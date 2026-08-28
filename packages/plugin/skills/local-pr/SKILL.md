@@ -42,18 +42,18 @@ Comments are the review protocol for the agent on that loop:
 | --- | --- | --- |
 | `human` | You (GUI, CLI, chat) | Status → `changes_requested` (including from **draft** — that is intended). Injected into the next session on that branch. |
 | `reviewer` | Automated review agent | Same as human. Findings only — that agent does not implement unless asked. |
-| `agent` | The implementer on this PR | Reply / done note. Does not change status. Then `set_status ready`. |
+| `agent` | The implementer on this PR | Reply. Use `resolve_comment` to close a finding. Does not change status. Then `set_status ready` for a second review. |
 
-`pendingComments` on `get_local_pr` are human/reviewer notes since the last agent reply.
+`pendingComments` on `get_local_pr` are **unresolved** human/reviewer notes. Resolved threads stay on the loop so the reviewer can verify them.
 
 ## Address comments
 
 If the current branch's local PR is `changes_requested`:
 
-1. `get_local_pr` and read `pendingComments`.
+1. `get_local_pr` and read `pendingComments` (unresolved human/reviewer notes; each has an `id`).
 2. Fix on the current branch. Commit if needed.
-3. `add_comment` with `role=agent` summarizing what changed.
-4. `set_status` `ready` and `add_comment` `role=agent` **Review requested.** That is how you ask the reviewer chat again.
+3. For **each** pending comment, MCP `resolve_comment` with that `commentId` and a reply (what you changed). Status stays `changes_requested`.
+4. When the inbox is done: `set_status` `ready` and `add_comment` `role=agent` **Review requested.** That is the second review for the reviewer chat.
 5. Do not `git push`. Do not review your own loop.
 
 ## Requesting review

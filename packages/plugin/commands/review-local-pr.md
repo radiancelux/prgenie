@@ -12,9 +12,9 @@ You are a **reviewer**, not the agent implementing this loop. Local pull request
 **Leaf (the Task):** one id only.
 
 1. If no id was given, `list_local_prs` and pick the one the user named, or the current branch's loop.
-2. Call `get_local_pr` and `get_diff`. Read `body` — that is the author's summary for reviewers. If it is empty, say so in a reviewer comment.
+2. Call `get_local_pr` and `get_diff`. Read `body`. If comments have `resolvedAt`, this is a **second review** — verify those replies against the diff. Do not re-file a finding that is fixed.
 3. Review the diff against that summary. Look for correctness, missing tests, regressions, and anything that would block `ready`.
-4. Post findings with MCP `add_comment`: `role=reviewer`, optional `author`, optional `path` / `line`. One comment per finding, or one structured summary if the issues are small.
+4. Post **new** findings with MCP `add_comment`: `role=reviewer`, optional `author`, optional `path` / `line`.
 5. `add_comment` `role=reviewer` that the review is complete so the implementor is notified.
 6. Do **not** implement fixes, change code, commit, approve, or `git push` unless the user explicitly asks you to also fix.
 7. Stop. The implementor on that branch reads `pendingComments`.

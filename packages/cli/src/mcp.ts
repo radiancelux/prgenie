@@ -15,6 +15,7 @@ import {
   listLocalPrs,
   listWorktrees,
   pendingReviewComments,
+  resolveLocalPrComment,
   resumeWatch,
   setLocalPrStatus,
   updateLocalPr,
@@ -102,6 +103,14 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
         side: args.side === "left" || args.side === "right" ? args.side : undefined,
       });
     }
+    case "resolve_comment":
+      return resolveLocalPrComment(
+        cwd,
+        String(args.id ?? ""),
+        String(args.commentId ?? ""),
+        String(args.body ?? ""),
+        { author: typeof args.author === "string" ? args.author : undefined },
+      );
     case "get_diff":
       return {
         files: await getLocalPrNameStatus(cwd, String(args.id ?? "")),
@@ -144,7 +153,7 @@ const tools = [
   {
     name: "list_local_prs",
     description:
-      "List unpublished local pull requests. status=ready is the reviewer queue. inbox=true is loops with pendingComments for the implementor.",
+      "List unpublished local pull requests. status=ready is the reviewer queue. inbox=true is loops with unresolved pendingComments for the implementor.",
     inputSchema: {
       type: "object",
       properties: {
@@ -196,7 +205,7 @@ const tools = [
   {
     name: "get_local_pr",
     description:
-      "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are human/reviewer notes the implementing agent has not answered yet.",
+      "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are unresolved human/reviewer notes. Resolved comments stay on the loop for the second review.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -231,6 +240,22 @@ const tools = [
         path: { type: "string" },
         line: { type: "number" },
         side: { type: "string", enum: ["left", "right"] },
+        cwd: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "resolve_comment",
+    description:
+      "Implementor: mark a human/reviewer comment resolved and attach a reply. Does not set ready. After addressing the inbox, set_status ready and add_comment role=agent Review requested for a second review. Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id", "commentId", "body"],
+      properties: {
+        id: { type: "string" },
+        commentId: { type: "string" },
+        body: { type: "string" },
+        author: { type: "string" },
         cwd: { type: "string" },
       },
     },

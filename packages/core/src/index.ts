@@ -34,6 +34,7 @@ export {
   normalizeComment,
   pendingReviewComments,
   refreshLocalPrHead,
+  resolveLocalPrComment,
   setLocalPrStatus,
   shouldSpawnReviewer,
   updateLocalPr,

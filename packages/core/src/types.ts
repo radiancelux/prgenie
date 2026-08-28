@@ -11,6 +11,9 @@ export interface LocalPrComment {
   path?: string;
   line?: number;
   side?: "left" | "right";
+  replyTo?: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
 }
 
 export interface LocalPrSource {

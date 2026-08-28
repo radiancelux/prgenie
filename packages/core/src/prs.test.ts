@@ -15,6 +15,7 @@ import {
   listLocalPrs,
   listWorktrees,
   pendingReviewComments,
+  resolveLocalPrComment,
   setLocalPrStatus,
   shouldSpawnReviewer,
   markReviewRequested,
@@ -108,22 +109,49 @@ test("reviewer comments request changes; agent replies do not", async () => {
   assert.equal(reviewed.comments[0].role, "reviewer");
   assert.equal(pendingReviewComments(reviewed).length, 1);
 
-  const replied = await addLocalPrComment(repo, pr.id, "Added widget.test.ts.", {
+  const replied = await addLocalPrComment(repo, pr.id, "Working on it.", {
     role: "agent",
   });
   assert.equal(replied.status, "changes_requested");
-  assert.equal(pendingReviewComments(replied).length, 0);
+  assert.equal(pendingReviewComments(replied).length, 1);
 
   const followup = await addLocalPrComment(repo, pr.id, "Also document the flag.", {
     path: "widget.txt",
     line: 1,
   });
-  assert.equal(pendingReviewComments(followup).length, 1);
+  assert.equal(pendingReviewComments(followup).length, 2);
   const inbox = formatReviewInbox(followup);
   assert.ok(inbox);
   assert.match(inbox, /Human \(PR Genie Test\)/);
   assert.match(inbox, /Also document the flag/);
   assert.match(inbox, /@ widget\.txt:1/);
+  assert.match(inbox, /\[c-/);
+});
+
+test("resolve_comment drops a finding from the inbox and leaves status", async () => {
+  const pr = await createLocalPr(repo, { title: "Resolve", base: "main" });
+  const first = await addLocalPrComment(repo, pr.id, "Missing tests.", {
+    role: "reviewer",
+    author: "review-agent",
+  });
+  const second = await addLocalPrComment(repo, pr.id, "Rename the file.", {
+    role: "reviewer",
+    author: "review-agent",
+  });
+  assert.equal(pendingReviewComments(second).length, 2);
+  const done = await resolveLocalPrComment(
+    repo,
+    pr.id,
+    first.comments[0].id,
+    "Added widget.test.ts.",
+  );
+  assert.equal(done.status, "changes_requested");
+  assert.equal(pendingReviewComments(done).length, 1);
+  assert.equal(pendingReviewComments(done)[0].body, "Rename the file.");
+  const reply = done.comments.find((c) => c.replyTo === first.comments[0].id);
+  assert.ok(reply);
+  assert.equal(reply.role, "agent");
+  assert.ok(done.comments.find((c) => c.id === first.comments[0].id)?.resolvedAt);
 });
 
 test("findLocalPrForCurrentBranch prefers changes_requested", async () => {

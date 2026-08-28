@@ -15,6 +15,7 @@ import {
   listLocalPrs,
   listWorktrees,
   pendingReviewComments,
+  resolveLocalPrComment,
   resumeWatch,
   setLocalPrStatus,
   updateLocalPr,
@@ -42,6 +43,7 @@ Usage:
   prgenie ready <id>
   prgenie request-changes <id> [-m <message>]
   prgenie comment <id> -m <message> [--role human|agent|reviewer] [--author <name>] [--path <file>] [--line <n>] [--side left|right]
+  prgenie resolve <id> <commentId> -m <message>
   prgenie status <id> <draft|ready|approved|changes_requested>
   prgenie worktrees
   prgenie worktree <id>
@@ -256,6 +258,16 @@ export async function run(argv: string[]): Promise<number> {
         side: sideRaw === "left" || sideRaw === "right" ? sideRaw : undefined,
       }),
     );
+    return 0;
+  }
+  if (sub === "resolve") {
+    const commentId = rest[1];
+    const message = arg(rest, "-m") ?? arg(rest, "--message");
+    if (!commentId || !message) {
+      process.stderr.write("prgenie resolve <id> <commentId> -m <message>\n");
+      return 1;
+    }
+    printPr(await resolveLocalPrComment(repo, id, commentId, message));
     return 0;
   }
   if (sub === "status") {

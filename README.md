@@ -53,6 +53,7 @@ prgenie show <id>
 prgenie diff <id>
 prgenie approve <id>
 prgenie comment <id> -m "..." [--role human|agent|reviewer]
+prgenie resolve <id> <commentId> -m "..."
 prgenie request-changes <id> -m "..."
 prgenie worktrees
 prgenie gh list
@@ -75,7 +76,7 @@ Cursor may auto-clean worktrees. The loop remains.
 
 `draft` → `ready` → `approved` | `changes_requested`
 
-Human and reviewer comments are the brief for the agent on that loop (`changes_requested`). The **reviewer chat** runs `/watch-ready-prs` and Tasks a subagent per `ready` loop. The **implementor chat** runs `/watch-review-inbox`. `/stop-watch` ends both loops. `/export-local-pr` ends the loops and opens the GitHub PR at origin. Every loop should have a **summary** (`body`): why, what changed, how to test.
+Human and reviewer comments are the brief (`changes_requested`). The implementor **resolves** each with a reply (`resolve_comment`), then marks `ready` for a second review. The **reviewer chat** runs `/watch-ready-prs`. The **implementor chat** runs `/watch-review-inbox`. `/stop-watch` ends both loops. `/export-local-pr` ends the loops and opens the GitHub PR at origin. Every loop should have a **summary** (`body`): why, what changed, how to test.
 
 Export to GitHub is an explicit later step (not in this slice).
 

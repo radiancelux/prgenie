@@ -442,11 +442,11 @@ function normalizeComment(comment) {
 }
 function pendingReviewComments(pr) {
   const comments = (pr.comments ?? []).map(normalizeComment);
-  const lastAgent = [...comments].reverse().find((c) => c.role === "agent");
   return comments.filter((c) => {
     if (c.role !== "human" && c.role !== "reviewer") return false;
-    if (!lastAgent) return true;
-    return c.createdAt > lastAgent.createdAt;
+    if (c.replyTo) return false;
+    if (c.resolvedAt) return false;
+    return true;
   });
 }
 async function addLocalPrComment(cwd, id, body, options = {}) {
@@ -478,6 +478,43 @@ async function addLocalPrComment(cwd, id, body, options = {}) {
       pr.status = "changes_requested";
     }
     pr.updatedAt = comment.createdAt;
+    await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
+    return pr;
+  });
+}
+async function resolveLocalPrComment(cwd, id, commentId, body, options = {}) {
+  const text = body.trim();
+  if (!text) throw new Error("Resolution comment is empty");
+  const needle = commentId.trim();
+  if (!needle) throw new Error("Comment id is empty");
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+    pr.comments = (pr.comments ?? []).map(normalizeComment);
+    const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
+    if (!target) throw new Error(`Comment not found: ${commentId}`);
+    if (target.role === "agent") {
+      throw new Error("Only human or reviewer comments can be resolved");
+    }
+    if (target.resolvedAt) {
+      throw new Error(`Comment ${target.id} is already resolved`);
+    }
+    const now = nowIso();
+    const author = options.author?.trim() || await userName(cwd);
+    target.resolvedAt = now;
+    target.resolvedBy = author;
+    pr.comments.push({
+      id: newId("c"),
+      body: text,
+      createdAt: now,
+      author,
+      role: "agent",
+      replyTo: target.id
+    });
+    pr.updatedAt = now;
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;
     return pr;
@@ -814,6 +851,14 @@ async function handleTool(name, args) {
         side: args.side === "left" || args.side === "right" ? args.side : void 0
       });
     }
+    case "resolve_comment":
+      return resolveLocalPrComment(
+        cwd,
+        String(args.id ?? ""),
+        String(args.commentId ?? ""),
+        String(args.body ?? ""),
+        { author: typeof args.author === "string" ? args.author : void 0 }
+      );
     case "get_diff":
       return {
         files: await getLocalPrNameStatus(cwd, String(args.id ?? "")),
@@ -853,7 +898,7 @@ var tools = [
   },
   {
     name: "list_local_prs",
-    description: "List unpublished local pull requests. status=ready is the reviewer queue. inbox=true is loops with pendingComments for the implementor.",
+    description: "List unpublished local pull requests. status=ready is the reviewer queue. inbox=true is loops with unresolved pendingComments for the implementor.",
     inputSchema: {
       type: "object",
       properties: {
@@ -902,7 +947,7 @@ var tools = [
   },
   {
     name: "get_local_pr",
-    description: "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are human/reviewer notes the implementing agent has not answered yet.",
+    description: "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are unresolved human/reviewer notes. Resolved comments stay on the loop for the second review.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -936,6 +981,21 @@ var tools = [
         path: { type: "string" },
         line: { type: "number" },
         side: { type: "string", enum: ["left", "right"] },
+        cwd: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "resolve_comment",
+    description: "Implementor: mark a human/reviewer comment resolved and attach a reply. Does not set ready. After addressing the inbox, set_status ready and add_comment role=agent Review requested for a second review. Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id", "commentId", "body"],
+      properties: {
+        id: { type: "string" },
+        commentId: { type: "string" },
+        body: { type: "string" },
+        author: { type: "string" },
         cwd: { type: "string" }
       }
     }

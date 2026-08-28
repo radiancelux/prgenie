@@ -19,7 +19,7 @@ Do not implement. When a Task returns, confirm `pendingComments` landed; if not,
 
 If you **are** the subagent (one id in the prompt):
 
-1. `get_local_pr` + `get_diff`. Read `body`.
-2. `add_comment` `role=reviewer` for each finding, or one summary. Prefer `path` / `line` when you know them.
+1. `get_local_pr` + `get_diff`. Read `body`. If comments are already `resolvedAt`, this is a **second review** — verify those replies against the diff. Do not re-file a finding that is actually fixed.
+2. `add_comment` `role=reviewer` for each **new** finding, or one summary. Prefer `path` / `line` when you know them.
 3. Always finish with `add_comment` `role=reviewer` that the review is complete (LGTM or blocking list).
 4. Stop. Do not implement. Do not spawn further reviewers.

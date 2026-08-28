@@ -9,6 +9,7 @@ import {
   findGitRoot,
   getLocalPrNameStatus,
   listLocalPrs,
+  resolveLocalPrComment,
   sameFsPath,
   setLocalPrStatus,
   updateLocalPr,
@@ -31,6 +32,7 @@ type ClientMessage =
   | { type: "openGitLens" }
   | { type: "openFile"; path: string; status: string }
   | { type: "openComment"; path: string; line?: number }
+  | { type: "resolve"; id: string; commentId: string }
   | { type: "openDiffs" };
 
 type Snapshot = {
@@ -239,6 +241,14 @@ export class LaneHub implements vscode.Disposable {
         await this.pushSnapshot();
       } else if (msg.type === "comment") {
         await addLocalPrComment(cwd, msg.id, msg.body, { role: "human" });
+        await this.pushSnapshot();
+      } else if (msg.type === "resolve") {
+        const note = await vscode.window.showInputBox({
+          title: "Resolve comment",
+          prompt: "How did you address this? This reply goes to the reviewer.",
+        });
+        if (note === undefined) return;
+        await resolveLocalPrComment(cwd, msg.id, msg.commentId, note);
         await this.pushSnapshot();
       } else if (msg.type === "summary") {
         await updateLocalPr(cwd, msg.id, { body: msg.body });
@@ -507,7 +517,8 @@ function panelHtml(webview: vscode.Webview): string {
     .comments {
       width: 280px; flex: none; overflow: auto; display: flex; flex-direction: column;
     }
-    .comment { padding: 8px 10px; border-bottom: 1px solid var(--vscode-widget-border, transparent); }
+    .comment.resolved { opacity: 0.72; }
+    .replies { margin: 6px 0 0 10px; padding-left: 8px; border-left: 2px solid var(--vscode-widget-border, transparent); }
     .comment .who { font-size: 11px; margin-bottom: 4px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
     .loc { font-size: 11px; padding: 1px 6px; }
     .role {
@@ -572,6 +583,8 @@ function panelHtml(webview: vscode.Webview): string {
       const draftCmt = keepCmt ? prevCmt.value : "";
       const files = msg.files || [];
       const comments = selected.comments || [];
+      const repliesFor = (id) => comments.filter((c) => c.replyTo === id);
+      const roots = comments.filter((c) => !c.replyTo);
       const short = (sha) => (sha || "").slice(0, 7);
       const when = selected.updatedAt ? new Date(selected.updatedAt).toLocaleString() : "";
       const where = selected.worktreePath ? "worktree" : "head";
@@ -584,11 +597,18 @@ function panelHtml(webview: vscode.Webview): string {
         if (role === "reviewer") return "Reviewer";
         return "Human";
       }
-      const commentHtml = comments.map((c) => {
+      const commentHtml = roots.map((c) => {
         const loc = c.path
           ? '<button type="button" class="loc secondary" data-path="' + esc(c.path) + '" data-line="' + (c.line || "") + '">' + esc(c.path) + (c.line ? ":" + c.line : "") + "</button>"
           : "";
-        return '<div class="comment"><div class="who muted"><span class="role">' + esc(roleLabel(c.role)) + "</span>" + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + loc + "</div><div>" + esc(c.body) + "</div></div>";
+        const canResolve = (c.role === "human" || c.role === "reviewer") && !c.resolvedAt;
+        const resolveBtn = canResolve
+          ? '<button type="button" class="resolve secondary" data-cid="' + esc(c.id) + '">Resolve</button>'
+          : (c.resolvedAt ? '<span class="role">Resolved</span>' : "");
+        const replies = repliesFor(c.id).map((r) =>
+          '<div class="comment"><div class="who muted"><span class="role">' + esc(roleLabel(r.role)) + "</span>" + esc(r.author || "agent") + " · " + esc(new Date(r.createdAt).toLocaleString()) + "</div><div>" + esc(r.body) + "</div></div>"
+        ).join("");
+        return '<div class="comment' + (c.resolvedAt ? " resolved" : "") + '"><div class="who muted"><span class="role">' + esc(roleLabel(c.role)) + "</span>" + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + loc + resolveBtn + "</div><div>" + esc(c.body) + "</div>" + (replies ? '<div class="replies">' + replies + "</div>" : "") + "</div>";
       }).join("") || '<p class="muted empty">No comments yet</p>';
       root.innerHTML = [
         '<div class="toolbar">',
@@ -606,7 +626,7 @@ function panelHtml(webview: vscode.Webview): string {
         '<div class="summary"><h2>Summary</h2><div class="pad"><textarea id="sum" placeholder="Why this exists, what changed, how to test. The implementing agent writes this for reviewers."></textarea><div style="margin-top:6px"><button id="saveSum">Save summary</button></div></div></div>',
         '<div class="body">',
         '<div class="files"><h2>Changes (' + where + ')</h2>' + fileHtml + '<p class="muted empty">Click a file to open the VS Code diff — loop base on the left, this worktree on the right.</p></div>',
-        '<div class="comments"><h2>Comments</h2><div id="clist">' + commentHtml + '</div><div class="composer"><p class="muted hint">Goes to the agent on this loop (next chat on this branch). Status becomes changes requested, including from draft.</p><textarea id="cmt" placeholder="Comment for the agent working this PR"></textarea><div style="margin-top:6px"><button id="send">Comment</button></div></div></div>',
+        '<div class="comments"><h2>Comments</h2><div id="clist">' + commentHtml + '</div><div class="composer"><p class="muted hint">Human/reviewer notes. Implementor: Resolve each with a reply, then Ready for a second review.</p><textarea id="cmt" placeholder="Comment for the agent working this PR"></textarea><div style="margin-top:6px"><button id="send">Comment</button></div></div></div>',
         "</div>"
       ].join("");
       layoutId = selected.id;
@@ -639,6 +659,13 @@ function panelHtml(webview: vscode.Webview): string {
           type: "openFile",
           path: el.getAttribute("data-path"),
           status: el.getAttribute("data-status") || "M"
+        });
+      }
+      for (const el of root.querySelectorAll(".resolve[data-cid]")) {
+        el.onclick = () => vscode.postMessage({
+          type: "resolve",
+          id: selected.id,
+          commentId: el.getAttribute("data-cid")
         });
       }
       for (const el of root.querySelectorAll(".loc[data-path]")) {

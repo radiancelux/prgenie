@@ -179,11 +179,11 @@ export function normalizeComment(comment: LocalPrComment): LocalPrComment {
 
 export function pendingReviewComments(pr: LocalPr): LocalPrComment[] {
   const comments = (pr.comments ?? []).map(normalizeComment);
-  const lastAgent = [...comments].reverse().find((c) => c.role === "agent");
   return comments.filter((c) => {
     if (c.role !== "human" && c.role !== "reviewer") return false;
-    if (!lastAgent) return true;
-    return c.createdAt > lastAgent.createdAt;
+    if (c.replyTo) return false;
+    if (c.resolvedAt) return false;
+    return true;
   });
 }
 
@@ -192,7 +192,7 @@ export function formatReviewInbox(pr: LocalPr): string | null {
   if (pending.length === 0) return null;
   const lines = [
     `PR Genie: local PR ${pr.id} ("${pr.title}") on branch ${pr.headRef} has review comments for the agent working this loop.`,
-    `Status is ${pr.status}. Treat the comments below as the brief. Address them on the current branch, commit if needed, then MCP add_comment with role=agent summarizing what you did, then set_status ready. Do not git push.`,
+    `Status is ${pr.status}. Address each unresolved comment with MCP resolve_comment (this loop id, that commentId, and a reply). Then set_status ready and add_comment role=agent "Review requested." for a second review. Do not git push.`,
     "",
   ];
   for (const comment of pending) {
@@ -201,7 +201,7 @@ export function formatReviewInbox(pr: LocalPr): string | null {
     const loc = comment.path
       ? ` @ ${comment.path}${comment.line ? `:${comment.line}` : ""}`
       : "";
-    lines.push(`${who}${loc} at ${comment.createdAt}:`);
+    lines.push(`${who} [${comment.id}]${loc} at ${comment.createdAt}:`);
     lines.push(comment.body);
     lines.push("");
   }
@@ -277,6 +277,50 @@ export async function addLocalPrComment(
       pr.status = "changes_requested";
     }
     pr.updatedAt = comment.createdAt;
+    await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
+    return pr;
+  });
+}
+
+export async function resolveLocalPrComment(
+  cwd: string,
+  id: string,
+  commentId: string,
+  body: string,
+  options: { author?: string } = {},
+): Promise<LocalPr> {
+  const text = body.trim();
+  if (!text) throw new Error("Resolution comment is empty");
+  const needle = commentId.trim();
+  if (!needle) throw new Error("Comment id is empty");
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+    pr.comments = (pr.comments ?? []).map(normalizeComment);
+    const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
+    if (!target) throw new Error(`Comment not found: ${commentId}`);
+    if (target.role === "agent") {
+      throw new Error("Only human or reviewer comments can be resolved");
+    }
+    if (target.resolvedAt) {
+      throw new Error(`Comment ${target.id} is already resolved`);
+    }
+    const now = nowIso();
+    const author = options.author?.trim() || (await userName(cwd));
+    target.resolvedAt = now;
+    target.resolvedBy = author;
+    pr.comments.push({
+      id: newId("c"),
+      body: text,
+      createdAt: now,
+      author,
+      role: "agent",
+      replyTo: target.id,
+    });
+    pr.updatedAt = now;
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;
     return pr;
