@@ -319,8 +319,12 @@ export async function refreshLocalPrHead(
   id: string,
 ): Promise<LocalPr> {
   const pr = await getLocalPr(cwd, id);
-  const sha = await gitText(cwd, ["rev-parse", pr.headRef]);
-  pr.headSha = sha;
+  const named = await git(cwd, ["rev-parse", "--verify", pr.headRef], { allowFail: true });
+  if (named.code !== 0) {
+    const branch = await currentBranch(cwd);
+    if (branch) pr.headRef = branch;
+  }
+  pr.headSha = await gitText(cwd, ["rev-parse", named.code === 0 ? pr.headRef : "HEAD"]);
   pr.updatedAt = nowIso();
   await writePr(cwd, pr);
   return pr;
