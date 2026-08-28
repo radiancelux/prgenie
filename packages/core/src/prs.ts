@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { git, gitText, requireGitRoot } from "./git.js";
-import { prFile, prsDir } from "./store.js";
+import { parseJsonObject, prFile, prsDir, writeJsonFile } from "./store.js";
 import {
   currentBranch,
   detectDefaultBase,
@@ -13,12 +13,13 @@ import {
 } from "./worktrees.js";
 import type {
   CaptureResult,
+  CommentRole,
   CreateLocalPrInput,
   LocalPr,
   LocalPrComment,
   LocalPrStatus,
 } from "./types.js";
-import { STATUSES } from "./types.js";
+import { COMMENT_ROLES, STATUSES } from "./types.js";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -30,7 +31,7 @@ function newId(prefix: string): string {
 
 async function writePr(cwd: string, pr: LocalPr): Promise<void> {
   const dir = await prsDir(cwd);
-  await writeFile(prFile(dir, pr.id), JSON.stringify(pr, null, 2), "utf8");
+  await writeJsonFile(prFile(dir, pr.id), pr);
   await git(cwd, [
     "update-ref",
     `refs/local-pr/${pr.id}/head`,
@@ -59,8 +60,14 @@ export async function listLocalPrs(cwd: string): Promise<LocalPr[]> {
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
     const raw = await readFile(path.join(dir, name), "utf8");
-    const pr = JSON.parse(raw) as LocalPr;
+    let pr: LocalPr;
+    try {
+      pr = parseJsonObject<LocalPr>(raw);
+    } catch {
+      continue;
+    }
     pr.source = pr.source ?? null;
+    pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
   }
   prs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -119,6 +126,25 @@ export async function createLocalPr(
   return pr;
 }
 
+export async function updateLocalPr(
+  cwd: string,
+  id: string,
+  patch: { title?: string; body?: string },
+): Promise<LocalPr> {
+  const pr = await getLocalPr(cwd, id);
+  if (patch.title !== undefined) {
+    const title = patch.title.trim();
+    if (!title) throw new Error("Title is empty");
+    pr.title = title;
+  }
+  if (patch.body !== undefined) {
+    pr.body = patch.body.trim();
+  }
+  pr.updatedAt = nowIso();
+  await writePr(cwd, pr);
+  return pr;
+}
+
 export async function setLocalPrStatus(
   cwd: string,
   id: string,
@@ -134,22 +160,76 @@ export async function setLocalPrStatus(
   return pr;
 }
 
+export function normalizeComment(comment: LocalPrComment): LocalPrComment {
+  const role: CommentRole =
+    comment.role === "agent" || comment.role === "reviewer" || comment.role === "human"
+      ? comment.role
+      : "human";
+  return {
+    ...comment,
+    author: comment.author || "reviewer",
+    role,
+  };
+}
+
+export function pendingReviewComments(pr: LocalPr): LocalPrComment[] {
+  const comments = (pr.comments ?? []).map(normalizeComment);
+  const lastAgent = [...comments].reverse().find((c) => c.role === "agent");
+  return comments.filter((c) => {
+    if (c.role !== "human" && c.role !== "reviewer") return false;
+    if (!lastAgent) return true;
+    return c.createdAt > lastAgent.createdAt;
+  });
+}
+
+export function formatReviewInbox(pr: LocalPr): string | null {
+  const pending = pendingReviewComments(pr);
+  if (pending.length === 0) return null;
+  const lines = [
+    `PR Genie: local PR ${pr.id} ("${pr.title}") on branch ${pr.headRef} has review comments for the agent working this packet.`,
+    `Status is ${pr.status}. Treat the comments below as the brief. Address them on the current branch, commit if needed, then MCP add_comment with role=agent summarizing what you did, then set_status ready. Do not git push.`,
+    "",
+  ];
+  for (const comment of pending) {
+    const who =
+      comment.role === "reviewer" ? `Reviewer (${comment.author})` : `Human (${comment.author})`;
+    lines.push(`${who} at ${comment.createdAt}:`);
+    lines.push(comment.body);
+    lines.push("");
+  }
+  return lines.join("\n").trimEnd();
+}
+
+export async function findLocalPrForCurrentBranch(cwd: string): Promise<LocalPr | null> {
+  const branch = await currentBranch(cwd);
+  if (!branch) return null;
+  const matches = (await listLocalPrs(cwd)).filter((pr) => pr.headRef === branch);
+  if (matches.length === 0) return null;
+  return matches.find((pr) => pr.status === "changes_requested") ?? matches[0];
+}
+
 export async function addLocalPrComment(
   cwd: string,
   id: string,
   body: string,
+  options: { role?: CommentRole; author?: string } = {},
 ): Promise<LocalPr> {
   const text = body.trim();
   if (!text) throw new Error("Comment body is empty");
+  const role = options.role ?? "human";
+  if (!COMMENT_ROLES.includes(role)) {
+    throw new Error(`Invalid comment role: ${role}`);
+  }
   const pr = await getLocalPr(cwd, id);
   const comment: LocalPrComment = {
     id: newId("c"),
     body: text,
     createdAt: nowIso(),
-    author: await userName(cwd),
+    author: options.author?.trim() || (await userName(cwd)),
+    role,
   };
   pr.comments.push(comment);
-  if (pr.status === "ready" || pr.status === "approved") {
+  if (role !== "agent") {
     pr.status = "changes_requested";
   }
   pr.updatedAt = comment.createdAt;

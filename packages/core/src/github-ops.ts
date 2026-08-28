@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { findGitRoot } from "./git.js";
-import { consoleDir } from "./store.js";
+import { consoleDir, parseJsonObject, writeJsonFile } from "./store.js";
 import {
   parseGhAuthStatus,
   type GhAccount,
@@ -81,7 +81,7 @@ export async function getRepoGithubBind(
   if (!root) return null;
   try {
     const raw = await readFile(bindFile(await consoleDir(root)), "utf8");
-    const parsed = JSON.parse(raw) as RepoGithubBind;
+    const parsed = parseJsonObject<RepoGithubBind>(raw);
     if (!parsed.login) return null;
     return { host: parsed.host || "github.com", login: parsed.login };
   } catch {
@@ -100,7 +100,7 @@ export async function bindRepoGithub(
   const bind: RepoGithubBind = { host, login };
   const dir = await consoleDir(root);
   await mkdir(dir, { recursive: true });
-  await writeFile(bindFile(dir), JSON.stringify(bind, null, 2), "utf8");
+  await writeJsonFile(bindFile(dir), bind);
   return bind;
 }
 

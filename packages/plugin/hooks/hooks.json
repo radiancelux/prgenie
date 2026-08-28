@@ -4,6 +4,9 @@
     "sessionStart": [
       {
         "command": "node ./hooks/session-log.mjs"
+      },
+      {
+        "command": "node ./hooks/review-inbox.cjs"
       }
     ],
     "sessionEnd": [

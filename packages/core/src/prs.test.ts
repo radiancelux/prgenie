@@ -8,11 +8,15 @@ import {
   addLocalPrComment,
   createLocalPr,
   captureAgentWork,
+  findLocalPrForCurrentBranch,
+  formatReviewInbox,
   getLocalPr,
   getLocalPrDiff,
   listLocalPrs,
   listWorktrees,
+  pendingReviewComments,
   setLocalPrStatus,
+  updateLocalPr,
 } from "./index.js";
 
 let repo = "";
@@ -46,15 +50,25 @@ test("lists the main worktree", async () => {
 });
 
 test("creates, lists, and approves a local PR", async () => {
-  const created = await createLocalPr(repo, { title: "Add widget", base: "main" });
+  const created = await createLocalPr(repo, {
+    title: "Add widget",
+    body: "Adds widget.txt so the playground has a diff.",
+    base: "main",
+  });
   assert.match(created.id, /^lp-[0-9a-f]{8}$/);
   assert.equal(created.status, "draft");
   assert.equal(created.headRef, "feat/widget");
   assert.equal(created.baseRef, "main");
+  assert.match(created.body, /widget\.txt/);
 
   const listed = await listLocalPrs(repo);
   assert.equal(listed.length, 1);
   assert.equal(listed[0].id, created.id);
+
+  const updated = await updateLocalPr(repo, created.id, {
+    body: "## Summary\n- Add widget.txt\n\n## Test\n- Open the packet diff.",
+  });
+  assert.match(updated.body, /## Summary/);
 
   const diff = await getLocalPrDiff(repo, created.id, { stat: true });
   assert.match(diff, /widget\.txt/);
@@ -74,9 +88,41 @@ test("comments move ready PRs back to changes_requested", async () => {
   const commented = await addLocalPrComment(repo, pr.id, "Please rename the file.");
   assert.equal(commented.status, "changes_requested");
   assert.equal(commented.comments.length, 1);
+  assert.equal(commented.comments[0].role, "human");
 
   const fetched = await getLocalPr(repo, pr.id.slice(0, 6));
   assert.equal(fetched.id, pr.id);
+});
+
+test("reviewer comments request changes; agent replies do not", async () => {
+  const pr = await createLocalPr(repo, { title: "Roles", base: "main" });
+  const reviewed = await addLocalPrComment(repo, pr.id, "Missing tests.", {
+    role: "reviewer",
+    author: "review-agent",
+  });
+  assert.equal(reviewed.status, "changes_requested");
+  assert.equal(reviewed.comments[0].role, "reviewer");
+  assert.equal(pendingReviewComments(reviewed).length, 1);
+
+  const replied = await addLocalPrComment(repo, pr.id, "Added widget.test.ts.", {
+    role: "agent",
+  });
+  assert.equal(replied.status, "changes_requested");
+  assert.equal(pendingReviewComments(replied).length, 0);
+
+  const followup = await addLocalPrComment(repo, pr.id, "Also document the flag.");
+  assert.equal(pendingReviewComments(followup).length, 1);
+  const inbox = formatReviewInbox(followup);
+  assert.ok(inbox);
+  assert.match(inbox, /Human \(PR Genie Test\)/);
+  assert.match(inbox, /Also document the flag/);
+});
+
+test("findLocalPrForCurrentBranch prefers changes_requested", async () => {
+  git(["checkout", "feat/widget"]);
+  const found = await findLocalPrForCurrentBranch(repo);
+  assert.ok(found);
+  assert.equal(found.headRef, "feat/widget");
 });
 
 test("captureAgentWork skips when HEAD is not ahead of base", async () => {

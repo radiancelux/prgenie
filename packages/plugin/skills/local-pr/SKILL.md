@@ -12,10 +12,18 @@ When a coding subagent **commits** and stops, the `subagentStop` hook drafts a p
 ## Create
 
 ```
-prgenie create --title "..." --base main
+prgenie create --title "..." --body "## Summary\n- ...\n\n## Test\n- ..." --base main
 ```
 
-Or MCP `create_local_pr` with `title`, optional `body`, `base`, `head`.
+Or MCP `create_local_pr` with `title` and **`body`**. `body` is the packet summary for reviewers — not optional when you are the implementing agent.
+
+Write it like a GitHub PR description:
+
+- Why this exists
+- What changed (bullets)
+- How to test
+
+If the packet already exists, `update_local_pr` with `body` (or `prgenie update <id> --body "..."`). Fill the summary before `set_status ready`.
 
 ## Inspect
 
@@ -28,7 +36,35 @@ Or MCP `create_local_pr` with `title`, optional `body`, `base`, `head`.
 
 `draft` → `ready` → `approved` | `changes_requested`
 
-Comments on a ready/approved packet move it to `changes_requested`.
+Comments are the review protocol for the agent on that packet:
+
+| role | Who | Effect |
+| --- | --- | --- |
+| `human` | You (GUI, CLI, chat) | Status → `changes_requested`. Injected into the next session on that branch. |
+| `reviewer` | Automated review agent | Same as human. Findings only — that agent does not implement unless asked. |
+| `agent` | The implementer on this PR | Reply / done note. Does not change status. Then `set_status ready`. |
+
+`pendingComments` on `get_local_pr` are human/reviewer notes since the last agent reply.
+
+## Address comments
+
+If the current branch's local PR is `changes_requested`:
+
+1. `get_local_pr` and read `pendingComments`.
+2. Fix on the current branch. Commit if needed.
+3. `add_comment` with `role=agent` summarizing what changed.
+4. `set_status` `ready`.
+5. Do not `git push`.
+
+## Automated review
+
+Use `/review-local-pr` or MCP as a **reviewer**, not the implementer:
+
+1. `get_local_pr` + `get_diff`.
+2. `add_comment` with `role=reviewer` (and optional `author`) for each finding or one summary.
+3. Do not implement, approve, or push unless the user asks.
+
+You may launch a Task subagent with that brief if the user wants a second-pass review. Post its findings with `role=reviewer`. The implementing agent (this branch / next session) picks them up.
 
 ## Worktrees
 

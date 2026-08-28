@@ -6,12 +6,13 @@ import {
   consoleDir,
   createLocalPr,
   findGitRoot,
-  getLocalPrDiff,
   getLocalPrNameStatus,
   listLocalPrs,
   setLocalPrStatus,
+  updateLocalPr,
   type LocalPr,
 } from "@prgenie/core";
+import { openAllChanges, openFileChange } from "./gitDiff.js";
 
 type Surface = "lane" | "panel";
 
@@ -22,9 +23,12 @@ type ClientMessage =
   | { type: "select"; id: string }
   | { type: "status"; id: string; status: LocalPr["status"] }
   | { type: "comment"; id: string; body: string }
+  | { type: "summary"; id: string; body: string }
+  | { type: "copyReviewPrompt"; id: string }
   | { type: "openFolder"; id: string }
   | { type: "openGitLens" }
-  | { type: "openFile"; path: string };
+  | { type: "openFile"; path: string; status: string }
+  | { type: "openDiffs" };
 
 type Snapshot = {
   type: "snapshot";
@@ -32,7 +36,6 @@ type Snapshot = {
   prs: LocalPr[];
   selectedId: string | null;
   files: { status: string; path: string }[];
-  diff: string;
   repo: string;
   freshIds: string[];
   watching: boolean;
@@ -42,6 +45,7 @@ export class LaneHub implements vscode.Disposable {
   private readonly views = new Map<Surface, vscode.WebviewView>();
   private watcher: FSWatcher | undefined;
   private poller: ReturnType<typeof setInterval> | undefined;
+  private watchTimer: ReturnType<typeof setTimeout> | undefined;
   private selectedId: string | undefined;
   private knownIds = new Set<string>();
   private primed = false;
@@ -69,9 +73,15 @@ export class LaneHub implements vscode.Disposable {
       prompt: "Local PR title",
     });
     if (title === undefined) return;
+    const body = await vscode.window.showInputBox({
+      title: "PR Genie",
+      prompt: "Summary for reviewers (why, what changed, how to test)",
+    });
+    if (body === undefined) return;
     try {
       const pr = await createLocalPr(cwd, {
         title: title || undefined,
+        body: body || undefined,
         source: { kind: "extension" },
       });
       this.selectedId = pr.id;
@@ -104,6 +114,7 @@ export class LaneHub implements vscode.Disposable {
 
   dispose(): void {
     this.watcher?.close();
+    if (this.watchTimer) clearTimeout(this.watchTimer);
     if (this.poller) clearInterval(this.poller);
   }
 
@@ -148,7 +159,8 @@ export class LaneHub implements vscode.Disposable {
     try {
       const dir = await consoleDir(cwd);
       this.watcher = watch(dir, { recursive: true }, () => {
-        void this.pushSnapshot();
+        if (this.watchTimer) clearTimeout(this.watchTimer);
+        this.watchTimer = setTimeout(() => void this.pushSnapshot(), 150);
       });
     } catch {
       // Store created on first local PR.
@@ -168,11 +180,18 @@ export class LaneHub implements vscode.Disposable {
       await this.openGitLens();
       return;
     }
-    if (msg.type === "openFile") {
-      const folder = vscode.workspace.workspaceFolders?.[0];
-      if (!folder) return;
-      const uri = vscode.Uri.joinPath(folder.uri, msg.path.replace(/\\/g, "/"));
-      await vscode.window.showTextDocument(uri, { preview: true });
+    if (msg.type === "openFile" || msg.type === "openDiffs") {
+      const cwd = await this.repoCwd({ warn: false });
+      if (!cwd) return;
+      const prs = await listLocalPrs(cwd);
+      const pr = prs.find((p) => p.id === this.selectedId);
+      if (!pr) return;
+      const files = await getLocalPrNameStatus(cwd, pr.id);
+      if (msg.type === "openDiffs") {
+        await openAllChanges(cwd, pr, files);
+        return;
+      }
+      await openFileChange(cwd, pr, msg.status, msg.path);
       return;
     }
     const cwd = await this.repoCwd();
@@ -187,8 +206,21 @@ export class LaneHub implements vscode.Disposable {
         await setLocalPrStatus(cwd, msg.id, msg.status);
         await this.pushSnapshot();
       } else if (msg.type === "comment") {
-        await addLocalPrComment(cwd, msg.id, msg.body);
+        await addLocalPrComment(cwd, msg.id, msg.body, { role: "human" });
         await this.pushSnapshot();
+      } else if (msg.type === "summary") {
+        await updateLocalPr(cwd, msg.id, { body: msg.body });
+        await this.pushSnapshot();
+      } else if (msg.type === "copyReviewPrompt") {
+        const prompt = [
+          `Review local PR ${msg.id} with PR Genie.`,
+          "Call get_diff, then add_comment with role reviewer for each finding (or one summary).",
+          "Do not implement fixes unless I ask. Do not git push.",
+        ].join(" ");
+        await vscode.env.clipboard.writeText(prompt);
+        void vscode.window.showInformationMessage(
+          "Review prompt copied. Paste it in a new chat or run /review-local-pr.",
+        );
       } else if (msg.type === "openFolder") {
         const prs = await listLocalPrs(cwd);
         const pr = prs.find((p) => p.id === msg.id);
@@ -241,18 +273,12 @@ export class LaneHub implements vscode.Disposable {
       }
       if (!this.selectedId) this.selectedId = prs[0]?.id;
       const selected = prs.find((p) => p.id === this.selectedId);
-      let files: { status: string; path: string }[] = [];
-      let diff = "";
-      if (selected) {
-        files = await getLocalPrNameStatus(root, selected.id);
-        diff = await getLocalPrDiff(root, selected.id, { maxBytes: 160_000 });
-      }
+      const files = selected ? await getLocalPrNameStatus(root, selected.id) : [];
       this.post({
         type: "snapshot",
         prs,
         selectedId: this.selectedId ?? null,
         files,
-        diff,
         repo: path.basename(root),
         freshIds,
         watching: true,
@@ -399,7 +425,7 @@ function panelHtml(webview: vscode.Webview): string {
     .toolbar h1 {
       font-size: 13px; font-weight: 600; margin: 0;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      max-width: 42vw;
+      max-width: 36vw;
     }
     .pill {
       font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
@@ -410,33 +436,38 @@ function panelHtml(webview: vscode.Webview): string {
     .grow { flex: 1; }
     .body { display: flex; flex: 1; min-height: 0; }
     .files {
-      width: 220px; flex: none; overflow: auto;
+      flex: 1; overflow: auto;
       border-right: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, transparent));
     }
+    .files h2, .comments h2, .summary h2 {
+      font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+      margin: 0; padding: 8px 10px; color: var(--vscode-descriptionForeground);
+    }
+    .summary {
+      flex: none; max-height: 30%; overflow: auto;
+      border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, transparent));
+    }
+    .summary .pad { padding: 0 10px 8px; }
     .file {
       display: flex; gap: 8px; padding: 4px 10px; cursor: pointer; font-size: 12px;
     }
     .file:hover { background: var(--vscode-list-hoverBackground); }
-    .file .st { width: 14px; flex: none; font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; }
-    .diff {
-      flex: 1; overflow: auto; padding: 8px 12px;
-      font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
-      font-size: 12px; line-height: 1.45; white-space: pre;
-    }
+    .file .st { width: 16px; flex: none; font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; }
     .add { color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950); }
     .del { color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149); }
-    .hunk { color: var(--vscode-textLink-foreground); }
-    .meta { color: var(--vscode-descriptionForeground); }
+    .mod { color: var(--vscode-gitDecoration-modifiedResourceForeground, #d29922); }
     .comments {
-      width: 260px; flex: none; overflow: auto; display: flex; flex-direction: column;
-      border-left: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, transparent));
-    }
-    .comments h2 {
-      font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
-      margin: 0; padding: 8px 10px; color: var(--vscode-descriptionForeground);
+      width: 280px; flex: none; overflow: auto; display: flex; flex-direction: column;
     }
     .comment { padding: 8px 10px; border-bottom: 1px solid var(--vscode-widget-border, transparent); }
-    .comment .who { font-size: 11px; margin-bottom: 4px; }
+    .comment .who { font-size: 11px; margin-bottom: 4px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .role {
+      font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
+      padding: 1px 5px;
+      background: var(--vscode-badge-background);
+      color: var(--vscode-badge-foreground);
+    }
+    .hint { font-size: 11px; margin: 0 0 8px; }
     textarea {
       width: 100%; box-sizing: border-box; min-height: 64px; resize: vertical;
       background: var(--vscode-input-background); color: var(--vscode-input-foreground);
@@ -454,22 +485,17 @@ function panelHtml(webview: vscode.Webview): string {
     function esc(s) {
       return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
     }
-    function colorDiff(diff) {
-      if (!diff) return '<span class="muted">(no diff — head matches base)</span>';
-      return diff.split("\\n").map((line) => {
-        const cls = line.startsWith("+") && !line.startsWith("+++") ? "add"
-          : line.startsWith("-") && !line.startsWith("---") ? "del"
-          : line.startsWith("@@") ? "hunk"
-          : line.startsWith("diff ") || line.startsWith("index ") ? "meta"
-          : "";
-        return '<div class="' + cls + '">' + esc(line) + "</div>";
-      }).join("");
-    }
     function stLabel(s) {
-      if (s === "A") return { t: "A", c: "add" };
-      if (s === "D") return { t: "D", c: "del" };
-      if (s === "M") return { t: "M", c: "" };
-      return { t: s || "?", c: "" };
+      const ch = (s || "?")[0];
+      if (ch === "A") return { t: "A", c: "add" };
+      if (ch === "D") return { t: "D", c: "del" };
+      if (ch === "M") return { t: "M", c: "mod" };
+      if (ch === "R") return { t: "R", c: "mod" };
+      return { t: ch, c: "" };
+    }
+    function fileLabel(p) {
+      const parts = String(p || "").split("\\t");
+      return parts[parts.length - 1] || p;
     }
     window.addEventListener("message", (event) => {
       const msg = event.data;
@@ -481,19 +507,25 @@ function panelHtml(webview: vscode.Webview): string {
       }
       const selected = (msg.prs || []).find((p) => p.id === msg.selectedId);
       if (!selected) {
-        root.innerHTML = '<p class="muted empty">Select a packet in Local PRs. This panel is the review surface — GitLens stays next to it for history.</p>';
+        root.innerHTML = '<p class="muted empty">Select a packet in Local PRs. File diffs open in the editor like Source Control, for that packet\\'s worktree.</p>';
         return;
       }
       const files = msg.files || [];
       const comments = selected.comments || [];
       const short = (sha) => (sha || "").slice(0, 7);
       const when = selected.updatedAt ? new Date(selected.updatedAt).toLocaleString() : "";
+      const where = selected.worktreePath ? "worktree" : "head";
       const fileHtml = files.map((f) => {
         const st = stLabel(f.status);
-        return '<div class="file" data-path="' + esc(f.path) + '"><span class="st ' + st.c + '">' + esc(st.t) + '</span><span>' + esc(f.path) + "</span></div>";
+        return '<div class="file" data-path="' + esc(f.path) + '" data-status="' + esc(f.status) + '"><span class="st ' + st.c + '">' + esc(st.t) + '</span><span>' + esc(fileLabel(f.path)) + "</span></div>";
       }).join("") || '<p class="muted empty">No files changed</p>';
+      function roleLabel(role) {
+        if (role === "agent") return "Agent";
+        if (role === "reviewer") return "Reviewer";
+        return "Human";
+      }
       const commentHtml = comments.map((c) =>
-        '<div class="comment"><div class="who muted">' + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + "</div><div>" + esc(c.body) + "</div></div>"
+        '<div class="comment"><div class="who muted"><span class="role">' + esc(roleLabel(c.role)) + "</span>" + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + "</div><div>" + esc(c.body) + "</div></div>"
       ).join("") || '<p class="muted empty">No comments yet</p>';
       root.innerHTML = [
         '<div class="toolbar">',
@@ -501,32 +533,45 @@ function panelHtml(webview: vscode.Webview): string {
         '<span class="pill"></span>',
         '<span class="muted" id="range"></span>',
         '<span class="grow"></span>',
+        '<button id="openDiffs">Open diffs</button>',
         '<button data-s="ready">Ready</button>',
         '<button data-s="approved">Approve</button>',
         '<button class="secondary" data-s="changes_requested">Request changes</button>',
+        '<button class="secondary" id="copyReview">Copy review prompt</button>',
         '<button class="secondary" id="openWt">Worktree</button>',
         "</div>",
+        '<div class="summary"><h2>Summary</h2><div class="pad"><textarea id="sum" placeholder="Why this exists, what changed, how to test. The implementing agent writes this for reviewers."></textarea><div style="margin-top:6px"><button id="saveSum">Save summary</button></div></div></div>',
         '<div class="body">',
-        '<div class="files">' + fileHtml + "</div>",
-        '<div class="diff"></div>',
-        '<div class="comments"><h2>Comments</h2><div id="clist">' + commentHtml + '</div><div class="composer"><textarea id="cmt" placeholder="Local review comment"></textarea><div style="margin-top:6px"><button id="send">Comment</button></div></div></div>',
+        '<div class="files"><h2>Changes (' + where + ')</h2>' + fileHtml + '<p class="muted empty">Click a file to open the VS Code diff — packet base on the left, this worktree on the right.</p></div>',
+        '<div class="comments"><h2>Comments</h2><div id="clist">' + commentHtml + '</div><div class="composer"><p class="muted hint">Goes to the agent on this packet (next chat on this branch). Status becomes changes requested.</p><textarea id="cmt" placeholder="Comment for the agent working this PR"></textarea><div style="margin-top:6px"><button id="send">Comment</button></div></div></div>',
         "</div>"
       ].join("");
       root.querySelector("h1").textContent = selected.title;
       root.querySelector(".pill").textContent = selected.status.replace("_", " ");
       root.querySelector("#range").textContent =
         selected.id + " · " + selected.headRef + " → " + selected.baseRef + " · " + short(selected.headSha) + " " + (when ? "· " + when : "");
-      root.querySelector(".diff").innerHTML = colorDiff(msg.diff || "");
+      root.querySelector("#sum").value = selected.body || "";
+      root.querySelector("#saveSum").onclick = () => vscode.postMessage({
+        type: "summary",
+        id: selected.id,
+        body: root.querySelector("#sum").value
+      });
       for (const btn of root.querySelectorAll("button[data-s]")) {
         btn.onclick = () => vscode.postMessage({ type: "status", id: selected.id, status: btn.getAttribute("data-s") });
       }
       root.querySelector("#openWt").onclick = () => vscode.postMessage({ type: "openFolder", id: selected.id });
+      root.querySelector("#copyReview").onclick = () => vscode.postMessage({ type: "copyReviewPrompt", id: selected.id });
+      root.querySelector("#openDiffs").onclick = () => vscode.postMessage({ type: "openDiffs" });
       root.querySelector("#send").onclick = () => {
         const body = root.querySelector("#cmt").value;
         if (body.trim()) vscode.postMessage({ type: "comment", id: selected.id, body });
       };
       for (const el of root.querySelectorAll(".file[data-path]")) {
-        el.onclick = () => vscode.postMessage({ type: "openFile", path: el.getAttribute("data-path") });
+        el.onclick = () => vscode.postMessage({
+          type: "openFile",
+          path: el.getAttribute("data-path"),
+          status: el.getAttribute("data-status") || "M"
+        });
       }
     });
     vscode.postMessage({ type: "ready" });

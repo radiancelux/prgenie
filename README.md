@@ -13,7 +13,7 @@ When a **subagent** finishes with commits, PR Genie drafts a packet and puts it 
 | Piece | Role |
 | --- | --- |
 | `@prgenie/core` + `prgenie` CLI | Create/list/approve local PRs from any worktree |
-| Cursor Plugin | No-push rule, `/local-pr`, MCP, subagent capture, **per-repo `gh` account** |
+| Cursor Plugin | No-push rule, `/local-pr`, `/review-local-pr`, MCP, subagent capture, **per-repo `gh` account** |
 | VS Code / Cursor extension | Live watch list as packets land — not a worktree manager |
 
 ## What it is not
@@ -45,11 +45,13 @@ Junction target: `%USERPROFILE%\.cursor\plugins\local\prgenie` (real copy of `pa
 ## CLI
 
 ```text
-prgenie create [--title t] [--body b] [--base main] [--head branch]
+prgenie create [--title t] [--body "summary"] [--base main] [--head branch]
+prgenie update <id> [--title t] [--body "summary"]
 prgenie list
 prgenie show <id>
 prgenie diff <id>
 prgenie approve <id>
+prgenie comment <id> -m "..." [--role human|agent|reviewer]
 prgenie request-changes <id> -m "..."
 prgenie worktrees
 prgenie gh list
@@ -71,6 +73,8 @@ Cursor may auto-clean worktrees. The packet remains.
 ## Status
 
 `draft` → `ready` → `approved` | `changes_requested`
+
+Human and reviewer comments are the brief for the agent on that packet (`changes_requested`). A new chat on that branch gets them via `sessionStart`. `/review-local-pr` is a second agent that posts `role=reviewer` findings without implementing. Every packet should have a **summary** (`body`): why, what changed, how to test.
 
 Export to GitHub is an explicit later step (not in this slice).
 

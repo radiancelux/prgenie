@@ -12,7 +12,11 @@ This repo may be bound to a GitHub login. If unbound and the user needs GitHub, 
 When work on this branch is ready for review:
 
 1. Commit on the current branch if needed (do not switch branches).
-2. Create or update a local PR with the `prgenie` MCP tools (`create_local_pr`) or `prgenie create`.
-3. Stop and wait. Do not open a GitHub pull request.
+2. Create or update a local PR with `create_local_pr` / `update_local_pr`. Always set `body` to a reviewer summary: why, what changed, how to test. Title is not enough.
+3. `set_status` ready. Stop and wait. Do not open a GitHub pull request.
+
+If this branch already has a local PR in `changes_requested`, call `get_local_pr` and treat `pendingComments` as the brief. After you address them: `add_comment` with `role=agent`, then `set_status` ready. Do not push.
+
+A separate chat can review a packet with `/review-local-pr`: `get_diff`, then `add_comment` with `role=reviewer`. That reviewer must not implement unless asked.
 
 Local PRs live in git refs `refs/local-pr/*` and `.git/agent-console/`. Cursor, GitLens, and Conductor keep managing worktrees — do not create, apply, or delete worktrees unless the user asks.

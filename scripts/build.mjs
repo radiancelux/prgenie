@@ -47,6 +47,12 @@ await esbuild.build({
 
 await esbuild.build({
   ...shared,
+  entryPoints: ["packages/cli/src/review-hook.ts"],
+  outfile: "packages/plugin/hooks/review-inbox.cjs",
+});
+
+await esbuild.build({
+  ...shared,
   entryPoints: ["packages/extension/src/extension.ts"],
   outfile: "packages/extension/dist/extension.js",
   external: ["vscode"],

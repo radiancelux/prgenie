@@ -96,6 +96,47 @@ async function consoleDir(cwd) {
   const common = await gitCommonDir(cwd);
   return import_node_path2.default.join(common, "agent-console");
 }
+function firstJsonObject(raw) {
+  const start = raw.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < raw.length; i++) {
+    const c = raw[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (c === "\\") {
+        escape = true;
+        continue;
+      }
+      if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      continue;
+    }
+    if (c === "{") depth += 1;
+    else if (c === "}") {
+      depth -= 1;
+      if (depth === 0) return raw.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+function parseJsonObject(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const slice = firstJsonObject(raw);
+    if (!slice) throw new SyntaxError("No JSON object in file");
+    return JSON.parse(slice);
+  }
+}
 
 // packages/core/src/github.ts
 function parseGhAuthStatus(text) {
@@ -187,7 +228,7 @@ async function getRepoGithubBind(cwd) {
   if (!root) return null;
   try {
     const raw = await (0, import_promises.readFile)(bindFile(await consoleDir(root)), "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = parseJsonObject(raw);
     if (!parsed.login) return null;
     return { host: parsed.host || "github.com", login: parsed.login };
   } catch {

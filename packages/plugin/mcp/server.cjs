@@ -29,6 +29,7 @@ var STATUSES = [
   "approved",
   "changes_requested"
 ];
+var COMMENT_ROLES = ["human", "agent", "reviewer"];
 
 // packages/core/src/git.ts
 var import_node_child_process = require("node:child_process");
@@ -182,6 +183,74 @@ async function prsDir(cwd) {
 function prFile(dir, id) {
   return import_node_path2.default.join(dir, `${id}.json`);
 }
+function firstJsonObject(raw) {
+  const start = raw.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < raw.length; i++) {
+    const c = raw[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (c === "\\") {
+        escape = true;
+        continue;
+      }
+      if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      continue;
+    }
+    if (c === "{") depth += 1;
+    else if (c === "}") {
+      depth -= 1;
+      if (depth === 0) return raw.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+function parseJsonObject(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const slice = firstJsonObject(raw);
+    if (!slice) throw new SyntaxError("No JSON object in file");
+    return JSON.parse(slice);
+  }
+}
+async function writeJsonFile(file, value) {
+  const body = `${JSON.stringify(value, null, 2)}
+`;
+  const tmp = `${file}.${process.pid}.tmp`;
+  const tmpHandle = await (0, import_promises.open)(tmp, "w");
+  try {
+    await tmpHandle.writeFile(body, "utf8");
+    await tmpHandle.sync();
+  } finally {
+    await tmpHandle.close();
+  }
+  try {
+    await (0, import_promises.rename)(tmp, file);
+    return;
+  } catch {
+  }
+  const dest = await (0, import_promises.open)(file, "w");
+  try {
+    const buf = Buffer.from(body, "utf8");
+    await dest.write(buf, 0, buf.length, 0);
+    await dest.truncate(buf.length);
+    await dest.sync();
+  } finally {
+    await dest.close();
+  }
+  await (0, import_promises.unlink)(tmp).catch(() => void 0);
+}
 
 // packages/core/src/prs.ts
 function nowIso() {
@@ -192,7 +261,7 @@ function newId(prefix) {
 }
 async function writePr(cwd, pr) {
   const dir = await prsDir(cwd);
-  await (0, import_promises2.writeFile)(prFile(dir, pr.id), JSON.stringify(pr, null, 2), "utf8");
+  await writeJsonFile(prFile(dir, pr.id), pr);
   await git(cwd, [
     "update-ref",
     `refs/local-pr/${pr.id}/head`,
@@ -220,8 +289,14 @@ async function listLocalPrs(cwd) {
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
     const raw = await (0, import_promises2.readFile)(import_node_path3.default.join(dir, name), "utf8");
-    const pr = JSON.parse(raw);
+    let pr;
+    try {
+      pr = parseJsonObject(raw);
+    } catch {
+      continue;
+    }
     pr.source = pr.source ?? null;
+    pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
   }
   prs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -270,6 +345,20 @@ async function createLocalPr(cwd, input = {}) {
   await writePr(root, pr);
   return pr;
 }
+async function updateLocalPr(cwd, id, patch) {
+  const pr = await getLocalPr(cwd, id);
+  if (patch.title !== void 0) {
+    const title = patch.title.trim();
+    if (!title) throw new Error("Title is empty");
+    pr.title = title;
+  }
+  if (patch.body !== void 0) {
+    pr.body = patch.body.trim();
+  }
+  pr.updatedAt = nowIso();
+  await writePr(cwd, pr);
+  return pr;
+}
 async function setLocalPrStatus(cwd, id, status) {
   if (!STATUSES.includes(status)) {
     throw new Error(`Invalid status: ${status}`);
@@ -280,18 +369,40 @@ async function setLocalPrStatus(cwd, id, status) {
   await writePr(cwd, pr);
   return pr;
 }
-async function addLocalPrComment(cwd, id, body) {
+function normalizeComment(comment) {
+  const role = comment.role === "agent" || comment.role === "reviewer" || comment.role === "human" ? comment.role : "human";
+  return {
+    ...comment,
+    author: comment.author || "reviewer",
+    role
+  };
+}
+function pendingReviewComments(pr) {
+  const comments = (pr.comments ?? []).map(normalizeComment);
+  const lastAgent = [...comments].reverse().find((c) => c.role === "agent");
+  return comments.filter((c) => {
+    if (c.role !== "human" && c.role !== "reviewer") return false;
+    if (!lastAgent) return true;
+    return c.createdAt > lastAgent.createdAt;
+  });
+}
+async function addLocalPrComment(cwd, id, body, options = {}) {
   const text = body.trim();
   if (!text) throw new Error("Comment body is empty");
+  const role = options.role ?? "human";
+  if (!COMMENT_ROLES.includes(role)) {
+    throw new Error(`Invalid comment role: ${role}`);
+  }
   const pr = await getLocalPr(cwd, id);
   const comment = {
     id: newId("c"),
     body: text,
     createdAt: nowIso(),
-    author: await userName(cwd)
+    author: options.author?.trim() || await userName(cwd),
+    role
   };
   pr.comments.push(comment);
-  if (pr.status === "ready" || pr.status === "approved") {
+  if (role !== "agent") {
     pr.status = "changes_requested";
   }
   pr.updatedAt = comment.createdAt;
@@ -409,7 +520,7 @@ async function getRepoGithubBind(cwd) {
   if (!root) return null;
   try {
     const raw = await (0, import_promises3.readFile)(bindFile(await consoleDir(root)), "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = parseJsonObject(raw);
     if (!parsed.login) return null;
     return { host: parsed.host || "github.com", login: parsed.login };
   } catch {
@@ -423,7 +534,7 @@ async function bindRepoGithub(cwd, login, host = "github.com") {
   const bind = { host, login };
   const dir = await consoleDir(root);
   await (0, import_promises3.mkdir)(dir, { recursive: true });
-  await (0, import_promises3.writeFile)(bindFile(dir), JSON.stringify(bind, null, 2), "utf8");
+  await writeJsonFile(bindFile(dir), bind);
   return bind;
 }
 
@@ -470,12 +581,25 @@ async function handleTool(name, args) {
         base: typeof args.base === "string" ? args.base : void 0,
         head: typeof args.head === "string" ? args.head : void 0
       });
-    case "get_local_pr":
-      return getLocalPr(cwd, String(args.id ?? ""));
+    case "update_local_pr":
+      return updateLocalPr(cwd, String(args.id ?? ""), {
+        title: typeof args.title === "string" ? args.title : void 0,
+        body: typeof args.body === "string" ? args.body : void 0
+      });
+    case "get_local_pr": {
+      const pr = await getLocalPr(cwd, String(args.id ?? ""));
+      return { ...pr, pendingComments: pendingReviewComments(pr) };
+    }
     case "set_status":
       return setLocalPrStatus(cwd, String(args.id ?? ""), args.status);
-    case "add_comment":
-      return addLocalPrComment(cwd, String(args.id ?? ""), String(args.body ?? ""));
+    case "add_comment": {
+      const role = typeof args.role === "string" ? args.role : void 0;
+      const author = typeof args.author === "string" ? args.author : void 0;
+      return addLocalPrComment(cwd, String(args.id ?? ""), String(args.body ?? ""), {
+        role,
+        author
+      });
+    }
     case "get_diff":
       return {
         files: await getLocalPrNameStatus(cwd, String(args.id ?? "")),
@@ -498,12 +622,15 @@ var tools = [
   },
   {
     name: "create_local_pr",
-    description: "Create a local PR (unpublished review packet) from the current branch or a named head. Do not git push or gh pr create.",
+    description: "Create a local PR (unpublished review packet) from the current branch or a named head. Always set body to a reviewer summary (why, what changed, how to test). Do not git push or gh pr create.",
     inputSchema: {
       type: "object",
       properties: {
         title: { type: "string" },
-        body: { type: "string" },
+        body: {
+          type: "string",
+          description: "Packet summary for reviewers: why, what changed, how to test."
+        },
         base: { type: "string" },
         head: { type: "string" },
         cwd: { type: "string" }
@@ -511,8 +638,22 @@ var tools = [
     }
   },
   {
+    name: "update_local_pr",
+    description: "Update a local PR title and/or body (the reviewer summary). Use this to fill or refresh the summary before set_status ready.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        title: { type: "string" },
+        body: { type: "string" },
+        cwd: { type: "string" }
+      }
+    }
+  },
+  {
     name: "get_local_pr",
-    description: "Show one local PR by id (prefix allowed).",
+    description: "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are human/reviewer notes the implementing agent has not answered yet.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -534,13 +675,15 @@ var tools = [
   },
   {
     name: "add_comment",
-    description: "Add a local review comment. Moves ready/approved packets back to changes_requested.",
+    description: "Add a local review comment. role=human (default, you) or role=reviewer (automated review) becomes the brief for the agent on that packet and sets status to changes_requested. role=agent is the implementing agent's reply and does not change status. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "body"],
       properties: {
         id: { type: "string" },
         body: { type: "string" },
+        role: { type: "string", enum: ["human", "agent", "reviewer"] },
+        author: { type: "string" },
         cwd: { type: "string" }
       }
     }

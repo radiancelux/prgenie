@@ -10,7 +10,10 @@ import {
   listGhAccounts,
   listLocalPrs,
   listWorktrees,
+  pendingReviewComments,
   setLocalPrStatus,
+  updateLocalPr,
+  type CommentRole,
   type LocalPrStatus,
 } from "@prgenie/core";
 
@@ -61,12 +64,25 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
         base: typeof args.base === "string" ? args.base : undefined,
         head: typeof args.head === "string" ? args.head : undefined,
       });
-    case "get_local_pr":
-      return getLocalPr(cwd, String(args.id ?? ""));
+    case "update_local_pr":
+      return updateLocalPr(cwd, String(args.id ?? ""), {
+        title: typeof args.title === "string" ? args.title : undefined,
+        body: typeof args.body === "string" ? args.body : undefined,
+      });
+    case "get_local_pr": {
+      const pr = await getLocalPr(cwd, String(args.id ?? ""));
+      return { ...pr, pendingComments: pendingReviewComments(pr) };
+    }
     case "set_status":
       return setLocalPrStatus(cwd, String(args.id ?? ""), args.status as LocalPrStatus);
-    case "add_comment":
-      return addLocalPrComment(cwd, String(args.id ?? ""), String(args.body ?? ""));
+    case "add_comment": {
+      const role = typeof args.role === "string" ? (args.role as CommentRole) : undefined;
+      const author = typeof args.author === "string" ? args.author : undefined;
+      return addLocalPrComment(cwd, String(args.id ?? ""), String(args.body ?? ""), {
+        role,
+        author,
+      });
+    }
     case "get_diff":
       return {
         files: await getLocalPrNameStatus(cwd, String(args.id ?? "")),
@@ -91,12 +107,15 @@ const tools = [
   {
     name: "create_local_pr",
     description:
-      "Create a local PR (unpublished review packet) from the current branch or a named head. Do not git push or gh pr create.",
+      "Create a local PR (unpublished review packet) from the current branch or a named head. Always set body to a reviewer summary (why, what changed, how to test). Do not git push or gh pr create.",
     inputSchema: {
       type: "object",
       properties: {
         title: { type: "string" },
-        body: { type: "string" },
+        body: {
+          type: "string",
+          description: "Packet summary for reviewers: why, what changed, how to test.",
+        },
         base: { type: "string" },
         head: { type: "string" },
         cwd: { type: "string" },
@@ -104,8 +123,24 @@ const tools = [
     },
   },
   {
+    name: "update_local_pr",
+    description:
+      "Update a local PR title and/or body (the reviewer summary). Use this to fill or refresh the summary before set_status ready.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        title: { type: "string" },
+        body: { type: "string" },
+        cwd: { type: "string" },
+      },
+    },
+  },
+  {
     name: "get_local_pr",
-    description: "Show one local PR by id (prefix allowed).",
+    description:
+      "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are human/reviewer notes the implementing agent has not answered yet.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -127,13 +162,16 @@ const tools = [
   },
   {
     name: "add_comment",
-    description: "Add a local review comment. Moves ready/approved packets back to changes_requested.",
+    description:
+      "Add a local review comment. role=human (default, you) or role=reviewer (automated review) becomes the brief for the agent on that packet and sets status to changes_requested. role=agent is the implementing agent's reply and does not change status. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "body"],
       properties: {
         id: { type: "string" },
         body: { type: "string" },
+        role: { type: "string", enum: ["human", "agent", "reviewer"] },
+        author: { type: "string" },
         cwd: { type: "string" },
       },
     },

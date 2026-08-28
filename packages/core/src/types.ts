@@ -1,10 +1,13 @@
 export type LocalPrStatus = "draft" | "ready" | "approved" | "changes_requested";
 
+export type CommentRole = "human" | "agent" | "reviewer";
+
 export interface LocalPrComment {
   id: string;
   body: string;
   createdAt: string;
   author: string;
+  role: CommentRole;
 }
 
 export interface LocalPrSource {
@@ -58,3 +61,5 @@ export const STATUSES: LocalPrStatus[] = [
   "approved",
   "changes_requested",
 ];
+
+export const COMMENT_ROLES: CommentRole[] = ["human", "agent", "reviewer"];

@@ -1,11 +1,16 @@
 import * as vscode from "vscode";
 import { LaneHub } from "./laneView.js";
+import { REV_SCHEME, RevisionContentProvider } from "./gitDiff.js";
 
 export function activate(context: vscode.ExtensionContext): void {
   const hub = new LaneHub(context);
   const retain = { webviewOptions: { retainContextWhenHidden: true } };
   context.subscriptions.push(
     hub,
+    vscode.workspace.registerTextDocumentContentProvider(
+      REV_SCHEME,
+      new RevisionContentProvider(),
+    ),
     vscode.window.registerWebviewViewProvider("prgenie.lane", hub.provider("lane"), retain),
     vscode.window.registerWebviewViewProvider("prgenie.panel", hub.provider("panel"), retain),
     vscode.commands.registerCommand("prgenie.refresh", () => hub.refresh()),

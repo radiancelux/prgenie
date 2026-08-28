@@ -10,7 +10,10 @@ import {
   listGhAccounts,
   listLocalPrs,
   listWorktrees,
+  pendingReviewComments,
   setLocalPrStatus,
+  updateLocalPr,
+  type CommentRole,
   type LocalPr,
   type LocalPrStatus,
 } from "@prgenie/core";
@@ -22,11 +25,12 @@ Usage:
   prgenie create [--title <t>] [--body <b>] [--base <ref>] [--head <ref>]
   prgenie list
   prgenie show <id>
+  prgenie update <id> [--title <t>] [--body <summary>]
   prgenie diff <id>
   prgenie approve <id>
   prgenie ready <id>
   prgenie request-changes <id> [-m <message>]
-  prgenie comment <id> -m <message>
+  prgenie comment <id> -m <message> [--role human|agent|reviewer] [--author <name>]
   prgenie status <id> <draft|ready|approved|changes_requested>
   prgenie worktrees
   prgenie gh list
@@ -50,8 +54,11 @@ function flag(args: string[], name: string): boolean {
 
 function printPr(pr: LocalPr): void {
   const filesNote = pr.worktreePath ? `\n  worktree: ${pr.worktreePath}` : "\n  worktree: (gone — packet still exists)";
+  const summary = pr.body.trim()
+    ? `\n  summary: ${pr.body.trim().split("\n")[0].slice(0, 100)}`
+    : "\n  summary: (none)";
   process.stdout.write(
-    `${pr.id}  ${pr.status.padEnd(18)}  ${pr.headRef} -> ${pr.baseRef}\n  ${pr.title}${filesNote}\n`,
+    `${pr.id}  ${pr.status.padEnd(18)}  ${pr.headRef} -> ${pr.baseRef}\n  ${pr.title}${filesNote}${summary}\n`,
   );
 }
 
@@ -115,12 +122,24 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "show") {
     const pr = await getLocalPr(repo, id);
-    process.stdout.write(JSON.stringify(pr, null, 2) + "\n");
+    process.stdout.write(
+      JSON.stringify({ ...pr, pendingComments: pendingReviewComments(pr) }, null, 2) + "\n",
+    );
     const files = await getLocalPrNameStatus(repo, pr.id);
     if (files.length) {
       process.stdout.write("\nFiles:\n");
       for (const f of files) process.stdout.write(`  ${f.status}\t${f.path}\n`);
     }
+    return 0;
+  }
+  if (sub === "update") {
+    const title = arg(rest, "--title");
+    const body = arg(rest, "--body");
+    if (title === undefined && body === undefined) {
+      process.stderr.write("prgenie update <id> [--title <t>] [--body <summary>]\n");
+      return 1;
+    }
+    printPr(await updateLocalPr(repo, id, { title, body }));
     return 0;
   }
   if (sub === "diff") {
@@ -138,17 +157,19 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "request-changes") {
     const message = arg(rest, "-m") ?? arg(rest, "--message");
-    if (message) await addLocalPrComment(repo, id, message);
+    if (message) await addLocalPrComment(repo, id, message, { role: "human" });
     printPr(await setLocalPrStatus(repo, id, "changes_requested"));
     return 0;
   }
   if (sub === "comment") {
     const message = arg(rest, "-m") ?? arg(rest, "--message");
     if (!message) {
-      process.stderr.write("prgenie comment <id> -m <message>\n");
+      process.stderr.write("prgenie comment <id> -m <message> [--role human|agent|reviewer]\n");
       return 1;
     }
-    printPr(await addLocalPrComment(repo, id, message));
+    const role = (arg(rest, "--role") ?? "human") as CommentRole;
+    const author = arg(rest, "--author");
+    printPr(await addLocalPrComment(repo, id, message, { role, author }));
     return 0;
   }
   if (sub === "status") {
