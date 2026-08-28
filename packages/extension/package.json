@@ -9,7 +9,11 @@
     "vscode": "^1.85.0"
   },
   "categories": ["SCM Providers", "Other"],
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:prgenie.lane",
+    "onView:prgenie.panel"
+  ],
   "main": "./dist/extension.js",
   "dependencies": {
     "@prgenie/core": "workspace:*"
@@ -26,6 +30,13 @@
           "title": "PR Genie",
           "icon": "media/icon.svg"
         }
+      ],
+      "panel": [
+        {
+          "id": "prgenie-panel",
+          "title": "PR Genie",
+          "icon": "media/icon.svg"
+        }
       ]
     },
     "views": {
@@ -33,7 +44,16 @@
         {
           "type": "webview",
           "id": "prgenie.lane",
-          "name": "Local PRs"
+          "name": "Local PRs",
+          "visibility": "visible"
+        }
+      ],
+      "prgenie-panel": [
+        {
+          "type": "webview",
+          "id": "prgenie.panel",
+          "name": "Packet",
+          "visibility": "visible"
         }
       ]
     },
@@ -45,8 +65,41 @@
       },
       {
         "command": "prgenie.createPr",
-        "title": "PR Genie: Create Local PR"
+        "title": "PR Genie: Create Local PR",
+        "icon": "$(add)"
+      },
+      {
+        "command": "prgenie.openLane",
+        "title": "PR Genie: Open Local PRs"
+      },
+      {
+        "command": "prgenie.openPanel",
+        "title": "PR Genie: Open Packet Panel"
+      },
+      {
+        "command": "prgenie.openGitLens",
+        "title": "PR Genie: Open GitLens Graph",
+        "icon": "$(git-merge)"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "prgenie.createPr",
+          "when": "view == prgenie.lane",
+          "group": "navigation"
+        },
+        {
+          "command": "prgenie.refresh",
+          "when": "view == prgenie.lane || view == prgenie.panel",
+          "group": "navigation"
+        },
+        {
+          "command": "prgenie.openGitLens",
+          "when": "view == prgenie.lane || view == prgenie.panel",
+          "group": "navigation"
+        }
+      ]
+    }
   }
 }

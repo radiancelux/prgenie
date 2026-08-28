@@ -13,6 +13,8 @@ import {
   type LocalPr,
 } from "@prgenie/core";
 
+type Surface = "lane" | "panel";
+
 type ClientMessage =
   | { type: "ready" }
   | { type: "refresh" }
@@ -21,10 +23,23 @@ type ClientMessage =
   | { type: "status"; id: string; status: LocalPr["status"] }
   | { type: "comment"; id: string; body: string }
   | { type: "openFolder"; id: string }
-  | { type: "openGitLens" };
+  | { type: "openGitLens" }
+  | { type: "openFile"; path: string };
 
-export class LaneViewProvider implements vscode.WebviewViewProvider {
-  private view: vscode.WebviewView | undefined;
+type Snapshot = {
+  type: "snapshot";
+  error?: string;
+  prs: LocalPr[];
+  selectedId: string | null;
+  files: { status: string; path: string }[];
+  diff: string;
+  repo: string;
+  freshIds: string[];
+  watching: boolean;
+};
+
+export class LaneHub implements vscode.Disposable {
+  private readonly views = new Map<Surface, vscode.WebviewView>();
   private watcher: FSWatcher | undefined;
   private poller: ReturnType<typeof setInterval> | undefined;
   private selectedId: string | undefined;
@@ -32,21 +47,14 @@ export class LaneViewProvider implements vscode.WebviewViewProvider {
   private primed = false;
   private userPinned = false;
 
-  constructor(private readonly context: vscode.ExtensionContext) {}
-
-  resolveWebviewView(webviewView: vscode.WebviewView): void {
-    this.view = webviewView;
-    webviewView.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [this.context.extensionUri],
-    };
-    webviewView.webview.html = this.html(webviewView.webview);
-    webviewView.webview.onDidReceiveMessage((msg: ClientMessage) => {
-      void this.onMessage(msg);
-    });
-    void this.watchStore();
+  constructor(private readonly context: vscode.ExtensionContext) {
     this.poller = setInterval(() => void this.pushSnapshot(), 2000);
-    void this.pushSnapshot();
+  }
+
+  provider(surface: Surface): vscode.WebviewViewProvider {
+    return {
+      resolveWebviewView: (webviewView) => this.resolve(surface, webviewView),
+    };
   }
 
   refresh(): void {
@@ -67,7 +75,9 @@ export class LaneViewProvider implements vscode.WebviewViewProvider {
         source: { kind: "extension" },
       });
       this.selectedId = pr.id;
+      this.userPinned = true;
       await this.pushSnapshot();
+      await vscode.commands.executeCommand("prgenie.panel.focus");
     } catch (err) {
       void vscode.window.showErrorMessage(
         err instanceof Error ? err.message : String(err),
@@ -75,9 +85,44 @@ export class LaneViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  async openGitLens(): Promise<void> {
+    const commands = await vscode.commands.getCommands(true);
+    const candidates = [
+      "gitlens.showGraph",
+      "gitlens.showCommitGraph",
+      "gitlens.showGraphPage",
+    ];
+    const found = candidates.find((c) => commands.includes(c));
+    if (found) {
+      await vscode.commands.executeCommand(found);
+      return;
+    }
+    void vscode.window.showInformationMessage(
+      "GitLens is not installed. Install it for history and the commit graph; PR Genie only shows local review packets.",
+    );
+  }
+
   dispose(): void {
     this.watcher?.close();
     if (this.poller) clearInterval(this.poller);
+  }
+
+  private resolve(surface: Surface, webviewView: vscode.WebviewView): void {
+    this.views.set(surface, webviewView);
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [this.context.extensionUri],
+    };
+    webviewView.webview.html =
+      surface === "lane" ? laneHtml(webviewView.webview) : panelHtml(webviewView.webview);
+    webviewView.webview.onDidReceiveMessage((msg: ClientMessage) => {
+      void this.onMessage(msg);
+    });
+    webviewView.onDidDispose(() => {
+      if (this.views.get(surface) === webviewView) this.views.delete(surface);
+    });
+    void this.watchStore();
+    void this.pushSnapshot();
   }
 
   private async repoCwd(options: { warn?: boolean } = { warn: true }): Promise<string | undefined> {
@@ -123,6 +168,13 @@ export class LaneViewProvider implements vscode.WebviewViewProvider {
       await this.openGitLens();
       return;
     }
+    if (msg.type === "openFile") {
+      const folder = vscode.workspace.workspaceFolders?.[0];
+      if (!folder) return;
+      const uri = vscode.Uri.joinPath(folder.uri, msg.path.replace(/\\/g, "/"));
+      await vscode.window.showTextDocument(uri, { preview: true });
+      return;
+    }
     const cwd = await this.repoCwd();
     if (!cwd) return;
     try {
@@ -130,6 +182,7 @@ export class LaneViewProvider implements vscode.WebviewViewProvider {
         this.selectedId = msg.id;
         this.userPinned = true;
         await this.pushSnapshot();
+        await vscode.commands.executeCommand("prgenie.panel.focus");
       } else if (msg.type === "status") {
         await setLocalPrStatus(cwd, msg.id, msg.status);
         await this.pushSnapshot();
@@ -158,50 +211,31 @@ export class LaneViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async openGitLens(): Promise<void> {
-    const commands = await vscode.commands.getCommands(true);
-    const candidates = ["gitlens.showGraph", "gitlens.showCommitGraph", "gitlens.showGraphPage"];
-    const found = candidates.find((c) => commands.includes(c));
-    if (found) {
-      await vscode.commands.executeCommand(found);
-      return;
+  private post(payload: Snapshot | { type: "snapshot"; error: string; prs: [] }): void {
+    for (const view of this.views.values()) {
+      void view.webview.postMessage(payload);
     }
-    void vscode.window.showInformationMessage(
-      "GitLens is not installed. Install it to open the commit graph; PR Genie will not duplicate that UI.",
-    );
   }
 
   private async pushSnapshot(): Promise<void> {
-    if (!this.view) return;
+    if (this.views.size === 0) return;
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!cwd) {
-      this.view.webview.postMessage({
-        type: "snapshot",
-        error: "Open a git repository.",
-        prs: [],
-      });
+      this.post({ type: "snapshot", error: "Open a git repository.", prs: [] });
       return;
     }
     const root = await findGitRoot(cwd);
     if (!root) {
-      this.view.webview.postMessage({
-        type: "snapshot",
-        error: "Not a git repository.",
-        prs: [],
-      });
+      this.post({ type: "snapshot", error: "Not a git repository.", prs: [] });
       return;
     }
     try {
       const prs = await listLocalPrs(root);
       const ids = prs.map((p) => p.id);
-      const freshIds = this.primed
-        ? ids.filter((id) => !this.knownIds.has(id))
-        : [];
+      const freshIds = this.primed ? ids.filter((id) => !this.knownIds.has(id)) : [];
       this.primed = true;
       for (const id of ids) this.knownIds.add(id);
-      if (freshIds.length && !this.userPinned) {
-        this.selectedId = freshIds[0];
-      }
+      if (freshIds.length && !this.userPinned) this.selectedId = freshIds[0];
       if (this.selectedId && !prs.some((p) => p.id === this.selectedId)) {
         this.selectedId = prs[0]?.id;
       }
@@ -211,9 +245,9 @@ export class LaneViewProvider implements vscode.WebviewViewProvider {
       let diff = "";
       if (selected) {
         files = await getLocalPrNameStatus(root, selected.id);
-        diff = await getLocalPrDiff(root, selected.id, { maxBytes: 60_000 });
+        diff = await getLocalPrDiff(root, selected.id, { maxBytes: 160_000 });
       }
-      this.view.webview.postMessage({
+      this.post({
         type: "snapshot",
         prs,
         selectedId: this.selectedId ?? null,
@@ -225,151 +259,278 @@ export class LaneViewProvider implements vscode.WebviewViewProvider {
       });
       await this.watchStore();
     } catch (err) {
-      this.view.webview.postMessage({
+      this.post({
         type: "snapshot",
         error: err instanceof Error ? err.message : String(err),
         prs: [],
       });
     }
   }
+}
 
-  private html(webview: vscode.Webview): string {
-    const nonce = String(Date.now());
-    const csp = webview.cspSource;
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${csp} 'unsafe-inline'; script-src 'nonce-${nonce}';" />
-  <style>
+function csp(webview: vscode.Webview, nonce: string): string {
+  return `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';" />`;
+}
+
+function sharedCss(): string {
+  return `
     :root {
       color: var(--vscode-foreground);
       font-family: var(--vscode-font-family);
       font-size: var(--vscode-font-size);
     }
-    body { margin: 0; padding: 8px; }
-    h1 { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; color: var(--vscode-descriptionForeground); margin: 0 0 8px; }
-    .row { display: flex; gap: 6px; margin-bottom: 8px; }
+    html, body { height: 100%; }
+    body { margin: 0; }
+    .muted { color: var(--vscode-descriptionForeground); }
+    .error { color: var(--vscode-errorForeground); padding: 8px 12px; }
     button {
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
       border: none;
-      padding: 4px 8px;
+      padding: 3px 8px;
       cursor: pointer;
+      font-size: 12px;
     }
     button.secondary {
       background: var(--vscode-button-secondaryBackground);
       color: var(--vscode-button-secondaryForeground);
     }
-    .pr {
-      padding: 6px 8px;
-      border: 1px solid var(--vscode-widget-border, transparent);
-      margin-bottom: 4px;
-      cursor: pointer;
+    .status {
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--vscode-descriptionForeground);
     }
-    .pr.fresh { outline: 1px solid var(--vscode-focusBorder); }
-    .live { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--vscode-charts-green, #3fb950); display: inline-block; margin-right: 6px; }
-    .muted { color: var(--vscode-descriptionForeground); }
-    .status { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
-    pre {
-      white-space: pre-wrap;
-      background: var(--vscode-textCodeBlock-background);
-      padding: 8px;
-      overflow: auto;
-      max-height: 240px;
+  `;
+}
+
+function laneHtml(webview: vscode.Webview): string {
+  const nonce = String(Date.now());
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  ${csp(webview, nonce)}
+  <style>
+    ${sharedCss()}
+    body { padding: 4px 0 8px; }
+    .meta {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 12px 8px;
       font-size: 11px;
     }
-    textarea { width: 100%; box-sizing: border-box; min-height: 48px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); }
-    ul { padding-left: 16px; margin: 6px 0; }
-    .error { color: var(--vscode-errorForeground); }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--vscode-charts-green, #3fb950); flex: none; }
+    .pr {
+      padding: 6px 12px;
+      cursor: pointer;
+      border-left: 2px solid transparent;
+    }
+    .pr:hover { background: var(--vscode-list-hoverBackground); }
+    .pr.active {
+      background: var(--vscode-list-activeSelectionBackground);
+      color: var(--vscode-list-activeSelectionForeground);
+      border-left-color: var(--vscode-focusBorder);
+    }
+    .pr.fresh { box-shadow: inset 2px 0 0 var(--vscode-focusBorder); }
+    .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .empty { padding: 12px; }
   </style>
 </head>
 <body>
-  <div class="live">
-    <h1><span class="dot"></span>Watching</h1>
-    <p class="muted" id="meta"></p>
-  </div>
-  <p class="muted" id="tagline">Packets land here as agents finish. GitHub when you say so.</p>
-  <div class="row">
-    <button id="create">Create</button>
-    <button class="secondary" id="refresh">Refresh</button>
-    <button class="secondary" id="gitlens">Open in GitLens</button>
-  </div>
+  <div class="meta"><span class="dot"></span><span class="muted" id="meta">Watching</span></div>
   <div id="list"></div>
-  <div id="detail"></div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const list = document.getElementById("list");
-    const detail = document.getElementById("detail");
-    document.getElementById("create").onclick = () => vscode.postMessage({ type: "create" });
-    document.getElementById("refresh").onclick = () => vscode.postMessage({ type: "refresh" });
-    document.getElementById("gitlens").onclick = () => vscode.postMessage({ type: "openGitLens" });
     window.addEventListener("message", (event) => {
       const msg = event.data;
       if (msg.type !== "snapshot") return;
+      const meta = document.getElementById("meta");
       if (msg.error) {
+        meta.textContent = "Watching";
         list.innerHTML = '<p class="error"></p>';
         list.firstChild.textContent = msg.error;
-        detail.innerHTML = "";
         return;
       }
       const prs = msg.prs || [];
       const fresh = new Set(msg.freshIds || []);
-      const meta = document.getElementById("meta");
       meta.textContent = (msg.repo ? msg.repo + " · " : "") + prs.length + " packet" + (prs.length === 1 ? "" : "s");
       list.innerHTML = "";
       if (!prs.length) {
-        list.innerHTML = '<p class="muted">Waiting for agents. When a subagent commits work, a draft packet appears here.</p>';
+        list.innerHTML = '<p class="muted empty">Waiting for agents. Packets land here when work is committed.</p>';
+        return;
       }
       for (const pr of prs) {
         const el = document.createElement("div");
         el.className = "pr" + (pr.id === msg.selectedId ? " active" : "") + (fresh.has(pr.id) ? " fresh" : "");
-        el.innerHTML = '<div class="status"></div><div></div><div class="muted"></div>';
-        el.children[0].textContent = pr.status.replace("_", " ");
-        el.children[1].textContent = pr.title;
         const src = pr.source && pr.source.kind === "subagent"
           ? (pr.source.subagentType || "subagent")
           : (pr.source && pr.source.kind) || "local";
+        el.innerHTML = '<div class="status"></div><div class="title"></div><div class="muted"></div>';
+        el.children[0].textContent = pr.status.replace("_", " ");
+        el.children[1].textContent = pr.title;
         el.children[2].textContent = src + " · " + pr.headRef + " → " + pr.baseRef;
         el.onclick = () => vscode.postMessage({ type: "select", id: pr.id });
         list.appendChild(el);
       }
-      const selected = prs.find((p) => p.id === msg.selectedId);
-      if (!selected) { detail.innerHTML = ""; return; }
-      const files = (msg.files || []).map((f) => {
-        const li = document.createElement("li");
-        li.textContent = f.status + " " + f.path;
-        return li.outerHTML;
-      }).join("");
-      detail.innerHTML = [
-        "<h1>Packet</h1>",
-        "<p class='muted'></p>",
-        "<div class='row'>",
-        "<button data-s='ready'>Ready</button>",
-        "<button data-s='approved'>Approve</button>",
-        "<button class='secondary' data-s='changes_requested'>Request changes</button>",
-        "<button class='secondary' id='openWt'>Open worktree</button>",
-        "</div>",
-        "<ul>" + files + "</ul>",
-        "<pre></pre>",
-        "<textarea id='cmt' placeholder='Local review comment'></textarea>",
-        "<div class='row'><button id='send'>Comment</button></div>"
-      ].join("");
-      detail.querySelector("p").textContent = selected.id + (selected.worktreePath ? "" : " · worktree gone, refs remain");
-      detail.querySelector("pre").textContent = msg.diff || "(no diff)";
-      for (const btn of detail.querySelectorAll("button[data-s]")) {
-        btn.onclick = () => vscode.postMessage({ type: "status", id: selected.id, status: btn.getAttribute("data-s") });
-      }
-      detail.querySelector("#openWt").onclick = () => vscode.postMessage({ type: "openFolder", id: selected.id });
-      detail.querySelector("#send").onclick = () => {
-        const body = detail.querySelector("#cmt").value;
-        if (body.trim()) vscode.postMessage({ type: "comment", id: selected.id, body });
-      };
     });
     vscode.postMessage({ type: "ready" });
   </script>
 </body>
 </html>`;
-  }
+}
+
+function panelHtml(webview: vscode.Webview): string {
+  const nonce = String(Date.now() + 1);
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  ${csp(webview, nonce)}
+  <style>
+    ${sharedCss()}
+    body { display: flex; flex-direction: column; }
+    #root { display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; }
+    .toolbar {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, transparent));
+    }
+    .toolbar h1 {
+      font-size: 13px; font-weight: 600; margin: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      max-width: 42vw;
+    }
+    .pill {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+      padding: 2px 6px;
+      background: var(--vscode-badge-background);
+      color: var(--vscode-badge-foreground);
+    }
+    .grow { flex: 1; }
+    .body { display: flex; flex: 1; min-height: 0; }
+    .files {
+      width: 220px; flex: none; overflow: auto;
+      border-right: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, transparent));
+    }
+    .file {
+      display: flex; gap: 8px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+    }
+    .file:hover { background: var(--vscode-list-hoverBackground); }
+    .file .st { width: 14px; flex: none; font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; }
+    .diff {
+      flex: 1; overflow: auto; padding: 8px 12px;
+      font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+      font-size: 12px; line-height: 1.45; white-space: pre;
+    }
+    .add { color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950); }
+    .del { color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149); }
+    .hunk { color: var(--vscode-textLink-foreground); }
+    .meta { color: var(--vscode-descriptionForeground); }
+    .comments {
+      width: 260px; flex: none; overflow: auto; display: flex; flex-direction: column;
+      border-left: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, transparent));
+    }
+    .comments h2 {
+      font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+      margin: 0; padding: 8px 10px; color: var(--vscode-descriptionForeground);
+    }
+    .comment { padding: 8px 10px; border-bottom: 1px solid var(--vscode-widget-border, transparent); }
+    .comment .who { font-size: 11px; margin-bottom: 4px; }
+    textarea {
+      width: 100%; box-sizing: border-box; min-height: 64px; resize: vertical;
+      background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, transparent); padding: 6px;
+    }
+    .composer { padding: 8px 10px; }
+    .empty { padding: 16px 12px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
+    const root = document.getElementById("root");
+    function esc(s) {
+      return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+    }
+    function colorDiff(diff) {
+      if (!diff) return '<span class="muted">(no diff — head matches base)</span>';
+      return diff.split("\\n").map((line) => {
+        const cls = line.startsWith("+") && !line.startsWith("+++") ? "add"
+          : line.startsWith("-") && !line.startsWith("---") ? "del"
+          : line.startsWith("@@") ? "hunk"
+          : line.startsWith("diff ") || line.startsWith("index ") ? "meta"
+          : "";
+        return '<div class="' + cls + '">' + esc(line) + "</div>";
+      }).join("");
+    }
+    function stLabel(s) {
+      if (s === "A") return { t: "A", c: "add" };
+      if (s === "D") return { t: "D", c: "del" };
+      if (s === "M") return { t: "M", c: "" };
+      return { t: s || "?", c: "" };
+    }
+    window.addEventListener("message", (event) => {
+      const msg = event.data;
+      if (msg.type !== "snapshot") return;
+      if (msg.error) {
+        root.innerHTML = '<p class="error"></p>';
+        root.firstChild.textContent = msg.error;
+        return;
+      }
+      const selected = (msg.prs || []).find((p) => p.id === msg.selectedId);
+      if (!selected) {
+        root.innerHTML = '<p class="muted empty">Select a packet in Local PRs. This panel is the review surface — GitLens stays next to it for history.</p>';
+        return;
+      }
+      const files = msg.files || [];
+      const comments = selected.comments || [];
+      const short = (sha) => (sha || "").slice(0, 7);
+      const when = selected.updatedAt ? new Date(selected.updatedAt).toLocaleString() : "";
+      const fileHtml = files.map((f) => {
+        const st = stLabel(f.status);
+        return '<div class="file" data-path="' + esc(f.path) + '"><span class="st ' + st.c + '">' + esc(st.t) + '</span><span>' + esc(f.path) + "</span></div>";
+      }).join("") || '<p class="muted empty">No files changed</p>';
+      const commentHtml = comments.map((c) =>
+        '<div class="comment"><div class="who muted">' + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + "</div><div>" + esc(c.body) + "</div></div>"
+      ).join("") || '<p class="muted empty">No comments yet</p>';
+      root.innerHTML = [
+        '<div class="toolbar">',
+        "<h1></h1>",
+        '<span class="pill"></span>',
+        '<span class="muted" id="range"></span>',
+        '<span class="grow"></span>',
+        '<button data-s="ready">Ready</button>',
+        '<button data-s="approved">Approve</button>',
+        '<button class="secondary" data-s="changes_requested">Request changes</button>',
+        '<button class="secondary" id="openWt">Worktree</button>',
+        "</div>",
+        '<div class="body">',
+        '<div class="files">' + fileHtml + "</div>",
+        '<div class="diff"></div>',
+        '<div class="comments"><h2>Comments</h2><div id="clist">' + commentHtml + '</div><div class="composer"><textarea id="cmt" placeholder="Local review comment"></textarea><div style="margin-top:6px"><button id="send">Comment</button></div></div></div>',
+        "</div>"
+      ].join("");
+      root.querySelector("h1").textContent = selected.title;
+      root.querySelector(".pill").textContent = selected.status.replace("_", " ");
+      root.querySelector("#range").textContent =
+        selected.id + " · " + selected.headRef + " → " + selected.baseRef + " · " + short(selected.headSha) + " " + (when ? "· " + when : "");
+      root.querySelector(".diff").innerHTML = colorDiff(msg.diff || "");
+      for (const btn of root.querySelectorAll("button[data-s]")) {
+        btn.onclick = () => vscode.postMessage({ type: "status", id: selected.id, status: btn.getAttribute("data-s") });
+      }
+      root.querySelector("#openWt").onclick = () => vscode.postMessage({ type: "openFolder", id: selected.id });
+      root.querySelector("#send").onclick = () => {
+        const body = root.querySelector("#cmt").value;
+        if (body.trim()) vscode.postMessage({ type: "comment", id: selected.id, body });
+      };
+      for (const el of root.querySelectorAll(".file[data-path]")) {
+        el.onclick = () => vscode.postMessage({ type: "openFile", path: el.getAttribute("data-path") });
+      }
+    });
+    vscode.postMessage({ type: "ready" });
+  </script>
+</body>
+</html>`;
 }
