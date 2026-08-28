@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "node ./hooks/session-log.mjs"
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "node ./hooks/session-log.mjs"
+      }
+    ],
+    "stop": [
+      {
+        "command": "node ./hooks/session-log.mjs"
+      }
+    ],
+    "subagentStart": [
+      {
+        "command": "node ./hooks/session-log.mjs"
+      }
+    ],
+    "subagentStop": [
+      {
+        "command": "node ./hooks/capture-subagent.cjs",
+        "loop_limit": 2
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "node ./hooks/github-gate.cjs"
+      }
+    ]
+  }
+}

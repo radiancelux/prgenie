@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "prgenie": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/mcp/server.cjs"]
+    }
+  }
+}

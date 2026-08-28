@@ -1,0 +1,18 @@
+---
+description: Do not push or open GitHub PRs. Create a PR Genie local PR instead.
+alwaysApply: true
+---
+
+PR Genie owns unpublished review. GitHub is an explicit later step.
+
+Never run `git push`, `gh pr create`, or `gh pr merge` unless the user clearly asks to export an already approved local PR.
+
+This repo may be bound to a GitHub login. If unbound and the user needs GitHub, ask which `gh` account to use, then `prgenie gh use <login>` or MCP `gh_use`. Do not guess. Do not `gh auth switch` to a different account than the bind.
+
+When work on this branch is ready for review:
+
+1. Commit on the current branch if needed (do not switch branches).
+2. Create or update a local PR with the `prgenie` MCP tools (`create_local_pr`) or `prgenie create`.
+3. Stop and wait. Do not open a GitHub pull request.
+
+Local PRs live in git refs `refs/local-pr/*` and `.git/agent-console/`. Cursor, GitLens, and Conductor keep managing worktrees — do not create, apply, or delete worktrees unless the user asks.
