@@ -22,17 +22,23 @@ export {
   createLocalPr,
   findLocalPrForCurrentBranch,
   formatReviewInbox,
+  formatSpawnReviewer,
   getLocalPr,
   getLocalPrDiff,
   getLocalPrNameStatus,
   hasCommitsAheadOfBase,
   listLocalPrs,
+  markReviewRequested,
   normalizeComment,
   pendingReviewComments,
   refreshLocalPrHead,
   setLocalPrStatus,
+  shouldSpawnReviewer,
   updateLocalPr,
 } from "./prs.js";
+export { haltWatch, getRepoWatch, resumeWatch } from "./watch.js";
+export type { RepoWatchState, WatchHaltReason } from "./watch.js";
+export { exportLocalPr } from "./export.js";
 export { appendSession } from "./sessions.js";
 export { consoleDir, parseJsonObject, writeJsonFile } from "./store.js";
 export { parseGhAuthStatus } from "./github.js";

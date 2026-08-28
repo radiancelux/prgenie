@@ -52,7 +52,7 @@
         {
           "type": "webview",
           "id": "prgenie.panel",
-          "name": "Packet",
+          "name": "Loop",
           "visibility": "visible"
         }
       ]
@@ -74,7 +74,7 @@
       },
       {
         "command": "prgenie.openPanel",
-        "title": "PR Genie: Open Packet Panel"
+        "title": "PR Genie: Open Loop Panel"
       },
       {
         "command": "prgenie.openGitLens",

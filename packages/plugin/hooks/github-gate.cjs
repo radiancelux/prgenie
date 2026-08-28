@@ -91,10 +91,13 @@ async function gitCommonDir(cwd) {
 }
 
 // packages/core/src/store.ts
+var import_promises = require("node:fs/promises");
 var import_node_path2 = __toESM(require("node:path"), 1);
 async function consoleDir(cwd) {
   const common = await gitCommonDir(cwd);
-  return import_node_path2.default.join(common, "agent-console");
+  const dir = import_node_path2.default.join(common, "agent-console");
+  await (0, import_promises.mkdir)(dir, { recursive: true });
+  return dir;
 }
 function firstJsonObject(raw) {
   const start = raw.indexOf("{");
@@ -138,6 +141,11 @@ function parseJsonObject(raw) {
   }
 }
 
+// packages/core/src/github-ops.ts
+var import_node_child_process2 = require("node:child_process");
+var import_promises2 = require("node:fs/promises");
+var import_node_path3 = __toESM(require("node:path"), 1);
+
 // packages/core/src/github.ts
 function parseGhAuthStatus(text) {
   const accounts = [];
@@ -165,9 +173,6 @@ function parseGhAuthStatus(text) {
 }
 
 // packages/core/src/github-ops.ts
-var import_node_child_process2 = require("node:child_process");
-var import_promises = require("node:fs/promises");
-var import_node_path3 = __toESM(require("node:path"), 1);
 function gh(args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = (0, import_node_child_process2.spawn)("gh", args, {
@@ -227,7 +232,7 @@ async function getRepoGithubBind(cwd) {
   const root = await findGitRoot(cwd);
   if (!root) return null;
   try {
-    const raw = await (0, import_promises.readFile)(bindFile(await consoleDir(root)), "utf8");
+    const raw = await (0, import_promises2.readFile)(bindFile(await consoleDir(root)), "utf8");
     const parsed = parseJsonObject(raw);
     if (!parsed.login) return null;
     return { host: parsed.host || "github.com", login: parsed.login };

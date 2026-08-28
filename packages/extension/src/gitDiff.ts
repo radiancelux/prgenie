@@ -73,6 +73,7 @@ async function sideUris(
   const { leftPath, rightPath } = splitChangePath(status, rawPath);
   const worktree = pr.worktreePath;
   const rightDisk = worktree ? path.join(worktree, rightPath) : path.join(root, rightPath);
+  const leftDisk = worktree ? path.join(worktree, leftPath) : path.join(root, leftPath);
   const probe = vscode.Uri.file(rightDisk);
   const api = await gitApi();
   const deleted = status === "D" || status.startsWith("D");
@@ -81,7 +82,9 @@ async function sideUris(
   let left: vscode.Uri;
   let right: vscode.Uri;
   if (api) {
-    left = added ? revUri(root, pr.baseSha, leftPath, true) : api.toGitUri(probe, pr.baseSha);
+    left = added
+      ? revUri(root, pr.baseSha, leftPath, true)
+      : api.toGitUri(vscode.Uri.file(leftDisk), pr.baseSha);
     if (deleted) {
       right = revUri(root, pr.headSha, rightPath, true);
     } else if (worktree && (await exists(rightDisk))) {
@@ -123,7 +126,7 @@ export async function openAllChanges(
   files: { status: string; path: string }[],
 ): Promise<void> {
   if (files.length === 0) {
-    void vscode.window.showInformationMessage("No files changed in this packet.");
+    void vscode.window.showInformationMessage("No files changed in this loop.");
     return;
   }
   const resources: [vscode.Uri, vscode.Uri, vscode.Uri][] = [];

@@ -17,6 +17,10 @@
     "stop": [
       {
         "command": "node ./hooks/session-log.mjs"
+      },
+      {
+        "command": "node ./hooks/review-inbox.cjs",
+        "loop_limit": 2
       }
     ],
     "subagentStart": [
@@ -27,6 +31,10 @@
     "subagentStop": [
       {
         "command": "node ./hooks/capture-subagent.cjs",
+        "loop_limit": 2
+      },
+      {
+        "command": "node ./hooks/review-inbox.cjs",
         "loop_limit": 2
       }
     ],

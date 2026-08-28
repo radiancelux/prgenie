@@ -2,15 +2,19 @@ import {
   addLocalPrComment,
   bindRepoGithub,
   createLocalPr,
+  exportLocalPr,
   findGitRoot,
   getLocalPr,
   getLocalPrDiff,
   getLocalPrNameStatus,
   getRepoGithubBind,
+  getRepoWatch,
+  haltWatch,
   listGhAccounts,
   listLocalPrs,
   listWorktrees,
   pendingReviewComments,
+  resumeWatch,
   setLocalPrStatus,
   updateLocalPr,
   type CommentRole,
@@ -24,13 +28,19 @@ function usage(): string {
 Usage:
   prgenie create [--title <t>] [--body <b>] [--base <ref>] [--head <ref>]
   prgenie list
+  prgenie queue
+  prgenie inbox
+  prgenie watch
+  prgenie watch stop
+  prgenie watch start
+  prgenie export <id>
   prgenie show <id>
   prgenie update <id> [--title <t>] [--body <summary>]
   prgenie diff <id>
   prgenie approve <id>
   prgenie ready <id>
   prgenie request-changes <id> [-m <message>]
-  prgenie comment <id> -m <message> [--role human|agent|reviewer] [--author <name>]
+  prgenie comment <id> -m <message> [--role human|agent|reviewer] [--author <name>] [--path <file>] [--line <n>] [--side left|right]
   prgenie status <id> <draft|ready|approved|changes_requested>
   prgenie worktrees
   prgenie gh list
@@ -38,7 +48,7 @@ Usage:
   prgenie gh use <login>
   prgenie mcp
 
-Run from any worktree. Packets are stored in the repo's .git/agent-console/.
+Run from any worktree. Loops are stored in the repo's .git/agent-console/.
 `;
 }
 
@@ -53,7 +63,7 @@ function flag(args: string[], name: string): boolean {
 }
 
 function printPr(pr: LocalPr): void {
-  const filesNote = pr.worktreePath ? `\n  worktree: ${pr.worktreePath}` : "\n  worktree: (gone — packet still exists)";
+  const filesNote = pr.worktreePath ? `\n  worktree: ${pr.worktreePath}` : "\n  worktree: (gone — loop still exists)";
   const summary = pr.body.trim()
     ? `\n  summary: ${pr.body.trim().split("\n")[0].slice(0, 100)}`
     : "\n  summary: (none)";
@@ -115,6 +125,61 @@ export async function run(argv: string[]): Promise<number> {
     for (const pr of prs) printPr(pr);
     return 0;
   }
+  if (sub === "queue") {
+    const ready = (await listLocalPrs(repo)).filter((pr) => pr.status === "ready");
+    if (ready.length === 0) {
+      process.stdout.write("No ready local PRs.\n");
+      return 0;
+    }
+    for (const pr of ready) printPr(pr);
+    return 0;
+  }
+  if (sub === "inbox") {
+    const waiting = (await listLocalPrs(repo)).filter(
+      (pr) => pendingReviewComments(pr).length > 0,
+    );
+    if (waiting.length === 0) {
+      process.stdout.write("No pending review comments.\n");
+      return 0;
+    }
+    for (const pr of waiting) {
+      printPr(pr);
+      process.stdout.write(`  pending: ${pendingReviewComments(pr).length}\n`);
+    }
+    return 0;
+  }
+  if (sub === "watch") {
+    const action = rest[0] ?? "status";
+    if (action === "stop") {
+      const state = await haltWatch(repo, "stop");
+      process.stdout.write(`Watch halted (${state.reason}).\n`);
+      return 0;
+    }
+    if (action === "start") {
+      await resumeWatch(repo);
+      process.stdout.write("Watch resumed.\n");
+      return 0;
+    }
+    const state = await getRepoWatch(repo);
+    process.stdout.write(
+      state.halted
+        ? `halted  reason=${state.reason ?? "stop"}${state.exportId ? `  export=${state.exportId}` : ""}\n`
+        : "listening\n",
+    );
+    return 0;
+  }
+  if (sub === "export") {
+    const exportId = rest[0];
+    if (!exportId) {
+      process.stderr.write("prgenie export <id>\n");
+      return 1;
+    }
+    const result = await exportLocalPr(repo, exportId);
+    process.stdout.write(
+      `${result.alreadyExisted ? "Existing" : "Opened"} GitHub PR ${result.url}\n`,
+    );
+    return 0;
+  }
   const id = rest[0];
   if (!id) {
     process.stderr.write("Missing local PR id.\n");
@@ -164,12 +229,25 @@ export async function run(argv: string[]): Promise<number> {
   if (sub === "comment") {
     const message = arg(rest, "-m") ?? arg(rest, "--message");
     if (!message) {
-      process.stderr.write("prgenie comment <id> -m <message> [--role human|agent|reviewer]\n");
+      process.stderr.write(
+        "prgenie comment <id> -m <message> [--role human|agent|reviewer] [--path <file>] [--line <n>]\n",
+      );
       return 1;
     }
     const role = (arg(rest, "--role") ?? "human") as CommentRole;
     const author = arg(rest, "--author");
-    printPr(await addLocalPrComment(repo, id, message, { role, author }));
+    const filePath = arg(rest, "--path");
+    const lineRaw = arg(rest, "--line");
+    const sideRaw = arg(rest, "--side");
+    printPr(
+      await addLocalPrComment(repo, id, message, {
+        role,
+        author,
+        path: filePath,
+        line: lineRaw ? Number(lineRaw) : undefined,
+        side: sideRaw === "left" || sideRaw === "right" ? sideRaw : undefined,
+      }),
+    );
     return 0;
   }
   if (sub === "status") {

@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { git, gitText, requireGitRoot } from "./git.js";
-import { parseJsonObject, prFile, prsDir, writeJsonFile } from "./store.js";
+import { parseJsonObject, prFile, prsDir, withFileLock, writeJsonFile } from "./store.js";
 import {
   currentBranch,
   detectDefaultBase,
@@ -67,6 +67,7 @@ export async function listLocalPrs(cwd: string): Promise<LocalPr[]> {
       continue;
     }
     pr.source = pr.source ?? null;
+    pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
   }
@@ -121,6 +122,7 @@ export async function createLocalPr(
     source: input.source ?? { kind: "cli" },
     createdAt,
     updatedAt: createdAt,
+    reviewRequestedSha: null,
   };
   await writePr(root, pr);
   return pr;
@@ -186,18 +188,42 @@ export function formatReviewInbox(pr: LocalPr): string | null {
   const pending = pendingReviewComments(pr);
   if (pending.length === 0) return null;
   const lines = [
-    `PR Genie: local PR ${pr.id} ("${pr.title}") on branch ${pr.headRef} has review comments for the agent working this packet.`,
+    `PR Genie: local PR ${pr.id} ("${pr.title}") on branch ${pr.headRef} has review comments for the agent working this loop.`,
     `Status is ${pr.status}. Treat the comments below as the brief. Address them on the current branch, commit if needed, then MCP add_comment with role=agent summarizing what you did, then set_status ready. Do not git push.`,
     "",
   ];
   for (const comment of pending) {
     const who =
       comment.role === "reviewer" ? `Reviewer (${comment.author})` : `Human (${comment.author})`;
-    lines.push(`${who} at ${comment.createdAt}:`);
+    const loc = comment.path
+      ? ` @ ${comment.path}${comment.line ? `:${comment.line}` : ""}`
+      : "";
+    lines.push(`${who}${loc} at ${comment.createdAt}:`);
     lines.push(comment.body);
     lines.push("");
   }
   return lines.join("\n").trimEnd();
+}
+
+export function shouldSpawnReviewer(pr: LocalPr): boolean {
+  return pr.status === "ready" && (pr.reviewRequestedSha ?? null) !== pr.headSha;
+}
+
+export function formatSpawnReviewer(pr: LocalPr): string {
+  return [
+    `PR Genie: local PR ${pr.id} ("${pr.title}") on ${pr.headRef} is ready.`,
+    "That is the review request. add_comment role=agent \"Review requested.\" if you have not already. Do not git push.",
+    "You are the implementor. Do not review this loop yourself. The reviewer chat should list_local_prs (status=ready) and Task a generalPurpose subagent per loop to run the review.",
+    "If you are covering review in this conversation because no reviewer chat exists, Task one generalPurpose reviewer for this id. If several loops are ready, Task one reviewer subagent each, in parallel.",
+  ].join("\n");
+}
+
+export async function markReviewRequested(cwd: string, id: string): Promise<LocalPr> {
+  const pr = await getLocalPr(cwd, id);
+  pr.reviewRequestedSha = pr.headSha;
+  pr.updatedAt = nowIso();
+  await writePr(cwd, pr);
+  return pr;
 }
 
 export async function findLocalPrForCurrentBranch(cwd: string): Promise<LocalPr | null> {
@@ -212,7 +238,13 @@ export async function addLocalPrComment(
   cwd: string,
   id: string,
   body: string,
-  options: { role?: CommentRole; author?: string } = {},
+  options: {
+    role?: CommentRole;
+    author?: string;
+    path?: string;
+    line?: number;
+    side?: "left" | "right";
+  } = {},
 ): Promise<LocalPr> {
   const text = body.trim();
   if (!text) throw new Error("Comment body is empty");
@@ -220,21 +252,29 @@ export async function addLocalPrComment(
   if (!COMMENT_ROLES.includes(role)) {
     throw new Error(`Invalid comment role: ${role}`);
   }
-  const pr = await getLocalPr(cwd, id);
-  const comment: LocalPrComment = {
-    id: newId("c"),
-    body: text,
-    createdAt: nowIso(),
-    author: options.author?.trim() || (await userName(cwd)),
-    role,
-  };
-  pr.comments.push(comment);
-  if (role !== "agent") {
-    pr.status = "changes_requested";
-  }
-  pr.updatedAt = comment.createdAt;
-  await writePr(cwd, pr);
-  return pr;
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  return withFileLock(prFile(dir, resolved.id), async () => {
+    const pr = await getLocalPr(cwd, resolved.id);
+    const comment: LocalPrComment = {
+      id: newId("c"),
+      body: text,
+      createdAt: nowIso(),
+      author: options.author?.trim() || (await userName(cwd)),
+      role,
+    };
+    const loc = options.path?.trim();
+    if (loc) comment.path = loc.replace(/\\/g, "/");
+    if (options.line && options.line > 0) comment.line = Math.floor(options.line);
+    if (options.side === "left" || options.side === "right") comment.side = options.side;
+    pr.comments.push(comment);
+    if (role !== "agent") {
+      pr.status = "changes_requested";
+    }
+    pr.updatedAt = comment.createdAt;
+    await writePr(cwd, pr);
+    return pr;
+  });
 }
 
 export async function getLocalPrDiff(

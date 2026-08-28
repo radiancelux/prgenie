@@ -2,15 +2,19 @@ import {
   addLocalPrComment,
   bindRepoGithub,
   createLocalPr,
+  exportLocalPr,
   findGitRoot,
   getLocalPr,
   getLocalPrDiff,
   getLocalPrNameStatus,
   getRepoGithubBind,
+  getRepoWatch,
+  haltWatch,
   listGhAccounts,
   listLocalPrs,
   listWorktrees,
   pendingReviewComments,
+  resumeWatch,
   setLocalPrStatus,
   updateLocalPr,
   type CommentRole,
@@ -55,8 +59,19 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
       return bindRepoGithub(cwd, String(args.login ?? ""));
     case "list_worktrees":
       return listWorktrees(cwd);
-    case "list_local_prs":
-      return listLocalPrs(cwd);
+    case "list_local_prs": {
+      const prs = (await listLocalPrs(cwd)).map((pr) => ({
+        ...pr,
+        pendingComments: pendingReviewComments(pr),
+      }));
+      const status = typeof args.status === "string" ? args.status : "";
+      const inbox = args.inbox === true;
+      return prs.filter((pr) => {
+        if (status && pr.status !== status) return false;
+        if (inbox && pr.pendingComments.length === 0) return false;
+        return true;
+      });
+    }
     case "create_local_pr":
       return createLocalPr(cwd, {
         title: typeof args.title === "string" ? args.title : undefined,
@@ -81,6 +96,9 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
       return addLocalPrComment(cwd, String(args.id ?? ""), String(args.body ?? ""), {
         role,
         author,
+        path: typeof args.path === "string" ? args.path : undefined,
+        line: typeof args.line === "number" ? args.line : undefined,
+        side: args.side === "left" || args.side === "right" ? args.side : undefined,
       });
     }
     case "get_diff":
@@ -88,6 +106,14 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
         files: await getLocalPrNameStatus(cwd, String(args.id ?? "")),
         diff: await getLocalPrDiff(cwd, String(args.id ?? ""), { maxBytes: 80_000 }),
       };
+    case "watch_status":
+      return getRepoWatch(cwd);
+    case "watch_stop":
+      return haltWatch(cwd, "stop");
+    case "watch_start":
+      return resumeWatch(cwd);
+    case "export_local_pr":
+      return exportLocalPr(cwd, String(args.id ?? ""));
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -101,20 +127,34 @@ const tools = [
   },
   {
     name: "list_local_prs",
-    description: "List unpublished local pull requests in this repository.",
-    inputSchema: { type: "object", properties: { cwd: { type: "string" } } },
+    description:
+      "List unpublished local pull requests. status=ready is the reviewer queue. inbox=true is loops with pendingComments for the implementor.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: { type: "string" },
+        status: {
+          type: "string",
+          enum: ["draft", "ready", "approved", "changes_requested"],
+        },
+        inbox: {
+          type: "boolean",
+          description: "Only loops with pending human/reviewer comments.",
+        },
+      },
+    },
   },
   {
     name: "create_local_pr",
     description:
-      "Create a local PR (unpublished review packet) from the current branch or a named head. Always set body to a reviewer summary (why, what changed, how to test). Do not git push or gh pr create.",
+      "Create a local PR (unpublished review loop) from the current branch or a named head. Always set body to a reviewer summary (why, what changed, how to test). Do not git push or gh pr create.",
     inputSchema: {
       type: "object",
       properties: {
         title: { type: "string" },
         body: {
           type: "string",
-          description: "Packet summary for reviewers: why, what changed, how to test.",
+          description: "Loop summary for reviewers: why, what changed, how to test.",
         },
         base: { type: "string" },
         head: { type: "string" },
@@ -163,7 +203,7 @@ const tools = [
   {
     name: "add_comment",
     description:
-      "Add a local review comment. role=human (default, you) or role=reviewer (automated review) becomes the brief for the agent on that packet and sets status to changes_requested. role=agent is the implementing agent's reply and does not change status. Do not git push.",
+      "Add a local review comment. role=human (default, you) or role=reviewer (automated review) becomes the brief for the agent on that loop and sets status to changes_requested — including from draft. role=agent is the implementing agent's reply and does not change status. Optional path/line/side anchors the comment. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "body"],
@@ -172,6 +212,9 @@ const tools = [
         body: { type: "string" },
         role: { type: "string", enum: ["human", "agent", "reviewer"] },
         author: { type: "string" },
+        path: { type: "string" },
+        line: { type: "number" },
+        side: { type: "string", enum: ["left", "right"] },
         cwd: { type: "string" },
       },
     },
@@ -179,6 +222,33 @@ const tools = [
   {
     name: "get_diff",
     description: "Return name-status and diff for a local PR.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } },
+    },
+  },
+  {
+    name: "watch_status",
+    description:
+      "Show whether the developer halted the review listen loops (stop or export).",
+    inputSchema: { type: "object", properties: { cwd: { type: "string" } } },
+  },
+  {
+    name: "watch_stop",
+    description:
+      "Developer command: halt reviewer and implementor listen loops. Does not push or open GitHub.",
+    inputSchema: { type: "object", properties: { cwd: { type: "string" } } },
+  },
+  {
+    name: "watch_start",
+    description: "Resume listen loops after watch_stop.",
+    inputSchema: { type: "object", properties: { cwd: { type: "string" } } },
+  },
+  {
+    name: "export_local_pr",
+    description:
+      "Developer command: halt listen loops, approve the loop, git push, and open a GitHub PR at origin. Only when the developer explicitly asks to export.",
     inputSchema: {
       type: "object",
       required: ["id"],

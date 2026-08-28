@@ -28,6 +28,7 @@ type ClientMessage =
   | { type: "openFolder"; id: string }
   | { type: "openGitLens" }
   | { type: "openFile"; path: string; status: string }
+  | { type: "openComment"; path: string; line?: number }
   | { type: "openDiffs" };
 
 type Snapshot = {
@@ -108,7 +109,7 @@ export class LaneHub implements vscode.Disposable {
       return;
     }
     void vscode.window.showInformationMessage(
-      "GitLens is not installed. Install it for history and the commit graph; PR Genie only shows local review packets.",
+      "GitLens is not installed. Install it for history and the commit graph; PR Genie only shows local review loops.",
     );
   }
 
@@ -153,7 +154,7 @@ export class LaneHub implements vscode.Disposable {
   }
 
   private async watchStore(): Promise<void> {
-    this.watcher?.close();
+    if (this.watcher) return;
     const cwd = await this.repoCwd({ warn: false });
     if (!cwd) return;
     try {
@@ -194,6 +195,26 @@ export class LaneHub implements vscode.Disposable {
       await openFileChange(cwd, pr, msg.status, msg.path);
       return;
     }
+    if (msg.type === "openComment") {
+      const cwd = await this.repoCwd({ warn: false });
+      if (!cwd) return;
+      try {
+        const prs = await listLocalPrs(cwd);
+        const pr = prs.find((p) => p.id === this.selectedId);
+        const root = pr?.worktreePath || cwd;
+        const uri = vscode.Uri.file(path.join(root, msg.path.replace(/\\/g, "/")));
+        const doc = await vscode.workspace.openTextDocument(uri);
+        const line = msg.line && msg.line > 0 ? msg.line - 1 : 0;
+        await vscode.window.showTextDocument(doc, {
+          selection: new vscode.Range(line, 0, line, 0),
+        });
+      } catch (err) {
+        void vscode.window.showErrorMessage(
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      return;
+    }
     const cwd = await this.repoCwd();
     if (!cwd) return;
     try {
@@ -232,7 +253,7 @@ export class LaneHub implements vscode.Disposable {
           );
         } else {
           void vscode.window.showInformationMessage(
-            "No live worktree for this packet. The branch and local PR still exist.",
+            "No live worktree for this loop. The branch and local PR still exist.",
           );
         }
       }
@@ -380,10 +401,10 @@ function laneHtml(webview: vscode.Webview): string {
       }
       const prs = msg.prs || [];
       const fresh = new Set(msg.freshIds || []);
-      meta.textContent = (msg.repo ? msg.repo + " · " : "") + prs.length + " packet" + (prs.length === 1 ? "" : "s");
+      meta.textContent = (msg.repo ? msg.repo + " · " : "") + prs.length + " loop" + (prs.length === 1 ? "" : "s");
       list.innerHTML = "";
       if (!prs.length) {
-        list.innerHTML = '<p class="muted empty">Waiting for agents. Packets land here when work is committed.</p>';
+        list.innerHTML = '<p class="muted empty">Waiting for agents. Loops land here when work is committed.</p>';
         return;
       }
       for (const pr of prs) {
@@ -461,6 +482,7 @@ function panelHtml(webview: vscode.Webview): string {
     }
     .comment { padding: 8px 10px; border-bottom: 1px solid var(--vscode-widget-border, transparent); }
     .comment .who { font-size: 11px; margin-bottom: 4px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .loc { font-size: 11px; padding: 1px 6px; }
     .role {
       font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
       padding: 1px 5px;
@@ -482,6 +504,8 @@ function panelHtml(webview: vscode.Webview): string {
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const root = document.getElementById("root");
+    let layoutId = null;
+    let serverSum = "";
     function esc(s) {
       return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
     }
@@ -501,15 +525,24 @@ function panelHtml(webview: vscode.Webview): string {
       const msg = event.data;
       if (msg.type !== "snapshot") return;
       if (msg.error) {
+        layoutId = null;
         root.innerHTML = '<p class="error"></p>';
         root.firstChild.textContent = msg.error;
         return;
       }
       const selected = (msg.prs || []).find((p) => p.id === msg.selectedId);
       if (!selected) {
-        root.innerHTML = '<p class="muted empty">Select a packet in Local PRs. File diffs open in the editor like Source Control, for that packet\\'s worktree.</p>';
+        layoutId = null;
+        root.innerHTML = '<p class="muted empty">Select a loop in Local PRs. File diffs open in the editor like Source Control, for that loop\\'s worktree.</p>';
         return;
       }
+      const prevSum = root.querySelector("#sum");
+      const prevCmt = root.querySelector("#cmt");
+      const reuse = layoutId === selected.id && prevSum && prevCmt;
+      const keepSum = reuse && (document.activeElement === prevSum || prevSum.value !== serverSum);
+      const keepCmt = reuse && (document.activeElement === prevCmt || prevCmt.value.length > 0);
+      const draftSum = keepSum ? prevSum.value : (selected.body || "");
+      const draftCmt = keepCmt ? prevCmt.value : "";
       const files = msg.files || [];
       const comments = selected.comments || [];
       const short = (sha) => (sha || "").slice(0, 7);
@@ -524,9 +557,12 @@ function panelHtml(webview: vscode.Webview): string {
         if (role === "reviewer") return "Reviewer";
         return "Human";
       }
-      const commentHtml = comments.map((c) =>
-        '<div class="comment"><div class="who muted"><span class="role">' + esc(roleLabel(c.role)) + "</span>" + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + "</div><div>" + esc(c.body) + "</div></div>"
-      ).join("") || '<p class="muted empty">No comments yet</p>';
+      const commentHtml = comments.map((c) => {
+        const loc = c.path
+          ? '<button type="button" class="loc secondary" data-path="' + esc(c.path) + '" data-line="' + (c.line || "") + '">' + esc(c.path) + (c.line ? ":" + c.line : "") + "</button>"
+          : "";
+        return '<div class="comment"><div class="who muted"><span class="role">' + esc(roleLabel(c.role)) + "</span>" + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + loc + "</div><div>" + esc(c.body) + "</div></div>";
+      }).join("") || '<p class="muted empty">No comments yet</p>';
       root.innerHTML = [
         '<div class="toolbar">',
         "<h1></h1>",
@@ -542,15 +578,18 @@ function panelHtml(webview: vscode.Webview): string {
         "</div>",
         '<div class="summary"><h2>Summary</h2><div class="pad"><textarea id="sum" placeholder="Why this exists, what changed, how to test. The implementing agent writes this for reviewers."></textarea><div style="margin-top:6px"><button id="saveSum">Save summary</button></div></div></div>',
         '<div class="body">',
-        '<div class="files"><h2>Changes (' + where + ')</h2>' + fileHtml + '<p class="muted empty">Click a file to open the VS Code diff — packet base on the left, this worktree on the right.</p></div>',
-        '<div class="comments"><h2>Comments</h2><div id="clist">' + commentHtml + '</div><div class="composer"><p class="muted hint">Goes to the agent on this packet (next chat on this branch). Status becomes changes requested.</p><textarea id="cmt" placeholder="Comment for the agent working this PR"></textarea><div style="margin-top:6px"><button id="send">Comment</button></div></div></div>',
+        '<div class="files"><h2>Changes (' + where + ')</h2>' + fileHtml + '<p class="muted empty">Click a file to open the VS Code diff — loop base on the left, this worktree on the right.</p></div>',
+        '<div class="comments"><h2>Comments</h2><div id="clist">' + commentHtml + '</div><div class="composer"><p class="muted hint">Goes to the agent on this loop (next chat on this branch). Status becomes changes requested, including from draft.</p><textarea id="cmt" placeholder="Comment for the agent working this PR"></textarea><div style="margin-top:6px"><button id="send">Comment</button></div></div></div>',
         "</div>"
       ].join("");
+      layoutId = selected.id;
+      serverSum = selected.body || "";
       root.querySelector("h1").textContent = selected.title;
       root.querySelector(".pill").textContent = selected.status.replace("_", " ");
       root.querySelector("#range").textContent =
         selected.id + " · " + selected.headRef + " → " + selected.baseRef + " · " + short(selected.headSha) + " " + (when ? "· " + when : "");
-      root.querySelector("#sum").value = selected.body || "";
+      root.querySelector("#sum").value = draftSum;
+      root.querySelector("#cmt").value = draftCmt;
       root.querySelector("#saveSum").onclick = () => vscode.postMessage({
         type: "summary",
         id: selected.id,
@@ -571,6 +610,13 @@ function panelHtml(webview: vscode.Webview): string {
           type: "openFile",
           path: el.getAttribute("data-path"),
           status: el.getAttribute("data-status") || "M"
+        });
+      }
+      for (const el of root.querySelectorAll(".loc[data-path]")) {
+        el.onclick = () => vscode.postMessage({
+          type: "openComment",
+          path: el.getAttribute("data-path"),
+          line: Number(el.getAttribute("data-line") || 0) || undefined
         });
       }
     });

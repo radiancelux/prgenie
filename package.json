@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "tsx --test packages/core/src/prs.test.ts packages/core/src/github.test.ts packages/core/src/store.test.ts",
+    "test": "tsx --test packages/core/src/prs.test.ts packages/core/src/github.test.ts packages/core/src/store.test.ts packages/core/src/watch.test.ts",
     "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/cli --noEmit && tsc -p packages/extension --noEmit",
     "cli": "node packages/cli/dist/prgenie.cjs",
     "link-plugin": "powershell -ExecutionPolicy Bypass -File scripts/link-plugin.ps1"

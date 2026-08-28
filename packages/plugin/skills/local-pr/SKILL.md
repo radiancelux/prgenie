@@ -7,7 +7,7 @@ description: Create and update unpublished local pull requests with PR Genie. Us
 
 Do not push. Subagent output becomes a local PR on the developer's watch list.
 
-When a coding subagent **commits** and stops, the `subagentStop` hook drafts a packet automatically. Explore/shell subagents with no file changes are ignored. If files changed but nothing was committed, the parent is told to commit — still no `git push`.
+When a coding subagent **commits** and stops, the `subagentStop` hook drafts a loop automatically. Explore/shell subagents with no file changes are ignored. If files changed but nothing was committed, the parent is told to commit — still no `git push`.
 
 ## Create
 
@@ -15,7 +15,7 @@ When a coding subagent **commits** and stops, the `subagentStop` hook drafts a p
 prgenie create --title "..." --body "## Summary\n- ...\n\n## Test\n- ..." --base main
 ```
 
-Or MCP `create_local_pr` with `title` and **`body`**. `body` is the packet summary for reviewers — not optional when you are the implementing agent.
+Or MCP `create_local_pr` with `title` and **`body`**. `body` is the loop summary for reviewers — not optional when you are the implementing agent.
 
 Write it like a GitHub PR description:
 
@@ -23,7 +23,7 @@ Write it like a GitHub PR description:
 - What changed (bullets)
 - How to test
 
-If the packet already exists, `update_local_pr` with `body` (or `prgenie update <id> --body "..."`). Fill the summary before `set_status ready`.
+If the loop already exists, `update_local_pr` with `body` (or `prgenie update <id> --body "..."`). Fill the summary before `set_status ready`.
 
 ## Inspect
 
@@ -36,11 +36,11 @@ If the packet already exists, `update_local_pr` with `body` (or `prgenie update 
 
 `draft` → `ready` → `approved` | `changes_requested`
 
-Comments are the review protocol for the agent on that packet:
+Comments are the review protocol for the agent on that loop:
 
 | role | Who | Effect |
 | --- | --- | --- |
-| `human` | You (GUI, CLI, chat) | Status → `changes_requested`. Injected into the next session on that branch. |
+| `human` | You (GUI, CLI, chat) | Status → `changes_requested` (including from **draft** — that is intended). Injected into the next session on that branch. |
 | `reviewer` | Automated review agent | Same as human. Findings only — that agent does not implement unless asked. |
 | `agent` | The implementer on this PR | Reply / done note. Does not change status. Then `set_status ready`. |
 
@@ -53,18 +53,22 @@ If the current branch's local PR is `changes_requested`:
 1. `get_local_pr` and read `pendingComments`.
 2. Fix on the current branch. Commit if needed.
 3. `add_comment` with `role=agent` summarizing what changed.
-4. `set_status` `ready`.
-5. Do not `git push`.
+4. `set_status` `ready` and `add_comment` `role=agent` **Review requested.** That is how you ask the reviewer chat again.
+5. Do not `git push`. Do not review your own loop.
 
-## Automated review
+## Requesting review
 
-Use `/review-local-pr` or MCP as a **reviewer**, not the implementer:
+You are the agent **on the worktree** (implementor). On completion:
 
-1. `get_local_pr` + `get_diff`.
-2. `add_comment` with `role=reviewer` (and optional `author`) for each finding or one summary.
-3. Do not implement, approve, or push unless the user asks.
+1. Loop exists, `body` is a real summary, HEAD matches the work.
+2. `set_status` `ready`.
+3. `add_comment` `role=agent`: `Review requested.`
+4. Stop. Start **`/watch-review-inbox`** in this chat if it is not already listening. The **reviewer chat** should be on **`/watch-ready-prs`**. It Tasks subagents — one per `ready` loop.
+5. When review is done, the loop has `role=reviewer` comments. `/review-inbox` (or the watch loop) treats `pendingComments` as the brief. Do not wait for a DM; the loop is the channel.
 
-You may launch a Task subagent with that brief if the user wants a second-pass review. Post its findings with `role=reviewer`. The implementing agent (this branch / next session) picks them up.
+If there is **no** reviewer chat, Task one reviewer subagent yourself for this id only.
+
+`/stop-watch` ends listen loops without publishing. `/export-local-pr` is the developer cutting the GitHub PR at origin.
 
 ## Worktrees
 

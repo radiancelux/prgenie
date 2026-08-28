@@ -4,9 +4,9 @@ Local pull requests for agent work. GitHub when you say so.
 
 PR Genie is a **pre-GitHub review lane** for Cursor (and any git checkout, including Conductor workspaces and GitLens worktrees). It does not manage worktrees. Cursor, GitLens, and Conductor already do that.
 
-A local PR is a git-native review packet: branch, base, diff, comments, and status. It never leaves the machine until you export it. Agents are steered — and hooked — away from `git push` / `gh pr create`.
+A local PR is a git-native review loop: branch, base, diff, comments, and status. It never leaves the machine until you export it. Agents are steered — and hooked — away from `git push` / `gh pr create`.
 
-When a **subagent** finishes with commits, PR Genie drafts a packet and puts it on the developer's watch list. Cursor still manages the subagents. The sidebar is the spectator GUI.
+When a **subagent** finishes with commits, PR Genie drafts a loop and puts it on the developer's watch list. Cursor still manages the subagents. The sidebar is the spectator GUI.
 
 ## What it is
 
@@ -14,7 +14,7 @@ When a **subagent** finishes with commits, PR Genie drafts a packet and puts it 
 | --- | --- |
 | `@prgenie/core` + `prgenie` CLI | Create/list/approve local PRs from any worktree |
 | Cursor Plugin | No-push rule, `/local-pr`, `/review-local-pr`, MCP, subagent capture, **per-repo `gh` account** |
-| VS Code / Cursor extension | Live watch list as packets land — not a worktree manager |
+| VS Code / Cursor extension | Live watch list as loops land — not a worktree manager |
 
 ## What it is not
 
@@ -46,6 +46,8 @@ Junction target: `%USERPROFILE%\.cursor\plugins\local\prgenie` (real copy of `pa
 
 ```text
 prgenie create [--title t] [--body "summary"] [--base main] [--head branch]
+prgenie queue
+prgenie inbox
 prgenie update <id> [--title t] [--body "summary"]
 prgenie list
 prgenie show <id>
@@ -68,13 +70,13 @@ Works from a Conductor workspace or any other worktree — same repo git dir.
 - Notes on `refs/notes/local-pr`
 - Metadata in `.git/agent-console/` (not committed)
 
-Cursor may auto-clean worktrees. The packet remains.
+Cursor may auto-clean worktrees. The loop remains.
 
 ## Status
 
 `draft` → `ready` → `approved` | `changes_requested`
 
-Human and reviewer comments are the brief for the agent on that packet (`changes_requested`). A new chat on that branch gets them via `sessionStart`. `/review-local-pr` is a second agent that posts `role=reviewer` findings without implementing. Every packet should have a **summary** (`body`): why, what changed, how to test.
+Human and reviewer comments are the brief for the agent on that loop (`changes_requested`). The **reviewer chat** runs `/watch-ready-prs` and Tasks a subagent per `ready` loop. The **implementor chat** runs `/watch-review-inbox`. `/stop-watch` ends both loops. `/export-local-pr` ends the loops and opens the GitHub PR at origin. Every loop should have a **summary** (`body`): why, what changed, how to test.
 
 Export to GitHub is an explicit later step (not in this slice).
 

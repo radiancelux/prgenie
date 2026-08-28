@@ -5,7 +5,11 @@ alwaysApply: true
 
 PR Genie owns unpublished review. GitHub is an explicit later step.
 
-Never run `git push`, `gh pr create`, or `gh pr merge` unless the user clearly asks to export an already approved local PR.
+Never run `git push`, `gh pr create`, or `gh pr merge` unless the developer clearly asks to export — `/export-local-pr`, MCP `export_local_pr`, or `prgenie export`. That command also **halts** listen loops.
+
+`/stop-watch` (MCP `watch_stop`) only stops the reviewer and implementor listen loops. It does not push.
+
+Each `/review-queue` and `/review-inbox` tick must call `watch_status` first. If halted, kill the loop and do not review or implement.
 
 This repo may be bound to a GitHub login. If unbound and the user needs GitHub, ask which `gh` account to use, then `prgenie gh use <login>` or MCP `gh_use`. Do not guess. Do not `gh auth switch` to a different account than the bind.
 
@@ -13,10 +17,10 @@ When work on this branch is ready for review:
 
 1. Commit on the current branch if needed (do not switch branches).
 2. Create or update a local PR with `create_local_pr` / `update_local_pr`. Always set `body` to a reviewer summary: why, what changed, how to test. Title is not enough.
-3. `set_status` ready. Stop and wait. Do not open a GitHub pull request.
+3. `set_status` ready and `add_comment` with `role=agent` saying review is requested. That is the handoff to the **reviewer chat**. Do not review this loop yourself. Do not open a GitHub pull request.
 
-If this branch already has a local PR in `changes_requested`, call `get_local_pr` and treat `pendingComments` as the brief. After you address them: `add_comment` with `role=agent`, then `set_status` ready. Do not push.
+If this branch already has a local PR in `changes_requested`, call `get_local_pr` and treat `pendingComments` as the brief. After you address them: `add_comment` with `role=agent`, then `set_status` ready (review requested again). Do not push.
 
-A separate chat can review a packet with `/review-local-pr`: `get_diff`, then `add_comment` with `role=reviewer`. That reviewer must not implement unless asked.
+The reviewer chat runs **`/watch-ready-prs`** and Tasks **subagents** to review — one Task per ready loop. You are the implementor on this worktree; run **`/watch-review-inbox`** so reviewer comments reach you. You do not spawn review Tasks unless there is no reviewer chat.
 
 Local PRs live in git refs `refs/local-pr/*` and `.git/agent-console/`. Cursor, GitLens, and Conductor keep managing worktrees — do not create, apply, or delete worktrees unless the user asks.

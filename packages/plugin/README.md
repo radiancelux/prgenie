@@ -13,8 +13,8 @@ pnpm link-plugin
 Then **Developer: Reload Window**, open **Customize**, and confirm:
 
 - Rule: do not push / open GitHub PRs
-- Command: `/local-pr`, `/review-local-pr`
+- Command: `/local-pr`, `/review-local-pr`, **`/watch-ready-prs`**, **`/watch-review-inbox`**, **`/stop-watch`**, **`/export-local-pr`**
 - MCP server: `prgenie`
-- Hooks: push-gate, session log, **review inbox** (`sessionStart` injects pending comments for the current branch), **subagentStop capture** (drafts a local PR when a child agent commits)
+- Hooks: push-gate, session log, **review loop** (`sessionStart` injects comments; `stop` Tasks a reviewer when the loop is `ready`; `subagentStop` returns those comments to this chat), **subagentStop capture**
 
-Worktrees stay in Cursor, GitLens, or Conductor. This plugin only creates local PR packets and asks before `git push` / `gh pr create`.
+Worktrees stay in Cursor, GitLens, or Conductor. This plugin only creates local PR loops and asks before `git push` / `gh pr create`.

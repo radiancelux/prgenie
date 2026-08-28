@@ -4,7 +4,9 @@ import { gitCommonDir } from "./git.js";
 
 export async function consoleDir(cwd: string): Promise<string> {
   const common = await gitCommonDir(cwd);
-  return path.join(common, "agent-console");
+  const dir = path.join(common, "agent-console");
+  await mkdir(dir, { recursive: true });
+  return dir;
 }
 
 export async function prsDir(cwd: string): Promise<string> {
@@ -93,4 +95,29 @@ export async function writeJsonFile(file: string, value: unknown): Promise<void>
     await dest.close();
   }
   await unlink(tmp).catch(() => undefined);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Cross-process lock so two reviewer chats cannot drop each other's comments. */
+export async function withFileLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
+  const lock = `${file}.lock`;
+  let lastErr: unknown;
+  for (let i = 0; i < 50; i++) {
+    try {
+      const handle = await open(lock, "wx");
+      try {
+        return await fn();
+      } finally {
+        await handle.close();
+        await unlink(lock).catch(() => undefined);
+      }
+    } catch (err) {
+      lastErr = err;
+      await delay(20);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(`Timed out locking ${file}`);
 }

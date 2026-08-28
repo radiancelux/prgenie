@@ -24,7 +24,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 
 // packages/cli/src/capture-hook.ts
 var import_node_fs = require("node:fs");
-var import_node_path4 = __toESM(require("node:path"), 1);
 
 // packages/core/src/git.ts
 var import_node_child_process = require("node:child_process");
@@ -164,7 +163,9 @@ var import_promises = require("node:fs/promises");
 var import_node_path2 = __toESM(require("node:path"), 1);
 async function consoleDir(cwd) {
   const common = await gitCommonDir(cwd);
-  return import_node_path2.default.join(common, "agent-console");
+  const dir = import_node_path2.default.join(common, "agent-console");
+  await (0, import_promises.mkdir)(dir, { recursive: true });
+  return dir;
 }
 async function prsDir(cwd) {
   const dir = import_node_path2.default.join(await consoleDir(cwd), "prs");
@@ -292,6 +293,7 @@ async function listLocalPrs(cwd) {
       continue;
     }
     pr.source = pr.source ?? null;
+    pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
   }
@@ -336,7 +338,8 @@ async function createLocalPr(cwd, input = {}) {
     comments: [],
     source: input.source ?? { kind: "cli" },
     createdAt,
-    updatedAt: createdAt
+    updatedAt: createdAt,
+    reviewRequestedSha: null
   };
   await writePr(root, pr);
   return pr;
@@ -410,10 +413,7 @@ async function appendSession(cwd, event) {
 function inferCwd(input) {
   if (typeof input.cwd === "string" && input.cwd) return input.cwd;
   const roots = input.workspace_roots;
-  if (Array.isArray(roots) && typeof roots[0] === "string") return roots[0];
-  if (typeof input.agent_transcript_path === "string") {
-    return import_node_path4.default.dirname(input.agent_transcript_path);
-  }
+  if (Array.isArray(roots) && typeof roots[0] === "string" && roots[0]) return roots[0];
   return process.cwd();
 }
 function silent() {
@@ -471,7 +471,7 @@ async function main() {
       process.stdout.write(
         JSON.stringify({
           followup_message: "PR Genie: the subagent changed files but did not commit. Commit on the current branch if this should become a local PR. Do not git push."
-        })
+        }) + "\n"
       );
       return;
     }
@@ -486,7 +486,7 @@ async function main() {
   process.stdout.write(
     JSON.stringify({
       followup_message: `PR Genie ${result.action} local PR ${pr.id} (${pr.status}) on ${pr.headRef}. It is on the developer's watch list. Do not git push or gh pr create.`
-    })
+    }) + "\n"
   );
 }
 main().catch(() => {

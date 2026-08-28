@@ -25,7 +25,7 @@ test("parseJsonObject recovers leftover bytes after a shorter overwrite", () => 
 });
 
 test("writeJsonFile truncates leftover bytes from a previous longer file", async () => {
-  const file = path.join(dir, "packet.json");
+  const file = path.join(dir, "pr.json");
   await writeFile(
     file,
     `${JSON.stringify({ status: "changes_requested", extra: "pad-pad-pad" }, null, 2)}\n`,

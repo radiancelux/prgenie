@@ -40,6 +40,13 @@ function gh(
   });
 }
 
+export function runGh(
+  args: string[],
+  options: { cwd?: string } = {},
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  return gh(args, options);
+}
+
 export async function listGhAccounts(): Promise<GhAccount[]> {
   const result = await gh(["auth", "status"]);
   return parseGhAuthStatus(`${result.stdout}\n${result.stderr}`);

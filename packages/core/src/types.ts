@@ -8,6 +8,9 @@ export interface LocalPrComment {
   createdAt: string;
   author: string;
   role: CommentRole;
+  path?: string;
+  line?: number;
+  side?: "left" | "right";
 }
 
 export interface LocalPrSource {
@@ -31,6 +34,8 @@ export interface LocalPr {
   source: LocalPrSource | null;
   createdAt: string;
   updatedAt: string;
+  /** HEAD sha we last asked a reviewer Task to look at. Blocks repeat review until HEAD moves. */
+  reviewRequestedSha: string | null;
 }
 
 export interface WorktreeInfo {

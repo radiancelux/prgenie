@@ -24,7 +24,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 
 // packages/cli/src/review-hook.ts
 var import_node_fs = require("node:fs");
-var import_node_path4 = __toESM(require("node:path"), 1);
 
 // packages/core/src/git.ts
 var import_node_child_process = require("node:child_process");
@@ -145,12 +144,17 @@ var import_promises = require("node:fs/promises");
 var import_node_path2 = __toESM(require("node:path"), 1);
 async function consoleDir(cwd) {
   const common = await gitCommonDir(cwd);
-  return import_node_path2.default.join(common, "agent-console");
+  const dir = import_node_path2.default.join(common, "agent-console");
+  await (0, import_promises.mkdir)(dir, { recursive: true });
+  return dir;
 }
 async function prsDir(cwd) {
   const dir = import_node_path2.default.join(await consoleDir(cwd), "prs");
   await (0, import_promises.mkdir)(dir, { recursive: true });
   return dir;
+}
+function prFile(dir, id) {
+  return import_node_path2.default.join(dir, `${id}.json`);
 }
 function firstJsonObject(raw) {
   const start = raw.indexOf("{");
@@ -193,8 +197,60 @@ function parseJsonObject(raw) {
     return JSON.parse(slice);
   }
 }
+async function writeJsonFile(file, value) {
+  const body = `${JSON.stringify(value, null, 2)}
+`;
+  const tmp = `${file}.${process.pid}.tmp`;
+  const tmpHandle = await (0, import_promises.open)(tmp, "w");
+  try {
+    await tmpHandle.writeFile(body, "utf8");
+    await tmpHandle.sync();
+  } finally {
+    await tmpHandle.close();
+  }
+  try {
+    await (0, import_promises.rename)(tmp, file);
+    return;
+  } catch {
+  }
+  const dest = await (0, import_promises.open)(file, "w");
+  try {
+    const buf = Buffer.from(body, "utf8");
+    await dest.write(buf, 0, buf.length, 0);
+    await dest.truncate(buf.length);
+    await dest.sync();
+  } finally {
+    await dest.close();
+  }
+  await (0, import_promises.unlink)(tmp).catch(() => void 0);
+}
 
 // packages/core/src/prs.ts
+function nowIso() {
+  return (/* @__PURE__ */ new Date()).toISOString();
+}
+async function writePr(cwd, pr) {
+  const dir = await prsDir(cwd);
+  await writeJsonFile(prFile(dir, pr.id), pr);
+  await git(cwd, [
+    "update-ref",
+    `refs/local-pr/${pr.id}/head`,
+    pr.headSha
+  ]);
+  await git(cwd, ["update-ref", `refs/local-pr/${pr.id}/base`, pr.baseSha]);
+  const note = JSON.stringify({
+    id: pr.id,
+    title: pr.title,
+    status: pr.status,
+    headRef: pr.headRef,
+    baseRef: pr.baseRef
+  });
+  await git(
+    cwd,
+    ["notes", "--ref=local-pr", "add", "-f", "-m", note, pr.headSha],
+    { allowFail: true }
+  );
+}
 async function listLocalPrs(cwd) {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
@@ -210,6 +266,7 @@ async function listLocalPrs(cwd) {
       continue;
     }
     pr.source = pr.source ?? null;
+    pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
   }
@@ -219,6 +276,12 @@ async function listLocalPrs(cwd) {
     pr.worktreePath = worktreeForBranch(trees, pr.headRef);
   }
   return prs;
+}
+async function getLocalPr(cwd, id) {
+  const prs = await listLocalPrs(cwd);
+  const pr = prs.find((p) => p.id === id || p.id.startsWith(id));
+  if (!pr) throw new Error(`Local PR not found: ${id}`);
+  return pr;
 }
 function normalizeComment(comment) {
   const role = comment.role === "agent" || comment.role === "reviewer" || comment.role === "human" ? comment.role : "human";
@@ -241,17 +304,36 @@ function formatReviewInbox(pr) {
   const pending = pendingReviewComments(pr);
   if (pending.length === 0) return null;
   const lines = [
-    `PR Genie: local PR ${pr.id} ("${pr.title}") on branch ${pr.headRef} has review comments for the agent working this packet.`,
+    `PR Genie: local PR ${pr.id} ("${pr.title}") on branch ${pr.headRef} has review comments for the agent working this loop.`,
     `Status is ${pr.status}. Treat the comments below as the brief. Address them on the current branch, commit if needed, then MCP add_comment with role=agent summarizing what you did, then set_status ready. Do not git push.`,
     ""
   ];
   for (const comment of pending) {
     const who = comment.role === "reviewer" ? `Reviewer (${comment.author})` : `Human (${comment.author})`;
-    lines.push(`${who} at ${comment.createdAt}:`);
+    const loc = comment.path ? ` @ ${comment.path}${comment.line ? `:${comment.line}` : ""}` : "";
+    lines.push(`${who}${loc} at ${comment.createdAt}:`);
     lines.push(comment.body);
     lines.push("");
   }
   return lines.join("\n").trimEnd();
+}
+function shouldSpawnReviewer(pr) {
+  return pr.status === "ready" && (pr.reviewRequestedSha ?? null) !== pr.headSha;
+}
+function formatSpawnReviewer(pr) {
+  return [
+    `PR Genie: local PR ${pr.id} ("${pr.title}") on ${pr.headRef} is ready.`,
+    'That is the review request. add_comment role=agent "Review requested." if you have not already. Do not git push.',
+    "You are the implementor. Do not review this loop yourself. The reviewer chat should list_local_prs (status=ready) and Task a generalPurpose subagent per loop to run the review.",
+    "If you are covering review in this conversation because no reviewer chat exists, Task one generalPurpose reviewer for this id. If several loops are ready, Task one reviewer subagent each, in parallel."
+  ].join("\n");
+}
+async function markReviewRequested(cwd, id) {
+  const pr = await getLocalPr(cwd, id);
+  pr.reviewRequestedSha = pr.headSha;
+  pr.updatedAt = nowIso();
+  await writePr(cwd, pr);
+  return pr;
 }
 async function findLocalPrForCurrentBranch(cwd) {
   const branch = await currentBranch(cwd);
@@ -260,16 +342,24 @@ async function findLocalPrForCurrentBranch(cwd) {
   if (matches.length === 0) return null;
   return matches.find((pr) => pr.status === "changes_requested") ?? matches[0];
 }
+async function refreshLocalPrHead(cwd, id) {
+  const pr = await getLocalPr(cwd, id);
+  const sha = await gitText(cwd, ["rev-parse", pr.headRef]);
+  pr.headSha = sha;
+  pr.updatedAt = nowIso();
+  await writePr(cwd, pr);
+  return pr;
+}
 
 // packages/cli/src/review-hook.ts
 function inferCwd(input) {
   if (typeof input.cwd === "string" && input.cwd) return input.cwd;
   const roots = input.workspace_roots;
-  if (Array.isArray(roots) && typeof roots[0] === "string") return roots[0];
-  if (typeof input.agent_transcript_path === "string") {
-    return import_node_path4.default.dirname(input.agent_transcript_path);
-  }
+  if (Array.isArray(roots) && typeof roots[0] === "string" && roots[0]) return roots[0];
   return process.cwd();
+}
+function eventName(input) {
+  return String(input.hook_event_name ?? input.event ?? "");
 }
 function silent() {
   process.stdout.write("{}\n");
@@ -282,6 +372,8 @@ async function main() {
   } catch {
     input = {};
   }
+  const event = eventName(input);
+  const loopCount = Number(input.loop_count ?? 0);
   const cwd = inferCwd(input);
   const root = await findGitRoot(cwd);
   if (!root) {
@@ -293,12 +385,46 @@ async function main() {
     silent();
     return;
   }
-  const text = formatReviewInbox(pr);
-  if (!text) {
+  const inbox = formatReviewInbox(pr);
+  if (event === "sessionStart") {
+    if (!inbox) {
+      silent();
+      return;
+    }
+    process.stdout.write(JSON.stringify({ additional_context: inbox }) + "\n");
+    return;
+  }
+  if (event === "subagentStop") {
+    if (!inbox || loopCount >= 2) {
+      silent();
+      return;
+    }
+    process.stdout.write(JSON.stringify({ followup_message: inbox }) + "\n");
+    return;
+  }
+  if (event === "stop") {
+    if (loopCount >= 1) {
+      silent();
+      return;
+    }
+    const pending = pendingReviewComments(pr);
+    const newest = pending[pending.length - 1];
+    if (newest?.role === "human" && inbox) {
+      process.stdout.write(JSON.stringify({ followup_message: inbox }) + "\n");
+      return;
+    }
+    if (pr.status === "ready") {
+      const fresh = await refreshLocalPrHead(root, pr.id);
+      if (shouldSpawnReviewer(fresh)) {
+        await markReviewRequested(root, fresh.id);
+        process.stdout.write(JSON.stringify({ followup_message: formatSpawnReviewer(fresh) }) + "\n");
+        return;
+      }
+    }
     silent();
     return;
   }
-  process.stdout.write(JSON.stringify({ additional_context: text }));
+  silent();
 }
 main().catch(() => {
   silent();

@@ -1,9 +1,13 @@
 import { readFileSync } from "node:fs";
-import path from "node:path";
 import {
   findGitRoot,
   findLocalPrForCurrentBranch,
   formatReviewInbox,
+  formatSpawnReviewer,
+  markReviewRequested,
+  pendingReviewComments,
+  refreshLocalPrHead,
+  shouldSpawnReviewer,
 } from "@prgenie/core";
 
 type HookInput = Record<string, unknown>;
@@ -11,11 +15,12 @@ type HookInput = Record<string, unknown>;
 function inferCwd(input: HookInput): string {
   if (typeof input.cwd === "string" && input.cwd) return input.cwd;
   const roots = input.workspace_roots;
-  if (Array.isArray(roots) && typeof roots[0] === "string") return roots[0];
-  if (typeof input.agent_transcript_path === "string") {
-    return path.dirname(input.agent_transcript_path);
-  }
+  if (Array.isArray(roots) && typeof roots[0] === "string" && roots[0]) return roots[0];
   return process.cwd();
+}
+
+function eventName(input: HookInput): string {
+  return String(input.hook_event_name ?? input.event ?? "");
 }
 
 function silent(): void {
@@ -31,6 +36,8 @@ async function main(): Promise<void> {
     input = {};
   }
 
+  const event = eventName(input);
+  const loopCount = Number(input.loop_count ?? 0);
   const cwd = inferCwd(input);
   const root = await findGitRoot(cwd);
   if (!root) {
@@ -44,13 +51,50 @@ async function main(): Promise<void> {
     return;
   }
 
-  const text = formatReviewInbox(pr);
-  if (!text) {
+  const inbox = formatReviewInbox(pr);
+
+  if (event === "sessionStart") {
+    if (!inbox) {
+      silent();
+      return;
+    }
+    process.stdout.write(JSON.stringify({ additional_context: inbox }) + "\n");
+    return;
+  }
+
+  if (event === "subagentStop") {
+    if (!inbox || loopCount >= 2) {
+      silent();
+      return;
+    }
+    process.stdout.write(JSON.stringify({ followup_message: inbox }) + "\n");
+    return;
+  }
+
+  if (event === "stop") {
+    if (loopCount >= 1) {
+      silent();
+      return;
+    }
+    const pending = pendingReviewComments(pr);
+    const newest = pending[pending.length - 1];
+    if (newest?.role === "human" && inbox) {
+      process.stdout.write(JSON.stringify({ followup_message: inbox }) + "\n");
+      return;
+    }
+    if (pr.status === "ready") {
+      const fresh = await refreshLocalPrHead(root, pr.id);
+      if (shouldSpawnReviewer(fresh)) {
+        await markReviewRequested(root, fresh.id);
+        process.stdout.write(JSON.stringify({ followup_message: formatSpawnReviewer(fresh) }) + "\n");
+        return;
+      }
+    }
     silent();
     return;
   }
 
-  process.stdout.write(JSON.stringify({ additional_context: text }));
+  silent();
 }
 
 main().catch(() => {

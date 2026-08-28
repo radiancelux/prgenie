@@ -173,7 +173,9 @@ var import_promises = require("node:fs/promises");
 var import_node_path2 = __toESM(require("node:path"), 1);
 async function consoleDir(cwd) {
   const common = await gitCommonDir(cwd);
-  return import_node_path2.default.join(common, "agent-console");
+  const dir = import_node_path2.default.join(common, "agent-console");
+  await (0, import_promises.mkdir)(dir, { recursive: true });
+  return dir;
 }
 async function prsDir(cwd) {
   const dir = import_node_path2.default.join(await consoleDir(cwd), "prs");
@@ -251,6 +253,28 @@ async function writeJsonFile(file, value) {
   }
   await (0, import_promises.unlink)(tmp).catch(() => void 0);
 }
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+async function withFileLock(file, fn) {
+  const lock = `${file}.lock`;
+  let lastErr;
+  for (let i = 0; i < 50; i++) {
+    try {
+      const handle = await (0, import_promises.open)(lock, "wx");
+      try {
+        return await fn();
+      } finally {
+        await handle.close();
+        await (0, import_promises.unlink)(lock).catch(() => void 0);
+      }
+    } catch (err) {
+      lastErr = err;
+      await delay(20);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(`Timed out locking ${file}`);
+}
 
 // packages/core/src/prs.ts
 function nowIso() {
@@ -296,6 +320,7 @@ async function listLocalPrs(cwd) {
       continue;
     }
     pr.source = pr.source ?? null;
+    pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
   }
@@ -340,7 +365,8 @@ async function createLocalPr(cwd, input = {}) {
     comments: [],
     source: input.source ?? { kind: "cli" },
     createdAt,
-    updatedAt: createdAt
+    updatedAt: createdAt,
+    reviewRequestedSha: null
   };
   await writePr(root, pr);
   return pr;
@@ -393,21 +419,29 @@ async function addLocalPrComment(cwd, id, body, options = {}) {
   if (!COMMENT_ROLES.includes(role)) {
     throw new Error(`Invalid comment role: ${role}`);
   }
-  const pr = await getLocalPr(cwd, id);
-  const comment = {
-    id: newId("c"),
-    body: text,
-    createdAt: nowIso(),
-    author: options.author?.trim() || await userName(cwd),
-    role
-  };
-  pr.comments.push(comment);
-  if (role !== "agent") {
-    pr.status = "changes_requested";
-  }
-  pr.updatedAt = comment.createdAt;
-  await writePr(cwd, pr);
-  return pr;
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  return withFileLock(prFile(dir, resolved.id), async () => {
+    const pr = await getLocalPr(cwd, resolved.id);
+    const comment = {
+      id: newId("c"),
+      body: text,
+      createdAt: nowIso(),
+      author: options.author?.trim() || await userName(cwd),
+      role
+    };
+    const loc = options.path?.trim();
+    if (loc) comment.path = loc.replace(/\\/g, "/");
+    if (options.line && options.line > 0) comment.line = Math.floor(options.line);
+    if (options.side === "left" || options.side === "right") comment.side = options.side;
+    pr.comments.push(comment);
+    if (role !== "agent") {
+      pr.status = "changes_requested";
+    }
+    pr.updatedAt = comment.createdAt;
+    await writePr(cwd, pr);
+    return pr;
+  });
 }
 async function getLocalPrDiff(cwd, id, options = {}) {
   const pr = await getLocalPr(cwd, id);
@@ -433,6 +467,61 @@ async function getLocalPrNameStatus(cwd, id) {
     return { status, path: rest.join("	") };
   });
 }
+
+// packages/core/src/watch.ts
+var import_promises3 = require("node:fs/promises");
+var import_node_path4 = __toESM(require("node:path"), 1);
+function watchFile(dir) {
+  return import_node_path4.default.join(dir, "watch.json");
+}
+var idle = () => ({
+  halted: false,
+  reason: null,
+  exportId: null,
+  updatedAt: (/* @__PURE__ */ new Date(0)).toISOString()
+});
+async function getRepoWatch(cwd) {
+  const root = await requireGitRoot(cwd);
+  try {
+    const raw = await (0, import_promises3.readFile)(watchFile(await consoleDir(root)), "utf8");
+    const parsed = parseJsonObject(raw);
+    return {
+      halted: parsed.halted === true,
+      reason: parsed.reason === "export" || parsed.reason === "stop" ? parsed.reason : null,
+      exportId: parsed.exportId ?? null,
+      updatedAt: parsed.updatedAt ?? idle().updatedAt
+    };
+  } catch {
+    return idle();
+  }
+}
+async function haltWatch(cwd, reason, exportId = null) {
+  const root = await requireGitRoot(cwd);
+  const state = {
+    halted: true,
+    reason,
+    exportId,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  await writeJsonFile(watchFile(await consoleDir(root)), state);
+  return state;
+}
+async function resumeWatch(cwd) {
+  const root = await requireGitRoot(cwd);
+  const state = {
+    halted: false,
+    reason: null,
+    exportId: null,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  await writeJsonFile(watchFile(await consoleDir(root)), state);
+  return state;
+}
+
+// packages/core/src/github-ops.ts
+var import_node_child_process2 = require("node:child_process");
+var import_promises4 = require("node:fs/promises");
+var import_node_path5 = __toESM(require("node:path"), 1);
 
 // packages/core/src/github.ts
 function parseGhAuthStatus(text) {
@@ -461,9 +550,6 @@ function parseGhAuthStatus(text) {
 }
 
 // packages/core/src/github-ops.ts
-var import_node_child_process2 = require("node:child_process");
-var import_promises3 = require("node:fs/promises");
-var import_node_path4 = __toESM(require("node:path"), 1);
 function gh(args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = (0, import_node_child_process2.spawn)("gh", args, {
@@ -491,10 +577,17 @@ function gh(args, options = {}) {
     });
   });
 }
+function runGh(args, options = {}) {
+  return gh(args, options);
+}
 async function listGhAccounts() {
   const result = await gh(["auth", "status"]);
   return parseGhAuthStatus(`${result.stdout}
 ${result.stderr}`);
+}
+async function activeGhLogin(host = "github.com") {
+  const accounts = await listGhAccounts();
+  return accounts.find((a) => a.host === host && a.active)?.login ?? null;
 }
 async function switchGhUser(login, host = "github.com") {
   const accounts = await listGhAccounts();
@@ -513,13 +606,13 @@ async function switchGhUser(login, host = "github.com") {
   }
 }
 function bindFile(dir) {
-  return import_node_path4.default.join(dir, "github.json");
+  return import_node_path5.default.join(dir, "github.json");
 }
 async function getRepoGithubBind(cwd) {
   const root = await findGitRoot(cwd);
   if (!root) return null;
   try {
-    const raw = await (0, import_promises3.readFile)(bindFile(await consoleDir(root)), "utf8");
+    const raw = await (0, import_promises4.readFile)(bindFile(await consoleDir(root)), "utf8");
     const parsed = parseJsonObject(raw);
     if (!parsed.login) return null;
     return { host: parsed.host || "github.com", login: parsed.login };
@@ -533,9 +626,76 @@ async function bindRepoGithub(cwd, login, host = "github.com") {
   await switchGhUser(login, host);
   const bind = { host, login };
   const dir = await consoleDir(root);
-  await (0, import_promises3.mkdir)(dir, { recursive: true });
+  await (0, import_promises4.mkdir)(dir, { recursive: true });
   await writeJsonFile(bindFile(dir), bind);
   return bind;
+}
+async function ensureRepoGithub(cwd) {
+  const bind = await getRepoGithubBind(cwd);
+  if (!bind) {
+    return { login: await activeGhLogin(), switched: false, bound: false };
+  }
+  const before = await activeGhLogin(bind.host);
+  if (before === bind.login) {
+    return { login: bind.login, switched: false, bound: true };
+  }
+  await switchGhUser(bind.login, bind.host);
+  return { login: bind.login, switched: true, bound: true };
+}
+
+// packages/core/src/export.ts
+function ghBase(ref) {
+  return ref.replace(/^origin\//, "").replace(/^refs\/heads\//, "");
+}
+async function exportLocalPr(cwd, id) {
+  const pr = await getLocalPr(cwd, id);
+  await haltWatch(cwd, "export", pr.id);
+  if (pr.status !== "approved") {
+    await setLocalPrStatus(cwd, pr.id, "approved");
+  }
+  const ghState = await ensureRepoGithub(cwd);
+  if (!ghState.bound && !ghState.login) {
+    throw new Error("No GitHub account. Run: gh auth login, then prgenie gh use <login>");
+  }
+  if (!ghState.bound) {
+    throw new Error(
+      `This repo is not bound to a GitHub login. Ask which account, then prgenie gh use <login> (active is ${ghState.login}).`
+    );
+  }
+  const push = await git(cwd, ["push", "-u", "origin", `HEAD:refs/heads/${pr.headRef}`], {
+    allowFail: true
+  });
+  if (push.code !== 0) {
+    throw new Error(push.stderr.trim() || `git push failed for ${pr.headRef}`);
+  }
+  const existing = await runGh(
+    ["pr", "view", "--head", pr.headRef, "--json", "url", "-q", ".url"],
+    { cwd }
+  );
+  if (existing.code === 0 && existing.stdout.trim().startsWith("http")) {
+    return { url: existing.stdout.trim(), id: pr.id, alreadyExisted: true };
+  }
+  const created = await runGh(
+    [
+      "pr",
+      "create",
+      "--title",
+      pr.title,
+      "--body",
+      pr.body.trim() || pr.title,
+      "--base",
+      ghBase(pr.baseRef),
+      "--head",
+      pr.headRef
+    ],
+    { cwd }
+  );
+  if (created.code !== 0) {
+    throw new Error(created.stderr.trim() || created.stdout.trim() || "gh pr create failed");
+  }
+  const url = created.stdout.trim().split("\n").find((line) => /^https?:\/\//.test(line)) ?? created.stdout.trim();
+  if (!url) throw new Error("gh pr create succeeded but returned no URL");
+  return { url, id: pr.id, alreadyExisted: false };
 }
 
 // packages/cli/src/mcp.ts
@@ -572,8 +732,19 @@ async function handleTool(name, args) {
       return bindRepoGithub(cwd, String(args.login ?? ""));
     case "list_worktrees":
       return listWorktrees(cwd);
-    case "list_local_prs":
-      return listLocalPrs(cwd);
+    case "list_local_prs": {
+      const prs = (await listLocalPrs(cwd)).map((pr) => ({
+        ...pr,
+        pendingComments: pendingReviewComments(pr)
+      }));
+      const status = typeof args.status === "string" ? args.status : "";
+      const inbox = args.inbox === true;
+      return prs.filter((pr) => {
+        if (status && pr.status !== status) return false;
+        if (inbox && pr.pendingComments.length === 0) return false;
+        return true;
+      });
+    }
     case "create_local_pr":
       return createLocalPr(cwd, {
         title: typeof args.title === "string" ? args.title : void 0,
@@ -597,7 +768,10 @@ async function handleTool(name, args) {
       const author = typeof args.author === "string" ? args.author : void 0;
       return addLocalPrComment(cwd, String(args.id ?? ""), String(args.body ?? ""), {
         role,
-        author
+        author,
+        path: typeof args.path === "string" ? args.path : void 0,
+        line: typeof args.line === "number" ? args.line : void 0,
+        side: args.side === "left" || args.side === "right" ? args.side : void 0
       });
     }
     case "get_diff":
@@ -605,6 +779,14 @@ async function handleTool(name, args) {
         files: await getLocalPrNameStatus(cwd, String(args.id ?? "")),
         diff: await getLocalPrDiff(cwd, String(args.id ?? ""), { maxBytes: 8e4 })
       };
+    case "watch_status":
+      return getRepoWatch(cwd);
+    case "watch_stop":
+      return haltWatch(cwd, "stop");
+    case "watch_start":
+      return resumeWatch(cwd);
+    case "export_local_pr":
+      return exportLocalPr(cwd, String(args.id ?? ""));
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -617,19 +799,32 @@ var tools = [
   },
   {
     name: "list_local_prs",
-    description: "List unpublished local pull requests in this repository.",
-    inputSchema: { type: "object", properties: { cwd: { type: "string" } } }
+    description: "List unpublished local pull requests. status=ready is the reviewer queue. inbox=true is loops with pendingComments for the implementor.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: { type: "string" },
+        status: {
+          type: "string",
+          enum: ["draft", "ready", "approved", "changes_requested"]
+        },
+        inbox: {
+          type: "boolean",
+          description: "Only loops with pending human/reviewer comments."
+        }
+      }
+    }
   },
   {
     name: "create_local_pr",
-    description: "Create a local PR (unpublished review packet) from the current branch or a named head. Always set body to a reviewer summary (why, what changed, how to test). Do not git push or gh pr create.",
+    description: "Create a local PR (unpublished review loop) from the current branch or a named head. Always set body to a reviewer summary (why, what changed, how to test). Do not git push or gh pr create.",
     inputSchema: {
       type: "object",
       properties: {
         title: { type: "string" },
         body: {
           type: "string",
-          description: "Packet summary for reviewers: why, what changed, how to test."
+          description: "Loop summary for reviewers: why, what changed, how to test."
         },
         base: { type: "string" },
         head: { type: "string" },
@@ -675,7 +870,7 @@ var tools = [
   },
   {
     name: "add_comment",
-    description: "Add a local review comment. role=human (default, you) or role=reviewer (automated review) becomes the brief for the agent on that packet and sets status to changes_requested. role=agent is the implementing agent's reply and does not change status. Do not git push.",
+    description: "Add a local review comment. role=human (default, you) or role=reviewer (automated review) becomes the brief for the agent on that loop and sets status to changes_requested \u2014 including from draft. role=agent is the implementing agent's reply and does not change status. Optional path/line/side anchors the comment. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "body"],
@@ -684,6 +879,9 @@ var tools = [
         body: { type: "string" },
         role: { type: "string", enum: ["human", "agent", "reviewer"] },
         author: { type: "string" },
+        path: { type: "string" },
+        line: { type: "number" },
+        side: { type: "string", enum: ["left", "right"] },
         cwd: { type: "string" }
       }
     }
@@ -691,6 +889,30 @@ var tools = [
   {
     name: "get_diff",
     description: "Return name-status and diff for a local PR.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } }
+    }
+  },
+  {
+    name: "watch_status",
+    description: "Show whether the developer halted the review listen loops (stop or export).",
+    inputSchema: { type: "object", properties: { cwd: { type: "string" } } }
+  },
+  {
+    name: "watch_stop",
+    description: "Developer command: halt reviewer and implementor listen loops. Does not push or open GitHub.",
+    inputSchema: { type: "object", properties: { cwd: { type: "string" } } }
+  },
+  {
+    name: "watch_start",
+    description: "Resume listen loops after watch_stop.",
+    inputSchema: { type: "object", properties: { cwd: { type: "string" } } }
+  },
+  {
+    name: "export_local_pr",
+    description: "Developer command: halt listen loops, approve the loop, git push, and open a GitHub PR at origin. Only when the developer explicitly asks to export.",
     inputSchema: {
       type: "object",
       required: ["id"],
