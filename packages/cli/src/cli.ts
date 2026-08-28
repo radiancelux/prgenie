@@ -3,6 +3,7 @@ import {
   bindRepoGithub,
   createLocalPr,
   exportLocalPr,
+  ensureWorktreeForLoop,
   findGitRoot,
   getLocalPr,
   getLocalPrDiff,
@@ -43,6 +44,7 @@ Usage:
   prgenie comment <id> -m <message> [--role human|agent|reviewer] [--author <name>] [--path <file>] [--line <n>] [--side left|right]
   prgenie status <id> <draft|ready|approved|changes_requested>
   prgenie worktrees
+  prgenie worktree <id>
   prgenie gh list
   prgenie gh status
   prgenie gh use <login>
@@ -210,6 +212,12 @@ export async function run(argv: string[]): Promise<number> {
   if (sub === "diff") {
     process.stdout.write(await getLocalPrDiff(repo, id, { stat: flag(rest, "--stat") }));
     if (!flag(rest, "--stat")) process.stdout.write("\n");
+    return 0;
+  }
+  if (sub === "worktree") {
+    const pr = await getLocalPr(repo, id);
+    const dest = await ensureWorktreeForLoop(repo, pr);
+    process.stdout.write(`${dest}\n`);
     return 0;
   }
   if (sub === "approve") {

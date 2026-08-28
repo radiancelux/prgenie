@@ -112,13 +112,14 @@ async function listWorktrees(cwd) {
       detached: false
     };
     for (const line of lines) {
-      if (line.startsWith("worktree ")) info.path = line.slice("worktree ".length);
-      else if (line.startsWith("HEAD ")) info.head = line.slice("HEAD ".length);
-      else if (line.startsWith("branch ")) {
-        const ref = line.slice("branch ".length);
+      const text = line.replace(/\r$/, "");
+      if (text.startsWith("worktree ")) info.path = text.slice("worktree ".length);
+      else if (text.startsWith("HEAD ")) info.head = text.slice("HEAD ".length);
+      else if (text.startsWith("branch ")) {
+        const ref = text.slice("branch ".length);
         info.branch = ref.replace(/^refs\/heads\//, "");
-      } else if (line === "bare") info.bare = true;
-      else if (line === "detached") info.detached = true;
+      } else if (text === "bare") info.bare = true;
+      else if (text === "detached") info.detached = true;
     }
     if (info.path) trees.push(info);
   }

@@ -22,6 +22,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("prgenie.openPanel", () =>
       vscode.commands.executeCommand("prgenie.panel.focus"),
     ),
+    vscode.commands.registerCommand("prgenie.switchLoop", () => hub.switchSelected()),
   );
 }
 

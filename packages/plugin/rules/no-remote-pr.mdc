@@ -23,4 +23,4 @@ If this branch already has a local PR in `changes_requested`, call `get_local_pr
 
 The reviewer chat runs **`/watch-ready-prs`** and Tasks **subagents** to review — one Task per ready loop. You are the implementor on this worktree; run **`/watch-review-inbox`** so reviewer comments reach you. You do not spawn review Tasks unless there is no reviewer chat.
 
-Local PRs live in git refs `refs/local-pr/*` and `.git/agent-console/`. Cursor, GitLens, and Conductor keep managing worktrees — do not create, apply, or delete worktrees unless the user asks.
+Each loop has a git worktree so the developer can Switch this window onto the implementor's files. PR Genie creates that checkout when needed (`../<repo>.loops/<id>` if the branch is free). Do not delete worktrees unless asked. Do not create extra ones.

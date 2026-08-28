@@ -23,7 +23,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // packages/cli/src/capture-hook.ts
-var import_node_fs = require("node:fs");
+var import_node_fs2 = require("node:fs");
 
 // packages/core/src/git.ts
 var import_node_child_process = require("node:child_process");
@@ -98,6 +98,9 @@ async function requireGitRoot(cwd) {
 }
 
 // packages/core/src/worktrees.ts
+var import_node_fs = require("node:fs");
+var import_promises = require("node:fs/promises");
+var import_node_path2 = __toESM(require("node:path"), 1);
 async function listWorktrees(cwd) {
   const { stdout } = await git(cwd, ["worktree", "list", "--porcelain"]);
   const blocks = stdout.split(/\n\n+/).map((b) => b.trim()).filter(Boolean);
@@ -112,13 +115,14 @@ async function listWorktrees(cwd) {
       detached: false
     };
     for (const line of lines) {
-      if (line.startsWith("worktree ")) info.path = line.slice("worktree ".length);
-      else if (line.startsWith("HEAD ")) info.head = line.slice("HEAD ".length);
-      else if (line.startsWith("branch ")) {
-        const ref = line.slice("branch ".length);
+      const text = line.replace(/\r$/, "");
+      if (text.startsWith("worktree ")) info.path = text.slice("worktree ".length);
+      else if (text.startsWith("HEAD ")) info.head = text.slice("HEAD ".length);
+      else if (text.startsWith("branch ")) {
+        const ref = text.slice("branch ".length);
         info.branch = ref.replace(/^refs\/heads\//, "");
-      } else if (line === "bare") info.bare = true;
-      else if (line === "detached") info.detached = true;
+      } else if (text === "bare") info.bare = true;
+      else if (text === "detached") info.detached = true;
     }
     if (info.path) trees.push(info);
   }
@@ -149,36 +153,69 @@ function worktreeForBranch(trees, branch) {
   const match = trees.find((t) => t.branch === branch);
   return match?.path ?? null;
 }
+function loopWorktreeDir(mainPath, id) {
+  return import_node_path2.default.join(import_node_path2.default.dirname(mainPath), `${import_node_path2.default.basename(mainPath)}.loops`, id);
+}
+async function ensureWorktreeForLoop(cwd, loop) {
+  const trees = await listWorktrees(cwd);
+  const existing = worktreeForBranch(trees, loop.headRef);
+  if (existing) return existing;
+  const current = await currentBranch(cwd);
+  if (current === loop.headRef) {
+    const here = await findGitRoot(cwd);
+    if (here) return here;
+  }
+  const main2 = trees.find((t) => !t.bare)?.path;
+  if (!main2) throw new Error("No git worktree to attach a loop to.");
+  const dest = loopWorktreeDir(main2, loop.id);
+  if ((0, import_node_fs.existsSync)(dest)) {
+    const already = await findGitRoot(dest);
+    if (already) return dest;
+  }
+  await (0, import_promises.mkdir)(import_node_path2.default.dirname(dest), { recursive: true });
+  await git(cwd, ["worktree", "prune"], { allowFail: true });
+  const branched = await git(cwd, ["worktree", "add", dest, loop.headRef], {
+    allowFail: true
+  });
+  if (branched.code === 0) return dest;
+  const detached = await git(cwd, ["worktree", "add", "--detach", dest, loop.headSha], {
+    allowFail: true
+  });
+  if (detached.code === 0) return dest;
+  throw new Error(
+    `Could not create a worktree for loop ${loop.id} (${loop.headRef}): ${(branched.stderr || detached.stderr).trim()}`
+  );
+}
 async function shortLogSubject(cwd, rev = "HEAD") {
   return gitText(cwd, ["log", "-1", "--format=%s", rev]);
 }
 
 // packages/core/src/prs.ts
 var import_node_crypto = require("node:crypto");
-var import_promises2 = require("node:fs/promises");
-var import_node_path3 = __toESM(require("node:path"), 1);
+var import_promises3 = require("node:fs/promises");
+var import_node_path4 = __toESM(require("node:path"), 1);
 
 // packages/core/src/store.ts
-var import_promises = require("node:fs/promises");
-var import_node_path2 = __toESM(require("node:path"), 1);
+var import_promises2 = require("node:fs/promises");
+var import_node_path3 = __toESM(require("node:path"), 1);
 async function consoleDir(cwd) {
   const common = await gitCommonDir(cwd);
-  const dir = import_node_path2.default.join(common, "agent-console");
-  await (0, import_promises.mkdir)(dir, { recursive: true });
+  const dir = import_node_path3.default.join(common, "agent-console");
+  await (0, import_promises2.mkdir)(dir, { recursive: true });
   return dir;
 }
 async function prsDir(cwd) {
-  const dir = import_node_path2.default.join(await consoleDir(cwd), "prs");
-  await (0, import_promises.mkdir)(dir, { recursive: true });
+  const dir = import_node_path3.default.join(await consoleDir(cwd), "prs");
+  await (0, import_promises2.mkdir)(dir, { recursive: true });
   return dir;
 }
 function prFile(dir, id) {
-  return import_node_path2.default.join(dir, `${id}.json`);
+  return import_node_path3.default.join(dir, `${id}.json`);
 }
 async function sessionsFile(cwd) {
   const dir = await consoleDir(cwd);
-  await (0, import_promises.mkdir)(dir, { recursive: true });
-  return import_node_path2.default.join(dir, "sessions.jsonl");
+  await (0, import_promises2.mkdir)(dir, { recursive: true });
+  return import_node_path3.default.join(dir, "sessions.jsonl");
 }
 function firstJsonObject(raw) {
   const start = raw.indexOf("{");
@@ -225,7 +262,7 @@ async function writeJsonFile(file, value) {
   const body = `${JSON.stringify(value, null, 2)}
 `;
   const tmp = `${file}.${process.pid}.tmp`;
-  const tmpHandle = await (0, import_promises.open)(tmp, "w");
+  const tmpHandle = await (0, import_promises2.open)(tmp, "w");
   try {
     await tmpHandle.writeFile(body, "utf8");
     await tmpHandle.sync();
@@ -233,11 +270,11 @@ async function writeJsonFile(file, value) {
     await tmpHandle.close();
   }
   try {
-    await (0, import_promises.rename)(tmp, file);
+    await (0, import_promises2.rename)(tmp, file);
     return;
   } catch {
   }
-  const dest = await (0, import_promises.open)(file, "w");
+  const dest = await (0, import_promises2.open)(file, "w");
   try {
     const buf = Buffer.from(body, "utf8");
     await dest.write(buf, 0, buf.length, 0);
@@ -246,7 +283,7 @@ async function writeJsonFile(file, value) {
   } finally {
     await dest.close();
   }
-  await (0, import_promises.unlink)(tmp).catch(() => void 0);
+  await (0, import_promises2.unlink)(tmp).catch(() => void 0);
 }
 
 // packages/core/src/prs.ts
@@ -281,11 +318,11 @@ async function writePr(cwd, pr) {
 async function listLocalPrs(cwd) {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
-  const names = await (0, import_promises2.readdir)(dir);
+  const names = await (0, import_promises3.readdir)(dir);
   const prs = [];
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
-    const raw = await (0, import_promises2.readFile)(import_node_path3.default.join(dir, name), "utf8");
+    const raw = await (0, import_promises3.readFile)(import_node_path4.default.join(dir, name), "utf8");
     let pr;
     try {
       pr = parseJsonObject(raw);
@@ -322,7 +359,6 @@ async function createLocalPr(cwd, input = {}) {
     throw new Error(`Cannot resolve base branch: ${baseRef}`);
   }
   const baseSha = baseResolved.stdout.trim();
-  const trees = await listWorktrees(root);
   const title = input.title?.trim() || await shortLogSubject(cwd, headSha).catch(() => "") || `Local PR from ${headRef}`;
   const createdAt = nowIso();
   const pr = {
@@ -334,7 +370,7 @@ async function createLocalPr(cwd, input = {}) {
     baseRef,
     headSha,
     baseSha,
-    worktreePath: worktreeForBranch(trees, headRef),
+    worktreePath: null,
     comments: [],
     source: input.source ?? { kind: "cli" },
     createdAt,
@@ -342,6 +378,7 @@ async function createLocalPr(cwd, input = {}) {
     reviewRequestedSha: null
   };
   await writePr(root, pr);
+  pr.worktreePath = await ensureWorktreeForLoop(root, pr);
   return pr;
 }
 function normalizeComment(comment) {
@@ -391,6 +428,7 @@ async function captureAgentWork(cwd, input = {}) {
     const updated = await refreshLocalPrHead(cwd, existing.id);
     updated.source = existing.source;
     await writePr(cwd, updated);
+    updated.worktreePath = await ensureWorktreeForLoop(cwd, updated);
     return { action: "updated", pr: updated };
   }
   const pr = await createLocalPr(cwd, input);
@@ -398,7 +436,7 @@ async function captureAgentWork(cwd, input = {}) {
 }
 
 // packages/core/src/sessions.ts
-var import_promises3 = require("node:fs/promises");
+var import_promises4 = require("node:fs/promises");
 async function appendSession(cwd, event) {
   const root = await findGitRoot(cwd);
   if (!root) return;
@@ -409,7 +447,7 @@ async function appendSession(cwd, event) {
     gitRoot: root,
     at: (/* @__PURE__ */ new Date()).toISOString()
   });
-  await (0, import_promises3.appendFile)(file, `${line}
+  await (0, import_promises4.appendFile)(file, `${line}
 `, "utf8");
 }
 
@@ -426,7 +464,7 @@ function silent() {
 async function main() {
   let input = {};
   try {
-    const raw = (0, import_node_fs.readFileSync)(0, "utf8");
+    const raw = (0, import_node_fs2.readFileSync)(0, "utf8");
     input = raw ? JSON.parse(raw) : {};
   } catch {
     input = {};

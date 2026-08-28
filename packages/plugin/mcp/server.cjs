@@ -104,6 +104,9 @@ async function requireGitRoot(cwd) {
 }
 
 // packages/core/src/worktrees.ts
+var import_node_fs = require("node:fs");
+var import_promises = require("node:fs/promises");
+var import_node_path2 = __toESM(require("node:path"), 1);
 async function listWorktrees(cwd) {
   const { stdout } = await git(cwd, ["worktree", "list", "--porcelain"]);
   const blocks = stdout.split(/\n\n+/).map((b) => b.trim()).filter(Boolean);
@@ -118,13 +121,14 @@ async function listWorktrees(cwd) {
       detached: false
     };
     for (const line of lines) {
-      if (line.startsWith("worktree ")) info.path = line.slice("worktree ".length);
-      else if (line.startsWith("HEAD ")) info.head = line.slice("HEAD ".length);
-      else if (line.startsWith("branch ")) {
-        const ref = line.slice("branch ".length);
+      const text = line.replace(/\r$/, "");
+      if (text.startsWith("worktree ")) info.path = text.slice("worktree ".length);
+      else if (text.startsWith("HEAD ")) info.head = text.slice("HEAD ".length);
+      else if (text.startsWith("branch ")) {
+        const ref = text.slice("branch ".length);
         info.branch = ref.replace(/^refs\/heads\//, "");
-      } else if (line === "bare") info.bare = true;
-      else if (line === "detached") info.detached = true;
+      } else if (text === "bare") info.bare = true;
+      else if (text === "detached") info.detached = true;
     }
     if (info.path) trees.push(info);
   }
@@ -155,6 +159,39 @@ function worktreeForBranch(trees, branch) {
   const match = trees.find((t) => t.branch === branch);
   return match?.path ?? null;
 }
+function loopWorktreeDir(mainPath, id) {
+  return import_node_path2.default.join(import_node_path2.default.dirname(mainPath), `${import_node_path2.default.basename(mainPath)}.loops`, id);
+}
+async function ensureWorktreeForLoop(cwd, loop) {
+  const trees = await listWorktrees(cwd);
+  const existing = worktreeForBranch(trees, loop.headRef);
+  if (existing) return existing;
+  const current = await currentBranch(cwd);
+  if (current === loop.headRef) {
+    const here = await findGitRoot(cwd);
+    if (here) return here;
+  }
+  const main = trees.find((t) => !t.bare)?.path;
+  if (!main) throw new Error("No git worktree to attach a loop to.");
+  const dest = loopWorktreeDir(main, loop.id);
+  if ((0, import_node_fs.existsSync)(dest)) {
+    const already = await findGitRoot(dest);
+    if (already) return dest;
+  }
+  await (0, import_promises.mkdir)(import_node_path2.default.dirname(dest), { recursive: true });
+  await git(cwd, ["worktree", "prune"], { allowFail: true });
+  const branched = await git(cwd, ["worktree", "add", dest, loop.headRef], {
+    allowFail: true
+  });
+  if (branched.code === 0) return dest;
+  const detached = await git(cwd, ["worktree", "add", "--detach", dest, loop.headSha], {
+    allowFail: true
+  });
+  if (detached.code === 0) return dest;
+  throw new Error(
+    `Could not create a worktree for loop ${loop.id} (${loop.headRef}): ${(branched.stderr || detached.stderr).trim()}`
+  );
+}
 async function userName(cwd) {
   const result = await git(cwd, ["config", "user.name"], { allowFail: true });
   return result.stdout.trim() || "local";
@@ -165,25 +202,25 @@ async function shortLogSubject(cwd, rev = "HEAD") {
 
 // packages/core/src/prs.ts
 var import_node_crypto = require("node:crypto");
-var import_promises2 = require("node:fs/promises");
-var import_node_path3 = __toESM(require("node:path"), 1);
+var import_promises3 = require("node:fs/promises");
+var import_node_path4 = __toESM(require("node:path"), 1);
 
 // packages/core/src/store.ts
-var import_promises = require("node:fs/promises");
-var import_node_path2 = __toESM(require("node:path"), 1);
+var import_promises2 = require("node:fs/promises");
+var import_node_path3 = __toESM(require("node:path"), 1);
 async function consoleDir(cwd) {
   const common = await gitCommonDir(cwd);
-  const dir = import_node_path2.default.join(common, "agent-console");
-  await (0, import_promises.mkdir)(dir, { recursive: true });
+  const dir = import_node_path3.default.join(common, "agent-console");
+  await (0, import_promises2.mkdir)(dir, { recursive: true });
   return dir;
 }
 async function prsDir(cwd) {
-  const dir = import_node_path2.default.join(await consoleDir(cwd), "prs");
-  await (0, import_promises.mkdir)(dir, { recursive: true });
+  const dir = import_node_path3.default.join(await consoleDir(cwd), "prs");
+  await (0, import_promises2.mkdir)(dir, { recursive: true });
   return dir;
 }
 function prFile(dir, id) {
-  return import_node_path2.default.join(dir, `${id}.json`);
+  return import_node_path3.default.join(dir, `${id}.json`);
 }
 function firstJsonObject(raw) {
   const start = raw.indexOf("{");
@@ -230,7 +267,7 @@ async function writeJsonFile(file, value) {
   const body = `${JSON.stringify(value, null, 2)}
 `;
   const tmp = `${file}.${process.pid}.tmp`;
-  const tmpHandle = await (0, import_promises.open)(tmp, "w");
+  const tmpHandle = await (0, import_promises2.open)(tmp, "w");
   try {
     await tmpHandle.writeFile(body, "utf8");
     await tmpHandle.sync();
@@ -238,11 +275,11 @@ async function writeJsonFile(file, value) {
     await tmpHandle.close();
   }
   try {
-    await (0, import_promises.rename)(tmp, file);
+    await (0, import_promises2.rename)(tmp, file);
     return;
   } catch {
   }
-  const dest = await (0, import_promises.open)(file, "w");
+  const dest = await (0, import_promises2.open)(file, "w");
   try {
     const buf = Buffer.from(body, "utf8");
     await dest.write(buf, 0, buf.length, 0);
@@ -251,7 +288,7 @@ async function writeJsonFile(file, value) {
   } finally {
     await dest.close();
   }
-  await (0, import_promises.unlink)(tmp).catch(() => void 0);
+  await (0, import_promises2.unlink)(tmp).catch(() => void 0);
 }
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -261,12 +298,12 @@ async function withFileLock(file, fn) {
   let lastErr;
   for (let i = 0; i < 50; i++) {
     try {
-      const handle = await (0, import_promises.open)(lock, "wx");
+      const handle = await (0, import_promises2.open)(lock, "wx");
       try {
         return await fn();
       } finally {
         await handle.close();
-        await (0, import_promises.unlink)(lock).catch(() => void 0);
+        await (0, import_promises2.unlink)(lock).catch(() => void 0);
       }
     } catch (err) {
       lastErr = err;
@@ -308,11 +345,11 @@ async function writePr(cwd, pr) {
 async function listLocalPrs(cwd) {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
-  const names = await (0, import_promises2.readdir)(dir);
+  const names = await (0, import_promises3.readdir)(dir);
   const prs = [];
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
-    const raw = await (0, import_promises2.readFile)(import_node_path3.default.join(dir, name), "utf8");
+    const raw = await (0, import_promises3.readFile)(import_node_path4.default.join(dir, name), "utf8");
     let pr;
     try {
       pr = parseJsonObject(raw);
@@ -349,7 +386,6 @@ async function createLocalPr(cwd, input = {}) {
     throw new Error(`Cannot resolve base branch: ${baseRef}`);
   }
   const baseSha = baseResolved.stdout.trim();
-  const trees = await listWorktrees(root);
   const title = input.title?.trim() || await shortLogSubject(cwd, headSha).catch(() => "") || `Local PR from ${headRef}`;
   const createdAt = nowIso();
   const pr = {
@@ -361,7 +397,7 @@ async function createLocalPr(cwd, input = {}) {
     baseRef,
     headSha,
     baseSha,
-    worktreePath: worktreeForBranch(trees, headRef),
+    worktreePath: null,
     comments: [],
     source: input.source ?? { kind: "cli" },
     createdAt,
@@ -369,6 +405,7 @@ async function createLocalPr(cwd, input = {}) {
     reviewRequestedSha: null
   };
   await writePr(root, pr);
+  pr.worktreePath = await ensureWorktreeForLoop(root, pr);
   return pr;
 }
 async function updateLocalPr(cwd, id, patch) {
@@ -421,8 +458,10 @@ async function addLocalPrComment(cwd, id, body, options = {}) {
   }
   const resolved = await getLocalPr(cwd, id);
   const dir = await prsDir(cwd);
-  return withFileLock(prFile(dir, resolved.id), async () => {
-    const pr = await getLocalPr(cwd, resolved.id);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+    pr.comments = (pr.comments ?? []).map(normalizeComment);
     const comment = {
       id: newId("c"),
       body: text,
@@ -440,6 +479,7 @@ async function addLocalPrComment(cwd, id, body, options = {}) {
     }
     pr.updatedAt = comment.createdAt;
     await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
     return pr;
   });
 }
@@ -469,10 +509,10 @@ async function getLocalPrNameStatus(cwd, id) {
 }
 
 // packages/core/src/watch.ts
-var import_promises3 = require("node:fs/promises");
-var import_node_path4 = __toESM(require("node:path"), 1);
+var import_promises4 = require("node:fs/promises");
+var import_node_path5 = __toESM(require("node:path"), 1);
 function watchFile(dir) {
-  return import_node_path4.default.join(dir, "watch.json");
+  return import_node_path5.default.join(dir, "watch.json");
 }
 var idle = () => ({
   halted: false,
@@ -483,7 +523,7 @@ var idle = () => ({
 async function getRepoWatch(cwd) {
   const root = await requireGitRoot(cwd);
   try {
-    const raw = await (0, import_promises3.readFile)(watchFile(await consoleDir(root)), "utf8");
+    const raw = await (0, import_promises4.readFile)(watchFile(await consoleDir(root)), "utf8");
     const parsed = parseJsonObject(raw);
     return {
       halted: parsed.halted === true,
@@ -520,8 +560,8 @@ async function resumeWatch(cwd) {
 
 // packages/core/src/github-ops.ts
 var import_node_child_process2 = require("node:child_process");
-var import_promises4 = require("node:fs/promises");
-var import_node_path5 = __toESM(require("node:path"), 1);
+var import_promises5 = require("node:fs/promises");
+var import_node_path6 = __toESM(require("node:path"), 1);
 
 // packages/core/src/github.ts
 function parseGhAuthStatus(text) {
@@ -606,13 +646,13 @@ async function switchGhUser(login, host = "github.com") {
   }
 }
 function bindFile(dir) {
-  return import_node_path5.default.join(dir, "github.json");
+  return import_node_path6.default.join(dir, "github.json");
 }
 async function getRepoGithubBind(cwd) {
   const root = await findGitRoot(cwd);
   if (!root) return null;
   try {
-    const raw = await (0, import_promises4.readFile)(bindFile(await consoleDir(root)), "utf8");
+    const raw = await (0, import_promises5.readFile)(bindFile(await consoleDir(root)), "utf8");
     const parsed = parseJsonObject(raw);
     if (!parsed.login) return null;
     return { host: parsed.host || "github.com", login: parsed.login };
@@ -626,7 +666,7 @@ async function bindRepoGithub(cwd, login, host = "github.com") {
   await switchGhUser(login, host);
   const bind = { host, login };
   const dir = await consoleDir(root);
-  await (0, import_promises4.mkdir)(dir, { recursive: true });
+  await (0, import_promises5.mkdir)(dir, { recursive: true });
   await writeJsonFile(bindFile(dir), bind);
   return bind;
 }
@@ -785,6 +825,11 @@ async function handleTool(name, args) {
       return haltWatch(cwd, "stop");
     case "watch_start":
       return resumeWatch(cwd);
+    case "ensure_worktree": {
+      const pr = await getLocalPr(cwd, String(args.id ?? ""));
+      const dest = await ensureWorktreeForLoop(cwd, pr);
+      return { ...pr, worktreePath: dest };
+    }
     case "export_local_pr":
       return exportLocalPr(cwd, String(args.id ?? ""));
     default:
@@ -794,8 +839,17 @@ async function handleTool(name, args) {
 var tools = [
   {
     name: "list_worktrees",
-    description: "Discover existing git worktrees. Does not create or delete them.",
+    description: "List git worktrees. PR Genie also ensures one worktree per loop.",
     inputSchema: { type: "object", properties: { cwd: { type: "string" } } }
+  },
+  {
+    name: "ensure_worktree",
+    description: "Ensure this loop has a git worktree and return its path. Creates a sibling <repo>.loops/<id> checkout when the branch is not already checked out.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } }
+    }
   },
   {
     name: "list_local_prs",

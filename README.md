@@ -2,7 +2,7 @@
 
 Local pull requests for agent work. GitHub when you say so.
 
-PR Genie is a **pre-GitHub review lane** for Cursor (and any git checkout, including Conductor workspaces and GitLens worktrees). It does not manage worktrees. Cursor, GitLens, and Conductor already do that.
+PR Genie is a **pre-GitHub review lane** for Cursor (and any git checkout, including Conductor workspaces and GitLens worktrees). Each loop gets a git worktree so you can switch this window onto the implementor's files.
 
 A local PR is a git-native review loop: branch, base, diff, comments, and status. It never leaves the machine until you export it. Agents are steered — and hooked — away from `git push` / `gh pr create`.
 
@@ -14,11 +14,10 @@ When a **subagent** finishes with commits, PR Genie drafts a loop and puts it on
 | --- | --- |
 | `@prgenie/core` + `prgenie` CLI | Create/list/approve local PRs from any worktree |
 | Cursor Plugin | No-push rule, `/local-pr`, `/review-local-pr`, MCP, subagent capture, **per-repo `gh` account** |
-| VS Code / Cursor extension | Live watch list as loops land — not a worktree manager |
+| VS Code / Cursor extension | Live watch list as loops land — Switch puts this window on that loop's worktree |
 
 ## What it is not
 
-- Not a worktree manager (no create / apply / delete)
 - Not a subagent orchestrator (Cursor's Task tool owns spawn/stop)
 - Not a GitHub PR client (GitLens owns remote PRs after export)
 - Not a Conductor replacement

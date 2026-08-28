@@ -62,6 +62,8 @@ test("creates, lists, and approves a local PR", async () => {
   assert.equal(created.headRef, "feat/widget");
   assert.equal(created.baseRef, "main");
   assert.match(created.body, /widget\.txt/);
+  assert.ok(created.worktreePath);
+  assert.equal(path.basename(created.worktreePath), path.basename(repo));
 
   const listed = await listLocalPrs(repo);
   assert.equal(listed.length, 1);
@@ -186,5 +188,23 @@ test("reviewer Task is requested once per loop HEAD", async () => {
   const marked = await markReviewRequested(repo, pr.id);
   assert.equal(shouldSpawnReviewer(marked), false);
   assert.equal(marked.reviewRequestedSha, marked.headSha);
+});
+
+test("a loop whose branch is not checked out gets a sibling worktree", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, {
+    title: "Widget sibling",
+    base: "main",
+    head: "feat/widget",
+  });
+  assert.ok(pr.worktreePath);
+  assert.match(pr.worktreePath.replace(/\\/g, "/"), /\.loops\//);
+  const trees = await listWorktrees(repo);
+  assert.ok(trees.some((t) => t.branch === "feat/widget"));
+  try {
+    git(["worktree", "remove", "--force", "--", pr.worktreePath]);
+  } catch {
+    // temp leftover
+  }
 });
 

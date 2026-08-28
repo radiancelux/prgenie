@@ -15,6 +15,8 @@ export {
   detectDefaultBase,
   listWorktrees,
   worktreeForBranch,
+  ensureWorktreeForLoop,
+  sameFsPath,
 } from "./worktrees.js";
 export {
   addLocalPrComment,

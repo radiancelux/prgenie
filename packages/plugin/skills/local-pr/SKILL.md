@@ -72,7 +72,9 @@ If there is **no** reviewer chat, Task one reviewer subagent yourself for this i
 
 ## Worktrees
 
-List with `prgenie worktrees` / MCP `list_worktrees`. Never create, apply, or delete worktrees unless the user asks. GitLens, Conductor, and Cursor own that.
+Each loop has a git worktree. If the branch is already checked out (this window), that checkout is the loop. Otherwise PR Genie adds `../<repo>.loops/<id>`. Use **Switch** in Local PRs / the loop panel to replace this window with that worktree. `prgenie worktree <id>` / MCP `ensure_worktree` only creates the checkout — they do not open the editor.
+
+Do not delete worktrees unless the user asks. Do not create extras beyond the one per loop.
 
 ## GitHub accounts
 

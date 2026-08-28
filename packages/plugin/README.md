@@ -17,4 +17,4 @@ Then **Developer: Reload Window**, open **Customize**, and confirm:
 - MCP server: `prgenie`
 - Hooks: push-gate, session log, **review loop** (`sessionStart` injects comments; `stop` Tasks a reviewer when the loop is `ready`; `subagentStop` returns those comments to this chat), **subagentStop capture**
 
-Worktrees stay in Cursor, GitLens, or Conductor. This plugin only creates local PR loops and asks before `git push` / `gh pr create`.
+Each loop has a git worktree. **Switch** in Local PRs replaces this window with that checkout. The plugin still asks before `git push` / `gh pr create`.

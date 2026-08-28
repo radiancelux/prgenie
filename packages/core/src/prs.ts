@@ -10,6 +10,9 @@ import {
   shortLogSubject,
   userName,
   worktreeForBranch,
+  ensureWorktreeForLoop,
+  loopWorktreeDir,
+  sameFsPath,
 } from "./worktrees.js";
 import type {
   CaptureResult,
@@ -102,7 +105,6 @@ export async function createLocalPr(
     throw new Error(`Cannot resolve base branch: ${baseRef}`);
   }
   const baseSha = baseResolved.stdout.trim();
-  const trees = await listWorktrees(root);
   const title =
     input.title?.trim() ||
     (await shortLogSubject(cwd, headSha).catch(() => "")) ||
@@ -117,7 +119,7 @@ export async function createLocalPr(
     baseRef,
     headSha,
     baseSha,
-    worktreePath: worktreeForBranch(trees, headRef),
+    worktreePath: null,
     comments: [],
     source: input.source ?? { kind: "cli" },
     createdAt,
@@ -125,6 +127,7 @@ export async function createLocalPr(
     reviewRequestedSha: null,
   };
   await writePr(root, pr);
+  pr.worktreePath = await ensureWorktreeForLoop(root, pr);
   return pr;
 }
 
@@ -254,8 +257,10 @@ export async function addLocalPrComment(
   }
   const resolved = await getLocalPr(cwd, id);
   const dir = await prsDir(cwd);
-  return withFileLock(prFile(dir, resolved.id), async () => {
-    const pr = await getLocalPr(cwd, resolved.id);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+    pr.comments = (pr.comments ?? []).map(normalizeComment);
     const comment: LocalPrComment = {
       id: newId("c"),
       body: text,
@@ -273,6 +278,7 @@ export async function addLocalPrComment(
     }
     pr.updatedAt = comment.createdAt;
     await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
     return pr;
   });
 }
@@ -367,6 +373,7 @@ export async function captureAgentWork(
     const updated = await refreshLocalPrHead(cwd, existing.id);
     updated.source = existing.source;
     await writePr(cwd, updated);
+    updated.worktreePath = await ensureWorktreeForLoop(cwd, updated);
     return { action: "updated", pr: updated };
   }
   const pr = await createLocalPr(cwd, input);

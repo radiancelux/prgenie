@@ -7,7 +7,7 @@ description: Create or update a PR Genie local pull request for the current bran
 
 Local pull requests for agent work. GitHub when you say so.
 
-1. Confirm you are in a git checkout (main repo or a worktree). Do not create a new worktree.
+1. Confirm you are in a git checkout (main repo or a worktree). `create_local_pr` ensures that loop has a worktree.
 2. Commit outstanding work on the current branch if the user wants it included.
 3. Call MCP `create_local_pr` with `title` **and** `body`. `body` is the reviewer summary (why, what changed, how to test) — do not leave it empty.
 4. Show the id, status (`draft`), head, base, and the summary.

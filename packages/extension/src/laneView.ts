@@ -5,9 +5,11 @@ import {
   addLocalPrComment,
   consoleDir,
   createLocalPr,
+  ensureWorktreeForLoop,
   findGitRoot,
   getLocalPrNameStatus,
   listLocalPrs,
+  sameFsPath,
   setLocalPrStatus,
   updateLocalPr,
   type LocalPr,
@@ -40,6 +42,7 @@ type Snapshot = {
   repo: string;
   freshIds: string[];
   watching: boolean;
+  hereId: string | null;
 };
 
 export class LaneHub implements vscode.Disposable {
@@ -64,6 +67,14 @@ export class LaneHub implements vscode.Disposable {
 
   refresh(): void {
     void this.pushSnapshot();
+  }
+
+  async switchSelected(): Promise<void> {
+    if (!this.selectedId) {
+      void vscode.window.showInformationMessage("Select a loop in Local PRs first.");
+      return;
+    }
+    await this.onMessage({ type: "openFolder", id: this.selectedId });
   }
 
   async createPr(): Promise<void> {
@@ -245,17 +256,16 @@ export class LaneHub implements vscode.Disposable {
       } else if (msg.type === "openFolder") {
         const prs = await listLocalPrs(cwd);
         const pr = prs.find((p) => p.id === msg.id);
-        if (pr?.worktreePath) {
-          await vscode.commands.executeCommand(
-            "vscode.openFolder",
-            vscode.Uri.file(pr.worktreePath),
-            { forceNewWindow: true },
-          );
-        } else {
-          void vscode.window.showInformationMessage(
-            "No live worktree for this loop. The branch and local PR still exist.",
-          );
+        if (!pr) return;
+        const dest = await ensureWorktreeForLoop(cwd, pr);
+        const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (folder && sameFsPath(folder, dest)) {
+          void vscode.window.showInformationMessage("This window is already on that loop.");
+          return;
         }
+        await vscode.commands.executeCommand("vscode.openFolder", vscode.Uri.file(dest), {
+          forceNewWindow: false,
+        });
       }
     } catch (err) {
       void vscode.window.showErrorMessage(
@@ -295,6 +305,9 @@ export class LaneHub implements vscode.Disposable {
       if (!this.selectedId) this.selectedId = prs[0]?.id;
       const selected = prs.find((p) => p.id === this.selectedId);
       const files = selected ? await getLocalPrNameStatus(root, selected.id) : [];
+      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+      const hereId =
+        prs.find((p) => p.worktreePath && sameFsPath(p.worktreePath, folder))?.id ?? null;
       this.post({
         type: "snapshot",
         prs,
@@ -303,6 +316,7 @@ export class LaneHub implements vscode.Disposable {
         repo: path.basename(root),
         freshIds,
         watching: true,
+        hereId,
       });
       await this.watchStore();
     } catch (err) {
@@ -368,16 +382,20 @@ function laneHtml(webview: vscode.Webview): string {
     }
     .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--vscode-charts-green, #3fb950); flex: none; }
     .pr {
+      display: flex; align-items: flex-start; gap: 8px;
       padding: 6px 12px;
       cursor: pointer;
       border-left: 2px solid transparent;
     }
+    .pr .info { flex: 1; min-width: 0; }
+    .pr .go { flex: none; font-size: 11px; padding: 2px 6px; margin-top: 2px; }
     .pr:hover { background: var(--vscode-list-hoverBackground); }
     .pr.active {
       background: var(--vscode-list-activeSelectionBackground);
       color: var(--vscode-list-activeSelectionForeground);
       border-left-color: var(--vscode-focusBorder);
     }
+    .pr.here { border-left-color: var(--vscode-charts-green, #3fb950); }
     .pr.fresh { box-shadow: inset 2px 0 0 var(--vscode-focusBorder); }
     .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .empty { padding: 12px; }
@@ -409,14 +427,23 @@ function laneHtml(webview: vscode.Webview): string {
       }
       for (const pr of prs) {
         const el = document.createElement("div");
-        el.className = "pr" + (pr.id === msg.selectedId ? " active" : "") + (fresh.has(pr.id) ? " fresh" : "");
+        const here = pr.id === msg.hereId;
+        el.className = "pr" + (pr.id === msg.selectedId ? " active" : "") + (fresh.has(pr.id) ? " fresh" : "") + (here ? " here" : "");
         const src = pr.source && pr.source.kind === "subagent"
           ? (pr.source.subagentType || "subagent")
           : (pr.source && pr.source.kind) || "local";
-        el.innerHTML = '<div class="status"></div><div class="title"></div><div class="muted"></div>';
-        el.children[0].textContent = pr.status.replace("_", " ");
-        el.children[1].textContent = pr.title;
-        el.children[2].textContent = src + " · " + pr.headRef + " → " + pr.baseRef;
+        el.innerHTML = '<div class="info"><div class="status"></div><div class="title"></div><div class="muted"></div></div><button class="go secondary"></button>';
+        const info = el.querySelector(".info");
+        info.children[0].textContent = pr.status.replace("_", " ");
+        info.children[1].textContent = pr.title;
+        info.children[2].textContent = src + " · " + pr.headRef + " → " + pr.baseRef;
+        const go = el.querySelector(".go");
+        go.textContent = here ? "Here" : "Switch";
+        go.disabled = here;
+        go.onclick = (e) => {
+          e.stopPropagation();
+          vscode.postMessage({ type: "openFolder", id: pr.id });
+        };
         el.onclick = () => vscode.postMessage({ type: "select", id: pr.id });
         list.appendChild(el);
       }
@@ -574,7 +601,7 @@ function panelHtml(webview: vscode.Webview): string {
         '<button data-s="approved">Approve</button>',
         '<button class="secondary" data-s="changes_requested">Request changes</button>',
         '<button class="secondary" id="copyReview">Copy review prompt</button>',
-        '<button class="secondary" id="openWt">Worktree</button>',
+        '<button class="secondary" id="openWt"></button>',
         "</div>",
         '<div class="summary"><h2>Summary</h2><div class="pad"><textarea id="sum" placeholder="Why this exists, what changed, how to test. The implementing agent writes this for reviewers."></textarea><div style="margin-top:6px"><button id="saveSum">Save summary</button></div></div></div>',
         '<div class="body">',
@@ -598,6 +625,8 @@ function panelHtml(webview: vscode.Webview): string {
       for (const btn of root.querySelectorAll("button[data-s]")) {
         btn.onclick = () => vscode.postMessage({ type: "status", id: selected.id, status: btn.getAttribute("data-s") });
       }
+      root.querySelector("#openWt").textContent = selected.id === msg.hereId ? "This window" : "Switch to this loop";
+      root.querySelector("#openWt").disabled = selected.id === msg.hereId;
       root.querySelector("#openWt").onclick = () => vscode.postMessage({ type: "openFolder", id: selected.id });
       root.querySelector("#copyReview").onclick = () => vscode.postMessage({ type: "copyReviewPrompt", id: selected.id });
       root.querySelector("#openDiffs").onclick = () => vscode.postMessage({ type: "openDiffs" });

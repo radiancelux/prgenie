@@ -3,6 +3,7 @@ import {
   bindRepoGithub,
   createLocalPr,
   exportLocalPr,
+  ensureWorktreeForLoop,
   findGitRoot,
   getLocalPr,
   getLocalPrDiff,
@@ -112,6 +113,11 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
       return haltWatch(cwd, "stop");
     case "watch_start":
       return resumeWatch(cwd);
+    case "ensure_worktree": {
+      const pr = await getLocalPr(cwd, String(args.id ?? ""));
+      const dest = await ensureWorktreeForLoop(cwd, pr);
+      return { ...pr, worktreePath: dest };
+    }
     case "export_local_pr":
       return exportLocalPr(cwd, String(args.id ?? ""));
     default:
@@ -122,8 +128,18 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
 const tools = [
   {
     name: "list_worktrees",
-    description: "Discover existing git worktrees. Does not create or delete them.",
+    description: "List git worktrees. PR Genie also ensures one worktree per loop.",
     inputSchema: { type: "object", properties: { cwd: { type: "string" } } },
+  },
+  {
+    name: "ensure_worktree",
+    description:
+      "Ensure this loop has a git worktree and return its path. Creates a sibling <repo>.loops/<id> checkout when the branch is not already checked out.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } },
+    },
   },
   {
     name: "list_local_prs",
