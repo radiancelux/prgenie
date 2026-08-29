@@ -210,13 +210,14 @@ export async function setLocalPrStatus(
   if (!STATUSES.includes(status)) {
     throw new Error(`Invalid status: ${status}`);
   }
-  return withPrLock(cwd, id, (pr) => {
+  return withPrLock(cwd, id, async (pr) => {
     if (isArchivedPr(pr) && status !== "approved") {
       throw new Error(
         `Loop ${pr.id} is archived. Start a new loop on a feature branch instead of reopening it.`,
       );
     }
     pr.status = status;
+    if (status === "ready") await applyHeadRefresh(cwd, pr);
     pr.updatedAt = nowIso();
   });
 }
@@ -300,6 +301,28 @@ function maybePromoteToReviewed(pr: LocalPr): void {
   pr.status = "reviewed";
 }
 
+async function maybeHandoffToReviewer(
+  cwd: string,
+  pr: LocalPr,
+  now: string,
+  author: string,
+): Promise<void> {
+  if (isArchivedPr(pr)) return;
+  if (pr.status !== "changes_requested") return;
+  if (pendingReviewComments(pr).length > 0) return;
+  await applyHeadRefresh(cwd, pr);
+  pr.status = "ready";
+  pr.comments.push({
+    id: newId("c"),
+    body: "Review requested.",
+    createdAt: now,
+    author,
+    role: "agent",
+    status: "resolved",
+  });
+  pr.updatedAt = now;
+}
+
 function lastFinding(pr: LocalPr): LocalPrComment | undefined {
   const findings = (pr.comments ?? []).map(normalizeComment).filter(isFindingComment);
   return findings[findings.length - 1];
@@ -311,7 +334,7 @@ export function formatReviewInbox(pr: LocalPr): string | null {
   if (pending.length === 0) return null;
   const lines = [
     `PR Genie: local PR ${pr.id} ("${pr.title}") on branch ${pr.headRef} has review comments for the agent working this loop.`,
-    `Status is ${pr.status}. Address each open comment with MCP address_comment (this loop id, that commentId, and a reply). Then set_status ready and add_comment role=agent "Review requested." for a second review. The reviewer resolves addressed comments. Do not git push.`,
+    `Status is ${pr.status}. Address each open comment with MCP address_comment (this loop id, that commentId, and a reply). Addressing the last open finding sets the loop to ready and posts Review requested. The reviewer resolves addressed comments. Do not git push.`,
     "",
   ];
   for (const comment of pending) {
@@ -458,6 +481,7 @@ export async function addressLocalPrComment(
       replyTo: target.id,
     });
     pr.updatedAt = now;
+    await maybeHandoffToReviewer(cwd, pr, now, author);
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;
     return pr;

@@ -59,7 +59,7 @@ Comments are the review protocol for the agent on that loop:
 | --- | --- | --- |
 | `human` | You (GUI, CLI, chat) | Open finding. Loop → `changes_requested` immediately (including from **draft** — that is intended). |
 | `reviewer` | Automated review agent | Open finding. **Does not** change loop status. Call `complete_review` when finished. |
-| `agent` | The implementer on this PR | Reply, nested under the finding. Use `address_comment`. Does not change loop status. Then `set_status ready` for a second review. |
+| `agent` | The implementer on this PR | Reply, nested under the finding. Use `address_comment`. The last open finding sets `ready` and posts Review requested. |
 
 `pendingComments` are **open** findings. The implementor inbox (`inbox=true`, `/review-inbox`) only includes them when status is `changes_requested`. Comments on a `ready` loop mean the reviewer is still writing. `addressedComments` are waiting for the reviewer. Agent replies render **under** the parent finding, not as a stack of sibling comments.
 
@@ -68,11 +68,10 @@ Comments are the review protocol for the agent on that loop:
 If the current branch's local PR is `changes_requested`:
 
 1. `get_local_pr` and read `pendingComments` (open human/reviewer notes; each has an `id`).
-2. Fix on the current branch. Commit if needed.
-3. For **each** open comment, MCP `address_comment` with that `commentId` and a reply (what you changed). Status stays `changes_requested`. The reply sits under that reviewer comment.
-4. When the inbox is done: `set_status` `ready` and `add_comment` `role=agent` **Review requested.** That is the second review for the reviewer chat.
-5. Do not `git push`. Do not review your own loop. Do not `resolve_comment` — that is the reviewer's job.
-6. If status is still `ready`, wait. Do not address comments until `complete_review` flips the loop to `changes_requested`.
+2. Fix on the current branch. Commit if needed **before** addressing.
+3. For **each** open comment, MCP `address_comment` (or `prgenie address`) with that `commentId` and a reply (what you changed). Mid-inbox status stays `changes_requested`. The last open finding sets the loop to `ready`, refreshes HEAD, and posts **Review requested.** so `/watch-ready-prs` can dispatch the next review.
+4. Confirm status is `ready`. Do not `git push`. Do not review your own loop. Do not `resolve_comment` — that is the reviewer's job.
+5. If status is still `ready` with a review in progress (open findings, no `complete_review` yet), wait. Do not address comments until `complete_review` flips the loop to `changes_requested`.
 
 ## Requesting review
 

@@ -22,7 +22,7 @@ Arm a recurring wake using the **loop** skill (`/loop 1m /review-inbox`):
 - Local IDE: monitored shell tick every 1 minute with prompt `/review-inbox`.
 - Cloud: subscription timer, same prompt.
 - Do not start a duplicate loop if one is already running for this purpose.
-- Each tick: MCP `watch_status` first. If halted (`stop` or `export`), kill the loop immediately. Otherwise only act when `inbox=true` shows this loop (`changes_requested` with new open findings).
+- Each tick: MCP `watch_status` if listed, otherwise `node packages/cli/dist/prgenie.cjs watch`. If halted (`stop` or `export`), kill the loop immediately. Otherwise only act when `prgenie inbox` / `inbox=true` shows this loop (`changes_requested` with new open findings).
 
 Developer commands in this chat:
 

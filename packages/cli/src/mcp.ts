@@ -40,6 +40,10 @@ function ok(id: unknown, result: unknown): void {
   writeMessage({ jsonrpc: "2.0", id, result });
 }
 
+function notify(method: string, params?: Json): void {
+  writeMessage(params ? { jsonrpc: "2.0", method, params } : { jsonrpc: "2.0", method });
+}
+
 function fail(id: unknown, code: number, message: string): void {
   writeMessage({ jsonrpc: "2.0", id, error: { code, message } });
 }
@@ -292,7 +296,7 @@ const tools = [
   {
     name: "address_comment",
     description:
-      "Implementor: mark an open finding addressed and attach a reply under it. Does not set ready. After the inbox is empty, set_status ready and add_comment role=agent Review requested. The reviewer resolves addressed comments. Do not git push.",
+      "Implementor: mark an open finding addressed and attach a reply under it. Addressing the last open finding sets the loop to ready, refreshes HEAD, and posts Review requested so the reviewer queue can pick it up. The reviewer resolves addressed comments. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "commentId", "body"],
@@ -405,12 +409,13 @@ async function onRequest(msg: Json): Promise<void> {
         typeof params.protocolVersion === "string" ? params.protocolVersion : "2024-11-05";
       ok(id, {
         protocolVersion: requested,
-        capabilities: { tools: {} },
-        serverInfo: { name: "prgenie", version: "0.1.0" },
+        capabilities: { tools: { listChanged: true } },
+        serverInfo: { name: "prgenie", version: "0.1.1" },
       });
       return;
     }
     if (method === "notifications/initialized" || method === "initialized") {
+      notify("notifications/tools/list_changed");
       return;
     }
     if (method === "notifications/cancelled") {

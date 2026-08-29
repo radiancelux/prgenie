@@ -568,6 +568,15 @@ async function withPrLock(cwd, id, fn) {
     return pr;
   });
 }
+async function applyHeadRefresh(cwd, pr) {
+  const named = await git(cwd, ["rev-parse", "--verify", pr.headRef], { allowFail: true });
+  if (named.code !== 0) {
+    const branch = await currentBranch(cwd);
+    if (branch) pr.headRef = branch;
+  }
+  pr.headSha = await gitText(cwd, ["rev-parse", named.code === 0 ? pr.headRef : "HEAD"]);
+  pr.updatedAt = nowIso();
+}
 function isArchivedPr(pr) {
   return pr.status === "approved";
 }
@@ -663,13 +672,14 @@ async function setLocalPrStatus(cwd, id, status) {
   if (!STATUSES.includes(status)) {
     throw new Error(`Invalid status: ${status}`);
   }
-  return withPrLock(cwd, id, (pr) => {
+  return withPrLock(cwd, id, async (pr) => {
     if (isArchivedPr(pr) && status !== "approved") {
       throw new Error(
         `Loop ${pr.id} is archived. Start a new loop on a feature branch instead of reopening it.`
       );
     }
     pr.status = status;
+    if (status === "ready") await applyHeadRefresh(cwd, pr);
     pr.updatedAt = nowIso();
   });
 }
@@ -736,6 +746,22 @@ function maybePromoteToReviewed(pr) {
   const addressed = addressedReviewComments(pr);
   if (open2.length > 0 || addressed.length > 0) return;
   pr.status = "reviewed";
+}
+async function maybeHandoffToReviewer(cwd, pr, now, author) {
+  if (isArchivedPr(pr)) return;
+  if (pr.status !== "changes_requested") return;
+  if (pendingReviewComments(pr).length > 0) return;
+  await applyHeadRefresh(cwd, pr);
+  pr.status = "ready";
+  pr.comments.push({
+    id: newId("c"),
+    body: "Review requested.",
+    createdAt: now,
+    author,
+    role: "agent",
+    status: "resolved"
+  });
+  pr.updatedAt = now;
 }
 function lastFinding(pr) {
   const findings = (pr.comments ?? []).map(normalizeComment).filter(isFindingComment);
@@ -818,6 +844,7 @@ async function addressLocalPrComment(cwd, id, commentId, body, options = {}) {
       replyTo: target.id
     });
     pr.updatedAt = now;
+    await maybeHandoffToReviewer(cwd, pr, now, author);
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;
     return pr;
@@ -1216,6 +1243,9 @@ function writeMessage(msg) {
 function ok(id, result) {
   writeMessage({ jsonrpc: "2.0", id, result });
 }
+function notify(method, params) {
+  writeMessage(params ? { jsonrpc: "2.0", method, params } : { jsonrpc: "2.0", method });
+}
 function fail(id, code, message) {
   writeMessage({ jsonrpc: "2.0", id, error: { code, message } });
 }
@@ -1453,7 +1483,7 @@ var tools = [
   },
   {
     name: "address_comment",
-    description: "Implementor: mark an open finding addressed and attach a reply under it. Does not set ready. After the inbox is empty, set_status ready and add_comment role=agent Review requested. The reviewer resolves addressed comments. Do not git push.",
+    description: "Implementor: mark an open finding addressed and attach a reply under it. Addressing the last open finding sets the loop to ready, refreshes HEAD, and posts Review requested so the reviewer queue can pick it up. The reviewer resolves addressed comments. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "commentId", "body"],
@@ -1558,12 +1588,13 @@ async function onRequest(msg) {
       const requested = typeof params.protocolVersion === "string" ? params.protocolVersion : "2024-11-05";
       ok(id, {
         protocolVersion: requested,
-        capabilities: { tools: {} },
-        serverInfo: { name: "prgenie", version: "0.1.0" }
+        capabilities: { tools: { listChanged: true } },
+        serverInfo: { name: "prgenie", version: "0.1.1" }
       });
       return;
     }
     if (method === "notifications/initialized" || method === "initialized") {
+      notify("notifications/tools/list_changed");
       return;
     }
     if (method === "notifications/cancelled") {

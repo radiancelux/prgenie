@@ -428,7 +428,7 @@ function formatReviewInbox(pr) {
   if (pending.length === 0) return null;
   const lines = [
     `PR Genie: local PR ${pr.id} ("${pr.title}") on branch ${pr.headRef} has review comments for the agent working this loop.`,
-    `Status is ${pr.status}. Address each open comment with MCP address_comment (this loop id, that commentId, and a reply). Then set_status ready and add_comment role=agent "Review requested." for a second review. The reviewer resolves addressed comments. Do not git push.`,
+    `Status is ${pr.status}. Address each open comment with MCP address_comment (this loop id, that commentId, and a reply). Addressing the last open finding sets the loop to ready and posts Review requested. The reviewer resolves addressed comments. Do not git push.`,
     ""
   ];
   for (const comment of pending) {

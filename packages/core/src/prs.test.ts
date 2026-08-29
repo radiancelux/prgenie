@@ -182,13 +182,17 @@ test("address_comment marks a finding addressed; reviewer resolve can hand off t
   assert.equal(addressed.comments.find((c) => c.id === first.comments[0].id)?.status, "addressed");
 
   await addressLocalPrComment(repo, pr.id, second.comments[1].id, "Renamed the file.");
+  const handedBack = await getLocalPr(repo, pr.id);
+  assert.equal(handedBack.status, "ready");
+  assert.equal(pendingReviewComments(handedBack).length, 0);
+  assert.match(handedBack.comments.at(-1)?.body ?? "", /Review requested/i);
   const verified = await resolveLocalPrComment(
     repo,
     pr.id,
     first.comments[0].id,
     "Tests look good.",
   );
-  assert.equal(verified.status, "changes_requested");
+  assert.equal(verified.status, "ready");
   const done = await completeLocalPrReview(repo, pr.id);
   assert.equal(done.status, "reviewed");
   assert.equal(pendingReviewComments(done).length, 0);
@@ -213,6 +217,18 @@ test("complete_review with findings hands the loop to the implementor", async ()
   assert.equal(done.status, "changes_requested");
   assert.equal(pendingReviewComments(done).length, 1);
   assert.match(done.comments.at(-1)?.body ?? "", /implementor/);
+});
+
+test("addressing the last open finding sets ready for the next review", async () => {
+  const pr = await createLocalPr(repo, { title: "Handoff", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready");
+  const filed = await addLocalPrComment(repo, pr.id, "Missing tests.", { role: "reviewer" });
+  await completeLocalPrReview(repo, pr.id);
+  const first = await addressLocalPrComment(repo, pr.id, filed.comments[0].id, "Added tests.");
+  assert.equal(first.status, "ready");
+  assert.equal(pendingReviewComments(first).length, 0);
+  assert.equal(addressedReviewComments(first).length, 1);
+  assert.equal(first.comments.some((c) => c.role === "agent" && /review requested/i.test(c.body)), true);
 });
 
 test("resolve_comment on ready does not finish the review", async () => {
