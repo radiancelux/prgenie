@@ -631,7 +631,7 @@ test("a missing export id is treated as shipped when creating the next loop", as
   assert.equal((await getRepoWatch(repo)).halted, false);
 });
 
-test("complete_review reports headDrift when HEAD moved after Review requested", async () => {
+test("complete_review refuses when HEAD moved after Review requested", async () => {
   git(["checkout", "main"]);
   const pr = await createLocalPr(repo, { title: "Drift guard", base: "main" });
   await setLocalPrStatus(repo, pr.id, "ready");
@@ -639,10 +639,25 @@ test("complete_review reports headDrift when HEAD moved after Review requested",
   await writeFile(path.join(repo, "drift.txt"), "moved\n");
   git(["add", "drift.txt"]);
   git(["commit", "-m", "move head after review requested"]);
-  const done = await completeLocalPrReview(repo, marked.id);
-  assert.equal(done.headDrift, true);
-  assert.equal(done.reviewedAgainstSha, marked.reviewRequestedSha);
-  assert.notEqual(done.headSha, marked.reviewRequestedSha);
+  await assert.rejects(
+    () => completeLocalPrReview(repo, marked.id),
+    /HEAD moved since Review requested/,
+  );
+  assert.equal((await getLocalPr(repo, marked.id)).status, "ready");
+  const forced = await completeLocalPrReview(repo, marked.id, { allowDrift: true });
+  assert.equal(forced.headDrift, true);
+  assert.equal(forced.status, "reviewed");
+});
+
+test("reviewer finding on reviewed flips to changes_requested", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, { title: "Late finding", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready");
+  await completeLocalPrReview(repo, pr.id);
+  assert.equal((await getLocalPr(repo, pr.id)).status, "reviewed");
+  const after = await addLocalPrComment(repo, pr.id, "Missed this.", { role: "reviewer" });
+  assert.equal(after.status, "changes_requested");
+  assert.equal(pendingReviewComments(after).length, 1);
 });
 
 test("getLocalPrDiff supports paths filter", async () => {

@@ -71,7 +71,7 @@ Usage:
   prgenie comment <id> -m <message> [--role human|agent|reviewer] [--author <name>] [--path <file>] [--line <n>] [--side left|right] [--reply-to <commentId>] [--body-file <path>]
   prgenie address <id> <commentId> -m <message>
   prgenie resolve <id> <commentId> -m <message>
-  prgenie complete-review <id> [-m <message>]
+  prgenie complete-review <id> [-m <message>] [--force]
   prgenie status <id> <draft|ready|changes_requested|reviewed|approved>
   prgenie worktrees
   prgenie worktree <id>
@@ -404,16 +404,23 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (sub === "complete-review") {
-    const done = await completeLocalPrReview(repo, id, {
-      body: messageArg(rest),
-    });
-    if (done.headDrift) {
-      process.stderr.write(
-        `warning: head moved since Review requested (${done.reviewedAgainstSha?.slice(0, 8)} → ${done.headSha.slice(0, 8)}). Re-diff before trusting this review.\n`,
-      );
+    try {
+      const done = await completeLocalPrReview(repo, id, {
+        body: messageArg(rest),
+        allowDrift: flag(rest, "--force") || flag(rest, "--allow-drift"),
+      });
+      if (done.headDrift) {
+        process.stderr.write(
+          `warning: finalized despite head drift (${done.reviewedAgainstSha?.slice(0, 8)} → ${done.headSha.slice(0, 8)}).\n`,
+        );
+      }
+      printPr(done);
+      return 0;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`${message}\n`);
+      return 1;
     }
-    printPr(done);
-    return 0;
   }
   if (sub === "status") {
     const status = rest[1] as LocalPrStatus;

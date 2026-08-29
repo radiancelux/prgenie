@@ -478,13 +478,13 @@ export async function addLocalPrComment(
       if (parent) comment.replyTo = parent.id;
     }
     pr.comments.push(comment);
-    if (
-      !isArchivedPr(pr) &&
-      role !== "agent" &&
-      role !== "reviewer" &&
-      comment.status === "open"
-    ) {
-      pr.status = "changes_requested";
+    if (!isArchivedPr(pr) && comment.status === "open") {
+      // Human findings always wake the implementor. Reviewer findings normally stay on
+      // ready until complete_review; if the loop is already reviewed, a new finding must
+      // flip to changes_requested or the implementor inbox never sees it.
+      if (role === "human" || (role === "reviewer" && pr.status === "reviewed")) {
+        pr.status = "changes_requested";
+      }
     }
     pr.updatedAt = comment.createdAt;
     await writePr(cwd, pr);
@@ -600,7 +600,7 @@ export type CompleteLocalPrReviewResult = LocalPr & {
 export async function completeLocalPrReview(
   cwd: string,
   id: string,
-  options: { author?: string; body?: string } = {},
+  options: { author?: string; body?: string; allowDrift?: boolean } = {},
 ): Promise<CompleteLocalPrReviewResult> {
   const resolved = await getLocalPr(cwd, id);
   const dir = await prsDir(cwd);
@@ -611,6 +611,11 @@ export async function completeLocalPrReview(
     const reviewedAgainstSha = pr.reviewRequestedSha ?? null;
     await applyHeadRefresh(cwd, pr);
     const headDrift = Boolean(reviewedAgainstSha && reviewedAgainstSha !== pr.headSha);
+    if (headDrift && !options.allowDrift) {
+      throw new Error(
+        `HEAD moved since Review requested (${reviewedAgainstSha?.slice(0, 8)} → ${pr.headSha.slice(0, 8)}). Re-diff and file any new findings while status is still ready, then complete-review again. Use --force / allowDrift only to finalize on purpose.`,
+      );
+    }
     const open = pendingReviewComments(pr);
     const now = nowIso();
     const author = options.author?.trim() || (await userName(cwd));

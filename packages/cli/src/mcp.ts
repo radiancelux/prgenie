@@ -164,6 +164,7 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
       return completeLocalPrReview(cwd, String(args.id ?? ""), {
         author: typeof args.author === "string" ? args.author : undefined,
         body: typeof args.body === "string" ? args.body : undefined,
+        allowDrift: args.allowDrift === true,
       });
     case "get_diff": {
       const paths = Array.isArray(args.paths)
@@ -364,7 +365,7 @@ const tools = [
   {
     name: "complete_review",
     description:
-      "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed for the human. Resolves remaining addressed comments. Returns headDrift=true when HEAD moved after Review requested — re-diff before trusting the review. Archived loops stay archived. Do not git push.",
+      "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed for the human. Resolves remaining addressed comments. Refuses when HEAD moved after Review requested unless allowDrift=true — re-diff and file findings first. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -372,6 +373,10 @@ const tools = [
         id: { type: "string" },
         body: { type: "string" },
         author: { type: "string" },
+        allowDrift: {
+          type: "boolean",
+          description: "Finalize even when headSha differs from reviewRequestedSha. Default false.",
+        },
         cwd: { type: "string" },
       },
     },

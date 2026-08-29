@@ -928,8 +928,10 @@ async function addLocalPrComment(cwd, id, body, options = {}) {
       if (parent) comment.replyTo = parent.id;
     }
     pr.comments.push(comment);
-    if (!isArchivedPr(pr) && role !== "agent" && role !== "reviewer" && comment.status === "open") {
-      pr.status = "changes_requested";
+    if (!isArchivedPr(pr) && comment.status === "open") {
+      if (role === "human" || role === "reviewer" && pr.status === "reviewed") {
+        pr.status = "changes_requested";
+      }
     }
     pr.updatedAt = comment.createdAt;
     await writePr(cwd, pr);
@@ -1031,6 +1033,11 @@ async function completeLocalPrReview(cwd, id, options = {}) {
     const reviewedAgainstSha = pr.reviewRequestedSha ?? null;
     await applyHeadRefresh(cwd, pr);
     const headDrift = Boolean(reviewedAgainstSha && reviewedAgainstSha !== pr.headSha);
+    if (headDrift && !options.allowDrift) {
+      throw new Error(
+        `HEAD moved since Review requested (${reviewedAgainstSha?.slice(0, 8)} \u2192 ${pr.headSha.slice(0, 8)}). Re-diff and file any new findings while status is still ready, then complete-review again. Use --force / allowDrift only to finalize on purpose.`
+      );
+    }
     const open2 = pendingReviewComments(pr);
     const now = nowIso();
     const author = options.author?.trim() || await userName(cwd);
@@ -1524,7 +1531,8 @@ async function handleTool(name, args) {
     case "complete_review":
       return completeLocalPrReview(cwd, String(args.id ?? ""), {
         author: typeof args.author === "string" ? args.author : void 0,
-        body: typeof args.body === "string" ? args.body : void 0
+        body: typeof args.body === "string" ? args.body : void 0,
+        allowDrift: args.allowDrift === true
       });
     case "get_diff": {
       const paths = Array.isArray(args.paths) ? args.paths.filter((p) => typeof p === "string") : void 0;
@@ -1708,7 +1716,7 @@ var tools = [
   },
   {
     name: "complete_review",
-    description: "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed for the human. Resolves remaining addressed comments. Returns headDrift=true when HEAD moved after Review requested \u2014 re-diff before trusting the review. Archived loops stay archived. Do not git push.",
+    description: "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed for the human. Resolves remaining addressed comments. Refuses when HEAD moved after Review requested unless allowDrift=true \u2014 re-diff and file findings first. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -1716,6 +1724,10 @@ var tools = [
         id: { type: "string" },
         body: { type: "string" },
         author: { type: "string" },
+        allowDrift: {
+          type: "boolean",
+          description: "Finalize even when headSha differs from reviewRequestedSha. Default false."
+        },
         cwd: { type: "string" }
       }
     }
