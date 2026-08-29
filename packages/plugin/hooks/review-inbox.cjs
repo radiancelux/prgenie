@@ -305,6 +305,9 @@ async function applyHeadRefresh(cwd, pr) {
   pr.headSha = await gitText(cwd, ["rev-parse", named.code === 0 ? pr.headRef : "HEAD"]);
   pr.updatedAt = nowIso();
 }
+function isArchivedPr(pr) {
+  return pr.status === "approved";
+}
 async function listLocalPrs(cwd) {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
@@ -398,7 +401,9 @@ async function markReviewRequested(cwd, id) {
 async function findLocalPrForCurrentBranch(cwd) {
   const branch = await currentBranch(cwd);
   if (!branch) return null;
-  const matches = (await listLocalPrs(cwd)).filter((pr) => pr.headRef === branch);
+  const matches = (await listLocalPrs(cwd)).filter(
+    (pr) => pr.headRef === branch && !isArchivedPr(pr)
+  );
   if (matches.length === 0) return null;
   return matches.find((pr) => pr.status === "changes_requested") ?? matches[0];
 }

@@ -368,6 +368,9 @@ async function applyHeadRefresh(cwd, pr) {
   pr.headSha = await gitText(cwd, ["rev-parse", named.code === 0 ? pr.headRef : "HEAD"]);
   pr.updatedAt = nowIso();
 }
+function isArchivedPr(pr) {
+  return pr.status === "approved";
+}
 async function listLocalPrs(cwd) {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
@@ -467,7 +470,7 @@ async function captureAgentWork(cwd, input = {}) {
   }
   const headRef = input.head ?? await currentBranch(cwd) ?? await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
   const existing = (await listLocalPrs(cwd)).find(
-    (pr2) => pr2.headRef === headRef && pr2.status !== "approved"
+    (pr2) => pr2.headRef === headRef && !isArchivedPr(pr2)
   );
   if (existing) {
     const prevSha = existing.headSha;

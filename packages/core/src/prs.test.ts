@@ -17,8 +17,12 @@ import {
   formatReviewInbox,
   getLocalPr,
   getLocalPrDiff,
+  isArchivedPr,
   listLocalPrs,
   listWorktrees,
+  pruneArchivedLoopWorktree,
+  releaseArchivedLoop,
+  sameFsPath,
   pendingReviewComments,
   resolveLocalPrComment,
   setLocalPrStatus,
@@ -85,6 +89,10 @@ test("creates, lists, and approves a local PR", async () => {
 
   const approved = await setLocalPrStatus(repo, created.id, "approved");
   assert.equal(approved.status, "approved");
+  assert.equal(isArchivedPr(approved), true);
+  const stillThere = await getLocalPr(repo, created.id);
+  assert.equal(stillThere.status, "approved");
+  assert.ok((await listLocalPrs(repo)).some((p) => p.id === created.id));
 
   const head = git(["rev-parse", `refs/local-pr/${created.id}/head`]);
   const base = git(["rev-parse", `refs/local-pr/${created.id}/base`]);
@@ -286,5 +294,85 @@ test("a loop whose branch is not checked out gets a sibling worktree", async () 
   } catch {
     // temp leftover
   }
+});
+
+test("approved loops stay readable but are not the current-branch loop", async () => {
+  git(["checkout", "-b", "feat/archive"]);
+  await writeFile(path.join(repo, "archive.txt"), "done\n");
+  git(["add", "."]);
+  git(["commit", "-m", "archive work"]);
+  const pr = await createLocalPr(repo, { title: "Ship it", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "approved");
+  const fetched = await getLocalPr(repo, pr.id);
+  assert.equal(fetched.status, "approved");
+  assert.equal(isArchivedPr(fetched), true);
+  assert.ok((await listLocalPrs(repo)).some((p) => p.id === pr.id));
+  const found = await findLocalPrForCurrentBranch(repo);
+  assert.equal(found, null);
+  const captured = await captureAgentWork(repo, { title: "Next loop" });
+  assert.equal(captured.action, "created");
+  assert.ok(captured.pr);
+  assert.notEqual(captured.pr.id, pr.id);
+});
+
+test("pruneArchivedLoopWorktree removes a sibling .loops checkout", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, {
+    title: "Prune sibling",
+    base: "main",
+    head: "feat/widget",
+  });
+  assert.ok(pr.worktreePath);
+  assert.match(pr.worktreePath.replace(/\\/g, "/"), /\.loops\//);
+  const pruned = await pruneArchivedLoopWorktree(repo, pr);
+  assert.equal(pruned, true);
+  const trees = await listWorktrees(repo);
+  assert.equal(
+    trees.some((t) => sameFsPath(t.path, pr.worktreePath ?? "")),
+    false,
+  );
+  const still = await getLocalPr(repo, pr.id);
+  assert.equal(still.id, pr.id);
+});
+
+test("pruneArchivedLoopWorktree keeps the primary checkout", async () => {
+  git(["checkout", "feat/widget"]);
+  const pr = await createLocalPr(repo, { title: "Stay put", base: "main" });
+  assert.ok(pr.worktreePath);
+  assert.equal(path.basename(pr.worktreePath), path.basename(repo));
+  const pruned = await pruneArchivedLoopWorktree(repo, pr);
+  assert.equal(pruned, false);
+  const still = await getLocalPr(repo, pr.id);
+  assert.equal(still.id, pr.id);
+});
+
+test("releaseArchivedLoop checks the main workspace off the loop branch", async () => {
+  git(["checkout", "feat/widget"]);
+  const pr = await createLocalPr(repo, { title: "Leave main", base: "main" });
+  assert.equal(path.basename(pr.worktreePath ?? ""), path.basename(repo));
+  const released = await releaseArchivedLoop(repo, pr);
+  assert.equal(released.checkedOutBase, true);
+  assert.equal(released.prunedWorktree, false);
+  assert.equal(released.reopen, false);
+  assert.equal(git(["branch", "--show-current"]), "main");
+  const still = await getLocalPr(repo, pr.id);
+  assert.equal(still.id, pr.id);
+});
+
+test("releaseArchivedLoop does not delete a worktree this window is sitting on", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, {
+    title: "Parked",
+    base: "main",
+    head: "feat/widget",
+  });
+  assert.ok(pr.worktreePath);
+  const parked = await releaseArchivedLoop(pr.worktreePath, pr);
+  assert.equal(parked.reopen, true);
+  assert.equal(parked.prunedWorktree, false);
+  const trees = await listWorktrees(repo);
+  assert.ok(trees.some((t) => sameFsPath(t.path, pr.worktreePath ?? "")));
+  const cleaned = await releaseArchivedLoop(repo, pr);
+  assert.equal(cleaned.prunedWorktree, true);
 });
 

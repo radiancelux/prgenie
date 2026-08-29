@@ -1,6 +1,7 @@
 import { git } from "./git.js";
 import { ensureRepoGithub, runGh } from "./github-ops.js";
 import { getLocalPr, setLocalPrStatus } from "./prs.js";
+import { releaseArchivedLoop } from "./worktrees.js";
 import { haltWatch, resumeWatch } from "./watch.js";
 
 function ghBase(ref: string): string {
@@ -15,7 +16,15 @@ export function exportPushRefspec(pr: { headSha: string; headRef: string }): str
 export async function exportLocalPr(
   cwd: string,
   id: string,
-): Promise<{ url: string; id: string; alreadyExisted: boolean }> {
+): Promise<{
+  url: string;
+  id: string;
+  alreadyExisted: boolean;
+  checkedOutBase: boolean;
+  prunedWorktree: boolean;
+  primaryPath: string | null;
+  reopen: boolean;
+}> {
   const pr = await getLocalPr(cwd, id);
   const ghState = await ensureRepoGithub(cwd);
   if (!ghState.bound && !ghState.login) {
@@ -73,7 +82,9 @@ export async function exportLocalPr(
     if (pr.status !== "approved") {
       await setLocalPrStatus(cwd, pr.id, "approved");
     }
-    return { url, id: pr.id, alreadyExisted };
+    const archived = await getLocalPr(cwd, pr.id);
+    const released = await releaseArchivedLoop(cwd, archived);
+    return { url, id: pr.id, alreadyExisted, ...released };
   } catch (err) {
     await resumeWatch(cwd);
     throw err;

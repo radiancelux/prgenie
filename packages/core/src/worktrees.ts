@@ -96,6 +96,92 @@ export function loopWorktreeDir(mainPath: string, id: string): string {
   return path.join(path.dirname(mainPath), `${path.basename(mainPath)}.loops`, id);
 }
 
+/** `../<repo>.loops/<id>` → the primary repo folder and loop id. */
+export function loopWorktreeIdentity(absPath: string): { primaryPath: string; id: string } | null {
+  const resolved = path.resolve(absPath);
+  const parent = path.dirname(resolved);
+  const loopsDir = path.basename(parent);
+  if (!loopsDir.endsWith(".loops")) return null;
+  const id = path.basename(resolved);
+  if (!/^lp-[0-9a-f]{8}$/i.test(id)) return null;
+  return {
+    primaryPath: path.join(path.dirname(parent), loopsDir.slice(0, -".loops".length)),
+    id,
+  };
+}
+
+export function localBaseRef(baseRef: string): string {
+  return baseRef.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+}
+
+export function primaryWorktreePath(trees: WorktreeInfo[]): string | null {
+  const mains = trees.filter((t) => !t.bare && !loopWorktreeIdentity(t.path));
+  return mains[0]?.path ?? trees.find((t) => !t.bare)?.path ?? null;
+}
+
+export type ReleaseArchivedLoopResult = {
+  checkedOutBase: boolean;
+  prunedWorktree: boolean;
+  primaryPath: string | null;
+  /** This window is still the extra loop checkout; reopen primaryPath then prune. */
+  reopen: boolean;
+};
+
+async function checkoutPrimaryOffLoop(
+  primary: string,
+  loop: { headRef: string; baseRef: string },
+): Promise<boolean> {
+  const base = localBaseRef(loop.baseRef);
+  if (!base || base === loop.headRef) return false;
+  const branch = await currentBranch(primary);
+  if (branch !== loop.headRef) return false;
+  const switched = await git(primary, ["checkout", base], { allowFail: true });
+  return switched.code === 0;
+}
+
+/** Drop a sibling .loops checkout after export. Never remove the primary repo folder. */
+export async function pruneArchivedLoopWorktree(
+  cwd: string,
+  loop: { id: string; worktreePath: string | null },
+): Promise<boolean> {
+  const trees = await listWorktrees(cwd);
+  const primary = primaryWorktreePath(trees);
+  if (!primary) return false;
+  const dest = loopWorktreeDir(primary, loop.id);
+  const extra = trees.find((t) => sameFsPath(t.path, dest));
+  if (!extra) return false;
+  const here = await findGitRoot(cwd);
+  if (here && sameFsPath(here, extra.path)) return false;
+  if (sameFsPath(extra.path, primary)) return false;
+  let removed = await git(cwd, ["worktree", "remove", extra.path], { allowFail: true });
+  if (removed.code !== 0) {
+    removed = await git(cwd, ["worktree", "remove", "--force", extra.path], { allowFail: true });
+  }
+  if (removed.code !== 0) return false;
+  await git(cwd, ["worktree", "prune"], { allowFail: true });
+  return true;
+}
+
+/** After export: take the loop branch off the main workspace and remove the extra worktree. */
+export async function releaseArchivedLoop(
+  cwd: string,
+  loop: { id: string; headRef: string; baseRef: string; worktreePath: string | null },
+): Promise<ReleaseArchivedLoopResult> {
+  const trees = await listWorktrees(cwd);
+  const primary = primaryWorktreePath(trees);
+  const checkedOutBase = primary ? await checkoutPrimaryOffLoop(primary, loop) : false;
+  const prunedWorktree = await pruneArchivedLoopWorktree(cwd, loop);
+  const here = await findGitRoot(cwd);
+  const dest = primary ? loopWorktreeDir(primary, loop.id) : null;
+  const stillExtra = dest
+    ? (await listWorktrees(cwd)).some((t) => sameFsPath(t.path, dest))
+    : false;
+  const reopen = Boolean(
+    stillExtra && here && dest && sameFsPath(here, dest),
+  );
+  return { checkedOutBase, prunedWorktree, primaryPath: primary, reopen };
+}
+
 /** One git worktree per loop branch so the developer can switch this window onto the implementor's files. */
 export async function ensureWorktreeForLoop(
   cwd: string,

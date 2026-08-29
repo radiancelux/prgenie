@@ -161,8 +161,91 @@ function worktreeForBranch(trees, branch) {
   const match = trees.find((t) => t.branch === branch);
   return match?.path ?? null;
 }
+function sameFsPath(a, b) {
+  try {
+    const leftStat = (0, import_node_fs.statSync)(a);
+    const rightStat = (0, import_node_fs.statSync)(b);
+    if (leftStat.ino !== 0 && leftStat.ino === rightStat.ino && leftStat.dev === rightStat.dev) {
+      return true;
+    }
+  } catch {
+  }
+  const canon = (p) => {
+    const normalized = import_node_path2.default.resolve(p);
+    try {
+      return import_node_fs.realpathSync.native(normalized);
+    } catch {
+      try {
+        return (0, import_node_fs.realpathSync)(normalized);
+      } catch {
+        return normalized;
+      }
+    }
+  };
+  const left = canon(a);
+  const right = canon(b);
+  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
 function loopWorktreeDir(mainPath, id) {
   return import_node_path2.default.join(import_node_path2.default.dirname(mainPath), `${import_node_path2.default.basename(mainPath)}.loops`, id);
+}
+function loopWorktreeIdentity(absPath) {
+  const resolved = import_node_path2.default.resolve(absPath);
+  const parent = import_node_path2.default.dirname(resolved);
+  const loopsDir = import_node_path2.default.basename(parent);
+  if (!loopsDir.endsWith(".loops")) return null;
+  const id = import_node_path2.default.basename(resolved);
+  if (!/^lp-[0-9a-f]{8}$/i.test(id)) return null;
+  return {
+    primaryPath: import_node_path2.default.join(import_node_path2.default.dirname(parent), loopsDir.slice(0, -".loops".length)),
+    id
+  };
+}
+function localBaseRef(baseRef) {
+  return baseRef.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+}
+function primaryWorktreePath(trees) {
+  const mains = trees.filter((t) => !t.bare && !loopWorktreeIdentity(t.path));
+  return mains[0]?.path ?? trees.find((t) => !t.bare)?.path ?? null;
+}
+async function checkoutPrimaryOffLoop(primary, loop) {
+  const base = localBaseRef(loop.baseRef);
+  if (!base || base === loop.headRef) return false;
+  const branch = await currentBranch(primary);
+  if (branch !== loop.headRef) return false;
+  const switched = await git(primary, ["checkout", base], { allowFail: true });
+  return switched.code === 0;
+}
+async function pruneArchivedLoopWorktree(cwd, loop) {
+  const trees = await listWorktrees(cwd);
+  const primary = primaryWorktreePath(trees);
+  if (!primary) return false;
+  const dest = loopWorktreeDir(primary, loop.id);
+  const extra = trees.find((t) => sameFsPath(t.path, dest));
+  if (!extra) return false;
+  const here = await findGitRoot(cwd);
+  if (here && sameFsPath(here, extra.path)) return false;
+  if (sameFsPath(extra.path, primary)) return false;
+  let removed = await git(cwd, ["worktree", "remove", extra.path], { allowFail: true });
+  if (removed.code !== 0) {
+    removed = await git(cwd, ["worktree", "remove", "--force", extra.path], { allowFail: true });
+  }
+  if (removed.code !== 0) return false;
+  await git(cwd, ["worktree", "prune"], { allowFail: true });
+  return true;
+}
+async function releaseArchivedLoop(cwd, loop) {
+  const trees = await listWorktrees(cwd);
+  const primary = primaryWorktreePath(trees);
+  const checkedOutBase = primary ? await checkoutPrimaryOffLoop(primary, loop) : false;
+  const prunedWorktree = await pruneArchivedLoopWorktree(cwd, loop);
+  const here = await findGitRoot(cwd);
+  const dest = primary ? loopWorktreeDir(primary, loop.id) : null;
+  const stillExtra = dest ? (await listWorktrees(cwd)).some((t) => sameFsPath(t.path, dest)) : false;
+  const reopen = Boolean(
+    stillExtra && here && dest && sameFsPath(here, dest)
+  );
+  return { checkedOutBase, prunedWorktree, primaryPath: primary, reopen };
 }
 async function ensureWorktreeForLoop(cwd, loop) {
   const trees = await listWorktrees(cwd);
@@ -362,6 +445,9 @@ async function withPrLock(cwd, id, fn) {
     pr.worktreePath = resolved.worktreePath;
     return pr;
   });
+}
+function isArchivedPr(pr) {
+  return pr.status === "approved";
 }
 async function listLocalPrs(cwd) {
   await requireGitRoot(cwd);
@@ -944,7 +1030,9 @@ async function exportLocalPr(cwd, id) {
     if (pr.status !== "approved") {
       await setLocalPrStatus(cwd, pr.id, "approved");
     }
-    return { url, id: pr.id, alreadyExisted };
+    const archived = await getLocalPr(cwd, pr.id);
+    const released = await releaseArchivedLoop(cwd, archived);
+    return { url, id: pr.id, alreadyExisted, ...released };
   } catch (err) {
     await resumeWatch(cwd);
     throw err;
@@ -997,8 +1085,10 @@ async function handleTool(name, args) {
       const prs = (await listLocalPrs(cwd)).map(withCommentViews);
       const status = typeof args.status === "string" ? args.status : "";
       const inbox = args.inbox === true;
+      const all = args.all === true;
       return prs.filter((pr) => {
         if (status && pr.status !== status) return false;
+        if (!status && !all && isArchivedPr(pr)) return false;
         if (inbox && pr.pendingComments.length === 0) return false;
         return true;
       });
@@ -1096,7 +1186,7 @@ var tools = [
   },
   {
     name: "list_local_prs",
-    description: "List unpublished local pull requests. status=ready is the reviewer queue. status=reviewed is waiting on the human. inbox=true is loops with open pendingComments for the implementor.",
+    description: "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue. status=reviewed is waiting on the human. inbox=true is loops with open pendingComments for the implementor.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1108,6 +1198,10 @@ var tools = [
         inbox: {
           type: "boolean",
           description: "Only loops with pending human/reviewer comments."
+        },
+        all: {
+          type: "boolean",
+          description: "Include archived (approved/exported) loops. Hidden by default."
         }
       }
     }
@@ -1255,7 +1349,7 @@ var tools = [
   },
   {
     name: "export_local_pr",
-    description: "Developer command: halt listen loops, approve the loop, git push, and open a GitHub PR at origin. Only when the developer explicitly asks to export.",
+    description: "Developer command: halt listen loops, git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export.",
     inputSchema: {
       type: "object",
       required: ["id"],

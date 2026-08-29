@@ -93,6 +93,10 @@ async function applyHeadRefresh(cwd: string, pr: LocalPr): Promise<void> {
   pr.updatedAt = nowIso();
 }
 
+export function isArchivedPr(pr: { status: LocalPrStatus }): boolean {
+  return pr.status === "approved";
+}
+
 export async function listLocalPrs(cwd: string): Promise<LocalPr[]> {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
@@ -327,7 +331,9 @@ export async function markReviewRequested(cwd: string, id: string): Promise<Loca
 export async function findLocalPrForCurrentBranch(cwd: string): Promise<LocalPr | null> {
   const branch = await currentBranch(cwd);
   if (!branch) return null;
-  const matches = (await listLocalPrs(cwd)).filter((pr) => pr.headRef === branch);
+  const matches = (await listLocalPrs(cwd)).filter(
+    (pr) => pr.headRef === branch && !isArchivedPr(pr),
+  );
   if (matches.length === 0) return null;
   return matches.find((pr) => pr.status === "changes_requested") ?? matches[0];
 }
@@ -601,7 +607,7 @@ export async function captureAgentWork(
     (await currentBranch(cwd)) ??
     (await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]));
   const existing = (await listLocalPrs(cwd)).find(
-    (pr) => pr.headRef === headRef && pr.status !== "approved",
+    (pr) => pr.headRef === headRef && !isArchivedPr(pr),
   );
   if (existing) {
     const prevSha = existing.headSha;

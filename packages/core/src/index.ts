@@ -18,8 +18,12 @@ export {
   listWorktrees,
   worktreeForBranch,
   ensureWorktreeForLoop,
+  loopWorktreeIdentity,
+  pruneArchivedLoopWorktree,
+  releaseArchivedLoop,
   sameFsPath,
 } from "./worktrees.js";
+export type { ReleaseArchivedLoopResult } from "./worktrees.js";
 export {
   addLocalPrComment,
   addressLocalPrComment,
@@ -35,6 +39,7 @@ export {
   getLocalPrDiff,
   getLocalPrNameStatus,
   hasCommitsAheadOfBase,
+  isArchivedPr,
   isFindingComment,
   isReviewRequestBody,
   listLocalPrs,

@@ -48,7 +48,7 @@ prgenie create [--title t] [--body "summary"] [--base main] [--head branch]
 prgenie queue
 prgenie inbox
 prgenie update <id> [--title t] [--body "summary"]
-prgenie list
+prgenie list [--all]
 prgenie show <id>
 prgenie diff <id>
 prgenie approve <id>
@@ -78,9 +78,7 @@ Cursor may auto-clean worktrees. The loop remains.
 
 `draft` → `ready` → `changes_requested` → `reviewed` → `approved`
 
-Human and reviewer comments are **open** findings (`changes_requested`). The implementor **addresses** each with a reply under that comment (`address_comment`), then marks `ready` for a second review. The reviewer **resolves** addressed comments, or `complete_review` if nothing else is wrong — that sets `reviewed` so **you** can look. The **reviewer chat** runs `/watch-ready-prs`. The **implementor chat** runs `/watch-review-inbox`. `/stop-watch` ends both loops. `/export-local-pr` ends the loops and opens the GitHub PR at origin. Every loop should have a **summary** (`body`): why, what changed, how to test.
-
-Export to GitHub is an explicit later step (not in this slice).
+Human and reviewer comments are **open** findings (`changes_requested`). The implementor **addresses** each with a reply under that comment (`address_comment`), then marks `ready` for a second review. The reviewer **resolves** addressed comments, or `complete_review` if nothing else is wrong — that sets `reviewed` so **you** can look. The **reviewer chat** runs `/watch-ready-prs`. The **implementor chat** runs `/watch-review-inbox`. `/stop-watch` ends both loops. `/export-local-pr` opens the GitHub PR at origin and **archives** the loop (`approved`): it stays on disk (`prgenie show <id>`, `refs/local-pr/*`) but drops off `prgenie list`, Local PRs, and MCP `list_local_prs` unless you pass `--all` / `all=true`. Export checks the **main workspace** off the loop branch (onto the loop base) and removes a sibling `../<repo>.loops/<id>` checkout. If this window is still on that extra worktree, PR Genie reopens the primary folder and then clears it. Every loop should have a **summary** (`body`): why, what changed, how to test.
 
 ## License
 
