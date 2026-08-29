@@ -51,6 +51,7 @@ export {
   pendingReviewComments,
   refreshLocalPrHead,
   resolveLocalPrComment,
+  resumeWatchForNextLoop,
   setLocalPrStatus,
   shouldSpawnReviewer,
   updateLocalPr,

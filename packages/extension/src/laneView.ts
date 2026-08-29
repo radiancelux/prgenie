@@ -563,6 +563,7 @@ function laneHtml(webview: vscode.Webview): string {
         return;
       }
       delete list.dataset.empty;
+      for (const leftover of [...list.querySelectorAll(":scope > .empty")]) leftover.remove();
       const y = list.scrollTop;
       const nodes = new Map();
       for (const el of list.querySelectorAll(".pr")) nodes.set(el.dataset.id, el);
@@ -585,6 +586,7 @@ function laneHtml(webview: vscode.Webview): string {
           ? "reviewed — your turn"
           : pr.status.replace("_", " ");
         info.children[1].textContent = pr.title;
+        info.children[1].title = pr.title;
         info.children[2].textContent = src + " · " + pr.headRef + " → " + pr.baseRef;
         const go = el.querySelector(".go");
         go.textContent = here ? "Here" : "Switch";
@@ -621,8 +623,10 @@ function panelHtml(webview: vscode.Webview): string {
     }
     .toolbar h1 {
       font-size: 13px; font-weight: 600; margin: 0;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      max-width: 36vw;
+      white-space: normal;
+      overflow: visible;
+      flex: 1 1 180px;
+      min-width: 0;
     }
     .pill {
       font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
@@ -783,6 +787,7 @@ function panelHtml(webview: vscode.Webview): string {
       const short = (sha) => (sha || "").slice(0, 7);
       const when = selected.updatedAt ? new Date(selected.updatedAt).toLocaleString() : "";
       root.querySelector("h1").textContent = selected.title;
+      root.querySelector("h1").title = selected.title;
       root.querySelector(".pill").textContent = selected.status.replace("_", " ");
       root.querySelector("#range").textContent =
         selected.id + " · " + selected.headRef + " → " + selected.baseRef + " · " + short(selected.headSha) + " " + (when ? "· " + when : "");

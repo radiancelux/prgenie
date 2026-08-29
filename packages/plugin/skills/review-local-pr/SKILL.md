@@ -20,7 +20,7 @@ Start **`/watch-ready-prs`**. Each tick is `/review-queue`: Task a `generalPurpo
 If you **are** the subagent (one id in the prompt):
 
 1. `get_local_pr` / `prgenie show` + `get_diff`. Read `body`. `addressedComments` means a **second review** — verify those replies against the diff. Do not re-file a finding that is actually fixed.
-2. Post **all** new findings with `add_comment` `role=reviewer`. Status stays `ready`.
+2. Post **all** new findings with `add_comment` `role=reviewer`. Status stays `ready`. Long findings: MCP `add_comment` (Content-Length framed) or `prgenie comment --body-file`. Do not pass finding text through an unquoted shell `-m`.
 3. `resolve_comment` addressed threads that are actually fixed. That does not finish the review.
 4. **Always** `complete_review` **before you stop**. Open findings → `changes_requested`. No open findings → `reviewed`. That write is the handoff. Do not ask the orchestrator to set status from your Task summary.
 5. Stop. Do not implement. Do not spawn further reviewers.

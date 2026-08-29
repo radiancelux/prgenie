@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   addLocalPrComment,
   addressLocalPrComment,
@@ -47,7 +48,7 @@ Usage:
   prgenie approve <id>
   prgenie ready <id>
   prgenie request-changes <id> [-m <message>]
-  prgenie comment <id> -m <message> [--role human|agent|reviewer] [--author <name>] [--path <file>] [--line <n>] [--side left|right] [--reply-to <commentId>]
+  prgenie comment <id> -m <message> [--role human|agent|reviewer] [--author <name>] [--path <file>] [--line <n>] [--side left|right] [--reply-to <commentId>] [--body-file <path>]
   prgenie address <id> <commentId> -m <message>
   prgenie resolve <id> <commentId> -m <message>
   prgenie complete-review <id> [-m <message>]
@@ -67,6 +68,15 @@ function arg(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
   if (i === -1) return undefined;
   return args[i + 1];
+}
+
+/** Comment text from -m, --message, --body-file, or stdin when -m is -. */
+function messageArg(args: string[]): string | undefined {
+  const file = arg(args, "--body-file");
+  if (file) return readFileSync(file, "utf8");
+  const message = arg(args, "-m") ?? arg(args, "--message");
+  if (message === "-") return readFileSync(0, "utf8");
+  return message;
 }
 
 function flag(args: string[], name: string): boolean {
@@ -268,16 +278,16 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (sub === "request-changes") {
-    const message = arg(rest, "-m") ?? arg(rest, "--message");
+    const message = messageArg(rest);
     if (message) await addLocalPrComment(repo, id, message, { role: "human" });
     printPr(await setLocalPrStatus(repo, id, "changes_requested"));
     return 0;
   }
   if (sub === "comment") {
-    const message = arg(rest, "-m") ?? arg(rest, "--message");
+    const message = messageArg(rest);
     if (!message) {
       process.stderr.write(
-        "prgenie comment <id> -m <message> [--role human|agent|reviewer] [--path <file>] [--line <n>]\n",
+        "prgenie comment <id> -m <message> [--body-file <path>] [--role human|agent|reviewer] [--path <file>] [--line <n>]\n",
       );
       return 1;
     }
@@ -300,7 +310,7 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "address") {
     const commentId = rest[1];
-    const message = arg(rest, "-m") ?? arg(rest, "--message");
+    const message = messageArg(rest);
     if (!commentId || !message) {
       process.stderr.write("prgenie address <id> <commentId> -m <message>\n");
       return 1;
@@ -310,7 +320,7 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "resolve") {
     const commentId = rest[1];
-    const message = arg(rest, "-m") ?? arg(rest, "--message");
+    const message = messageArg(rest);
     if (!commentId || !message) {
       process.stderr.write("prgenie resolve <id> <commentId> -m <message>\n");
       return 1;
@@ -321,7 +331,7 @@ export async function run(argv: string[]): Promise<number> {
   if (sub === "complete-review") {
     printPr(
       await completeLocalPrReview(repo, id, {
-        body: arg(rest, "-m") ?? arg(rest, "--message"),
+        body: messageArg(rest),
       }),
     );
     return 0;
