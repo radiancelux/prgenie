@@ -6,6 +6,8 @@ import { parseJsonObject, prFile, prsDir, withFileLock, writeJsonFile } from "./
 import {
   currentBranch,
   detectDefaultBase,
+  ensureLoopFeatureBranch,
+  isBaseBranch,
   listWorktrees,
   shortLogSubject,
   userName,
@@ -136,9 +138,7 @@ export async function createLocalPr(
   input: CreateLocalPrInput = {},
 ): Promise<LocalPr> {
   const root = await requireGitRoot(cwd);
-  const headRef =
-    input.head ?? (await currentBranch(cwd)) ?? (await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]));
-  const headSha = await gitText(cwd, ["rev-parse", input.head ?? "HEAD"]);
+  const id = newId("lp");
   const baseRef = input.base ?? (await detectDefaultBase(cwd));
   const baseResolved = await git(cwd, ["rev-parse", "--verify", baseRef], {
     allowFail: true,
@@ -147,13 +147,20 @@ export async function createLocalPr(
     throw new Error(`Cannot resolve base branch: ${baseRef}`);
   }
   const baseSha = baseResolved.stdout.trim();
+  const requestedHead =
+    input.head ?? (await currentBranch(cwd)) ?? (await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]));
+  const { headRef, headSha } = await ensureLoopFeatureBranch(root, {
+    id,
+    requestedHead,
+    baseRef,
+  });
   const title =
     input.title?.trim() ||
     (await shortLogSubject(cwd, headSha).catch(() => "")) ||
     `Local PR from ${headRef}`;
   const createdAt = nowIso();
   const pr: LocalPr = {
-    id: newId("lp"),
+    id,
     title,
     body: input.body?.trim() ?? "",
     status: "draft",
@@ -606,13 +613,16 @@ export async function captureAgentWork(
       reason: "no commits ahead of base",
     };
   }
+  const baseRef = input.base ?? (await detectDefaultBase(cwd));
   const headRef =
     input.head ??
     (await currentBranch(cwd)) ??
     (await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]));
-  const existing = (await listLocalPrs(cwd)).find(
-    (pr) => pr.headRef === headRef && !isArchivedPr(pr),
-  );
+  const existing = isBaseBranch(headRef, baseRef)
+    ? undefined
+    : (await listLocalPrs(cwd)).find(
+        (pr) => pr.headRef === headRef && !isArchivedPr(pr),
+      );
   if (existing) {
     const prevSha = existing.headSha;
     const updated = await withPrLock(cwd, existing.id, async (pr) => {

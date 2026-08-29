@@ -1,6 +1,6 @@
 ---
 name: watch-review-inbox
-description: Implementor chat listen loop. Watch for reviewer comments on this worktree's local PR and treat them as the brief.
+description: Implementor chat listen loop. If there is no loop yet, take a ticket or chat brief via /start-loop. Then watch for reviewer comments on this worktree's local PR.
 ---
 
 # Watch review inbox
@@ -11,7 +11,9 @@ Reviewer `role=reviewer` comments (and human comments) are how review completion
 
 ## Now
 
-Run one `/review-inbox` pass immediately.
+If this branch has **no** live local PR yet, the user's message is the brief — follow `/start-loop` (ticket MCP or chat text), then come back here. Do not sit idle on `main` waiting for a packet.
+
+Otherwise run one `/review-inbox` pass immediately.
 
 ## Listen
 
