@@ -288,6 +288,7 @@ export class LaneHub implements vscode.Disposable {
         if (!pr) return;
         const dest = await ensureWorktreeForLoop(cwd, pr, {
           staleLoopIds: prs.filter((p) => p.id !== pr.id && isArchivedPr(p)).map((p) => p.id),
+          liveLoopIds: prs.filter((p) => !isArchivedPr(p)).map((p) => p.id),
         });
         const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (folder && sameFsPath(folder, dest)) {

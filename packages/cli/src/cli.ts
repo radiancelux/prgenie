@@ -244,6 +244,9 @@ export async function run(argv: string[]): Promise<number> {
       staleLoopIds: (await listLocalPrs(repo))
         .filter((p) => p.id !== pr.id && isArchivedPr(p))
         .map((p) => p.id),
+      liveLoopIds: (await listLocalPrs(repo))
+        .filter((p) => !isArchivedPr(p))
+        .map((p) => p.id),
     });
     process.stdout.write(`${dest}\n`);
     return 0;

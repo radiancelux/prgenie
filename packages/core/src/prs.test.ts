@@ -23,6 +23,7 @@ import {
   pruneArchivedLoopWorktree,
   releaseArchivedLoop,
   sameFsPath,
+  ensureWorktreeForLoop,
   pendingReviewComments,
   resolveLocalPrComment,
   setLocalPrStatus,
@@ -410,5 +411,29 @@ test("new loop does not reuse an archived .loops checkout", async () => {
   });
   const trees = await listWorktrees(repo);
   assert.ok(trees.some((t) => sameFsPath(t.path, next.worktreePath ?? "")));
+});
+
+test("ensureWorktreeForLoop does not attach to another loop's leftover .loops folder", async () => {
+  git(["checkout", "main"]);
+  const leftover = await createLocalPr(repo, {
+    title: "Leftover folder",
+    base: "main",
+    head: "feat/widget",
+  });
+  assert.ok(leftover.worktreePath);
+  await setLocalPrStatus(repo, leftover.id, "approved");
+  const parked = await releaseArchivedLoop(leftover.worktreePath, leftover);
+  assert.equal(parked.reopen, true);
+  const dest = await ensureWorktreeForLoop(
+    repo,
+    {
+      id: "lp-aaaaaaaa",
+      headRef: "feat/widget",
+      headSha: leftover.headSha,
+    },
+    { liveLoopIds: [] },
+  );
+  assert.match(dest.replace(/\\/g, "/"), /lp-aaaaaaaa$/);
+  assert.equal(sameFsPath(dest, leftover.worktreePath ?? ""), false);
 });
 

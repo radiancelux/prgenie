@@ -222,10 +222,7 @@ async function freeStaleLoopWorktree(cwd: string, treePath: string): Promise<voi
     await git(treePath, ["checkout", "--detach"], { allowFail: true });
     return;
   }
-  let removed = await git(cwd, ["worktree", "remove", treePath], { allowFail: true });
-  if (removed.code !== 0) {
-    removed = await git(cwd, ["worktree", "remove", "--force", treePath], { allowFail: true });
-  }
+  await git(cwd, ["worktree", "remove", treePath], { allowFail: true });
   await git(cwd, ["worktree", "prune"], { allowFail: true });
 }
 
@@ -257,11 +254,15 @@ async function addLoopWorktree(
 export async function ensureWorktreeForLoop(
   cwd: string,
   loop: { id: string; headRef: string; headSha: string },
-  options: { staleLoopIds?: Iterable<string> } = {},
+  options: { staleLoopIds?: Iterable<string>; liveLoopIds?: Iterable<string> } = {},
 ): Promise<string> {
   const stale = new Set(
     [...(options.staleLoopIds ?? [])].map((id) => id.toLowerCase()),
   );
+  const live = new Set(
+    [...(options.liveLoopIds ?? [])].map((id) => id.toLowerCase()),
+  );
+  live.add(loop.id.toLowerCase());
   let trees = await listWorktrees(cwd);
   const primary = primaryWorktreePath(trees);
   if (!primary) throw new Error("No git worktree to attach a loop to.");
@@ -275,10 +276,10 @@ export async function ensureWorktreeForLoop(
     if (sameFsPath(holder.path, primary)) return holder.path;
     const ident = loopWorktreeIdentity(holder.path);
     if (ident && ident.id.toLowerCase() === loop.id.toLowerCase()) return holder.path;
-    if (ident && stale.has(ident.id.toLowerCase())) {
+    if (ident) {
+      const otherId = ident.id.toLowerCase();
+      if (live.has(otherId) && !stale.has(otherId)) continue;
       await freeStaleLoopWorktree(cwd, holder.path);
-    } else if (ident) {
-      return holder.path;
     }
   }
 

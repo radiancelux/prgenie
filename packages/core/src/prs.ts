@@ -169,10 +169,11 @@ export async function createLocalPr(
     reviewRequestedSha: null,
   };
   await writePr(root, pr);
-  const staleLoopIds = (await listLocalPrs(root))
-    .filter((other) => other.id !== pr.id && isArchivedPr(other))
-    .map((other) => other.id);
-  pr.worktreePath = await ensureWorktreeForLoop(root, pr, { staleLoopIds });
+  const others = await listLocalPrs(root);
+  pr.worktreePath = await ensureWorktreeForLoop(root, pr, {
+    staleLoopIds: others.filter((other) => other.id !== pr.id && isArchivedPr(other)).map((other) => other.id),
+    liveLoopIds: others.filter((other) => !isArchivedPr(other)).map((other) => other.id),
+  });
   return pr;
 }
 
@@ -626,6 +627,9 @@ export async function captureAgentWork(
     updated.worktreePath = await ensureWorktreeForLoop(cwd, updated, {
       staleLoopIds: (await listLocalPrs(cwd))
         .filter((other) => other.id !== updated.id && isArchivedPr(other))
+        .map((other) => other.id),
+      liveLoopIds: (await listLocalPrs(cwd))
+        .filter((other) => !isArchivedPr(other))
         .map((other) => other.id),
     });
     return { action: "updated", pr: updated };

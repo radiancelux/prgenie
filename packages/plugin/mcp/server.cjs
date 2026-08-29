@@ -275,10 +275,7 @@ async function freeStaleLoopWorktree(cwd, treePath) {
     await git(treePath, ["checkout", "--detach"], { allowFail: true });
     return;
   }
-  let removed = await git(cwd, ["worktree", "remove", treePath], { allowFail: true });
-  if (removed.code !== 0) {
-    removed = await git(cwd, ["worktree", "remove", "--force", treePath], { allowFail: true });
-  }
+  await git(cwd, ["worktree", "remove", treePath], { allowFail: true });
   await git(cwd, ["worktree", "prune"], { allowFail: true });
 }
 async function addLoopWorktree(cwd, dest, loop) {
@@ -304,6 +301,10 @@ async function ensureWorktreeForLoop(cwd, loop, options = {}) {
   const stale = new Set(
     [...options.staleLoopIds ?? []].map((id) => id.toLowerCase())
   );
+  const live = new Set(
+    [...options.liveLoopIds ?? []].map((id) => id.toLowerCase())
+  );
+  live.add(loop.id.toLowerCase());
   let trees = await listWorktrees(cwd);
   const primary = primaryWorktreePath(trees);
   if (!primary) throw new Error("No git worktree to attach a loop to.");
@@ -316,10 +317,10 @@ async function ensureWorktreeForLoop(cwd, loop, options = {}) {
     if (sameFsPath(holder.path, primary)) return holder.path;
     const ident = loopWorktreeIdentity(holder.path);
     if (ident && ident.id.toLowerCase() === loop.id.toLowerCase()) return holder.path;
-    if (ident && stale.has(ident.id.toLowerCase())) {
+    if (ident) {
+      const otherId = ident.id.toLowerCase();
+      if (live.has(otherId) && !stale.has(otherId)) continue;
       await freeStaleLoopWorktree(cwd, holder.path);
-    } else if (ident) {
-      return holder.path;
     }
   }
   const here = await findGitRoot(cwd);
@@ -570,8 +571,11 @@ async function createLocalPr(cwd, input = {}) {
     reviewRequestedSha: null
   };
   await writePr(root, pr);
-  const staleLoopIds = (await listLocalPrs(root)).filter((other) => other.id !== pr.id && isArchivedPr(other)).map((other) => other.id);
-  pr.worktreePath = await ensureWorktreeForLoop(root, pr, { staleLoopIds });
+  const others = await listLocalPrs(root);
+  pr.worktreePath = await ensureWorktreeForLoop(root, pr, {
+    staleLoopIds: others.filter((other) => other.id !== pr.id && isArchivedPr(other)).map((other) => other.id),
+    liveLoopIds: others.filter((other) => !isArchivedPr(other)).map((other) => other.id)
+  });
   return pr;
 }
 async function updateLocalPr(cwd, id, patch) {
@@ -1220,7 +1224,8 @@ async function handleTool(name, args) {
     case "ensure_worktree": {
       const pr = await getLocalPr(cwd, String(args.id ?? ""));
       const dest = await ensureWorktreeForLoop(cwd, pr, {
-        staleLoopIds: (await listLocalPrs(cwd)).filter((p) => p.id !== pr.id && isArchivedPr(p)).map((p) => p.id)
+        staleLoopIds: (await listLocalPrs(cwd)).filter((p) => p.id !== pr.id && isArchivedPr(p)).map((p) => p.id),
+        liveLoopIds: (await listLocalPrs(cwd)).filter((p) => !isArchivedPr(p)).map((p) => p.id)
       });
       return { ...pr, worktreePath: dest };
     }
