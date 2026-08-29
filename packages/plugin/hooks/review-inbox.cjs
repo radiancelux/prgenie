@@ -23,7 +23,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // packages/cli/src/review-hook.ts
-var import_node_fs = require("node:fs");
+var import_node_fs2 = require("node:fs");
 
 // packages/core/src/types.ts
 var COMMENT_STATUSES = ["open", "addressed", "resolved"];
@@ -101,6 +101,8 @@ async function requireGitRoot(cwd) {
 }
 
 // packages/core/src/worktrees.ts
+var import_node_fs = require("node:fs");
+var import_node_path2 = __toESM(require("node:path"), 1);
 async function listWorktrees(cwd) {
   const { stdout } = await git(cwd, ["worktree", "list", "--porcelain"]);
   const blocks = stdout.split(/\n\n+/).map((b) => b.trim()).filter(Boolean);
@@ -134,31 +136,87 @@ async function currentBranch(cwd) {
   const name = result.stdout.trim();
   return name || null;
 }
-function worktreeForBranch(trees, branch) {
-  const match = trees.find((t) => t.branch === branch);
-  return match?.path ?? null;
+function worktreeForLoop(trees, loop) {
+  const primary = primaryWorktreePath(trees);
+  const dest = primary ? loopWorktreeDir(primary, loop.id) : null;
+  if (dest) {
+    const own = trees.find((t) => sameFsPath(t.path, dest));
+    if (own) return own.path;
+  }
+  const onBranch = trees.filter((t) => t.branch === loop.headRef);
+  const onPrimary = onBranch.find((t) => primary && sameFsPath(t.path, primary));
+  if (onPrimary) return onPrimary.path;
+  const ownLoops = onBranch.find((t) => {
+    const ident = loopWorktreeIdentity(t.path);
+    return ident && ident.id.toLowerCase() === loop.id.toLowerCase();
+  });
+  return ownLoops?.path ?? null;
+}
+function sameFsPath(a, b) {
+  try {
+    const leftStat = (0, import_node_fs.statSync)(a);
+    const rightStat = (0, import_node_fs.statSync)(b);
+    if (leftStat.ino !== 0 && leftStat.ino === rightStat.ino && leftStat.dev === rightStat.dev) {
+      return true;
+    }
+  } catch {
+  }
+  const canon = (p) => {
+    const normalized = import_node_path2.default.resolve(p);
+    try {
+      return import_node_fs.realpathSync.native(normalized);
+    } catch {
+      try {
+        return (0, import_node_fs.realpathSync)(normalized);
+      } catch {
+        return normalized;
+      }
+    }
+  };
+  const left = canon(a);
+  const right = canon(b);
+  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+function loopWorktreeDir(mainPath, id) {
+  return import_node_path2.default.join(import_node_path2.default.dirname(mainPath), `${import_node_path2.default.basename(mainPath)}.loops`, id);
+}
+function loopWorktreeIdentity(absPath) {
+  const resolved = import_node_path2.default.resolve(absPath);
+  const parent = import_node_path2.default.dirname(resolved);
+  const loopsDir = import_node_path2.default.basename(parent);
+  if (!loopsDir.endsWith(".loops")) return null;
+  const id = import_node_path2.default.basename(resolved);
+  if (!/^lp-[0-9a-f]{8}$/i.test(id)) return null;
+  return {
+    primaryPath: import_node_path2.default.join(import_node_path2.default.dirname(parent), loopsDir.slice(0, -".loops".length)),
+    id
+  };
+}
+function primaryWorktreePath(trees) {
+  const mains = trees.filter((t) => !t.bare && !loopWorktreeIdentity(t.path));
+  return mains[0]?.path ?? trees.find((t) => !t.bare)?.path ?? null;
 }
 
 // packages/core/src/prs.ts
 var import_promises2 = require("node:fs/promises");
-var import_node_path3 = __toESM(require("node:path"), 1);
+var import_node_path4 = __toESM(require("node:path"), 1);
 
 // packages/core/src/store.ts
 var import_promises = require("node:fs/promises");
-var import_node_path2 = __toESM(require("node:path"), 1);
+var import_node_path3 = __toESM(require("node:path"), 1);
 async function consoleDir(cwd) {
   const common = await gitCommonDir(cwd);
-  const dir = import_node_path2.default.join(common, "agent-console");
+  const dir = import_node_path3.default.join(common, "agent-console");
   await (0, import_promises.mkdir)(dir, { recursive: true });
   return dir;
 }
 async function prsDir(cwd) {
-  const dir = import_node_path2.default.join(await consoleDir(cwd), "prs");
+  const dir = import_node_path3.default.join(await consoleDir(cwd), "prs");
   await (0, import_promises.mkdir)(dir, { recursive: true });
   return dir;
 }
 function prFile(dir, id) {
-  return import_node_path2.default.join(dir, `${id}.json`);
+  return import_node_path3.default.join(dir, `${id}.json`);
 }
 function firstJsonObject(raw) {
   const start = raw.indexOf("{");
@@ -315,7 +373,7 @@ async function listLocalPrs(cwd) {
   const prs = [];
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
-    const raw = await (0, import_promises2.readFile)(import_node_path3.default.join(dir, name), "utf8");
+    const raw = await (0, import_promises2.readFile)(import_node_path4.default.join(dir, name), "utf8");
     let pr;
     try {
       pr = parseJsonObject(raw);
@@ -330,7 +388,7 @@ async function listLocalPrs(cwd) {
   prs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const trees = await listWorktrees(cwd);
   for (const pr of prs) {
-    pr.worktreePath = worktreeForBranch(trees, pr.headRef);
+    pr.worktreePath = worktreeForLoop(trees, pr);
   }
   return prs;
 }
@@ -427,7 +485,7 @@ function silent() {
 async function main() {
   let input = {};
   try {
-    const raw = (0, import_node_fs.readFileSync)(0, "utf8");
+    const raw = (0, import_node_fs2.readFileSync)(0, "utf8");
     input = raw ? JSON.parse(raw) : {};
   } catch {
     input = {};

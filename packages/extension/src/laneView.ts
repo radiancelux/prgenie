@@ -286,7 +286,9 @@ export class LaneHub implements vscode.Disposable {
         const prs = await listLocalPrs(cwd);
         const pr = prs.find((p) => p.id === msg.id);
         if (!pr) return;
-        const dest = await ensureWorktreeForLoop(cwd, pr);
+        const dest = await ensureWorktreeForLoop(cwd, pr, {
+          staleLoopIds: prs.filter((p) => p.id !== pr.id && isArchivedPr(p)).map((p) => p.id),
+        });
         const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (folder && sameFsPath(folder, dest)) {
           void vscode.window.showInformationMessage("This window is already on that loop.");
@@ -333,7 +335,13 @@ export class LaneHub implements vscode.Disposable {
         const parkedPrs = await listLocalPrs(root);
         const parkedLoop = parkedPrs.find((p) => p.id === parked.id);
         if (!parkedLoop || isArchivedPr(parkedLoop)) {
-          if (!this.reopeningMain) {
+          const liveHere = parkedPrs.some(
+            (p) =>
+              !isArchivedPr(p) &&
+              (p.id === parked.id ||
+                (p.worktreePath && sameFsPath(p.worktreePath, root))),
+          );
+          if (!liveHere && !this.reopeningMain) {
             this.reopeningMain = true;
             await vscode.commands.executeCommand(
               "vscode.openFolder",
@@ -341,7 +349,7 @@ export class LaneHub implements vscode.Disposable {
               { forceNewWindow: false },
             );
           }
-          return;
+          if (!liveHere) return;
         }
       } catch {
         // Store may not exist yet.
@@ -349,9 +357,13 @@ export class LaneHub implements vscode.Disposable {
     }
     try {
       const all = await listLocalPrs(root);
+      const livePaths = all
+        .filter((p) => !isArchivedPr(p) && p.worktreePath)
+        .map((p) => p.worktreePath as string);
       for (const pr of all.filter(isArchivedPr)) {
-        if (pr.worktreePath && loopWorktreeIdentity(pr.worktreePath)) {
-          await pruneArchivedLoopWorktree(root, pr);
+        const ident = pr.worktreePath ? loopWorktreeIdentity(pr.worktreePath) : null;
+        if (ident && ident.id.toLowerCase() === pr.id.toLowerCase()) {
+          await pruneArchivedLoopWorktree(root, pr, { keepPaths: livePaths });
         }
       }
       const archivedCount = all.filter(isArchivedPr).length;

@@ -155,7 +155,11 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
       return resumeWatch(cwd);
     case "ensure_worktree": {
       const pr = await getLocalPr(cwd, String(args.id ?? ""));
-      const dest = await ensureWorktreeForLoop(cwd, pr);
+      const dest = await ensureWorktreeForLoop(cwd, pr, {
+        staleLoopIds: (await listLocalPrs(cwd))
+          .filter((p) => p.id !== pr.id && isArchivedPr(p))
+          .map((p) => p.id),
+      });
       return { ...pr, worktreePath: dest };
     }
     case "export_local_pr":

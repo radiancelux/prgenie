@@ -152,25 +152,79 @@ async function detectDefaultBase(cwd) {
   }
   return "HEAD";
 }
-function worktreeForBranch(trees, branch) {
-  const match = trees.find((t) => t.branch === branch);
-  return match?.path ?? null;
+function worktreeForLoop(trees, loop) {
+  const primary = primaryWorktreePath(trees);
+  const dest = primary ? loopWorktreeDir(primary, loop.id) : null;
+  if (dest) {
+    const own = trees.find((t) => sameFsPath(t.path, dest));
+    if (own) return own.path;
+  }
+  const onBranch = trees.filter((t) => t.branch === loop.headRef);
+  const onPrimary = onBranch.find((t) => primary && sameFsPath(t.path, primary));
+  if (onPrimary) return onPrimary.path;
+  const ownLoops = onBranch.find((t) => {
+    const ident = loopWorktreeIdentity(t.path);
+    return ident && ident.id.toLowerCase() === loop.id.toLowerCase();
+  });
+  return ownLoops?.path ?? null;
+}
+function sameFsPath(a, b) {
+  try {
+    const leftStat = (0, import_node_fs.statSync)(a);
+    const rightStat = (0, import_node_fs.statSync)(b);
+    if (leftStat.ino !== 0 && leftStat.ino === rightStat.ino && leftStat.dev === rightStat.dev) {
+      return true;
+    }
+  } catch {
+  }
+  const canon = (p) => {
+    const normalized = import_node_path2.default.resolve(p);
+    try {
+      return import_node_fs.realpathSync.native(normalized);
+    } catch {
+      try {
+        return (0, import_node_fs.realpathSync)(normalized);
+      } catch {
+        return normalized;
+      }
+    }
+  };
+  const left = canon(a);
+  const right = canon(b);
+  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 function loopWorktreeDir(mainPath, id) {
   return import_node_path2.default.join(import_node_path2.default.dirname(mainPath), `${import_node_path2.default.basename(mainPath)}.loops`, id);
 }
-async function ensureWorktreeForLoop(cwd, loop) {
-  const trees = await listWorktrees(cwd);
-  const existing = worktreeForBranch(trees, loop.headRef);
-  if (existing) return existing;
-  const current = await currentBranch(cwd);
-  if (current === loop.headRef) {
-    const here = await findGitRoot(cwd);
-    if (here) return here;
+function loopWorktreeIdentity(absPath) {
+  const resolved = import_node_path2.default.resolve(absPath);
+  const parent = import_node_path2.default.dirname(resolved);
+  const loopsDir = import_node_path2.default.basename(parent);
+  if (!loopsDir.endsWith(".loops")) return null;
+  const id = import_node_path2.default.basename(resolved);
+  if (!/^lp-[0-9a-f]{8}$/i.test(id)) return null;
+  return {
+    primaryPath: import_node_path2.default.join(import_node_path2.default.dirname(parent), loopsDir.slice(0, -".loops".length)),
+    id
+  };
+}
+function primaryWorktreePath(trees) {
+  const mains = trees.filter((t) => !t.bare && !loopWorktreeIdentity(t.path));
+  return mains[0]?.path ?? trees.find((t) => !t.bare)?.path ?? null;
+}
+async function freeStaleLoopWorktree(cwd, treePath) {
+  const here = await findGitRoot(cwd);
+  if (here && sameFsPath(here, treePath)) {
+    await git(treePath, ["checkout", "--detach"], { allowFail: true });
+    return;
   }
-  const main2 = trees.find((t) => !t.bare)?.path;
-  if (!main2) throw new Error("No git worktree to attach a loop to.");
-  const dest = loopWorktreeDir(main2, loop.id);
+  let removed = await git(cwd, ["worktree", "remove", treePath], { allowFail: true });
+  if (removed.code !== 0) {
+    removed = await git(cwd, ["worktree", "remove", "--force", treePath], { allowFail: true });
+  }
+  await git(cwd, ["worktree", "prune"], { allowFail: true });
+}
+async function addLoopWorktree(cwd, dest, loop) {
   if ((0, import_node_fs.existsSync)(dest)) {
     const already = await findGitRoot(dest);
     if (already) return dest;
@@ -188,6 +242,41 @@ async function ensureWorktreeForLoop(cwd, loop) {
   throw new Error(
     `Could not create a worktree for loop ${loop.id} (${loop.headRef}): ${(branched.stderr || detached.stderr).trim()}`
   );
+}
+async function ensureWorktreeForLoop(cwd, loop, options = {}) {
+  const stale = new Set(
+    [...options.staleLoopIds ?? []].map((id) => id.toLowerCase())
+  );
+  let trees = await listWorktrees(cwd);
+  const primary = primaryWorktreePath(trees);
+  if (!primary) throw new Error("No git worktree to attach a loop to.");
+  const dest = loopWorktreeDir(primary, loop.id);
+  const own = trees.find((t) => sameFsPath(t.path, dest));
+  if (own) return own.path;
+  const holders = trees.filter((t) => t.branch === loop.headRef);
+  for (const holder of holders) {
+    if (sameFsPath(holder.path, dest)) return holder.path;
+    if (sameFsPath(holder.path, primary)) return holder.path;
+    const ident = loopWorktreeIdentity(holder.path);
+    if (ident && ident.id.toLowerCase() === loop.id.toLowerCase()) return holder.path;
+    if (ident && stale.has(ident.id.toLowerCase())) {
+      await freeStaleLoopWorktree(cwd, holder.path);
+    } else if (ident) {
+      return holder.path;
+    }
+  }
+  const here = await findGitRoot(cwd);
+  const current = await currentBranch(cwd);
+  if (current === loop.headRef && here && !loopWorktreeIdentity(here)) {
+    return here;
+  }
+  trees = await listWorktrees(cwd);
+  const stillOwn = trees.find((t) => sameFsPath(t.path, dest));
+  if (stillOwn) return stillOwn.path;
+  if (trees.some((t) => t.branch === loop.headRef && sameFsPath(t.path, primary))) {
+    return primary;
+  }
+  return addLoopWorktree(cwd, dest, loop);
 }
 async function shortLogSubject(cwd, rev = "HEAD") {
   return gitText(cwd, ["log", "-1", "--format=%s", rev]);
@@ -393,7 +482,7 @@ async function listLocalPrs(cwd) {
   prs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const trees = await listWorktrees(cwd);
   for (const pr of prs) {
-    pr.worktreePath = worktreeForBranch(trees, pr.headRef);
+    pr.worktreePath = worktreeForLoop(trees, pr);
   }
   return prs;
 }
@@ -434,7 +523,8 @@ async function createLocalPr(cwd, input = {}) {
     reviewRequestedSha: null
   };
   await writePr(root, pr);
-  pr.worktreePath = await ensureWorktreeForLoop(root, pr);
+  const staleLoopIds = (await listLocalPrs(root)).filter((other) => other.id !== pr.id && isArchivedPr(other)).map((other) => other.id);
+  pr.worktreePath = await ensureWorktreeForLoop(root, pr, { staleLoopIds });
   return pr;
 }
 function inferCommentStatus(comment, role) {
@@ -483,7 +573,9 @@ async function captureAgentWork(cwd, input = {}) {
         pr2.status = "ready";
       }
     });
-    updated.worktreePath = await ensureWorktreeForLoop(cwd, updated);
+    updated.worktreePath = await ensureWorktreeForLoop(cwd, updated, {
+      staleLoopIds: (await listLocalPrs(cwd)).filter((other) => other.id !== updated.id && isArchivedPr(other)).map((other) => other.id)
+    });
     return { action: "updated", pr: updated };
   }
   const pr = await createLocalPr(cwd, input);

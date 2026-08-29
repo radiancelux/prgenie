@@ -376,3 +376,39 @@ test("releaseArchivedLoop does not delete a worktree this window is sitting on",
   assert.equal(cleaned.prunedWorktree, true);
 });
 
+test("new loop does not reuse an archived .loops checkout", async () => {
+  git(["checkout", "main"]);
+  const old = await createLocalPr(repo, {
+    title: "Archived sibling",
+    base: "main",
+    head: "feat/widget",
+  });
+  assert.ok(old.worktreePath);
+  assert.match(old.worktreePath.replace(/\\/g, "/"), /\.loops\//);
+  await setLocalPrStatus(repo, old.id, "approved");
+  const parked = await releaseArchivedLoop(old.worktreePath, old);
+  assert.equal(parked.reopen, true);
+  assert.equal(parked.prunedWorktree, false);
+  const next = await createLocalPr(repo, {
+    title: "Fresh sibling",
+    base: "main",
+    head: "feat/widget",
+  });
+  assert.ok(next.worktreePath);
+  assert.match(next.worktreePath.replace(/\\/g, "/"), new RegExp(`${next.id}$`));
+  assert.equal(sameFsPath(next.worktreePath, old.worktreePath ?? ""), false);
+  const listed = await listLocalPrs(repo);
+  const oldListed = listed.find((p) => p.id === old.id);
+  const nextListed = listed.find((p) => p.id === next.id);
+  assert.ok(nextListed?.worktreePath);
+  assert.equal(sameFsPath(nextListed.worktreePath ?? "", next.worktreePath), true);
+  if (oldListed?.worktreePath) {
+    assert.equal(sameFsPath(oldListed.worktreePath, next.worktreePath), false);
+  }
+  await pruneArchivedLoopWorktree(repo, old, {
+    keepPaths: next.worktreePath ? [next.worktreePath] : [],
+  });
+  const trees = await listWorktrees(repo);
+  assert.ok(trees.some((t) => sameFsPath(t.path, next.worktreePath ?? "")));
+});
+

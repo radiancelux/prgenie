@@ -240,7 +240,11 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "worktree") {
     const pr = await getLocalPr(repo, id);
-    const dest = await ensureWorktreeForLoop(repo, pr);
+    const dest = await ensureWorktreeForLoop(repo, pr, {
+      staleLoopIds: (await listLocalPrs(repo))
+        .filter((p) => p.id !== pr.id && isArchivedPr(p))
+        .map((p) => p.id),
+    });
     process.stdout.write(`${dest}\n`);
     return 0;
   }

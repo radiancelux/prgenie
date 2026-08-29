@@ -9,7 +9,7 @@ import {
   listWorktrees,
   shortLogSubject,
   userName,
-  worktreeForBranch,
+  worktreeForLoop,
   ensureWorktreeForLoop,
   loopWorktreeDir,
   sameFsPath,
@@ -119,7 +119,7 @@ export async function listLocalPrs(cwd: string): Promise<LocalPr[]> {
   prs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const trees = await listWorktrees(cwd);
   for (const pr of prs) {
-    pr.worktreePath = worktreeForBranch(trees, pr.headRef);
+    pr.worktreePath = worktreeForLoop(trees, pr);
   }
   return prs;
 }
@@ -169,7 +169,10 @@ export async function createLocalPr(
     reviewRequestedSha: null,
   };
   await writePr(root, pr);
-  pr.worktreePath = await ensureWorktreeForLoop(root, pr);
+  const staleLoopIds = (await listLocalPrs(root))
+    .filter((other) => other.id !== pr.id && isArchivedPr(other))
+    .map((other) => other.id);
+  pr.worktreePath = await ensureWorktreeForLoop(root, pr, { staleLoopIds });
   return pr;
 }
 
@@ -620,7 +623,11 @@ export async function captureAgentWork(
         pr.status = "ready";
       }
     });
-    updated.worktreePath = await ensureWorktreeForLoop(cwd, updated);
+    updated.worktreePath = await ensureWorktreeForLoop(cwd, updated, {
+      staleLoopIds: (await listLocalPrs(cwd))
+        .filter((other) => other.id !== updated.id && isArchivedPr(other))
+        .map((other) => other.id),
+    });
     return { action: "updated", pr: updated };
   }
   const pr = await createLocalPr(cwd, input);
