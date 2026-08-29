@@ -135,6 +135,76 @@ export function localBaseRef(baseRef: string): string {
   return baseRef.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
 }
 
+export function refsAreSameBranch(a: string, b: string): boolean {
+  return localBaseRef(a).toLowerCase() === localBaseRef(b).toLowerCase();
+}
+
+/** True when `head` is missing, detached, or the same branch as the loop base (main/master). */
+export function isBaseBranch(head: string | null | undefined, baseRef: string): boolean {
+  if (!head || head === "HEAD" || head === "DETACHED") return true;
+  return refsAreSameBranch(head, baseRef);
+}
+
+async function branchExists(cwd: string, name: string): Promise<boolean> {
+  const ref = localBaseRef(name);
+  const result = await git(cwd, ["rev-parse", "--verify", `refs/heads/${ref}`], {
+    allowFail: true,
+  });
+  return result.code === 0;
+}
+
+/**
+ * Pick (or create) a feature branch this loop can export.
+ * Never uses the loop base. If this checkout is on the base, switch it onto the new branch.
+ * If the requested head is already checked out elsewhere, create `<id>` from that commit instead.
+ */
+export async function ensureLoopFeatureBranch(
+  cwd: string,
+  options: { id: string; requestedHead?: string | null; baseRef: string },
+): Promise<{ headRef: string; headSha: string }> {
+  const current = await currentBranch(cwd);
+  const wanted = options.requestedHead?.trim() || current;
+  const here = await findGitRoot(cwd);
+  const trees = await listWorktrees(cwd);
+
+  if (wanted && !isBaseBranch(wanted, options.baseRef)) {
+    const holder = trees.find((t) => t.branch === wanted);
+    if (!holder || (here && sameFsPath(holder.path, here))) {
+      return {
+        headRef: wanted,
+        headSha: await gitText(cwd, ["rev-parse", wanted]),
+      };
+    }
+    const headRef = options.id;
+    const headSha = await gitText(cwd, ["rev-parse", wanted]);
+    const created = await git(cwd, ["branch", headRef, wanted], { allowFail: true });
+    if (created.code !== 0 && !(await branchExists(cwd, headRef))) {
+      throw new Error(`Could not create loop branch ${headRef}: ${created.stderr.trim()}`);
+    }
+    return { headRef, headSha };
+  }
+
+  const headRef = options.id;
+  if (here && isBaseBranch(current, options.baseRef)) {
+    const created = await git(cwd, ["checkout", "-b", headRef], { allowFail: true });
+    if (created.code !== 0) {
+      const switched = await git(cwd, ["checkout", headRef], { allowFail: true });
+      if (switched.code !== 0) {
+        throw new Error(
+          `Could not create loop branch ${headRef}: ${(created.stderr || switched.stderr).trim()}`,
+        );
+      }
+    }
+    return { headRef, headSha: await gitText(cwd, ["rev-parse", "HEAD"]) };
+  }
+
+  const created = await git(cwd, ["branch", headRef], { allowFail: true });
+  if (created.code !== 0 && !(await branchExists(cwd, headRef))) {
+    throw new Error(`Could not create loop branch ${headRef}: ${created.stderr.trim()}`);
+  }
+  return { headRef, headSha: await gitText(cwd, ["rev-parse", "HEAD"]) };
+}
+
 export function primaryWorktreePath(trees: WorktreeInfo[]): string | null {
   const mains = trees.filter((t) => !t.bare && !loopWorktreeIdentity(t.path));
   return mains[0]?.path ?? trees.find((t) => !t.bare)?.path ?? null;
@@ -237,16 +307,25 @@ async function addLoopWorktree(
   }
   await mkdir(path.dirname(dest), { recursive: true });
   await git(cwd, ["worktree", "prune"], { allowFail: true });
-  const branched = await git(cwd, ["worktree", "add", dest, loop.headRef], {
-    allowFail: true,
-  });
-  if (branched.code === 0) return dest;
-  const detached = await git(cwd, ["worktree", "add", "--detach", dest, loop.headSha], {
-    allowFail: true,
-  });
-  if (detached.code === 0) return dest;
+  const trees = await listWorktrees(cwd);
+  const held = trees.some((t) => t.branch === loop.headRef);
+  if (!held && (await branchExists(cwd, loop.headRef))) {
+    const added = await git(cwd, ["worktree", "add", dest, loop.headRef], { allowFail: true });
+    if (added.code === 0) return dest;
+  }
+  if (!held && !(await branchExists(cwd, loop.headRef))) {
+    const created = await git(
+      cwd,
+      ["worktree", "add", "-b", loop.headRef, dest, loop.headSha],
+      { allowFail: true },
+    );
+    if (created.code === 0) return dest;
+    throw new Error(
+      `Could not create a worktree for loop ${loop.id} on branch ${loop.headRef}: ${created.stderr.trim()}`,
+    );
+  }
   throw new Error(
-    `Could not create a worktree for loop ${loop.id} (${loop.headRef}): ${(branched.stderr || detached.stderr).trim()}`,
+    `Could not create a worktree for loop ${loop.id}: branch ${loop.headRef} is already checked out.`,
   );
 }
 

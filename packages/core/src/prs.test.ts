@@ -437,3 +437,27 @@ test("ensureWorktreeForLoop does not attach to another loop's leftover .loops fo
   assert.equal(sameFsPath(dest, leftover.worktreePath ?? ""), false);
 });
 
+test("a loop created on the base branch checks out a feature branch here", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, { title: "Off main", base: "main" });
+  assert.equal(pr.headRef, pr.id);
+  assert.notEqual(pr.headRef, "main");
+  assert.equal(git(["branch", "--show-current"]), pr.id);
+  assert.equal(path.basename(pr.worktreePath ?? ""), path.basename(repo));
+});
+
+test("a peeled worktree is created on the loop branch, not detached", async () => {
+  const headSha = git(["rev-parse", "HEAD"]);
+  const dest = await ensureWorktreeForLoop(repo, {
+    id: "lp-bbbbbbbb",
+    headRef: "lp-bbbbbbbb",
+    headSha,
+  });
+  assert.match(dest.replace(/\\/g, "/"), /lp-bbbbbbbb$/);
+  const trees = await listWorktrees(repo);
+  const extra = trees.find((t) => sameFsPath(t.path, dest));
+  assert.equal(extra?.branch, "lp-bbbbbbbb");
+  assert.equal(extra?.detached, false);
+  git(["worktree", "remove", "--force", "--", dest]);
+});
+

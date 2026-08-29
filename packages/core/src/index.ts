@@ -18,6 +18,8 @@ export {
   listWorktrees,
   worktreeForBranch,
   ensureWorktreeForLoop,
+  ensureLoopFeatureBranch,
+  isBaseBranch,
   loopWorktreeIdentity,
   pruneArchivedLoopWorktree,
   releaseArchivedLoop,

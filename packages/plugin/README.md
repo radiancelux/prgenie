@@ -13,8 +13,8 @@ pnpm link-plugin
 Then **Developer: Reload Window**, open **Customize**, and confirm:
 
 - Rule: do not push / open GitHub PRs
-- Command: `/local-pr`, `/review-local-pr`, **`/watch-ready-prs`**, **`/watch-review-inbox`**, **`/stop-watch`**, **`/export-local-pr`**
+- Command: `/start-loop`, `/local-pr`, `/review-local-pr`, **`/watch-ready-prs`**, **`/watch-review-inbox`**, **`/stop-watch`**, **`/export-local-pr`**
 - MCP server: `prgenie`
 - Hooks: push-gate, session log, **review loop** (`sessionStart` injects comments; `stop` Tasks a reviewer when the loop is `ready`; `subagentStop` returns those comments to this chat), **subagentStop capture**
 
-Each loop has a git worktree. **Switch** in Local PRs replaces this window with that checkout. Exported (`approved`) loops are archived: they stay on disk but leave the Local PRs list. Export checks the main workspace off the loop branch and drops a sibling `.loops` checkout. The plugin still asks before `git push` / `gh pr create`.
+Each loop has a feature branch for export and a git worktree. **Switch** in Local PRs replaces this window with that checkout. Exported (`approved`) loops are archived: they stay on disk but leave the Local PRs list. Export checks the main workspace off the loop branch and drops a sibling `.loops` checkout. The plugin still asks before `git push` / `gh pr create`.
