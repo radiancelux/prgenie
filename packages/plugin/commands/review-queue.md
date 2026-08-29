@@ -11,6 +11,7 @@ You are the **reviewer orchestrator**. Do not implement. Do not push unless `/ex
 1. Ready queue: `node packages/cli/dist/prgenie.cjs queue`. MCP `list_local_prs` with `status=ready` only if that parameter exists in the listing (older MCP listings ignore it and return every loop).
 2. Skip any `id`+`headSha` you already Tasked this session.
 3. For each remaining loop, Task `generalPurpose` **in parallel** (one Task per loop). Prompt: review that id — `get_local_pr` / `prgenie show`, `get_diff` / `prgenie diff`, read `body`, post **all** findings first (`add_comment` `role=reviewer` or `prgenie comment <id> -m "..." --role reviewer`; status stays `ready`), `resolve_comment` addressed threads that are fixed, then **always** `complete_review` last (`prgenie complete-review <id>` if MCP `complete_review` is not listed). Open findings → `changes_requested`; none → `reviewed`. Do not implement or git push.
-4. When a Task returns, `prgenie show <id>` (or `get_local_pr`) and confirm `changes_requested` or `reviewed`. If it is still `ready`, `complete_review` / `prgenie complete-review` yourself.
-5. If the queue is empty, say so in one line. Do not invent work.
-6. Remember dispatched `id`+`headSha` for the next tick.
+4. **Wait for each Task.** If it is backgrounded, fails to start, returns empty, or the loop is still `ready` with no `complete_review`, **finish the review in this chat** (same leaf steps). Hooks must not assume the child ran. Do not skip until the next tick hoping a dead agent will complete.
+5. When a Task returns (or you finished it here), `prgenie show <id>` and confirm `changes_requested` or `reviewed`. If it is still `ready`, `complete_review` yourself.
+6. If the queue is empty, say so in one line. Do not invent work.
+7. Remember dispatched `id`+`headSha` for the next tick.

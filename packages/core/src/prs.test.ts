@@ -15,6 +15,7 @@ import {
   completeLocalPrReview,
   exportPushRefspec,
   findLocalPrForCurrentBranch,
+  findLocalPrForCurrentWorktree,
   formatReviewInbox,
   getLocalPr,
   getLocalPrDiff,
@@ -249,17 +250,22 @@ test("resolve_comment on ready does not finish the review", async () => {
   assert.equal(done.status, "reviewed");
 });
 
-test("findLocalPrForCurrentBranch prefers changes_requested", async () => {
+test("findLocalPrForCurrentWorktree does not grab another loop's inbox", async () => {
   git(["checkout", "feat/widget"]);
-  const ready = await createLocalPr(repo, { title: "Ready twin", base: "main" });
-  await setLocalPrStatus(repo, ready.id, "ready");
-  const blocked = await createLocalPr(repo, { title: "Blocked twin", base: "main" });
-  await addLocalPrComment(repo, blocked.id, "Fix the widget.", { role: "reviewer" });
-  await completeLocalPrReview(repo, blocked.id);
-  const found = await findLocalPrForCurrentBranch(repo);
+  const here = await createLocalPr(repo, { title: "This checkout", base: "main" });
+  await setLocalPrStatus(repo, here.id, "ready");
+  assert.equal(here.headRef, "feat/widget");
+  git(["checkout", "-b", "feat/other-inbox"]);
+  const other = await createLocalPr(repo, { title: "Other inbox", base: "main" });
+  await setLocalPrStatus(repo, other.id, "ready");
+  await addLocalPrComment(repo, other.id, "Fix other.", { role: "reviewer" });
+  await completeLocalPrReview(repo, other.id);
+  assert.equal((await getLocalPr(repo, other.id)).status, "changes_requested");
+  git(["checkout", "feat/widget"]);
+  const found = await findLocalPrForCurrentWorktree(repo);
   assert.ok(found);
-  assert.equal(found.id, blocked.id);
-  assert.equal(found.status, "changes_requested");
+  assert.equal(found.headRef, "feat/widget");
+  assert.notEqual(found.id, other.id);
 });
 
 test("parallel reviewer comments both survive", async () => {

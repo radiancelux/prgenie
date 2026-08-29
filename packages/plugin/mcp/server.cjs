@@ -767,6 +767,25 @@ function lastFinding(pr) {
   const findings = (pr.comments ?? []).map(normalizeComment).filter(isFindingComment);
   return findings[findings.length - 1];
 }
+async function findLocalPrForCurrentBranch(cwd) {
+  const branch = await currentBranch(cwd);
+  if (!branch) return null;
+  const matches = (await listLocalPrs(cwd)).filter(
+    (pr) => pr.headRef === branch && !isArchivedPr(pr)
+  );
+  if (matches.length === 0) return null;
+  return matches.find((pr) => pr.status === "changes_requested") ?? matches[0];
+}
+async function findLocalPrForCurrentWorktree(cwd) {
+  const byBranch = await findLocalPrForCurrentBranch(cwd);
+  if (byBranch) return byBranch;
+  const branch = await currentBranch(cwd);
+  if (branch) return null;
+  const root = await findGitRoot(cwd);
+  if (!root) return null;
+  const live = (await listLocalPrs(cwd)).filter((pr) => !isArchivedPr(pr) && pr.worktreePath);
+  return live.find((pr) => sameFsPath(pr.worktreePath ?? "", root)) ?? null;
+}
 async function addLocalPrComment(cwd, id, body, options = {}) {
   const text = body.trim();
   if (!text) throw new Error("Comment body is empty");
@@ -1286,10 +1305,16 @@ async function handleTool(name, args) {
       const status = typeof args.status === "string" ? args.status : "";
       const inbox = args.inbox === true;
       const all = args.all === true;
+      if (inbox) {
+        const mine = await findLocalPrForCurrentWorktree(cwd);
+        if (!mine || mine.status !== "changes_requested" || pendingReviewComments(mine).length === 0) {
+          return [];
+        }
+        return [withCommentViews(mine)];
+      }
       return prs.filter((pr) => {
         if (status && pr.status !== status) return false;
         if (!status && !all && isArchivedPr(pr)) return false;
-        if (inbox && (pr.status !== "changes_requested" || pr.pendingComments.length === 0)) return false;
         return true;
       });
     }
@@ -1389,7 +1414,7 @@ var tools = [
   },
   {
     name: "list_local_prs",
-    description: "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue (comments may still be accumulating). status=reviewed is waiting on the human. inbox=true is only changes_requested loops with open pendingComments for the implementor.",
+    description: "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue (comments may still be accumulating). status=reviewed is waiting on the human. inbox=true is only this worktree's loop when it is changes_requested with open pendingComments.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1400,7 +1425,7 @@ var tools = [
         },
         inbox: {
           type: "boolean",
-          description: "Only loops in changes_requested with open pendingComments for the implementor."
+          description: "Only this worktree's loop, and only if it is changes_requested with open pendingComments."
         },
         all: {
           type: "boolean",

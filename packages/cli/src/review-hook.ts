@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import {
   findGitRoot,
-  findLocalPrForCurrentBranch,
+  findLocalPrForCurrentWorktree,
   formatReviewInbox,
   formatSpawnReviewer,
   markReviewRequested,
@@ -45,7 +45,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const pr = await findLocalPrForCurrentBranch(root);
+  const pr = await findLocalPrForCurrentWorktree(root);
   if (!pr) {
     silent();
     return;

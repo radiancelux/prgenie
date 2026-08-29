@@ -61,7 +61,7 @@ Comments are the review protocol for the agent on that loop:
 | `reviewer` | Automated review agent | Open finding. **Does not** change loop status. Call `complete_review` when finished. |
 | `agent` | The implementer on this PR | Reply, nested under the finding. Use `address_comment`. The last open finding sets `ready` and posts Review requested. |
 
-`pendingComments` are **open** findings. The implementor inbox (`inbox=true`, `/review-inbox`) only includes them when status is `changes_requested`. Comments on a `ready` loop mean the reviewer is still writing. `addressedComments` are waiting for the reviewer. Agent replies render **under** the parent finding, not as a stack of sibling comments.
+`pendingComments` are **open** findings. The implementor inbox (`prgenie inbox`, `inbox=true`) is **this worktree's loop only**, and only when status is `changes_requested`. Never grab another loop. Comments on a `ready` loop mean the reviewer is still writing. `addressedComments` are waiting for the reviewer. Agent replies render **under** the parent finding, not as a stack of sibling comments.
 
 ## Address comments
 

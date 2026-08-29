@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { git, gitText, requireGitRoot } from "./git.js";
+import { git, gitText, requireGitRoot, findGitRoot } from "./git.js";
 import { parseJsonObject, prFile, prsDir, withFileLock, writeJsonFile } from "./store.js";
 import {
   currentBranch,
@@ -378,6 +378,18 @@ export async function findLocalPrForCurrentBranch(cwd: string): Promise<LocalPr 
   );
   if (matches.length === 0) return null;
   return matches.find((pr) => pr.status === "changes_requested") ?? matches[0];
+}
+
+/** Live loop for this checkout only — never another branch's packet. */
+export async function findLocalPrForCurrentWorktree(cwd: string): Promise<LocalPr | null> {
+  const byBranch = await findLocalPrForCurrentBranch(cwd);
+  if (byBranch) return byBranch;
+  const branch = await currentBranch(cwd);
+  if (branch) return null;
+  const root = await findGitRoot(cwd);
+  if (!root) return null;
+  const live = (await listLocalPrs(cwd)).filter((pr) => !isArchivedPr(pr) && pr.worktreePath);
+  return live.find((pr) => sameFsPath(pr.worktreePath ?? "", root)) ?? null;
 }
 
 export async function addLocalPrComment(

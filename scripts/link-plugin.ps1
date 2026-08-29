@@ -28,4 +28,4 @@ Set-Content -LiteralPath $mcpPath -Value $mcp.TrimEnd() -Encoding utf8
 
 Write-Host "Installed Cursor plugin (real copy, not a junction):"
 Write-Host "  $dest"
-Write-Host "Reload the window, then in Customize open Plugins and look for PR Genie."
+Write-Host "Reload is often not enough for MCP tools. In Customize → Plugins, disable and re-enable PR Genie."

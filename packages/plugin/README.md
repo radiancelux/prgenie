@@ -10,7 +10,7 @@ pnpm link-plugin
 
 `mcp.json` uses `${PLUGIN_ROOT}/mcp/server.cjs`. Cursor currently resolves a relative `./mcp/server.cjs` against the **workspace**, which 404s. `link-plugin` rewrites the installed copy to an absolute path.
 
-Then **Developer: Reload Window**, open **Customize**, and confirm:
+Then **Developer: Reload Window** is not enough for MCP tools (Cursor caches the first tool list). In **Customize → Plugins**, disable and re-enable PR Genie. Confirm:
 
 - Rule: do not push / open GitHub PRs
 - Command: `/start-loop`, `/local-pr`, `/review-local-pr`, **`/watch-ready-prs`**, **`/watch-review-inbox`**, **`/stop-watch`**, **`/export-local-pr`**

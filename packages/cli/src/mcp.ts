@@ -10,6 +10,7 @@ import {
   exportLocalPr,
   ensureWorktreeForLoop,
   findGitRoot,
+  findLocalPrForCurrentWorktree,
   getLocalPr,
   getLocalPrDiff,
   getLocalPrNameStatus,
@@ -87,10 +88,20 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
       const status = typeof args.status === "string" ? args.status : "";
       const inbox = args.inbox === true;
       const all = args.all === true;
+      if (inbox) {
+        const mine = await findLocalPrForCurrentWorktree(cwd);
+        if (
+          !mine ||
+          mine.status !== "changes_requested" ||
+          pendingReviewComments(mine).length === 0
+        ) {
+          return [];
+        }
+        return [withCommentViews(mine)];
+      }
       return prs.filter((pr) => {
         if (status && pr.status !== status) return false;
         if (!status && !all && isArchivedPr(pr)) return false;
-        if (inbox && (pr.status !== "changes_requested" || pr.pendingComments.length === 0)) return false;
         return true;
       });
     }
@@ -197,7 +208,7 @@ const tools = [
   {
     name: "list_local_prs",
     description:
-      "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue (comments may still be accumulating). status=reviewed is waiting on the human. inbox=true is only changes_requested loops with open pendingComments for the implementor.",
+      "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue (comments may still be accumulating). status=reviewed is waiting on the human. inbox=true is only this worktree's loop when it is changes_requested with open pendingComments.",
     inputSchema: {
       type: "object",
       properties: {
@@ -208,7 +219,7 @@ const tools = [
         },
         inbox: {
           type: "boolean",
-          description: "Only loops in changes_requested with open pendingComments for the implementor.",
+          description: "Only this worktree's loop, and only if it is changes_requested with open pendingComments.",
         },
         all: {
           type: "boolean",

@@ -8,6 +8,7 @@ import {
   exportLocalPr,
   ensureWorktreeForLoop,
   findGitRoot,
+  findLocalPrForCurrentWorktree,
   getLocalPr,
   getLocalPrDiff,
   getLocalPrNameStatus,
@@ -155,17 +156,22 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (sub === "inbox") {
-    const waiting = (await listLocalPrs(repo)).filter(
-      (pr) => pr.status === "changes_requested" && pendingReviewComments(pr).length > 0,
-    );
-    if (waiting.length === 0) {
-      process.stdout.write("No pending review comments.\n");
+    const mine = await findLocalPrForCurrentWorktree(repo);
+    if (!mine) {
+      process.stdout.write("No live local PR on this worktree.\n");
       return 0;
     }
-    for (const pr of waiting) {
-      printPr(pr);
-      process.stdout.write(`  pending: ${pendingReviewComments(pr).length}\n`);
+    const pending = pendingReviewComments(mine);
+    if (mine.status !== "changes_requested" || pending.length === 0) {
+      process.stdout.write(
+        mine.status === "ready"
+          ? "This worktree's loop is ready — wait for complete_review.\n"
+          : "No pending review comments on this worktree.\n",
+      );
+      return 0;
     }
+    printPr(mine);
+    process.stdout.write(`  pending: ${pending.length}\n`);
     return 0;
   }
   if (sub === "watch") {

@@ -31,15 +31,16 @@ pnpm install
 pnpm build
 pnpm test
 pnpm link-plugin
+pnpm link-extension
 ```
 
 Then:
 
 1. **CLI** — `pnpm cli --help` or `node packages/cli/dist/prgenie.cjs list`
-2. **Cursor Plugin** — Reload Window, open Customize, confirm PR Genie (rules, `/local-pr`, MCP `prgenie`)
-3. **Sidebar** — F5 (`Run PR Genie Extension`) against a real git repo. Rebuild first with `pnpm build` (or Ctrl+Shift+B) if you changed extension code.
+2. **Cursor Plugin** (rules, `/local-pr`, MCP) — `link-plugin` copies to `%USERPROFILE%\.cursor\plugins\local\prgenie`. A reload often **does not** refresh the MCP tool list. In **Customize → Plugins**, turn PR Genie **off and on**. This repo also has `.cursor/mcp.json` so the workspace MCP is the live `packages/plugin/mcp/server.cjs` (approve it if Cursor prompts).
+3. **Sidebar / Local PRs** — that is a **VS Code extension**, not the plugin. `link-plugin` does not update it. Run `pnpm link-extension`, then **quit Cursor fully and reopen** (or F5 `Run PR Genie Extension` for a debug host).
 
-Junction target: `%USERPROFILE%\.cursor\plugins\local\prgenie` (real copy of `packages/plugin`). `link-plugin` pins MCP `server.cjs` to that folder so Cursor does not look for `mcp/server.cjs` in the workspace.
+`link-plugin` pins MCP `server.cjs` to the plugin folder so Cursor does not look for `mcp/server.cjs` in the workspace root.
 
 ## CLI
 

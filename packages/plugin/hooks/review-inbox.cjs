@@ -466,6 +466,16 @@ async function findLocalPrForCurrentBranch(cwd) {
   if (matches.length === 0) return null;
   return matches.find((pr) => pr.status === "changes_requested") ?? matches[0];
 }
+async function findLocalPrForCurrentWorktree(cwd) {
+  const byBranch = await findLocalPrForCurrentBranch(cwd);
+  if (byBranch) return byBranch;
+  const branch = await currentBranch(cwd);
+  if (branch) return null;
+  const root = await findGitRoot(cwd);
+  if (!root) return null;
+  const live = (await listLocalPrs(cwd)).filter((pr) => !isArchivedPr(pr) && pr.worktreePath);
+  return live.find((pr) => sameFsPath(pr.worktreePath ?? "", root)) ?? null;
+}
 async function refreshLocalPrHead(cwd, id) {
   return withPrLock(cwd, id, (pr) => applyHeadRefresh(cwd, pr));
 }
@@ -499,7 +509,7 @@ async function main() {
     silent();
     return;
   }
-  const pr = await findLocalPrForCurrentBranch(root);
+  const pr = await findLocalPrForCurrentWorktree(root);
   if (!pr) {
     silent();
     return;

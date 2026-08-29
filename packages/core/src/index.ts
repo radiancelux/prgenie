@@ -35,6 +35,7 @@ export {
   completeLocalPrReview,
   createLocalPr,
   findLocalPrForCurrentBranch,
+  findLocalPrForCurrentWorktree,
   formatReviewInbox,
   formatSpawnReviewer,
   getLocalPr,

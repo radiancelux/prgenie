@@ -15,7 +15,7 @@ The loop is the handoff. `ready` means the worktree agent requested a review. Fi
 
 Start **`/watch-ready-prs`** so this chat listens for `ready` loops. Each tick is `/review-queue`: Task a `generalPurpose` subagent per new loop, in parallel if several are waiting.
 
-Do not implement. When a Task returns, confirm status is `changes_requested` **or** `reviewed`. Comments on a still-`ready` loop mean the reviewer has not finished — call `complete_review` yourself. Do not treat `pendingComments` on `ready` as the implementor signal.
+Do not implement. When a Task returns, confirm status is `changes_requested` **or** `reviewed`. If the Task is backgrounded, dies on start, or the loop is still `ready`, finish the review in this chat (`complete_review` after findings). Do not sit on a dead subagent. Comments on a still-`ready` loop mean the reviewer has not finished.
 
 ## Leaf reviewer (Task)
 
