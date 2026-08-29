@@ -1,6 +1,6 @@
 ---
 name: local-pr
-description: Create and update unpublished local pull requests with PR Genie. Use when agent work is ready for review, when the user mentions local PRs, or instead of pushing to GitHub.
+description: Create and update unpublished PR Genie local pull requests (branch, diff, comments, status) instead of git push or gh pr create. Use when agent work is ready for review, the user mentions local PRs, or export is not requested.
 ---
 
 # PR Genie local PRs
@@ -31,6 +31,7 @@ If the loop already exists, `update_local_pr` with `body` (or `prgenie update <i
 
 - `prgenie list` (hides `approved` / exported loops)
 - `prgenie list --all` to include the archive
+- Local PRs sidebar: **Show archived** to view exported/approved packets (read-only; worktrees are gone)
 - `prgenie show <id>` still works after export
 - `prgenie diff <id>`
 - MCP `list_local_prs` (same archive filter; `all=true` or `status=approved` to see them), `get_local_pr`, `get_diff`
@@ -39,7 +40,7 @@ If the loop already exists, `update_local_pr` with `body` (or `prgenie update <i
 
 `draft` → `ready` (reviewer files findings; status stays `ready`) → `complete_review` → `changes_requested` (findings) or `reviewed` (clean) → `ready` (second pass) → `reviewed` → `approved`
 
-`reviewed` means the automated reviewer found nothing else and the **human** should look. `approved` is you signing off / export. Approved loops are **archived**: JSON and `refs/local-pr/*` stay; they are hidden from the default list and Local PRs. `get_local_pr` / `prgenie show` still work. A later `create_local_pr` / `captureAgentWork` on that branch starts a new loop.
+`reviewed` means the automated reviewer found nothing else and the **human** should look. `approved` is you signing off / export. Approved loops are **archived**: JSON and `refs/local-pr/*` stay; they are hidden from the default list. Local PRs shows them when **Show archived** is on. `get_local_pr` / `prgenie show` still work. A later `create_local_pr` / `captureAgentWork` on that branch starts a new loop.
 
 ### Comments
 
@@ -80,12 +81,12 @@ You are the agent **on the worktree** (implementor). On completion:
 1. Loop exists, `body` is a real summary, HEAD matches the work.
 2. `set_status` `ready`.
 3. `add_comment` `role=agent`: `Review requested.`
-4. Stop. Start **`/watch-review-inbox`** in this chat if it is not already listening. The **reviewer chat** should be on **`/watch-ready-prs`**. It Tasks subagents — one per `ready` loop — and must not await them.
+4. Stop. Start **`/watch-review-inbox`** in this chat if it is not already listening (60-tick / ~1 hour cap). The **reviewer chat** should be on **`/watch-ready-prs`**. It Tasks subagents — one per `ready` loop — and must not await them.
 5. When review is done, status is `changes_requested` (findings) or `reviewed` (clean). `/review-inbox` (or the watch loop) only treats `pendingComments` as the brief after `changes_requested`. Do not wait for a DM; the loop is the channel. Do not start on comments while the loop is still `ready`.
 
 If there is **no** reviewer chat, Task one reviewer subagent yourself for this id only. Do not wait on it.
 
-`/stop-watch` ends listen loops without publishing. `/export-local-pr` is the developer cutting the GitHub PR at origin.
+`/stop-loop` ends the implementor listen. `/stop-review` ends the reviewer listen. `/stop-watch` ends both. None of those push. `/export-local-pr` is the developer cutting the GitHub PR at origin.
 
 ## Worktrees
 
