@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
-import { getRepoWatch, haltWatch, haltWatchRole, resumeWatch } from "./watch.js";
+import { getRepoWatch, haltWatch, haltWatchRole, resumeWatch, resumeWatchRole } from "./watch.js";
 import { consoleDir, writeJsonFile } from "./store.js";
 
 let repo = "";
@@ -69,4 +69,12 @@ test("legacy watch.json halt applies to both lanes", async () => {
   assert.equal(state.inbox.halted, true);
   assert.equal(state.queue.halted, true);
   assert.equal(state.halted, true);
+});
+
+test("start inbox does not resume the reviewer queue", async () => {
+  await haltWatch(repo, "stop");
+  const state = await resumeWatchRole(repo, "inbox");
+  assert.equal(state.inbox.halted, false);
+  assert.equal(state.queue.halted, true);
+  await resumeWatch(repo);
 });

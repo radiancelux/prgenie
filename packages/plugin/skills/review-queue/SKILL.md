@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 You are the **reviewer orchestrator**. Do not implement. Do not push unless `/export-local-pr`.
 
-0. Halt check — do not skip if MCP `watch_status` is missing. Prefer `node packages/cli/dist/prgenie.cjs watch queue` (the **queue** lane only). Combined `halted` is both lanes — do not treat an inbox-only stop as your halt. `listening` continues. `halted reason=stop` → kill this listen loop. `halted reason=export` → last packet shipped; do not dispatch. A new `create_local_pr` resumes watch only after that export id is archived or missing.
+0. Halt check — do not skip if MCP `watch_status` is missing. Prefer `node packages/cli/dist/prgenie.cjs watch queue` (the **queue** lane only). Combined `halted` is both lanes — do not treat an inbox-only stop as your halt. `listening` continues. `halted reason=stop` → kill this listen loop. `halted reason=export` → last packet shipped; do not dispatch. Do **not** `prgenie watch start` on this tick. A new `create_local_pr` resumes export-halted lanes after that id is archived or missing; it does not clear a stop halt.
 1. If this wake is `AGENT_LOOP_DONE_*` or the listen shell exited after the 60-tick cap, run `/stop-review` and stop. Do not re-arm. Do not `/stop-watch`.
 2. Ready queue: `node packages/cli/dist/prgenie.cjs queue`. Packet status is the source of truth — not a Task return message.
 3. Skip any `id`+`headSha` you already Tasked this session. A still-`ready` loop you already dispatched is in progress — skip it; do not duplicate the review.

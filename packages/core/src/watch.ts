@@ -126,6 +126,13 @@ export async function haltWatchRole(
   return writeWatch(cwd, derive(inbox, queue, new Date().toISOString()));
 }
 
+export async function resumeWatchRole(cwd: string, role: WatchRole): Promise<RepoWatchState> {
+  const current = await getRepoWatch(cwd);
+  const inbox = role === "inbox" ? idleLane() : current.inbox;
+  const queue = role === "queue" ? idleLane() : current.queue;
+  return writeWatch(cwd, derive(inbox, queue, new Date().toISOString()));
+}
+
 export async function resumeWatch(cwd: string): Promise<RepoWatchState> {
   return writeWatch(cwd, derive(idleLane(), idleLane(), new Date().toISOString()));
 }

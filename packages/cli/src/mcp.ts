@@ -25,6 +25,7 @@ import {
   isArchivedPr,
   resolveLocalPrComment,
   resumeWatch,
+  resumeWatchRole,
   setLocalPrStatus,
   updateLocalPr,
   type CommentRole,
@@ -173,8 +174,10 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
       const role = args.role === "inbox" || args.role === "queue" ? args.role : undefined;
       return role ? haltWatchRole(cwd, role, "stop") : haltWatch(cwd, "stop");
     }
-    case "watch_start":
-      return resumeWatch(cwd);
+    case "watch_start": {
+      const role = args.role === "inbox" || args.role === "queue" ? args.role : undefined;
+      return role ? resumeWatchRole(cwd, role) : resumeWatch(cwd);
+    }
     case "ensure_worktree": {
       const pr = await getLocalPr(cwd, String(args.id ?? ""));
     const dest = await ensureWorktreeForLoop(cwd, pr, {
@@ -390,8 +393,19 @@ const tools = [
   },
   {
     name: "watch_start",
-    description: "Resume listen loops after watch_stop. Creating a new loop also resumes after an export halt.",
-    inputSchema: { type: "object", properties: { cwd: { type: "string" } } },
+    description:
+      "Resume listen loops. Omit role to resume both. role=inbox is /watch-review-inbox re-arm. role=queue is /watch-ready-prs re-arm. Do not use from a review-inbox/review-queue tick. Creating a new loop also resumes export-halted lanes after that id is archived.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: { type: "string" },
+        role: {
+          type: "string",
+          enum: ["inbox", "queue"],
+          description: "inbox = implementor listen, queue = reviewer listen. Omit to resume both.",
+        },
+      },
+    },
   },
   {
     name: "export_local_pr",

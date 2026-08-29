@@ -521,8 +521,11 @@ async function writeWatch(cwd, state) {
   await writeJsonFile(watchFile(await consoleDir(root)), state);
   return state;
 }
-async function resumeWatch(cwd) {
-  return writeWatch(cwd, derive(idleLane(), idleLane(), (/* @__PURE__ */ new Date()).toISOString()));
+async function resumeWatchRole(cwd, role) {
+  const current = await getRepoWatch(cwd);
+  const inbox = role === "inbox" ? idleLane() : current.inbox;
+  const queue = role === "queue" ? idleLane() : current.queue;
+  return writeWatch(cwd, derive(inbox, queue, (/* @__PURE__ */ new Date()).toISOString()));
 }
 
 // packages/core/src/prs.ts
@@ -619,16 +622,19 @@ async function getLocalPr(cwd, id) {
 }
 async function resumeWatchForNextLoop(cwd) {
   const watch = await getRepoWatch(cwd);
-  if (!watch.halted || watch.reason !== "export") return;
-  if (watch.exportId) {
-    try {
-      const exported = await getLocalPr(cwd, watch.exportId);
-      if (!isArchivedPr(exported)) return;
-    } catch (err) {
-      if (!(err instanceof Error) || !err.message.startsWith("Local PR not found:")) throw err;
+  for (const role of ["inbox", "queue"]) {
+    const lane = watch[role];
+    if (!lane.halted || lane.reason !== "export") continue;
+    if (lane.exportId) {
+      try {
+        const exported = await getLocalPr(cwd, lane.exportId);
+        if (!isArchivedPr(exported)) continue;
+      } catch (err) {
+        if (!(err instanceof Error) || !err.message.startsWith("Local PR not found:")) throw err;
+      }
     }
+    await resumeWatchRole(cwd, role);
   }
-  await resumeWatch(cwd);
 }
 async function createLocalPr(cwd, input = {}) {
   const root = await requireGitRoot(cwd);

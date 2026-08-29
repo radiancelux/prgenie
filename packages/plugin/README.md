@@ -20,4 +20,4 @@ Then **Developer: Reload Window** is not enough for MCP tools (Cursor caches the
 
 Each loop has a feature branch for export and a git worktree. **Switch** in Local PRs replaces this window with that checkout. When a loop is **reviewed**, **Export to GitHub** on the loop panel publishes it. Exported (`approved`) loops are archived: they stay on disk. **Show archived** in Local PRs lists them. A merged GitHub PR archives the matching local packet. Export also checks the main workspace off the loop branch and drops a sibling `.loops` checkout. The plugin still asks before `git push` / `gh pr create`.
 
-Listen loops cap at **60 ticks** (~1 hour), then halt that chat's lane only (`/stop-loop` or `/stop-review`). Re-run `/watch-review-inbox` or `/watch-ready-prs` to continue. `/stop-watch` stops both sooner.
+Listen loops cap at **60 ticks** (~1 hour), then halt that chat's lane only (`/stop-loop` or `/stop-review`). Re-run `/watch-review-inbox` or `/watch-ready-prs` to start that lane again. `/stop-watch` stops both.

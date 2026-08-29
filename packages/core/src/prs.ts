@@ -27,7 +27,7 @@ import type {
   LocalPrStatus,
 } from "./types.js";
 import { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
-import { getRepoWatch, resumeWatch } from "./watch.js";
+import { getRepoWatch, resumeWatchRole } from "./watch.js";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -134,19 +134,22 @@ export async function getLocalPr(cwd: string, id: string): Promise<LocalPr> {
   return pr;
 }
 
-/** Export halt lasts until the next loop. `/stop-watch` never auto-resumes. */
+/** Export halt lasts until the next loop. Stop halt never auto-resumes, including one-sided stop. */
 export async function resumeWatchForNextLoop(cwd: string): Promise<void> {
   const watch = await getRepoWatch(cwd);
-  if (!watch.halted || watch.reason !== "export") return;
-  if (watch.exportId) {
-    try {
-      const exported = await getLocalPr(cwd, watch.exportId);
-      if (!isArchivedPr(exported)) return;
-    } catch (err) {
-      if (!(err instanceof Error) || !err.message.startsWith("Local PR not found:")) throw err;
+  for (const role of ["inbox", "queue"] as const) {
+    const lane = watch[role];
+    if (!lane.halted || lane.reason !== "export") continue;
+    if (lane.exportId) {
+      try {
+        const exported = await getLocalPr(cwd, lane.exportId);
+        if (!isArchivedPr(exported)) continue;
+      } catch (err) {
+        if (!(err instanceof Error) || !err.message.startsWith("Local PR not found:")) throw err;
+      }
     }
+    await resumeWatchRole(cwd, role);
   }
-  await resumeWatch(cwd);
 }
 
 export async function createLocalPr(

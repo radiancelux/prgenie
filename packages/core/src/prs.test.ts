@@ -595,6 +595,20 @@ test("creating a loop does not resume an inbox-only stop halt", async () => {
   await resumeWatch(repo);
 });
 
+test("creating a loop resumes export lanes even if the other lane is stop-halted", async () => {
+  git(["checkout", "main"]);
+  const shipped = await createLocalPr(repo, { title: "Shipped then cap", base: "main" });
+  await setLocalPrStatus(repo, shipped.id, "approved");
+  await haltWatch(repo, "export", shipped.id);
+  await haltWatchRole(repo, "inbox", "stop");
+  await createLocalPr(repo, { title: "Next after mixed halt", base: "main" });
+  const watch = await getRepoWatch(repo);
+  assert.equal(watch.inbox.halted, true);
+  assert.equal(watch.inbox.reason, "stop");
+  assert.equal(watch.queue.halted, false);
+  await resumeWatch(repo);
+});
+
 test("creating a loop does not resume export halt while that id is still live", async () => {
   git(["checkout", "main"]);
   const live = await createLocalPr(repo, { title: "Export in flight", base: "main" });

@@ -26,6 +26,7 @@ import {
   pendingReviewComments,
   resolveLocalPrComment,
   resumeWatch,
+  resumeWatchRole,
   setLocalPrStatus,
   updateLocalPr,
   type CommentRole,
@@ -48,6 +49,8 @@ Usage:
   prgenie watch stop inbox
   prgenie watch stop queue
   prgenie watch start
+  prgenie watch start inbox
+  prgenie watch start queue
   prgenie export <id>
   prgenie show <id>
   prgenie update <id> [--title <t>] [--body <summary>]
@@ -205,6 +208,12 @@ export async function run(argv: string[]): Promise<number> {
       return 0;
     }
     if (action === "start") {
+      const role = rest[1];
+      if (role === "inbox" || role === "queue") {
+        await resumeWatchRole(repo, role);
+        process.stdout.write(`${role} resumed.\n`);
+        return 0;
+      }
       await resumeWatch(repo);
       process.stdout.write("Watch resumed.\n");
       return 0;

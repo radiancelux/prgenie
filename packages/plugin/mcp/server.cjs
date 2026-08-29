@@ -585,6 +585,12 @@ async function haltWatchRole(cwd, role, reason = "stop") {
   const queue = role === "queue" ? lane : current.queue;
   return writeWatch(cwd, derive(inbox, queue, (/* @__PURE__ */ new Date()).toISOString()));
 }
+async function resumeWatchRole(cwd, role) {
+  const current = await getRepoWatch(cwd);
+  const inbox = role === "inbox" ? idleLane() : current.inbox;
+  const queue = role === "queue" ? idleLane() : current.queue;
+  return writeWatch(cwd, derive(inbox, queue, (/* @__PURE__ */ new Date()).toISOString()));
+}
 async function resumeWatch(cwd) {
   return writeWatch(cwd, derive(idleLane(), idleLane(), (/* @__PURE__ */ new Date()).toISOString()));
 }
@@ -683,16 +689,19 @@ async function getLocalPr(cwd, id) {
 }
 async function resumeWatchForNextLoop(cwd) {
   const watch = await getRepoWatch(cwd);
-  if (!watch.halted || watch.reason !== "export") return;
-  if (watch.exportId) {
-    try {
-      const exported = await getLocalPr(cwd, watch.exportId);
-      if (!isArchivedPr(exported)) return;
-    } catch (err) {
-      if (!(err instanceof Error) || !err.message.startsWith("Local PR not found:")) throw err;
+  for (const role of ["inbox", "queue"]) {
+    const lane = watch[role];
+    if (!lane.halted || lane.reason !== "export") continue;
+    if (lane.exportId) {
+      try {
+        const exported = await getLocalPr(cwd, lane.exportId);
+        if (!isArchivedPr(exported)) continue;
+      } catch (err) {
+        if (!(err instanceof Error) || !err.message.startsWith("Local PR not found:")) throw err;
+      }
     }
+    await resumeWatchRole(cwd, role);
   }
-  await resumeWatch(cwd);
 }
 async function createLocalPr(cwd, input = {}) {
   const root = await requireGitRoot(cwd);
@@ -1480,8 +1489,10 @@ async function handleTool(name, args) {
       const role = args.role === "inbox" || args.role === "queue" ? args.role : void 0;
       return role ? haltWatchRole(cwd, role, "stop") : haltWatch(cwd, "stop");
     }
-    case "watch_start":
-      return resumeWatch(cwd);
+    case "watch_start": {
+      const role = args.role === "inbox" || args.role === "queue" ? args.role : void 0;
+      return role ? resumeWatchRole(cwd, role) : resumeWatch(cwd);
+    }
     case "ensure_worktree": {
       const pr = await getLocalPr(cwd, String(args.id ?? ""));
       const dest = await ensureWorktreeForLoop(cwd, pr, {
@@ -1681,8 +1692,18 @@ var tools = [
   },
   {
     name: "watch_start",
-    description: "Resume listen loops after watch_stop. Creating a new loop also resumes after an export halt.",
-    inputSchema: { type: "object", properties: { cwd: { type: "string" } } }
+    description: "Resume listen loops. Omit role to resume both. role=inbox is /watch-review-inbox re-arm. role=queue is /watch-ready-prs re-arm. Do not use from a review-inbox/review-queue tick. Creating a new loop also resumes export-halted lanes after that id is archived.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: { type: "string" },
+        role: {
+          type: "string",
+          enum: ["inbox", "queue"],
+          description: "inbox = implementor listen, queue = reviewer listen. Omit to resume both."
+        }
+      }
+    }
   },
   {
     name: "export_local_pr",
