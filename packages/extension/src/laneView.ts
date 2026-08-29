@@ -3,6 +3,8 @@ import path from "node:path";
 import * as vscode from "vscode";
 import {
   addLocalPrComment,
+  addressLocalPrComment,
+  commentThreads,
   consoleDir,
   createLocalPr,
   ensureWorktreeForLoop,
@@ -32,6 +34,7 @@ type ClientMessage =
   | { type: "openGitLens" }
   | { type: "openFile"; path: string; status: string }
   | { type: "openComment"; path: string; line?: number }
+  | { type: "address"; id: string; commentId: string }
   | { type: "resolve"; id: string; commentId: string }
   | { type: "openDiffs" };
 
@@ -41,6 +44,7 @@ type Snapshot = {
   prs: LocalPr[];
   selectedId: string | null;
   files: { status: string; path: string }[];
+  threads?: { root: LocalPr["comments"][number]; replies: LocalPr["comments"] }[];
   repo: string;
   freshIds: string[];
   watching: boolean;
@@ -242,13 +246,21 @@ export class LaneHub implements vscode.Disposable {
       } else if (msg.type === "comment") {
         await addLocalPrComment(cwd, msg.id, msg.body, { role: "human" });
         await this.pushSnapshot();
+      } else if (msg.type === "address") {
+        const note = await vscode.window.showInputBox({
+          title: "Address comment",
+          prompt: "How did you address this? This reply sits under the reviewer comment.",
+        });
+        if (note === undefined) return;
+        await addressLocalPrComment(cwd, msg.id, msg.commentId, note);
+        await this.pushSnapshot();
       } else if (msg.type === "resolve") {
         const note = await vscode.window.showInputBox({
           title: "Resolve comment",
-          prompt: "How did you address this? This reply goes to the reviewer.",
+          prompt: "Confirm this is fixed. This marks the thread resolved for human review.",
         });
         if (note === undefined) return;
-        await resolveLocalPrComment(cwd, msg.id, msg.commentId, note);
+        await resolveLocalPrComment(cwd, msg.id, msg.commentId, note, { role: "human" });
         await this.pushSnapshot();
       } else if (msg.type === "summary") {
         await updateLocalPr(cwd, msg.id, { body: msg.body });
@@ -256,7 +268,8 @@ export class LaneHub implements vscode.Disposable {
       } else if (msg.type === "copyReviewPrompt") {
         const prompt = [
           `Review local PR ${msg.id} with PR Genie.`,
-          "Call get_diff, then add_comment with role reviewer for each finding (or one summary).",
+          "Call get_diff. Post new findings with add_comment role=reviewer.",
+          "On a second pass, resolve_comment each addressed finding or complete_review if nothing else is wrong.",
           "Do not implement fixes unless I ask. Do not git push.",
         ].join(" ");
         await vscode.env.clipboard.writeText(prompt);
@@ -323,6 +336,7 @@ export class LaneHub implements vscode.Disposable {
         prs,
         selectedId: this.selectedId ?? null,
         files,
+        threads: selected ? commentThreads(selected.comments) : [],
         repo: path.basename(root),
         freshIds,
         watching: true,
@@ -494,12 +508,13 @@ function panelHtml(webview: vscode.Webview): string {
     .grow { flex: 1; }
     .body { display: flex; flex: 1; min-height: 0; }
     .files {
-      flex: 1; overflow: auto;
+      flex: 1; min-width: 0; min-height: 0; overflow: hidden;
+      display: flex; flex-direction: column;
       border-right: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, transparent));
     }
     .files h2, .comments h2, .summary h2 {
       font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
-      margin: 0; padding: 8px 10px; color: var(--vscode-descriptionForeground);
+      margin: 0; padding: 8px 10px; color: var(--vscode-descriptionForeground); flex: none;
     }
     .summary {
       flex: none; max-height: 30%; overflow: auto;
@@ -515,11 +530,29 @@ function panelHtml(webview: vscode.Webview): string {
     .del { color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149); }
     .mod { color: var(--vscode-gitDecoration-modifiedResourceForeground, #d29922); }
     .comments {
-      width: 280px; flex: none; overflow: auto; display: flex; flex-direction: column;
+      width: 280px; flex: none; min-height: 0; overflow: hidden;
+      display: flex; flex-direction: column;
     }
-    .comment.resolved { opacity: 0.72; }
-    .replies { margin: 6px 0 0 10px; padding-left: 8px; border-left: 2px solid var(--vscode-widget-border, transparent); }
-    .comment .who { font-size: 11px; margin-bottom: 4px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    #flist, #clist { flex: 1; min-height: 0; overflow: auto; }
+    #clist { padding: 0 10px 8px; }
+    .thread {
+      margin: 8px 0 0;
+      padding: 8px;
+      border: 1px solid var(--vscode-widget-border, rgba(127,127,127,0.35));
+    }
+    .thread.resolved { opacity: 0.72; }
+    .thread .body { font-size: 12px; white-space: pre-wrap; }
+    .replies {
+      margin: 8px 0 0;
+      padding: 8px 0 0 10px;
+      border-left: 2px solid var(--vscode-focusBorder, var(--vscode-widget-border, #0078d4));
+    }
+    .reply { font-size: 12px; margin-top: 8px; }
+    .reply:first-child { margin-top: 0; }
+    .reply .body { white-space: pre-wrap; }
+    .comment .who, .thread .who, .reply .who {
+      font-size: 11px; margin-bottom: 4px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+    }
     .loc { font-size: 11px; padding: 1px 6px; }
     .role {
       font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
@@ -533,7 +566,7 @@ function panelHtml(webview: vscode.Webview): string {
       background: var(--vscode-input-background); color: var(--vscode-input-foreground);
       border: 1px solid var(--vscode-input-border, transparent); padding: 6px;
     }
-    .composer { padding: 8px 10px; }
+    .composer { padding: 8px 10px; flex: none; }
     .empty { padding: 16px 12px; }
   </style>
 </head>
@@ -544,6 +577,8 @@ function panelHtml(webview: vscode.Webview): string {
     const root = document.getElementById("root");
     let layoutId = null;
     let serverSum = "";
+    let paintedFiles = "";
+    let paintedComments = "";
     function esc(s) {
       return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
     }
@@ -559,84 +594,12 @@ function panelHtml(webview: vscode.Webview): string {
       const parts = String(p || "").split("\\t");
       return parts[parts.length - 1] || p;
     }
-    window.addEventListener("message", (event) => {
-      const msg = event.data;
-      if (msg.type !== "snapshot") return;
-      if (msg.error) {
-        layoutId = null;
-        root.innerHTML = '<p class="error"></p>';
-        root.firstChild.textContent = msg.error;
-        return;
-      }
-      const selected = (msg.prs || []).find((p) => p.id === msg.selectedId);
-      if (!selected) {
-        layoutId = null;
-        root.innerHTML = '<p class="muted empty">Select a loop in Local PRs. File diffs open in the editor like Source Control, for that loop\\'s worktree.</p>';
-        return;
-      }
-      const prevSum = root.querySelector("#sum");
-      const prevCmt = root.querySelector("#cmt");
-      const reuse = layoutId === selected.id && prevSum && prevCmt;
-      const keepSum = reuse && (document.activeElement === prevSum || prevSum.value !== serverSum);
-      const keepCmt = reuse && (document.activeElement === prevCmt || prevCmt.value.length > 0);
-      const draftSum = keepSum ? prevSum.value : (selected.body || "");
-      const draftCmt = keepCmt ? prevCmt.value : "";
-      const files = msg.files || [];
-      const comments = selected.comments || [];
-      const repliesFor = (id) => comments.filter((c) => c.replyTo === id);
-      const roots = comments.filter((c) => !c.replyTo);
-      const short = (sha) => (sha || "").slice(0, 7);
-      const when = selected.updatedAt ? new Date(selected.updatedAt).toLocaleString() : "";
-      const where = selected.worktreePath ? "worktree" : "head";
-      const fileHtml = files.map((f) => {
-        const st = stLabel(f.status);
-        return '<div class="file" data-path="' + esc(f.path) + '" data-status="' + esc(f.status) + '"><span class="st ' + st.c + '">' + esc(st.t) + '</span><span>' + esc(fileLabel(f.path)) + "</span></div>";
-      }).join("") || '<p class="muted empty">No files changed</p>';
-      function roleLabel(role) {
-        if (role === "agent") return "Agent";
-        if (role === "reviewer") return "Reviewer";
-        return "Human";
-      }
-      const commentHtml = roots.map((c) => {
-        const loc = c.path
-          ? '<button type="button" class="loc secondary" data-path="' + esc(c.path) + '" data-line="' + (c.line || "") + '">' + esc(c.path) + (c.line ? ":" + c.line : "") + "</button>"
-          : "";
-        const canResolve = (c.role === "human" || c.role === "reviewer") && !c.resolvedAt;
-        const resolveBtn = canResolve
-          ? '<button type="button" class="resolve secondary" data-cid="' + esc(c.id) + '">Resolve</button>'
-          : (c.resolvedAt ? '<span class="role">Resolved</span>' : "");
-        const replies = repliesFor(c.id).map((r) =>
-          '<div class="comment"><div class="who muted"><span class="role">' + esc(roleLabel(r.role)) + "</span>" + esc(r.author || "agent") + " · " + esc(new Date(r.createdAt).toLocaleString()) + "</div><div>" + esc(r.body) + "</div></div>"
-        ).join("");
-        return '<div class="comment' + (c.resolvedAt ? " resolved" : "") + '"><div class="who muted"><span class="role">' + esc(roleLabel(c.role)) + "</span>" + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + loc + resolveBtn + "</div><div>" + esc(c.body) + "</div>" + (replies ? '<div class="replies">' + replies + "</div>" : "") + "</div>";
-      }).join("") || '<p class="muted empty">No comments yet</p>';
-      root.innerHTML = [
-        '<div class="toolbar">',
-        "<h1></h1>",
-        '<span class="pill"></span>',
-        '<span class="muted" id="range"></span>',
-        '<span class="grow"></span>',
-        '<button id="openDiffs">Open diffs</button>',
-        '<button data-s="ready">Ready</button>',
-        '<button data-s="approved">Approve</button>',
-        '<button class="secondary" data-s="changes_requested">Request changes</button>',
-        '<button class="secondary" id="copyReview">Copy review prompt</button>',
-        '<button class="secondary" id="openWt"></button>',
-        "</div>",
-        '<div class="summary"><h2>Summary</h2><div class="pad"><textarea id="sum" placeholder="Why this exists, what changed, how to test. The implementing agent writes this for reviewers."></textarea><div style="margin-top:6px"><button id="saveSum">Save summary</button></div></div></div>',
-        '<div class="body">',
-        '<div class="files"><h2>Changes (' + where + ')</h2>' + fileHtml + '<p class="muted empty">Click a file to open the VS Code diff — loop base on the left, this worktree on the right.</p></div>',
-        '<div class="comments"><h2>Comments</h2><div id="clist">' + commentHtml + '</div><div class="composer"><p class="muted hint">Human/reviewer notes. Implementor: Resolve each with a reply, then Ready for a second review.</p><textarea id="cmt" placeholder="Comment for the agent working this PR"></textarea><div style="margin-top:6px"><button id="send">Comment</button></div></div></div>',
-        "</div>"
-      ].join("");
-      layoutId = selected.id;
-      serverSum = selected.body || "";
-      root.querySelector("h1").textContent = selected.title;
-      root.querySelector(".pill").textContent = selected.status.replace("_", " ");
-      root.querySelector("#range").textContent =
-        selected.id + " · " + selected.headRef + " → " + selected.baseRef + " · " + short(selected.headSha) + " " + (when ? "· " + when : "");
-      root.querySelector("#sum").value = draftSum;
-      root.querySelector("#cmt").value = draftCmt;
+    function roleLabel(role) {
+      if (role === "agent") return "Agent";
+      if (role === "reviewer") return "Reviewer";
+      return "Human";
+    }
+    function bindChrome(selected, msg) {
       root.querySelector("#saveSum").onclick = () => vscode.postMessage({
         type: "summary",
         id: selected.id,
@@ -645,8 +608,6 @@ function panelHtml(webview: vscode.Webview): string {
       for (const btn of root.querySelectorAll("button[data-s]")) {
         btn.onclick = () => vscode.postMessage({ type: "status", id: selected.id, status: btn.getAttribute("data-s") });
       }
-      root.querySelector("#openWt").textContent = selected.id === msg.hereId ? "This window" : "Switch to this loop";
-      root.querySelector("#openWt").disabled = selected.id === msg.hereId;
       root.querySelector("#openWt").onclick = () => vscode.postMessage({ type: "openFolder", id: selected.id });
       root.querySelector("#copyReview").onclick = () => vscode.postMessage({ type: "copyReviewPrompt", id: selected.id });
       root.querySelector("#openDiffs").onclick = () => vscode.postMessage({ type: "openDiffs" });
@@ -654,11 +615,22 @@ function panelHtml(webview: vscode.Webview): string {
         const body = root.querySelector("#cmt").value;
         if (body.trim()) vscode.postMessage({ type: "comment", id: selected.id, body });
       };
+    }
+    function bindFiles() {
       for (const el of root.querySelectorAll(".file[data-path]")) {
         el.onclick = () => vscode.postMessage({
           type: "openFile",
           path: el.getAttribute("data-path"),
           status: el.getAttribute("data-status") || "M"
+        });
+      }
+    }
+    function bindComments(selected) {
+      for (const el of root.querySelectorAll(".address[data-cid]")) {
+        el.onclick = () => vscode.postMessage({
+          type: "address",
+          id: selected.id,
+          commentId: el.getAttribute("data-cid")
         });
       }
       for (const el of root.querySelectorAll(".resolve[data-cid]")) {
@@ -675,6 +647,117 @@ function panelHtml(webview: vscode.Webview): string {
           line: Number(el.getAttribute("data-line") || 0) || undefined
         });
       }
+    }
+    function paintChrome(selected, msg, draftSum, draftCmt) {
+      const short = (sha) => (sha || "").slice(0, 7);
+      const when = selected.updatedAt ? new Date(selected.updatedAt).toLocaleString() : "";
+      root.querySelector("h1").textContent = selected.title;
+      root.querySelector(".pill").textContent = selected.status.replace("_", " ");
+      root.querySelector("#range").textContent =
+        selected.id + " · " + selected.headRef + " → " + selected.baseRef + " · " + short(selected.headSha) + " " + (when ? "· " + when : "");
+      const filesH2 = root.querySelector(".files h2");
+      if (filesH2) filesH2.textContent = "Changes (" + (selected.worktreePath ? "worktree" : "head") + ")";
+      root.querySelector("#openWt").textContent = selected.id === msg.hereId ? "This window" : "Switch to this loop";
+      root.querySelector("#openWt").disabled = selected.id === msg.hereId;
+      if (draftSum !== undefined) root.querySelector("#sum").value = draftSum;
+      if (draftCmt !== undefined) root.querySelector("#cmt").value = draftCmt;
+    }
+    function setList(el, html, paintedKey) {
+      if (!el) return false;
+      if (paintedKey === "files" && html === paintedFiles) return false;
+      if (paintedKey === "comments" && html === paintedComments) return false;
+      const y = el.scrollTop;
+      el.innerHTML = html;
+      el.scrollTop = y;
+      if (paintedKey === "files") paintedFiles = html;
+      else paintedComments = html;
+      return true;
+    }
+    window.addEventListener("message", (event) => {
+      const msg = event.data;
+      if (msg.type !== "snapshot") return;
+      if (msg.error) {
+        layoutId = null;
+        paintedFiles = "";
+        paintedComments = "";
+        root.innerHTML = '<p class="error"></p>';
+        root.firstChild.textContent = msg.error;
+        return;
+      }
+      const selected = (msg.prs || []).find((p) => p.id === msg.selectedId);
+      if (!selected) {
+        layoutId = null;
+        paintedFiles = "";
+        paintedComments = "";
+        root.innerHTML = '<p class="muted empty">Select a loop in Local PRs. File diffs open in the editor like Source Control, for that loop\\'s worktree.</p>';
+        return;
+      }
+      const prevSum = root.querySelector("#sum");
+      const prevCmt = root.querySelector("#cmt");
+      const reuse = layoutId === selected.id && prevSum && prevCmt && root.querySelector("#clist") && root.querySelector("#flist");
+      const keepSum = reuse && (document.activeElement === prevSum || prevSum.value !== serverSum);
+      const keepCmt = reuse && (document.activeElement === prevCmt || prevCmt.value.length > 0);
+      const draftSum = keepSum ? prevSum.value : (selected.body || "");
+      const draftCmt = keepCmt ? prevCmt.value : "";
+      const files = msg.files || [];
+      const threads = msg.threads || [];
+      const where = selected.worktreePath ? "worktree" : "head";
+      const fileHtml = files.map((f) => {
+        const st = stLabel(f.status);
+        return '<div class="file" data-path="' + esc(f.path) + '" data-status="' + esc(f.status) + '"><span class="st ' + st.c + '">' + esc(st.t) + '</span><span>' + esc(fileLabel(f.path)) + "</span></div>";
+      }).join("") || '<p class="muted empty">No files changed</p>';
+      const commentHtml = threads.map((t) => {
+        const c = t.root;
+        const st = c.status || (c.resolvedAt ? "resolved" : "open");
+        const loc = c.path
+          ? '<button type="button" class="loc secondary" data-path="' + esc(c.path) + '" data-line="' + (c.line || "") + '">' + esc(c.path) + (c.line ? ":" + c.line : "") + "</button>"
+          : "";
+        const action = st === "open" && (c.role === "human" || c.role === "reviewer")
+          ? '<button type="button" class="address secondary" data-cid="' + esc(c.id) + '">Addressed</button>'
+          : st === "addressed"
+            ? '<button type="button" class="resolve secondary" data-cid="' + esc(c.id) + '">Resolve</button>'
+            : "";
+        const replies = (t.replies || []).map((r) =>
+          '<div class="reply"><div class="who muted"><span class="role">' + esc(roleLabel(r.role)) + "</span>" + esc(r.author || "agent") + " · " + esc(new Date(r.createdAt).toLocaleString()) + '</div><div class="body">' + esc(r.body) + "</div></div>"
+        ).join("");
+        return '<div class="thread ' + esc(st) + '"><div class="who muted"><span class="role">' + esc(roleLabel(c.role)) + '</span><span class="role">' + esc(st) + "</span>" + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + loc + action + '</div><div class="body">' + esc(c.body) + "</div>" + (replies ? '<div class="replies">' + replies + "</div>" : "") + "</div>";
+      }).join("") || '<p class="muted empty">No comments yet</p>';
+      if (!reuse) {
+        paintedFiles = "";
+        paintedComments = "";
+        root.innerHTML = [
+          '<div class="toolbar">',
+          "<h1></h1>",
+          '<span class="pill"></span>',
+          '<span class="muted" id="range"></span>',
+          '<span class="grow"></span>',
+          '<button id="openDiffs">Open diffs</button>',
+          '<button data-s="ready">Ready</button>',
+          '<button data-s="approved">Approve</button>',
+          '<button class="secondary" data-s="changes_requested">Request changes</button>',
+          '<button class="secondary" id="copyReview">Copy review prompt</button>',
+          '<button class="secondary" id="openWt"></button>',
+          "</div>",
+          '<div class="summary"><h2>Summary</h2><div class="pad"><textarea id="sum" placeholder="Why this exists, what changed, how to test. The implementing agent writes this for reviewers."></textarea><div style="margin-top:6px"><button id="saveSum">Save summary</button></div></div></div>',
+          '<div class="body">',
+          '<div class="files"><h2>Changes (' + where + ')</h2><div id="flist">' + fileHtml + '</div><p class="muted empty">Click a file to open the VS Code diff — loop base on the left, this worktree on the right.</p></div>',
+          '<div class="comments"><h2>Comments</h2><div id="clist">' + commentHtml + '</div><div class="composer"><p class="muted hint">Open findings go to the implementor. Address nests a reply underneath. Reviewer Resolve (or complete_review) hands a clean pass to you.</p><textarea id="cmt" placeholder="Comment for the agent working this PR"></textarea><div style="margin-top:6px"><button id="send">Comment</button></div></div></div>',
+          "</div>"
+        ].join("");
+        paintedFiles = fileHtml;
+        paintedComments = commentHtml;
+        bindChrome(selected, msg);
+        bindFiles();
+        bindComments(selected);
+      } else {
+        const filesChanged = setList(root.querySelector("#flist"), fileHtml, "files");
+        const commentsChanged = setList(root.querySelector("#clist"), commentHtml, "comments");
+        if (filesChanged) bindFiles();
+        if (commentsChanged) bindComments(selected);
+      }
+      layoutId = selected.id;
+      serverSum = selected.body || "";
+      paintChrome(selected, msg, keepSum ? undefined : draftSum, keepCmt ? undefined : draftCmt);
     });
     vscode.postMessage({ type: "ready" });
   </script>

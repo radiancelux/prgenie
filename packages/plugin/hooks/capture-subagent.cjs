@@ -25,6 +25,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 // packages/cli/src/capture-hook.ts
 var import_node_fs2 = require("node:fs");
 
+// packages/core/src/types.ts
+var COMMENT_STATUSES = ["open", "addressed", "resolved"];
+
 // packages/core/src/git.ts
 var import_node_child_process = require("node:child_process");
 var import_node_path = __toESM(require("node:path"), 1);
@@ -285,6 +288,28 @@ async function writeJsonFile(file, value) {
   }
   await (0, import_promises2.unlink)(tmp).catch(() => void 0);
 }
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+async function withFileLock(file, fn) {
+  const lock = `${file}.lock`;
+  let lastErr;
+  for (let i = 0; i < 50; i++) {
+    try {
+      const handle = await (0, import_promises2.open)(lock, "wx");
+      try {
+        return await fn();
+      } finally {
+        await handle.close();
+        await (0, import_promises2.unlink)(lock).catch(() => void 0);
+      }
+    } catch (err) {
+      lastErr = err;
+      await delay(20);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(`Timed out locking ${file}`);
+}
 
 // packages/core/src/prs.ts
 function nowIso() {
@@ -314,6 +339,34 @@ async function writePr(cwd, pr) {
     ["notes", "--ref=local-pr", "add", "-f", "-m", note, pr.headSha],
     { allowFail: true }
   );
+}
+async function readPrFile(file) {
+  const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+  pr.source = pr.source ?? null;
+  pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
+  pr.comments = (pr.comments ?? []).map(normalizeComment);
+  return pr;
+}
+async function withPrLock(cwd, id, fn) {
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = await readPrFile(file);
+    await fn(pr);
+    await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
+    return pr;
+  });
+}
+async function applyHeadRefresh(cwd, pr) {
+  const named = await git(cwd, ["rev-parse", "--verify", pr.headRef], { allowFail: true });
+  if (named.code !== 0) {
+    const branch = await currentBranch(cwd);
+    if (branch) pr.headRef = branch;
+  }
+  pr.headSha = await gitText(cwd, ["rev-parse", named.code === 0 ? pr.headRef : "HEAD"]);
+  pr.updatedAt = nowIso();
 }
 async function listLocalPrs(cwd) {
   await requireGitRoot(cwd);
@@ -381,25 +434,20 @@ async function createLocalPr(cwd, input = {}) {
   pr.worktreePath = await ensureWorktreeForLoop(root, pr);
   return pr;
 }
+function inferCommentStatus(comment, role) {
+  if (comment.status && COMMENT_STATUSES.includes(comment.status)) return comment.status;
+  if (comment.resolvedAt) return "resolved";
+  if (comment.replyTo || role === "agent") return "resolved";
+  return "open";
+}
 function normalizeComment(comment) {
   const role = comment.role === "agent" || comment.role === "reviewer" || comment.role === "human" ? comment.role : "human";
   return {
     ...comment,
     author: comment.author || "reviewer",
-    role
+    role,
+    status: inferCommentStatus(comment, role)
   };
-}
-async function refreshLocalPrHead(cwd, id) {
-  const pr = await getLocalPr(cwd, id);
-  const named = await git(cwd, ["rev-parse", "--verify", pr.headRef], { allowFail: true });
-  if (named.code !== 0) {
-    const branch = await currentBranch(cwd);
-    if (branch) pr.headRef = branch;
-  }
-  pr.headSha = await gitText(cwd, ["rev-parse", named.code === 0 ? pr.headRef : "HEAD"]);
-  pr.updatedAt = nowIso();
-  await writePr(cwd, pr);
-  return pr;
 }
 async function hasCommitsAheadOfBase(cwd, baseRef) {
   const base = baseRef ?? await detectDefaultBase(cwd);
@@ -422,12 +470,16 @@ async function captureAgentWork(cwd, input = {}) {
     (pr2) => pr2.headRef === headRef && pr2.status !== "approved"
   );
   if (existing) {
-    if (input.source) existing.source = input.source;
-    if (input.title?.trim()) existing.title = input.title.trim();
-    if (input.body?.trim()) existing.body = input.body.trim();
-    const updated = await refreshLocalPrHead(cwd, existing.id);
-    updated.source = existing.source;
-    await writePr(cwd, updated);
+    const prevSha = existing.headSha;
+    const updated = await withPrLock(cwd, existing.id, async (pr2) => {
+      if (input.source) pr2.source = input.source;
+      if (input.title?.trim()) pr2.title = input.title.trim();
+      if (input.body?.trim()) pr2.body = input.body.trim();
+      await applyHeadRefresh(cwd, pr2);
+      if (pr2.status === "reviewed" && pr2.headSha !== prevSha) {
+        pr2.status = "ready";
+      }
+    });
     updated.worktreePath = await ensureWorktreeForLoop(cwd, updated);
     return { action: "updated", pr: updated };
   }

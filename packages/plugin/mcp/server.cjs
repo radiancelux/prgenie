@@ -26,10 +26,12 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var STATUSES = [
   "draft",
   "ready",
-  "approved",
-  "changes_requested"
+  "changes_requested",
+  "reviewed",
+  "approved"
 ];
 var COMMENT_ROLES = ["human", "agent", "reviewer"];
+var COMMENT_STATUSES = ["open", "addressed", "resolved"];
 
 // packages/core/src/git.ts
 var import_node_child_process = require("node:child_process");
@@ -342,6 +344,25 @@ async function writePr(cwd, pr) {
     { allowFail: true }
   );
 }
+async function readPrFile(file) {
+  const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+  pr.source = pr.source ?? null;
+  pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
+  pr.comments = (pr.comments ?? []).map(normalizeComment);
+  return pr;
+}
+async function withPrLock(cwd, id, fn) {
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = await readPrFile(file);
+    await fn(pr);
+    await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
+    return pr;
+  });
+}
 async function listLocalPrs(cwd) {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
@@ -409,45 +430,94 @@ async function createLocalPr(cwd, input = {}) {
   return pr;
 }
 async function updateLocalPr(cwd, id, patch) {
-  const pr = await getLocalPr(cwd, id);
-  if (patch.title !== void 0) {
-    const title = patch.title.trim();
-    if (!title) throw new Error("Title is empty");
-    pr.title = title;
-  }
-  if (patch.body !== void 0) {
-    pr.body = patch.body.trim();
-  }
-  pr.updatedAt = nowIso();
-  await writePr(cwd, pr);
-  return pr;
+  return withPrLock(cwd, id, (pr) => {
+    if (patch.title !== void 0) {
+      const title = patch.title.trim();
+      if (!title) throw new Error("Title is empty");
+      pr.title = title;
+    }
+    if (patch.body !== void 0) {
+      pr.body = patch.body.trim();
+    }
+    pr.updatedAt = nowIso();
+  });
 }
 async function setLocalPrStatus(cwd, id, status) {
   if (!STATUSES.includes(status)) {
     throw new Error(`Invalid status: ${status}`);
   }
-  const pr = await getLocalPr(cwd, id);
-  pr.status = status;
-  pr.updatedAt = nowIso();
-  await writePr(cwd, pr);
-  return pr;
+  return withPrLock(cwd, id, (pr) => {
+    pr.status = status;
+    pr.updatedAt = nowIso();
+  });
+}
+function isReviewRequestBody(body) {
+  return /^review requested\.?$/i.test(body.trim());
+}
+function inferCommentStatus(comment, role) {
+  if (comment.status && COMMENT_STATUSES.includes(comment.status)) return comment.status;
+  if (comment.resolvedAt) return "resolved";
+  if (comment.replyTo || role === "agent") return "resolved";
+  return "open";
 }
 function normalizeComment(comment) {
   const role = comment.role === "agent" || comment.role === "reviewer" || comment.role === "human" ? comment.role : "human";
   return {
     ...comment,
     author: comment.author || "reviewer",
-    role
+    role,
+    status: inferCommentStatus(comment, role)
   };
 }
+function isFindingComment(comment) {
+  const c = normalizeComment(comment);
+  if (c.role !== "human" && c.role !== "reviewer") return false;
+  if (c.replyTo) return false;
+  return true;
+}
 function pendingReviewComments(pr) {
-  const comments = (pr.comments ?? []).map(normalizeComment);
-  return comments.filter((c) => {
-    if (c.role !== "human" && c.role !== "reviewer") return false;
-    if (c.replyTo) return false;
-    if (c.resolvedAt) return false;
-    return true;
-  });
+  return (pr.comments ?? []).map(normalizeComment).filter((c) => isFindingComment(c) && c.status === "open");
+}
+function addressedReviewComments(pr) {
+  return (pr.comments ?? []).map(normalizeComment).filter((c) => isFindingComment(c) && c.status === "addressed");
+}
+function commentThreads(comments) {
+  const list = (comments ?? []).map(normalizeComment);
+  const ids = new Set(list.map((c) => c.id));
+  const assigned = /* @__PURE__ */ new Set();
+  const repliesByParent = /* @__PURE__ */ new Map();
+  for (const c of list) {
+    if (c.replyTo && ids.has(c.replyTo)) {
+      const bucket = repliesByParent.get(c.replyTo) ?? [];
+      bucket.push(c);
+      repliesByParent.set(c.replyTo, bucket);
+      assigned.add(c.id);
+    }
+  }
+  const threads = [];
+  let lastFinding2;
+  for (const c of list) {
+    if (assigned.has(c.id)) continue;
+    if (c.role === "agent" && !isReviewRequestBody(c.body) && lastFinding2) {
+      lastFinding2.replies.push(c);
+      continue;
+    }
+    const thread = { root: c, replies: repliesByParent.get(c.id) ?? [] };
+    threads.push(thread);
+    if (isFindingComment(c)) lastFinding2 = thread;
+  }
+  return threads;
+}
+function maybePromoteToReviewed(pr) {
+  if (pr.status !== "ready" && pr.status !== "changes_requested") return;
+  const open2 = pendingReviewComments(pr);
+  const addressed = addressedReviewComments(pr);
+  if (open2.length > 0 || addressed.length > 0) return;
+  pr.status = "reviewed";
+}
+function lastFinding(pr) {
+  const findings = (pr.comments ?? []).map(normalizeComment).filter(isFindingComment);
+  return findings[findings.length - 1];
 }
 async function addLocalPrComment(cwd, id, body, options = {}) {
   const text = body.trim();
@@ -467,14 +537,25 @@ async function addLocalPrComment(cwd, id, body, options = {}) {
       body: text,
       createdAt: nowIso(),
       author: options.author?.trim() || await userName(cwd),
-      role
+      role,
+      status: role === "agent" ? "resolved" : "open"
     };
     const loc = options.path?.trim();
     if (loc) comment.path = loc.replace(/\\/g, "/");
     if (options.line && options.line > 0) comment.line = Math.floor(options.line);
     if (options.side === "left" || options.side === "right") comment.side = options.side;
+    const replyTo = options.replyTo?.trim();
+    if (replyTo) {
+      const target = pr.comments.find((c) => c.id === replyTo || c.id.startsWith(replyTo));
+      if (!target) throw new Error(`Comment not found: ${replyTo}`);
+      comment.replyTo = target.id;
+      comment.status = "resolved";
+    } else if (role === "agent" && !isReviewRequestBody(text)) {
+      const parent = lastFinding(pr);
+      if (parent) comment.replyTo = parent.id;
+    }
     pr.comments.push(comment);
-    if (role !== "agent") {
+    if (role !== "agent" && comment.status === "open") {
       pr.status = "changes_requested";
     }
     pr.updatedAt = comment.createdAt;
@@ -483,9 +564,9 @@ async function addLocalPrComment(cwd, id, body, options = {}) {
     return pr;
   });
 }
-async function resolveLocalPrComment(cwd, id, commentId, body, options = {}) {
+async function addressLocalPrComment(cwd, id, commentId, body, options = {}) {
   const text = body.trim();
-  if (!text) throw new Error("Resolution comment is empty");
+  if (!text) throw new Error("Address comment is empty");
   const needle = commentId.trim();
   if (!needle) throw new Error("Comment id is empty");
   const resolved = await getLocalPr(cwd, id);
@@ -496,14 +577,58 @@ async function resolveLocalPrComment(cwd, id, commentId, body, options = {}) {
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
     if (!target) throw new Error(`Comment not found: ${commentId}`);
-    if (target.role === "agent") {
-      throw new Error("Only human or reviewer comments can be resolved");
+    if (!isFindingComment(target)) {
+      throw new Error("Only human or reviewer findings can be addressed");
     }
-    if (target.resolvedAt) {
-      throw new Error(`Comment ${target.id} is already resolved`);
+    if (target.status !== "open") {
+      throw new Error(`Comment ${target.id} is ${target.status}, not open`);
     }
     const now = nowIso();
     const author = options.author?.trim() || await userName(cwd);
+    target.status = "addressed";
+    pr.comments.push({
+      id: newId("c"),
+      body: text,
+      createdAt: now,
+      author,
+      role: "agent",
+      status: "resolved",
+      replyTo: target.id
+    });
+    pr.updatedAt = now;
+    await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
+    return pr;
+  });
+}
+async function resolveLocalPrComment(cwd, id, commentId, body, options = {}) {
+  const text = body.trim();
+  if (!text) throw new Error("Resolution comment is empty");
+  const needle = commentId.trim();
+  if (!needle) throw new Error("Comment id is empty");
+  const role = options.role === "human" ? "human" : "reviewer";
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+    pr.comments = (pr.comments ?? []).map(normalizeComment);
+    const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
+    if (!target) throw new Error(`Comment not found: ${commentId}`);
+    if (!isFindingComment(target)) {
+      throw new Error("Only human or reviewer findings can be resolved");
+    }
+    if (target.status === "resolved") {
+      throw new Error(`Comment ${target.id} is already resolved`);
+    }
+    if (target.status === "open" && role !== "human") {
+      throw new Error(
+        `Comment ${target.id} is still open. The implementor must address_comment it before the reviewer resolves it.`
+      );
+    }
+    const now = nowIso();
+    const author = options.author?.trim() || await userName(cwd);
+    target.status = "resolved";
     target.resolvedAt = now;
     target.resolvedBy = author;
     pr.comments.push({
@@ -511,9 +636,48 @@ async function resolveLocalPrComment(cwd, id, commentId, body, options = {}) {
       body: text,
       createdAt: now,
       author,
-      role: "agent",
+      role,
+      status: "resolved",
       replyTo: target.id
     });
+    pr.updatedAt = now;
+    maybePromoteToReviewed(pr);
+    await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
+    return pr;
+  });
+}
+async function completeLocalPrReview(cwd, id, options = {}) {
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+    pr.comments = (pr.comments ?? []).map(normalizeComment);
+    const open2 = pendingReviewComments(pr);
+    if (open2.length > 0) {
+      throw new Error(
+        `Open findings remain (${open2.length}). File them as addressed first, or add no new findings and resolve the rest.`
+      );
+    }
+    const now = nowIso();
+    const author = options.author?.trim() || await userName(cwd);
+    for (const comment of pr.comments) {
+      if (isFindingComment(comment) && comment.status === "addressed") {
+        comment.status = "resolved";
+        comment.resolvedAt = now;
+        comment.resolvedBy = author;
+      }
+    }
+    pr.comments.push({
+      id: newId("c"),
+      body: (options.body?.trim() || "Review complete. Ready for human review.").trim(),
+      createdAt: now,
+      author,
+      role: "reviewer",
+      status: "resolved"
+    });
+    pr.status = "reviewed";
     pr.updatedAt = now;
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;
@@ -724,12 +888,11 @@ async function ensureRepoGithub(cwd) {
 function ghBase(ref) {
   return ref.replace(/^origin\//, "").replace(/^refs\/heads\//, "");
 }
+function exportPushRefspec(pr) {
+  return `${pr.headSha}:refs/heads/${pr.headRef}`;
+}
 async function exportLocalPr(cwd, id) {
   const pr = await getLocalPr(cwd, id);
-  await haltWatch(cwd, "export", pr.id);
-  if (pr.status !== "approved") {
-    await setLocalPrStatus(cwd, pr.id, "approved");
-  }
   const ghState = await ensureRepoGithub(cwd);
   if (!ghState.bound && !ghState.login) {
     throw new Error("No GitHub account. Run: gh auth login, then prgenie gh use <login>");
@@ -739,40 +902,53 @@ async function exportLocalPr(cwd, id) {
       `This repo is not bound to a GitHub login. Ask which account, then prgenie gh use <login> (active is ${ghState.login}).`
     );
   }
-  const push = await git(cwd, ["push", "-u", "origin", `HEAD:refs/heads/${pr.headRef}`], {
-    allowFail: true
-  });
-  if (push.code !== 0) {
-    throw new Error(push.stderr.trim() || `git push failed for ${pr.headRef}`);
+  await haltWatch(cwd, "export", pr.id);
+  try {
+    const push = await git(cwd, ["push", "-u", "origin", exportPushRefspec(pr)], {
+      allowFail: true
+    });
+    if (push.code !== 0) {
+      throw new Error(push.stderr.trim() || `git push failed for ${pr.headRef}`);
+    }
+    const existing = await runGh(
+      ["pr", "view", "--head", pr.headRef, "--json", "url", "-q", ".url"],
+      { cwd }
+    );
+    let url;
+    let alreadyExisted = false;
+    if (existing.code === 0 && existing.stdout.trim().startsWith("http")) {
+      url = existing.stdout.trim();
+      alreadyExisted = true;
+    } else {
+      const created = await runGh(
+        [
+          "pr",
+          "create",
+          "--title",
+          pr.title,
+          "--body",
+          pr.body.trim() || pr.title,
+          "--base",
+          ghBase(pr.baseRef),
+          "--head",
+          pr.headRef
+        ],
+        { cwd }
+      );
+      if (created.code !== 0) {
+        throw new Error(created.stderr.trim() || created.stdout.trim() || "gh pr create failed");
+      }
+      url = created.stdout.trim().split("\n").find((line) => /^https?:\/\//.test(line)) ?? created.stdout.trim();
+      if (!url) throw new Error("gh pr create succeeded but returned no URL");
+    }
+    if (pr.status !== "approved") {
+      await setLocalPrStatus(cwd, pr.id, "approved");
+    }
+    return { url, id: pr.id, alreadyExisted };
+  } catch (err) {
+    await resumeWatch(cwd);
+    throw err;
   }
-  const existing = await runGh(
-    ["pr", "view", "--head", pr.headRef, "--json", "url", "-q", ".url"],
-    { cwd }
-  );
-  if (existing.code === 0 && existing.stdout.trim().startsWith("http")) {
-    return { url: existing.stdout.trim(), id: pr.id, alreadyExisted: true };
-  }
-  const created = await runGh(
-    [
-      "pr",
-      "create",
-      "--title",
-      pr.title,
-      "--body",
-      pr.body.trim() || pr.title,
-      "--base",
-      ghBase(pr.baseRef),
-      "--head",
-      pr.headRef
-    ],
-    { cwd }
-  );
-  if (created.code !== 0) {
-    throw new Error(created.stderr.trim() || created.stdout.trim() || "gh pr create failed");
-  }
-  const url = created.stdout.trim().split("\n").find((line) => /^https?:\/\//.test(line)) ?? created.stdout.trim();
-  if (!url) throw new Error("gh pr create succeeded but returned no URL");
-  return { url, id: pr.id, alreadyExisted: false };
 }
 
 // packages/cli/src/mcp.ts
@@ -785,6 +961,14 @@ function ok(id, result) {
 }
 function fail(id, code, message) {
   writeMessage({ jsonrpc: "2.0", id, error: { code, message } });
+}
+function withCommentViews(pr) {
+  return {
+    ...pr,
+    pendingComments: pendingReviewComments(pr),
+    addressedComments: addressedReviewComments(pr),
+    threads: commentThreads(pr.comments)
+  };
 }
 async function repoCwd() {
   const cwd = process.cwd();
@@ -810,10 +994,7 @@ async function handleTool(name, args) {
     case "list_worktrees":
       return listWorktrees(cwd);
     case "list_local_prs": {
-      const prs = (await listLocalPrs(cwd)).map((pr) => ({
-        ...pr,
-        pendingComments: pendingReviewComments(pr)
-      }));
+      const prs = (await listLocalPrs(cwd)).map(withCommentViews);
       const status = typeof args.status === "string" ? args.status : "";
       const inbox = args.inbox === true;
       return prs.filter((pr) => {
@@ -836,7 +1017,7 @@ async function handleTool(name, args) {
       });
     case "get_local_pr": {
       const pr = await getLocalPr(cwd, String(args.id ?? ""));
-      return { ...pr, pendingComments: pendingReviewComments(pr) };
+      return withCommentViews(pr);
     }
     case "set_status":
       return setLocalPrStatus(cwd, String(args.id ?? ""), args.status);
@@ -848,17 +1029,34 @@ async function handleTool(name, args) {
         author,
         path: typeof args.path === "string" ? args.path : void 0,
         line: typeof args.line === "number" ? args.line : void 0,
-        side: args.side === "left" || args.side === "right" ? args.side : void 0
+        side: args.side === "left" || args.side === "right" ? args.side : void 0,
+        replyTo: typeof args.replyTo === "string" ? args.replyTo : void 0
       });
     }
-    case "resolve_comment":
-      return resolveLocalPrComment(
+    case "address_comment":
+      return addressLocalPrComment(
         cwd,
         String(args.id ?? ""),
         String(args.commentId ?? ""),
         String(args.body ?? ""),
         { author: typeof args.author === "string" ? args.author : void 0 }
       );
+    case "resolve_comment":
+      return resolveLocalPrComment(
+        cwd,
+        String(args.id ?? ""),
+        String(args.commentId ?? ""),
+        String(args.body ?? ""),
+        {
+          author: typeof args.author === "string" ? args.author : void 0,
+          role: args.role === "human" ? "human" : "reviewer"
+        }
+      );
+    case "complete_review":
+      return completeLocalPrReview(cwd, String(args.id ?? ""), {
+        author: typeof args.author === "string" ? args.author : void 0,
+        body: typeof args.body === "string" ? args.body : void 0
+      });
     case "get_diff":
       return {
         files: await getLocalPrNameStatus(cwd, String(args.id ?? "")),
@@ -898,14 +1096,14 @@ var tools = [
   },
   {
     name: "list_local_prs",
-    description: "List unpublished local pull requests. status=ready is the reviewer queue. inbox=true is loops with unresolved pendingComments for the implementor.",
+    description: "List unpublished local pull requests. status=ready is the reviewer queue. status=reviewed is waiting on the human. inbox=true is loops with open pendingComments for the implementor.",
     inputSchema: {
       type: "object",
       properties: {
         cwd: { type: "string" },
         status: {
           type: "string",
-          enum: ["draft", "ready", "approved", "changes_requested"]
+          enum: ["draft", "ready", "changes_requested", "reviewed", "approved"]
         },
         inbox: {
           type: "boolean",
@@ -947,7 +1145,7 @@ var tools = [
   },
   {
     name: "get_local_pr",
-    description: "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are unresolved human/reviewer notes. Resolved comments stay on the loop for the second review.",
+    description: "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are open findings for the implementor. addressedComments are waiting for the reviewer to resolve. threads nest agent replies under those findings.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -956,20 +1154,20 @@ var tools = [
   },
   {
     name: "set_status",
-    description: "Set local PR status: draft, ready, approved, changes_requested.",
+    description: "Set local PR status: draft, ready, changes_requested, reviewed, approved. reviewed means the automated reviewer signed off and the human should look.",
     inputSchema: {
       type: "object",
       required: ["id", "status"],
       properties: {
         id: { type: "string" },
-        status: { type: "string", enum: ["draft", "ready", "approved", "changes_requested"] },
+        status: { type: "string", enum: ["draft", "ready", "changes_requested", "reviewed", "approved"] },
         cwd: { type: "string" }
       }
     }
   },
   {
     name: "add_comment",
-    description: "Add a local review comment. role=human (default, you) or role=reviewer (automated review) becomes the brief for the agent on that loop and sets status to changes_requested \u2014 including from draft. role=agent is the implementing agent's reply and does not change status. Optional path/line/side anchors the comment. Do not git push.",
+    description: "Add a local review comment. role=human or role=reviewer is an open finding (status=open) and sets the loop to changes_requested. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "body"],
@@ -981,19 +1179,50 @@ var tools = [
         path: { type: "string" },
         line: { type: "number" },
         side: { type: "string", enum: ["left", "right"] },
+        replyTo: { type: "string", description: "Nest this comment under an existing comment id." },
         cwd: { type: "string" }
       }
     }
   },
   {
-    name: "resolve_comment",
-    description: "Implementor: mark a human/reviewer comment resolved and attach a reply. Does not set ready. After addressing the inbox, set_status ready and add_comment role=agent Review requested for a second review. Do not git push.",
+    name: "address_comment",
+    description: "Implementor: mark an open finding addressed and attach a reply under it. Does not set ready. After the inbox is empty, set_status ready and add_comment role=agent Review requested. The reviewer resolves addressed comments. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "commentId", "body"],
       properties: {
         id: { type: "string" },
         commentId: { type: "string" },
+        body: { type: "string" },
+        author: { type: "string" },
+        cwd: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "resolve_comment",
+    description: "Reviewer or human: mark an addressed finding resolved and attach a reply under it. If nothing open or addressed remains, the loop becomes reviewed (ready for human review). Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id", "commentId", "body"],
+      properties: {
+        id: { type: "string" },
+        commentId: { type: "string" },
+        body: { type: "string" },
+        author: { type: "string" },
+        role: { type: "string", enum: ["reviewer", "human"] },
+        cwd: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "complete_review",
+    description: "Reviewer: no new findings. Resolves remaining addressed comments and sets the loop to reviewed so the human can review. Fails if open findings remain. Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
         body: { type: "string" },
         author: { type: "string" },
         cwd: { type: "string" }

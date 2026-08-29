@@ -17,12 +17,14 @@ import {
 import type {
   CaptureResult,
   CommentRole,
+  CommentStatus,
+  CommentThread,
   CreateLocalPrInput,
   LocalPr,
   LocalPrComment,
   LocalPrStatus,
 } from "./types.js";
-import { COMMENT_ROLES, STATUSES } from "./types.js";
+import { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -53,6 +55,42 @@ async function writePr(cwd: string, pr: LocalPr): Promise<void> {
     ["notes", "--ref=local-pr", "add", "-f", "-m", note, pr.headSha],
     { allowFail: true },
   );
+}
+
+async function readPrFile(file: string): Promise<LocalPr> {
+  const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+  pr.source = pr.source ?? null;
+  pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
+  pr.comments = (pr.comments ?? []).map(normalizeComment);
+  return pr;
+}
+
+/** Lock, re-read, mutate, write — so parallel chats cannot drop comments. */
+async function withPrLock(
+  cwd: string,
+  id: string,
+  fn: (pr: LocalPr) => void | Promise<void>,
+): Promise<LocalPr> {
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = await readPrFile(file);
+    await fn(pr);
+    await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
+    return pr;
+  });
+}
+
+async function applyHeadRefresh(cwd: string, pr: LocalPr): Promise<void> {
+  const named = await git(cwd, ["rev-parse", "--verify", pr.headRef], { allowFail: true });
+  if (named.code !== 0) {
+    const branch = await currentBranch(cwd);
+    if (branch) pr.headRef = branch;
+  }
+  pr.headSha = await gitText(cwd, ["rev-parse", named.code === 0 ? pr.headRef : "HEAD"]);
+  pr.updatedAt = nowIso();
 }
 
 export async function listLocalPrs(cwd: string): Promise<LocalPr[]> {
@@ -136,18 +174,17 @@ export async function updateLocalPr(
   id: string,
   patch: { title?: string; body?: string },
 ): Promise<LocalPr> {
-  const pr = await getLocalPr(cwd, id);
-  if (patch.title !== undefined) {
-    const title = patch.title.trim();
-    if (!title) throw new Error("Title is empty");
-    pr.title = title;
-  }
-  if (patch.body !== undefined) {
-    pr.body = patch.body.trim();
-  }
-  pr.updatedAt = nowIso();
-  await writePr(cwd, pr);
-  return pr;
+  return withPrLock(cwd, id, (pr) => {
+    if (patch.title !== undefined) {
+      const title = patch.title.trim();
+      if (!title) throw new Error("Title is empty");
+      pr.title = title;
+    }
+    if (patch.body !== undefined) {
+      pr.body = patch.body.trim();
+    }
+    pr.updatedAt = nowIso();
+  });
 }
 
 export async function setLocalPrStatus(
@@ -158,11 +195,21 @@ export async function setLocalPrStatus(
   if (!STATUSES.includes(status)) {
     throw new Error(`Invalid status: ${status}`);
   }
-  const pr = await getLocalPr(cwd, id);
-  pr.status = status;
-  pr.updatedAt = nowIso();
-  await writePr(cwd, pr);
-  return pr;
+  return withPrLock(cwd, id, (pr) => {
+    pr.status = status;
+    pr.updatedAt = nowIso();
+  });
+}
+
+export function isReviewRequestBody(body: string): boolean {
+  return /^review requested\.?$/i.test(body.trim());
+}
+
+function inferCommentStatus(comment: LocalPrComment, role: CommentRole): CommentStatus {
+  if (comment.status && COMMENT_STATUSES.includes(comment.status)) return comment.status;
+  if (comment.resolvedAt) return "resolved";
+  if (comment.replyTo || role === "agent") return "resolved";
+  return "open";
 }
 
 export function normalizeComment(comment: LocalPrComment): LocalPrComment {
@@ -174,17 +221,66 @@ export function normalizeComment(comment: LocalPrComment): LocalPrComment {
     ...comment,
     author: comment.author || "reviewer",
     role,
+    status: inferCommentStatus(comment, role),
   };
 }
 
+export function isFindingComment(comment: LocalPrComment): boolean {
+  const c = normalizeComment(comment);
+  if (c.role !== "human" && c.role !== "reviewer") return false;
+  if (c.replyTo) return false;
+  return true;
+}
+
 export function pendingReviewComments(pr: LocalPr): LocalPrComment[] {
-  const comments = (pr.comments ?? []).map(normalizeComment);
-  return comments.filter((c) => {
-    if (c.role !== "human" && c.role !== "reviewer") return false;
-    if (c.replyTo) return false;
-    if (c.resolvedAt) return false;
-    return true;
-  });
+  return (pr.comments ?? []).map(normalizeComment).filter((c) => isFindingComment(c) && c.status === "open");
+}
+
+export function addressedReviewComments(pr: LocalPr): LocalPrComment[] {
+  return (pr.comments ?? [])
+    .map(normalizeComment)
+    .filter((c) => isFindingComment(c) && c.status === "addressed");
+}
+
+export function commentThreads(comments: LocalPrComment[]): CommentThread[] {
+  const list = (comments ?? []).map(normalizeComment);
+  const ids = new Set(list.map((c) => c.id));
+  const assigned = new Set<string>();
+  const repliesByParent = new Map<string, LocalPrComment[]>();
+  for (const c of list) {
+    if (c.replyTo && ids.has(c.replyTo)) {
+      const bucket = repliesByParent.get(c.replyTo) ?? [];
+      bucket.push(c);
+      repliesByParent.set(c.replyTo, bucket);
+      assigned.add(c.id);
+    }
+  }
+  const threads: CommentThread[] = [];
+  let lastFinding: CommentThread | undefined;
+  for (const c of list) {
+    if (assigned.has(c.id)) continue;
+    if (c.role === "agent" && !isReviewRequestBody(c.body) && lastFinding) {
+      lastFinding.replies.push(c);
+      continue;
+    }
+    const thread: CommentThread = { root: c, replies: repliesByParent.get(c.id) ?? [] };
+    threads.push(thread);
+    if (isFindingComment(c)) lastFinding = thread;
+  }
+  return threads;
+}
+
+function maybePromoteToReviewed(pr: LocalPr): void {
+  if (pr.status !== "ready" && pr.status !== "changes_requested") return;
+  const open = pendingReviewComments(pr);
+  const addressed = addressedReviewComments(pr);
+  if (open.length > 0 || addressed.length > 0) return;
+  pr.status = "reviewed";
+}
+
+function lastFinding(pr: LocalPr): LocalPrComment | undefined {
+  const findings = (pr.comments ?? []).map(normalizeComment).filter(isFindingComment);
+  return findings[findings.length - 1];
 }
 
 export function formatReviewInbox(pr: LocalPr): string | null {
@@ -192,7 +288,7 @@ export function formatReviewInbox(pr: LocalPr): string | null {
   if (pending.length === 0) return null;
   const lines = [
     `PR Genie: local PR ${pr.id} ("${pr.title}") on branch ${pr.headRef} has review comments for the agent working this loop.`,
-    `Status is ${pr.status}. Address each unresolved comment with MCP resolve_comment (this loop id, that commentId, and a reply). Then set_status ready and add_comment role=agent "Review requested." for a second review. Do not git push.`,
+    `Status is ${pr.status}. Address each open comment with MCP address_comment (this loop id, that commentId, and a reply). Then set_status ready and add_comment role=agent "Review requested." for a second review. The reviewer resolves addressed comments. Do not git push.`,
     "",
   ];
   for (const comment of pending) {
@@ -201,7 +297,7 @@ export function formatReviewInbox(pr: LocalPr): string | null {
     const loc = comment.path
       ? ` @ ${comment.path}${comment.line ? `:${comment.line}` : ""}`
       : "";
-    lines.push(`${who} [${comment.id}]${loc} at ${comment.createdAt}:`);
+    lines.push(`${who} [${comment.id}] open${loc} at ${comment.createdAt}:`);
     lines.push(comment.body);
     lines.push("");
   }
@@ -222,11 +318,10 @@ export function formatSpawnReviewer(pr: LocalPr): string {
 }
 
 export async function markReviewRequested(cwd: string, id: string): Promise<LocalPr> {
-  const pr = await getLocalPr(cwd, id);
-  pr.reviewRequestedSha = pr.headSha;
-  pr.updatedAt = nowIso();
-  await writePr(cwd, pr);
-  return pr;
+  return withPrLock(cwd, id, (pr) => {
+    pr.reviewRequestedSha = pr.headSha;
+    pr.updatedAt = nowIso();
+  });
 }
 
 export async function findLocalPrForCurrentBranch(cwd: string): Promise<LocalPr | null> {
@@ -247,6 +342,7 @@ export async function addLocalPrComment(
     path?: string;
     line?: number;
     side?: "left" | "right";
+    replyTo?: string;
   } = {},
 ): Promise<LocalPr> {
   const text = body.trim();
@@ -267,16 +363,71 @@ export async function addLocalPrComment(
       createdAt: nowIso(),
       author: options.author?.trim() || (await userName(cwd)),
       role,
+      status: role === "agent" ? "resolved" : "open",
     };
     const loc = options.path?.trim();
     if (loc) comment.path = loc.replace(/\\/g, "/");
     if (options.line && options.line > 0) comment.line = Math.floor(options.line);
     if (options.side === "left" || options.side === "right") comment.side = options.side;
+    const replyTo = options.replyTo?.trim();
+    if (replyTo) {
+      const target = pr.comments.find((c) => c.id === replyTo || c.id.startsWith(replyTo));
+      if (!target) throw new Error(`Comment not found: ${replyTo}`);
+      comment.replyTo = target.id;
+      comment.status = "resolved";
+    } else if (role === "agent" && !isReviewRequestBody(text)) {
+      const parent = lastFinding(pr);
+      if (parent) comment.replyTo = parent.id;
+    }
     pr.comments.push(comment);
-    if (role !== "agent") {
+    if (role !== "agent" && comment.status === "open") {
       pr.status = "changes_requested";
     }
     pr.updatedAt = comment.createdAt;
+    await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
+    return pr;
+  });
+}
+
+export async function addressLocalPrComment(
+  cwd: string,
+  id: string,
+  commentId: string,
+  body: string,
+  options: { author?: string } = {},
+): Promise<LocalPr> {
+  const text = body.trim();
+  if (!text) throw new Error("Address comment is empty");
+  const needle = commentId.trim();
+  if (!needle) throw new Error("Comment id is empty");
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+    pr.comments = (pr.comments ?? []).map(normalizeComment);
+    const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
+    if (!target) throw new Error(`Comment not found: ${commentId}`);
+    if (!isFindingComment(target)) {
+      throw new Error("Only human or reviewer findings can be addressed");
+    }
+    if (target.status !== "open") {
+      throw new Error(`Comment ${target.id} is ${target.status}, not open`);
+    }
+    const now = nowIso();
+    const author = options.author?.trim() || (await userName(cwd));
+    target.status = "addressed";
+    pr.comments.push({
+      id: newId("c"),
+      body: text,
+      createdAt: now,
+      author,
+      role: "agent",
+      status: "resolved",
+      replyTo: target.id,
+    });
+    pr.updatedAt = now;
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;
     return pr;
@@ -288,12 +439,13 @@ export async function resolveLocalPrComment(
   id: string,
   commentId: string,
   body: string,
-  options: { author?: string } = {},
+  options: { author?: string; role?: CommentRole } = {},
 ): Promise<LocalPr> {
   const text = body.trim();
   if (!text) throw new Error("Resolution comment is empty");
   const needle = commentId.trim();
   if (!needle) throw new Error("Comment id is empty");
+  const role = options.role === "human" ? "human" : "reviewer";
   const resolved = await getLocalPr(cwd, id);
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
@@ -302,14 +454,20 @@ export async function resolveLocalPrComment(
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
     if (!target) throw new Error(`Comment not found: ${commentId}`);
-    if (target.role === "agent") {
-      throw new Error("Only human or reviewer comments can be resolved");
+    if (!isFindingComment(target)) {
+      throw new Error("Only human or reviewer findings can be resolved");
     }
-    if (target.resolvedAt) {
+    if (target.status === "resolved") {
       throw new Error(`Comment ${target.id} is already resolved`);
+    }
+    if (target.status === "open" && role !== "human") {
+      throw new Error(
+        `Comment ${target.id} is still open. The implementor must address_comment it before the reviewer resolves it.`,
+      );
     }
     const now = nowIso();
     const author = options.author?.trim() || (await userName(cwd));
+    target.status = "resolved";
     target.resolvedAt = now;
     target.resolvedBy = author;
     pr.comments.push({
@@ -317,9 +475,53 @@ export async function resolveLocalPrComment(
       body: text,
       createdAt: now,
       author,
-      role: "agent",
+      role,
+      status: "resolved",
       replyTo: target.id,
     });
+    pr.updatedAt = now;
+    maybePromoteToReviewed(pr);
+    await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
+    return pr;
+  });
+}
+
+export async function completeLocalPrReview(
+  cwd: string,
+  id: string,
+  options: { author?: string; body?: string } = {},
+): Promise<LocalPr> {
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+    pr.comments = (pr.comments ?? []).map(normalizeComment);
+    const open = pendingReviewComments(pr);
+    if (open.length > 0) {
+      throw new Error(
+        `Open findings remain (${open.length}). File them as addressed first, or add no new findings and resolve the rest.`,
+      );
+    }
+    const now = nowIso();
+    const author = options.author?.trim() || (await userName(cwd));
+    for (const comment of pr.comments) {
+      if (isFindingComment(comment) && comment.status === "addressed") {
+        comment.status = "resolved";
+        comment.resolvedAt = now;
+        comment.resolvedBy = author;
+      }
+    }
+    pr.comments.push({
+      id: newId("c"),
+      body: (options.body?.trim() || "Review complete. Ready for human review.").trim(),
+      createdAt: now,
+      author,
+      role: "reviewer",
+      status: "resolved",
+    });
+    pr.status = "reviewed";
     pr.updatedAt = now;
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;
@@ -368,16 +570,7 @@ export async function refreshLocalPrHead(
   cwd: string,
   id: string,
 ): Promise<LocalPr> {
-  const pr = await getLocalPr(cwd, id);
-  const named = await git(cwd, ["rev-parse", "--verify", pr.headRef], { allowFail: true });
-  if (named.code !== 0) {
-    const branch = await currentBranch(cwd);
-    if (branch) pr.headRef = branch;
-  }
-  pr.headSha = await gitText(cwd, ["rev-parse", named.code === 0 ? pr.headRef : "HEAD"]);
-  pr.updatedAt = nowIso();
-  await writePr(cwd, pr);
-  return pr;
+  return withPrLock(cwd, id, (pr) => applyHeadRefresh(cwd, pr));
 }
 
 export async function hasCommitsAheadOfBase(
@@ -411,12 +604,16 @@ export async function captureAgentWork(
     (pr) => pr.headRef === headRef && pr.status !== "approved",
   );
   if (existing) {
-    if (input.source) existing.source = input.source;
-    if (input.title?.trim()) existing.title = input.title.trim();
-    if (input.body?.trim()) existing.body = input.body.trim();
-    const updated = await refreshLocalPrHead(cwd, existing.id);
-    updated.source = existing.source;
-    await writePr(cwd, updated);
+    const prevSha = existing.headSha;
+    const updated = await withPrLock(cwd, existing.id, async (pr) => {
+      if (input.source) pr.source = input.source;
+      if (input.title?.trim()) pr.title = input.title.trim();
+      if (input.body?.trim()) pr.body = input.body.trim();
+      await applyHeadRefresh(cwd, pr);
+      if (pr.status === "reviewed" && pr.headSha !== prevSha) {
+        pr.status = "ready";
+      }
+    });
     updated.worktreePath = await ensureWorktreeForLoop(cwd, updated);
     return { action: "updated", pr: updated };
   }

