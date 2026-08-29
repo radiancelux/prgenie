@@ -21,6 +21,6 @@ When work on this branch is ready for review:
 
 If this branch already has a local PR in `changes_requested`, call `get_local_pr` and treat `pendingComments` as the brief. Address each with `address_comment` (reply required). Addressing the last open finding sets `ready` and posts **Review requested.** Do not `resolve_comment` (reviewer). Do not push. If the loop is still `ready`, the reviewer has not finished — wait for `complete_review` / `changes_requested`. Do not address comments on a `ready` loop.
 
-The reviewer chat runs **`/watch-ready-prs`** and Tasks **subagents** to review — one Task per ready loop. You are the implementor on this worktree; run **`/watch-review-inbox`** so reviewer comments reach you. You do not spawn review Tasks unless there is no reviewer chat.
+The reviewer chat runs **`/watch-ready-prs`** and Tasks **subagents** to review — one Task per ready loop. It must not await those Tasks. You are the implementor on this worktree; run **`/watch-review-inbox`** so reviewer comments reach you. You do not spawn review Tasks unless there is no reviewer chat.
 
 Each loop has a git worktree so the developer can Switch this window onto the implementor's files. PR Genie creates that checkout when needed (`../<repo>.loops/<id>` if the branch is free). Do not delete worktrees unless asked. Do not create extra ones.

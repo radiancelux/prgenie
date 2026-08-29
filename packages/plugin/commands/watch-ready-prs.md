@@ -7,11 +7,11 @@ description: Reviewer chat listen loop. Watch for local PRs that become ready an
 
 You are the **reviewer chat**. Stay in this conversation. Do not implement. Do not push.
 
-`ready` is the implementor asking for review. Your job is to notice those loops as they land and Task subagents to review them.
+`ready` is the implementor asking for review. Your job is to notice those loops as they land and Task subagents to review them. Do not sit on a Task waiting for it to return.
 
 ## Now
 
-Run one `/review-queue` pass immediately (list `status=ready`, Task one `generalPurpose` reviewer per new loop, parallel if several).
+Run one `/review-queue` pass immediately (list `status=ready`, Task one `generalPurpose` reviewer per new loop, parallel if several). Then keep listening.
 
 ## Listen
 
@@ -20,7 +20,7 @@ Arm a recurring wake using the **loop** skill (`/loop 1m /review-queue`):
 - Local IDE: monitored shell tick every 1 minute with prompt `/review-queue`.
 - Cloud: subscription timer, same prompt.
 - Do not start a duplicate loop if one is already running for this purpose.
-- Each tick: MCP `watch_status` first. If halted (`stop` or `export`), kill the loop immediately. Otherwise only dispatch loops you have not already Tasked for that `headSha`. After a Task returns — or if it never ran — confirm `changes_requested` or `reviewed`. If still `ready`, complete the review in this chat.
+- Each tick: MCP `watch_status` if listed, otherwise `prgenie watch`. If halted (`stop` or `export`), kill the loop immediately. Otherwise only dispatch loops you have not already Tasked for that `headSha`. Do not await those Tasks. If a Task later returns in this chat, confirm `changes_requested` or `reviewed`.
 
 Developer commands in this chat:
 
