@@ -22,7 +22,7 @@ Arm a recurring wake using the **loop** skill (`/loop 1m /review-inbox`):
 - Local IDE: monitored shell tick every 1 minute with prompt `/review-inbox`.
 - Cloud: subscription timer, same prompt.
 - Do not start a duplicate loop if one is already running for this purpose.
-- Each tick: MCP `watch_status` if listed, otherwise `node packages/cli/dist/prgenie.cjs watch`. Do not stall looking for MCP. `listening` continues. `halted reason=stop` → kill the listen loop; the developer ended it. `halted reason=export` → that packet shipped; do not implement it and do **not** `prgenie watch start` if this checkout's live loop is that export id. A new `/start-loop` / `create_local_pr` resumes watch once the exported id is archived. If a **different** live loop is already here, `prgenie watch start`, then continue. Otherwise only act when `prgenie inbox` shows **this worktree's** loop (`changes_requested` with new open findings). Never pick another loop.
+- Each tick: MCP `watch_status` if listed, otherwise `node packages/cli/dist/prgenie.cjs watch`. Do not stall looking for MCP. `listening` continues. `halted reason=stop` → kill the listen loop; the developer ended it. `halted reason=export` → do not implement that packet. Do **not** `prgenie watch start` unless the export id is missing or archived. A different live loop on this checkout is not enough. `create_local_pr` resumes only after that id is archived or gone. Otherwise only act when `prgenie inbox` shows **this worktree's** loop (`changes_requested` with new open findings). Never pick another loop.
 
 Developer commands in this chat:
 
