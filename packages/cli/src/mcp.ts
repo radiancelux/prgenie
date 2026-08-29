@@ -1,6 +1,10 @@
 import {
   addLocalPrComment,
+  addressLocalPrComment,
+  addressedReviewComments,
   bindRepoGithub,
+  commentThreads,
+  completeLocalPrReview,
   createLocalPr,
   exportLocalPr,
   ensureWorktreeForLoop,
@@ -20,6 +24,7 @@ import {
   setLocalPrStatus,
   updateLocalPr,
   type CommentRole,
+  type LocalPr,
   type LocalPrStatus,
 } from "@prgenie/core";
 
@@ -35,6 +40,15 @@ function ok(id: unknown, result: unknown): void {
 
 function fail(id: unknown, code: number, message: string): void {
   writeMessage({ jsonrpc: "2.0", id, error: { code, message } });
+}
+
+function withCommentViews(pr: LocalPr) {
+  return {
+    ...pr,
+    pendingComments: pendingReviewComments(pr),
+    addressedComments: addressedReviewComments(pr),
+    threads: commentThreads(pr.comments),
+  };
 }
 
 async function repoCwd(): Promise<string> {
@@ -62,10 +76,7 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
     case "list_worktrees":
       return listWorktrees(cwd);
     case "list_local_prs": {
-      const prs = (await listLocalPrs(cwd)).map((pr) => ({
-        ...pr,
-        pendingComments: pendingReviewComments(pr),
-      }));
+      const prs = (await listLocalPrs(cwd)).map(withCommentViews);
       const status = typeof args.status === "string" ? args.status : "";
       const inbox = args.inbox === true;
       return prs.filter((pr) => {
@@ -88,7 +99,7 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
       });
     case "get_local_pr": {
       const pr = await getLocalPr(cwd, String(args.id ?? ""));
-      return { ...pr, pendingComments: pendingReviewComments(pr) };
+      return withCommentViews(pr);
     }
     case "set_status":
       return setLocalPrStatus(cwd, String(args.id ?? ""), args.status as LocalPrStatus);
@@ -101,16 +112,33 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
         path: typeof args.path === "string" ? args.path : undefined,
         line: typeof args.line === "number" ? args.line : undefined,
         side: args.side === "left" || args.side === "right" ? args.side : undefined,
+        replyTo: typeof args.replyTo === "string" ? args.replyTo : undefined,
       });
     }
-    case "resolve_comment":
-      return resolveLocalPrComment(
+    case "address_comment":
+      return addressLocalPrComment(
         cwd,
         String(args.id ?? ""),
         String(args.commentId ?? ""),
         String(args.body ?? ""),
         { author: typeof args.author === "string" ? args.author : undefined },
       );
+    case "resolve_comment":
+      return resolveLocalPrComment(
+        cwd,
+        String(args.id ?? ""),
+        String(args.commentId ?? ""),
+        String(args.body ?? ""),
+        {
+          author: typeof args.author === "string" ? args.author : undefined,
+          role: args.role === "human" ? "human" : "reviewer",
+        },
+      );
+    case "complete_review":
+      return completeLocalPrReview(cwd, String(args.id ?? ""), {
+        author: typeof args.author === "string" ? args.author : undefined,
+        body: typeof args.body === "string" ? args.body : undefined,
+      });
     case "get_diff":
       return {
         files: await getLocalPrNameStatus(cwd, String(args.id ?? "")),
@@ -153,14 +181,14 @@ const tools = [
   {
     name: "list_local_prs",
     description:
-      "List unpublished local pull requests. status=ready is the reviewer queue. inbox=true is loops with unresolved pendingComments for the implementor.",
+      "List unpublished local pull requests. status=ready is the reviewer queue. status=reviewed is waiting on the human. inbox=true is loops with open pendingComments for the implementor.",
     inputSchema: {
       type: "object",
       properties: {
         cwd: { type: "string" },
         status: {
           type: "string",
-          enum: ["draft", "ready", "approved", "changes_requested"],
+          enum: ["draft", "ready", "changes_requested", "reviewed", "approved"],
         },
         inbox: {
           type: "boolean",
@@ -205,7 +233,7 @@ const tools = [
   {
     name: "get_local_pr",
     description:
-      "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are unresolved human/reviewer notes. Resolved comments stay on the loop for the second review.",
+      "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are open findings for the implementor. addressedComments are waiting for the reviewer to resolve. threads nest agent replies under those findings.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -214,13 +242,13 @@ const tools = [
   },
   {
     name: "set_status",
-    description: "Set local PR status: draft, ready, approved, changes_requested.",
+    description: "Set local PR status: draft, ready, changes_requested, reviewed, approved. reviewed means the automated reviewer signed off and the human should look.",
     inputSchema: {
       type: "object",
       required: ["id", "status"],
       properties: {
         id: { type: "string" },
-        status: { type: "string", enum: ["draft", "ready", "approved", "changes_requested"] },
+        status: { type: "string", enum: ["draft", "ready", "changes_requested", "reviewed", "approved"] },
         cwd: { type: "string" },
       },
     },
@@ -228,7 +256,7 @@ const tools = [
   {
     name: "add_comment",
     description:
-      "Add a local review comment. role=human (default, you) or role=reviewer (automated review) becomes the brief for the agent on that loop and sets status to changes_requested — including from draft. role=agent is the implementing agent's reply and does not change status. Optional path/line/side anchors the comment. Do not git push.",
+      "Add a local review comment. role=human or role=reviewer is an open finding (status=open) and sets the loop to changes_requested. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "body"],
@@ -240,6 +268,23 @@ const tools = [
         path: { type: "string" },
         line: { type: "number" },
         side: { type: "string", enum: ["left", "right"] },
+        replyTo: { type: "string", description: "Nest this comment under an existing comment id." },
+        cwd: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "address_comment",
+    description:
+      "Implementor: mark an open finding addressed and attach a reply under it. Does not set ready. After the inbox is empty, set_status ready and add_comment role=agent Review requested. The reviewer resolves addressed comments. Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id", "commentId", "body"],
+      properties: {
+        id: { type: "string" },
+        commentId: { type: "string" },
+        body: { type: "string" },
+        author: { type: "string" },
         cwd: { type: "string" },
       },
     },
@@ -247,13 +292,29 @@ const tools = [
   {
     name: "resolve_comment",
     description:
-      "Implementor: mark a human/reviewer comment resolved and attach a reply. Does not set ready. After addressing the inbox, set_status ready and add_comment role=agent Review requested for a second review. Do not git push.",
+      "Reviewer or human: mark an addressed finding resolved and attach a reply under it. If nothing open or addressed remains, the loop becomes reviewed (ready for human review). Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "commentId", "body"],
       properties: {
         id: { type: "string" },
         commentId: { type: "string" },
+        body: { type: "string" },
+        author: { type: "string" },
+        role: { type: "string", enum: ["reviewer", "human"] },
+        cwd: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "complete_review",
+    description:
+      "Reviewer: no new findings. Resolves remaining addressed comments and sets the loop to reviewed so the human can review. Fails if open findings remain. Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
         body: { type: "string" },
         author: { type: "string" },
         cwd: { type: "string" },

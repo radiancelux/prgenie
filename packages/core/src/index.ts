@@ -1,6 +1,8 @@
 export type {
   CaptureResult,
   CommentRole,
+  CommentStatus,
+  CommentThread,
   CreateLocalPrInput,
   LocalPr,
   LocalPrComment,
@@ -8,7 +10,7 @@ export type {
   LocalPrStatus,
   WorktreeInfo,
 } from "./types.js";
-export { COMMENT_ROLES, STATUSES } from "./types.js";
+export { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
 export { GitError, findGitRoot, git, gitCommonDir, gitText, requireGitRoot } from "./git.js";
 export {
   currentBranch,
@@ -20,7 +22,11 @@ export {
 } from "./worktrees.js";
 export {
   addLocalPrComment,
+  addressLocalPrComment,
+  addressedReviewComments,
   captureAgentWork,
+  commentThreads,
+  completeLocalPrReview,
   createLocalPr,
   findLocalPrForCurrentBranch,
   formatReviewInbox,
@@ -29,6 +35,8 @@ export {
   getLocalPrDiff,
   getLocalPrNameStatus,
   hasCommitsAheadOfBase,
+  isFindingComment,
+  isReviewRequestBody,
   listLocalPrs,
   markReviewRequested,
   normalizeComment,
@@ -41,7 +49,7 @@ export {
 } from "./prs.js";
 export { haltWatch, getRepoWatch, resumeWatch } from "./watch.js";
 export type { RepoWatchState, WatchHaltReason } from "./watch.js";
-export { exportLocalPr } from "./export.js";
+export { exportLocalPr, exportPushRefspec } from "./export.js";
 export { appendSession } from "./sessions.js";
 export { consoleDir, parseJsonObject, writeJsonFile } from "./store.js";
 export { parseGhAuthStatus } from "./github.js";

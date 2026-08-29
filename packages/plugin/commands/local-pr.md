@@ -13,4 +13,4 @@ Local pull requests for agent work. GitHub when you say so.
 4. Show the id, status (`draft`), head, base, and the summary.
 5. Do not `git push` or `gh pr create`.
 
-If a local PR already exists for this branch, show it with `list_local_prs` and update via `update_local_pr` (summary), `set_status`, or `add_comment` instead of opening GitHub. If it is `changes_requested`, read `pendingComments` first (`/review-inbox` or `/watch-review-inbox`). Fill or refresh `body` before marking ready.
+If a local PR already exists for this branch, show it with `list_local_prs` and update via `update_local_pr` (summary), `set_status`, or `add_comment` instead of opening GitHub. If it is `changes_requested`, read `pendingComments` first (`/review-inbox` or `/watch-review-inbox`) and `address_comment` each. Fill or refresh `body` before marking ready.

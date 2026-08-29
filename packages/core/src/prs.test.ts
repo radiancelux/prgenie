@@ -6,8 +6,13 @@ import path from "node:path";
 import { after, before, test } from "node:test";
 import {
   addLocalPrComment,
+  addressLocalPrComment,
+  addressedReviewComments,
   createLocalPr,
   captureAgentWork,
+  commentThreads,
+  completeLocalPrReview,
+  exportPushRefspec,
   findLocalPrForCurrentBranch,
   formatReviewInbox,
   getLocalPr,
@@ -126,10 +131,16 @@ test("reviewer comments request changes; agent replies do not", async () => {
   assert.match(inbox, /Also document the flag/);
   assert.match(inbox, /@ widget\.txt:1/);
   assert.match(inbox, /\[c-/);
+
+  const threads = commentThreads(followup.comments);
+  const finding = threads.find((t) => t.root.body === "Missing tests.");
+  assert.ok(finding);
+  assert.equal(finding.replies.some((r) => r.body === "Working on it."), true);
 });
 
-test("resolve_comment drops a finding from the inbox and leaves status", async () => {
+test("address_comment marks a finding addressed; reviewer resolve can hand off to human", async () => {
   const pr = await createLocalPr(repo, { title: "Resolve", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready");
   const first = await addLocalPrComment(repo, pr.id, "Missing tests.", {
     role: "reviewer",
     author: "review-agent",
@@ -139,19 +150,42 @@ test("resolve_comment drops a finding from the inbox and leaves status", async (
     author: "review-agent",
   });
   assert.equal(pendingReviewComments(second).length, 2);
-  const done = await resolveLocalPrComment(
+  const addressed = await addressLocalPrComment(
     repo,
     pr.id,
     first.comments[0].id,
     "Added widget.test.ts.",
   );
-  assert.equal(done.status, "changes_requested");
-  assert.equal(pendingReviewComments(done).length, 1);
-  assert.equal(pendingReviewComments(done)[0].body, "Rename the file.");
-  const reply = done.comments.find((c) => c.replyTo === first.comments[0].id);
+  assert.equal(addressed.status, "changes_requested");
+  assert.equal(pendingReviewComments(addressed).length, 1);
+  assert.equal(addressedReviewComments(addressed).length, 1);
+  assert.equal(pendingReviewComments(addressed)[0].body, "Rename the file.");
+  const reply = addressed.comments.find((c) => c.replyTo === first.comments[0].id);
   assert.ok(reply);
   assert.equal(reply.role, "agent");
-  assert.ok(done.comments.find((c) => c.id === first.comments[0].id)?.resolvedAt);
+  assert.equal(addressed.comments.find((c) => c.id === first.comments[0].id)?.status, "addressed");
+
+  await addressLocalPrComment(repo, pr.id, second.comments[1].id, "Renamed the file.");
+  const verified = await resolveLocalPrComment(
+    repo,
+    pr.id,
+    first.comments[0].id,
+    "Tests look good.",
+  );
+  assert.equal(verified.status, "changes_requested");
+  const done = await completeLocalPrReview(repo, pr.id);
+  assert.equal(done.status, "reviewed");
+  assert.equal(pendingReviewComments(done).length, 0);
+  assert.equal(addressedReviewComments(done).length, 0);
+});
+
+test("complete_review with no findings is ready for human review", async () => {
+  const pr = await createLocalPr(repo, { title: "Clean", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready");
+  const done = await completeLocalPrReview(repo, pr.id, { body: "LGTM" });
+  assert.equal(done.status, "reviewed");
+  assert.match(done.comments[0].body, /LGTM/);
+  assert.equal(done.comments[0].status, "resolved");
 });
 
 test("findLocalPrForCurrentBranch prefers changes_requested", async () => {
@@ -176,6 +210,24 @@ test("parallel reviewer comments both survive", async () => {
   assert.equal(fresh.comments.length, 2);
   const bodies = fresh.comments.map((c) => c.body).sort();
   assert.deepEqual(bodies, ["First finding.", "Second finding."]);
+});
+
+test("status write overlapping a comment keeps the finding", async () => {
+  const pr = await createLocalPr(repo, { title: "Status lock", base: "main" });
+  await Promise.all([
+    setLocalPrStatus(repo, pr.id, "ready"),
+    addLocalPrComment(repo, pr.id, "Do not drop this.", { role: "reviewer" }),
+  ]);
+  const fresh = await getLocalPr(repo, pr.id);
+  assert.equal(fresh.comments.length, 1);
+  assert.equal(fresh.comments[0].body, "Do not drop this.");
+});
+
+test("export pushes the loop SHA, not cwd HEAD", () => {
+  assert.equal(
+    exportPushRefspec({ headSha: "abc123", headRef: "ui/loop-panel" }),
+    "abc123:refs/heads/ui/loop-panel",
+  );
 });
 
 test("captureAgentWork skips when HEAD is not ahead of base", async () => {

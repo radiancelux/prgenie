@@ -1,6 +1,14 @@
-export type LocalPrStatus = "draft" | "ready" | "approved" | "changes_requested";
+export type LocalPrStatus =
+  | "draft"
+  | "ready"
+  | "changes_requested"
+  | "reviewed"
+  | "approved";
 
 export type CommentRole = "human" | "agent" | "reviewer";
+
+/** Finding lifecycle: agent addresses, reviewer resolves. */
+export type CommentStatus = "open" | "addressed" | "resolved";
 
 export interface LocalPrComment {
   id: string;
@@ -8,12 +16,18 @@ export interface LocalPrComment {
   createdAt: string;
   author: string;
   role: CommentRole;
+  status: CommentStatus;
   path?: string;
   line?: number;
   side?: "left" | "right";
   replyTo?: string;
   resolvedAt?: string;
   resolvedBy?: string;
+}
+
+export interface CommentThread {
+  root: LocalPrComment;
+  replies: LocalPrComment[];
 }
 
 export interface LocalPrSource {
@@ -66,8 +80,11 @@ export interface CaptureResult {
 export const STATUSES: LocalPrStatus[] = [
   "draft",
   "ready",
-  "approved",
   "changes_requested",
+  "reviewed",
+  "approved",
 ];
 
 export const COMMENT_ROLES: CommentRole[] = ["human", "agent", "reviewer"];
+
+export const COMMENT_STATUSES: CommentStatus[] = ["open", "addressed", "resolved"];

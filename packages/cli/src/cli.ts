@@ -1,6 +1,8 @@
 import {
   addLocalPrComment,
+  addressLocalPrComment,
   bindRepoGithub,
+  completeLocalPrReview,
   createLocalPr,
   exportLocalPr,
   ensureWorktreeForLoop,
@@ -42,9 +44,11 @@ Usage:
   prgenie approve <id>
   prgenie ready <id>
   prgenie request-changes <id> [-m <message>]
-  prgenie comment <id> -m <message> [--role human|agent|reviewer] [--author <name>] [--path <file>] [--line <n>] [--side left|right]
+  prgenie comment <id> -m <message> [--role human|agent|reviewer] [--author <name>] [--path <file>] [--line <n>] [--side left|right] [--reply-to <commentId>]
+  prgenie address <id> <commentId> -m <message>
   prgenie resolve <id> <commentId> -m <message>
-  prgenie status <id> <draft|ready|approved|changes_requested>
+  prgenie complete-review <id> [-m <message>]
+  prgenie status <id> <draft|ready|changes_requested|reviewed|approved>
   prgenie worktrees
   prgenie worktree <id>
   prgenie gh list
@@ -256,8 +260,19 @@ export async function run(argv: string[]): Promise<number> {
         path: filePath,
         line: lineRaw ? Number(lineRaw) : undefined,
         side: sideRaw === "left" || sideRaw === "right" ? sideRaw : undefined,
+        replyTo: arg(rest, "--reply-to"),
       }),
     );
+    return 0;
+  }
+  if (sub === "address") {
+    const commentId = rest[1];
+    const message = arg(rest, "-m") ?? arg(rest, "--message");
+    if (!commentId || !message) {
+      process.stderr.write("prgenie address <id> <commentId> -m <message>\n");
+      return 1;
+    }
+    printPr(await addressLocalPrComment(repo, id, commentId, message));
     return 0;
   }
   if (sub === "resolve") {
@@ -267,7 +282,15 @@ export async function run(argv: string[]): Promise<number> {
       process.stderr.write("prgenie resolve <id> <commentId> -m <message>\n");
       return 1;
     }
-    printPr(await resolveLocalPrComment(repo, id, commentId, message));
+    printPr(await resolveLocalPrComment(repo, id, commentId, message, { role: "reviewer" }));
+    return 0;
+  }
+  if (sub === "complete-review") {
+    printPr(
+      await completeLocalPrReview(repo, id, {
+        body: arg(rest, "-m") ?? arg(rest, "--message"),
+      }),
+    );
     return 0;
   }
   if (sub === "status") {

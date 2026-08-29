@@ -25,6 +25,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 // packages/cli/src/review-hook.ts
 var import_node_fs = require("node:fs");
 
+// packages/core/src/types.ts
+var COMMENT_STATUSES = ["open", "addressed", "resolved"];
+
 // packages/core/src/git.ts
 var import_node_child_process = require("node:child_process");
 var import_node_path = __toESM(require("node:path"), 1);
@@ -225,6 +228,28 @@ async function writeJsonFile(file, value) {
   }
   await (0, import_promises.unlink)(tmp).catch(() => void 0);
 }
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+async function withFileLock(file, fn) {
+  const lock = `${file}.lock`;
+  let lastErr;
+  for (let i = 0; i < 50; i++) {
+    try {
+      const handle = await (0, import_promises.open)(lock, "wx");
+      try {
+        return await fn();
+      } finally {
+        await handle.close();
+        await (0, import_promises.unlink)(lock).catch(() => void 0);
+      }
+    } catch (err) {
+      lastErr = err;
+      await delay(20);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(`Timed out locking ${file}`);
+}
 
 // packages/core/src/prs.ts
 function nowIso() {
@@ -251,6 +276,34 @@ async function writePr(cwd, pr) {
     ["notes", "--ref=local-pr", "add", "-f", "-m", note, pr.headSha],
     { allowFail: true }
   );
+}
+async function readPrFile(file) {
+  const pr = parseJsonObject(await (0, import_promises2.readFile)(file, "utf8"));
+  pr.source = pr.source ?? null;
+  pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
+  pr.comments = (pr.comments ?? []).map(normalizeComment);
+  return pr;
+}
+async function withPrLock(cwd, id, fn) {
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = await readPrFile(file);
+    await fn(pr);
+    await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
+    return pr;
+  });
+}
+async function applyHeadRefresh(cwd, pr) {
+  const named = await git(cwd, ["rev-parse", "--verify", pr.headRef], { allowFail: true });
+  if (named.code !== 0) {
+    const branch = await currentBranch(cwd);
+    if (branch) pr.headRef = branch;
+  }
+  pr.headSha = await gitText(cwd, ["rev-parse", named.code === 0 ? pr.headRef : "HEAD"]);
+  pr.updatedAt = nowIso();
 }
 async function listLocalPrs(cwd) {
   await requireGitRoot(cwd);
@@ -284,35 +337,42 @@ async function getLocalPr(cwd, id) {
   if (!pr) throw new Error(`Local PR not found: ${id}`);
   return pr;
 }
+function inferCommentStatus(comment, role) {
+  if (comment.status && COMMENT_STATUSES.includes(comment.status)) return comment.status;
+  if (comment.resolvedAt) return "resolved";
+  if (comment.replyTo || role === "agent") return "resolved";
+  return "open";
+}
 function normalizeComment(comment) {
   const role = comment.role === "agent" || comment.role === "reviewer" || comment.role === "human" ? comment.role : "human";
   return {
     ...comment,
     author: comment.author || "reviewer",
-    role
+    role,
+    status: inferCommentStatus(comment, role)
   };
 }
+function isFindingComment(comment) {
+  const c = normalizeComment(comment);
+  if (c.role !== "human" && c.role !== "reviewer") return false;
+  if (c.replyTo) return false;
+  return true;
+}
 function pendingReviewComments(pr) {
-  const comments = (pr.comments ?? []).map(normalizeComment);
-  return comments.filter((c) => {
-    if (c.role !== "human" && c.role !== "reviewer") return false;
-    if (c.replyTo) return false;
-    if (c.resolvedAt) return false;
-    return true;
-  });
+  return (pr.comments ?? []).map(normalizeComment).filter((c) => isFindingComment(c) && c.status === "open");
 }
 function formatReviewInbox(pr) {
   const pending = pendingReviewComments(pr);
   if (pending.length === 0) return null;
   const lines = [
     `PR Genie: local PR ${pr.id} ("${pr.title}") on branch ${pr.headRef} has review comments for the agent working this loop.`,
-    `Status is ${pr.status}. Address each unresolved comment with MCP resolve_comment (this loop id, that commentId, and a reply). Then set_status ready and add_comment role=agent "Review requested." for a second review. Do not git push.`,
+    `Status is ${pr.status}. Address each open comment with MCP address_comment (this loop id, that commentId, and a reply). Then set_status ready and add_comment role=agent "Review requested." for a second review. The reviewer resolves addressed comments. Do not git push.`,
     ""
   ];
   for (const comment of pending) {
     const who = comment.role === "reviewer" ? `Reviewer (${comment.author})` : `Human (${comment.author})`;
     const loc = comment.path ? ` @ ${comment.path}${comment.line ? `:${comment.line}` : ""}` : "";
-    lines.push(`${who} [${comment.id}]${loc} at ${comment.createdAt}:`);
+    lines.push(`${who} [${comment.id}] open${loc} at ${comment.createdAt}:`);
     lines.push(comment.body);
     lines.push("");
   }
@@ -330,11 +390,10 @@ function formatSpawnReviewer(pr) {
   ].join("\n");
 }
 async function markReviewRequested(cwd, id) {
-  const pr = await getLocalPr(cwd, id);
-  pr.reviewRequestedSha = pr.headSha;
-  pr.updatedAt = nowIso();
-  await writePr(cwd, pr);
-  return pr;
+  return withPrLock(cwd, id, (pr) => {
+    pr.reviewRequestedSha = pr.headSha;
+    pr.updatedAt = nowIso();
+  });
 }
 async function findLocalPrForCurrentBranch(cwd) {
   const branch = await currentBranch(cwd);
@@ -344,16 +403,7 @@ async function findLocalPrForCurrentBranch(cwd) {
   return matches.find((pr) => pr.status === "changes_requested") ?? matches[0];
 }
 async function refreshLocalPrHead(cwd, id) {
-  const pr = await getLocalPr(cwd, id);
-  const named = await git(cwd, ["rev-parse", "--verify", pr.headRef], { allowFail: true });
-  if (named.code !== 0) {
-    const branch = await currentBranch(cwd);
-    if (branch) pr.headRef = branch;
-  }
-  pr.headSha = await gitText(cwd, ["rev-parse", named.code === 0 ? pr.headRef : "HEAD"]);
-  pr.updatedAt = nowIso();
-  await writePr(cwd, pr);
-  return pr;
+  return withPrLock(cwd, id, (pr) => applyHeadRefresh(cwd, pr));
 }
 
 // packages/cli/src/review-hook.ts
