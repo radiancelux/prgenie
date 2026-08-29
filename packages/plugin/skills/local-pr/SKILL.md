@@ -9,6 +9,8 @@ Do not push. Subagent output becomes a local PR on the developer's watch list.
 
 When a coding subagent **commits** and stops, the `subagentStop` hook drafts a loop automatically. Explore/shell subagents with no file changes are ignored. If files changed but nothing was committed, the parent is told to commit — still no `git push`.
 
+To **start** implementor work (no loop yet): `/start-loop` with a ClickUp/Jira/Linear ticket or a brief typed in chat. That creates the feature branch and the draft packet. Do not stay on `main`.
+
 ## Create
 
 ```
@@ -27,16 +29,17 @@ If the loop already exists, `update_local_pr` with `body` (or `prgenie update <i
 
 ## Inspect
 
-- `prgenie list`
-- `prgenie show <id>`
+- `prgenie list` (hides `approved` / exported loops)
+- `prgenie list --all` to include the archive
+- `prgenie show <id>` still works after export
 - `prgenie diff <id>`
-- MCP `list_local_prs`, `get_local_pr`, `get_diff`
+- MCP `list_local_prs` (same archive filter; `all=true` or `status=approved` to see them), `get_local_pr`, `get_diff`
 
 ## Status
 
 `draft` → `ready` → `changes_requested` → `ready` (second pass) → `reviewed` → `approved`
 
-`reviewed` means the automated reviewer found nothing else and the **human** should look. `approved` is you signing off.
+`reviewed` means the automated reviewer found nothing else and the **human** should look. `approved` is you signing off / export. Approved loops are **archived**: JSON and `refs/local-pr/*` stay; they are hidden from the default list and Local PRs. `get_local_pr` / `prgenie show` still work. A later `create_local_pr` / `captureAgentWork` on that branch starts a new loop.
 
 ### Comments
 
@@ -86,9 +89,9 @@ If there is **no** reviewer chat, Task one reviewer subagent yourself for this i
 
 ## Worktrees
 
-Each loop has a git worktree. If the branch is already checked out (this window), that checkout is the loop. Otherwise PR Genie adds `../<repo>.loops/<id>`. Use **Switch** in Local PRs / the loop panel to replace this window with that worktree. `prgenie worktree <id>` / MCP `ensure_worktree` only creates the checkout — they do not open the editor.
+Each loop has a **feature branch** for export (never `main`/`master`). If this window is on the base, PR Genie checks out `lp-<id>` here. If it peels a sibling `../<repo>.loops/<id>` worktree, that checkout is created with `-b` — never detached. If the branch is already checked out (this window), that checkout is the loop. Use **Switch** in Local PRs / the loop panel to replace this window with that worktree. `prgenie worktree <id>` / MCP `ensure_worktree` only creates the checkout — they do not open the editor.
 
-Do not delete worktrees unless the user asks. Do not create extras beyond the one per loop.
+Do not delete worktrees unless the user asks. Do not create extras beyond the one per loop. After **export**, PR Genie checks the main workspace off the loop branch (onto the loop base) and removes the sibling `../<repo>.loops/<id>` checkout. The primary repo folder is never deleted. If this window is still on the extra worktree, reopen the primary folder — the sidebar does that, then the extra checkout is cleared.
 
 ## GitHub accounts
 
@@ -109,4 +112,4 @@ prgenie gh use <login>
 
 ## Export
 
-Only if the user explicitly asks to publish. That is not the default, and V1 of the plugin does not auto-export.
+Only if the user explicitly asks to publish. That is not the default, and V1 of the plugin does not auto-export. Export marks the loop `approved` (archived), checks the main workspace off the loop branch onto the loop base, and removes the extra `.loops` worktree. If this window is still on that extra checkout, reopen the primary folder so it can be cleared.

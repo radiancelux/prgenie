@@ -19,6 +19,7 @@ import {
   listLocalPrs,
   listWorktrees,
   pendingReviewComments,
+  isArchivedPr,
   resolveLocalPrComment,
   resumeWatch,
   setLocalPrStatus,
@@ -79,8 +80,10 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
       const prs = (await listLocalPrs(cwd)).map(withCommentViews);
       const status = typeof args.status === "string" ? args.status : "";
       const inbox = args.inbox === true;
+      const all = args.all === true;
       return prs.filter((pr) => {
         if (status && pr.status !== status) return false;
+        if (!status && !all && isArchivedPr(pr)) return false;
         if (inbox && pr.pendingComments.length === 0) return false;
         return true;
       });
@@ -152,7 +155,14 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
       return resumeWatch(cwd);
     case "ensure_worktree": {
       const pr = await getLocalPr(cwd, String(args.id ?? ""));
-      const dest = await ensureWorktreeForLoop(cwd, pr);
+    const dest = await ensureWorktreeForLoop(cwd, pr, {
+      staleLoopIds: (await listLocalPrs(cwd))
+        .filter((p) => p.id !== pr.id && isArchivedPr(p))
+        .map((p) => p.id),
+      liveLoopIds: (await listLocalPrs(cwd))
+        .filter((p) => !isArchivedPr(p))
+        .map((p) => p.id),
+    });
       return { ...pr, worktreePath: dest };
     }
     case "export_local_pr":
@@ -181,7 +191,7 @@ const tools = [
   {
     name: "list_local_prs",
     description:
-      "List unpublished local pull requests. status=ready is the reviewer queue. status=reviewed is waiting on the human. inbox=true is loops with open pendingComments for the implementor.",
+      "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue. status=reviewed is waiting on the human. inbox=true is loops with open pendingComments for the implementor.",
     inputSchema: {
       type: "object",
       properties: {
@@ -193,6 +203,10 @@ const tools = [
         inbox: {
           type: "boolean",
           description: "Only loops with pending human/reviewer comments.",
+        },
+        all: {
+          type: "boolean",
+          description: "Include archived (approved/exported) loops. Hidden by default.",
         },
       },
     },
@@ -350,7 +364,7 @@ const tools = [
   {
     name: "export_local_pr",
     description:
-      "Developer command: halt listen loops, approve the loop, git push, and open a GitHub PR at origin. Only when the developer explicitly asks to export.",
+      "Developer command: halt listen loops, git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export.",
     inputSchema: {
       type: "object",
       required: ["id"],

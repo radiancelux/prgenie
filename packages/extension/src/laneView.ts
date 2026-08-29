@@ -10,7 +10,10 @@ import {
   ensureWorktreeForLoop,
   findGitRoot,
   getLocalPrNameStatus,
+  isArchivedPr,
   listLocalPrs,
+  loopWorktreeIdentity,
+  pruneArchivedLoopWorktree,
   resolveLocalPrComment,
   sameFsPath,
   setLocalPrStatus,
@@ -49,6 +52,7 @@ type Snapshot = {
   freshIds: string[];
   watching: boolean;
   hereId: string | null;
+  archivedCount?: number;
 };
 
 export class LaneHub implements vscode.Disposable {
@@ -61,6 +65,7 @@ export class LaneHub implements vscode.Disposable {
   private primed = false;
   private userPinned = false;
   private lastPosted = "";
+  private reopeningMain = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.poller = setInterval(() => void this.pushSnapshot(), 2000);
@@ -281,7 +286,10 @@ export class LaneHub implements vscode.Disposable {
         const prs = await listLocalPrs(cwd);
         const pr = prs.find((p) => p.id === msg.id);
         if (!pr) return;
-        const dest = await ensureWorktreeForLoop(cwd, pr);
+        const dest = await ensureWorktreeForLoop(cwd, pr, {
+          staleLoopIds: prs.filter((p) => p.id !== pr.id && isArchivedPr(p)).map((p) => p.id),
+          liveLoopIds: prs.filter((p) => !isArchivedPr(p)).map((p) => p.id),
+        });
         const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (folder && sameFsPath(folder, dest)) {
           void vscode.window.showInformationMessage("This window is already on that loop.");
@@ -322,8 +330,45 @@ export class LaneHub implements vscode.Disposable {
       this.post({ type: "snapshot", error: "Not a git repository.", prs: [] }, force);
       return;
     }
+    const parked = loopWorktreeIdentity(root);
+    if (parked) {
+      try {
+        const parkedPrs = await listLocalPrs(root);
+        const parkedLoop = parkedPrs.find((p) => p.id === parked.id);
+        if (!parkedLoop || isArchivedPr(parkedLoop)) {
+          const liveHere = parkedPrs.some(
+            (p) =>
+              !isArchivedPr(p) &&
+              (p.id === parked.id ||
+                (p.worktreePath && sameFsPath(p.worktreePath, root))),
+          );
+          if (!liveHere && !this.reopeningMain) {
+            this.reopeningMain = true;
+            await vscode.commands.executeCommand(
+              "vscode.openFolder",
+              vscode.Uri.file(parked.primaryPath),
+              { forceNewWindow: false },
+            );
+          }
+          if (!liveHere) return;
+        }
+      } catch {
+        // Store may not exist yet.
+      }
+    }
     try {
-      const prs = await listLocalPrs(root);
+      const all = await listLocalPrs(root);
+      const livePaths = all
+        .filter((p) => !isArchivedPr(p) && p.worktreePath)
+        .map((p) => p.worktreePath as string);
+      for (const pr of all.filter(isArchivedPr)) {
+        const ident = pr.worktreePath ? loopWorktreeIdentity(pr.worktreePath) : null;
+        if (ident && ident.id.toLowerCase() === pr.id.toLowerCase()) {
+          await pruneArchivedLoopWorktree(root, pr, { keepPaths: livePaths });
+        }
+      }
+      const archivedCount = all.filter(isArchivedPr).length;
+      const prs = all.filter((p) => !isArchivedPr(p));
       const ids = prs.map((p) => p.id);
       const freshIds = this.primed ? ids.filter((id) => !this.knownIds.has(id)) : [];
       this.primed = true;
@@ -348,6 +393,7 @@ export class LaneHub implements vscode.Disposable {
         freshIds,
         watching: true,
         hereId,
+        archivedCount,
       }, force);
       await this.watchStore();
     } catch (err) {
@@ -367,6 +413,7 @@ function snapshotKey(
     error: payload.error ?? null,
     selectedId: "selectedId" in payload ? payload.selectedId : null,
     hereId: "hereId" in payload ? payload.hereId : null,
+    archivedCount: "archivedCount" in payload ? payload.archivedCount : 0,
     repo: "repo" in payload ? payload.repo : "",
     files: "files" in payload ? payload.files : [],
     threads: "threads" in payload ? payload.threads : [],
@@ -475,11 +522,17 @@ function laneHtml(webview: vscode.Webview): string {
       }
       const prs = msg.prs || [];
       const fresh = new Set(msg.freshIds || []);
-      meta.textContent = (msg.repo ? msg.repo + " · " : "") + prs.length + " loop" + (prs.length === 1 ? "" : "s");
+      const archived = msg.archivedCount || 0;
+      meta.textContent = (msg.repo ? msg.repo + " · " : "") + prs.length + " loop" + (prs.length === 1 ? "" : "s")
+        + (archived ? " · " + archived + " archived" : "");
       if (!prs.length) {
-        if (list.dataset.empty !== "1") {
-          list.innerHTML = '<p class="muted empty">Waiting for agents. Loops land here when work is committed.</p>';
-          list.dataset.empty = "1";
+        const emptyText = archived
+          ? "No active loops. " + archived + " archived after export."
+          : "Waiting for agents. Loops land here when work is committed.";
+        if (list.dataset.empty !== emptyText) {
+          list.innerHTML = '<p class="muted empty"></p>';
+          list.firstChild.textContent = emptyText;
+          list.dataset.empty = emptyText;
         }
         return;
       }

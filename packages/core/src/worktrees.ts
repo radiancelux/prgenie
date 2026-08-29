@@ -63,6 +63,27 @@ export function worktreeForBranch(
   return match?.path ?? null;
 }
 
+/** Checkout for this loop id only — never a leftover `.loops/<other-id>` folder. */
+export function worktreeForLoop(
+  trees: WorktreeInfo[],
+  loop: { id: string; headRef: string },
+): string | null {
+  const primary = primaryWorktreePath(trees);
+  const dest = primary ? loopWorktreeDir(primary, loop.id) : null;
+  if (dest) {
+    const own = trees.find((t) => sameFsPath(t.path, dest));
+    if (own) return own.path;
+  }
+  const onBranch = trees.filter((t) => t.branch === loop.headRef);
+  const onPrimary = onBranch.find((t) => primary && sameFsPath(t.path, primary));
+  if (onPrimary) return onPrimary.path;
+  const ownLoops = onBranch.find((t) => {
+    const ident = loopWorktreeIdentity(t.path);
+    return ident && ident.id.toLowerCase() === loop.id.toLowerCase();
+  });
+  return ownLoops?.path ?? null;
+}
+
 export function sameFsPath(a: string, b: string): boolean {
   try {
     const leftStat = statSync(a);
@@ -96,41 +117,264 @@ export function loopWorktreeDir(mainPath: string, id: string): string {
   return path.join(path.dirname(mainPath), `${path.basename(mainPath)}.loops`, id);
 }
 
-/** One git worktree per loop branch so the developer can switch this window onto the implementor's files. */
-export async function ensureWorktreeForLoop(
+/** `../<repo>.loops/<id>` → the primary repo folder and loop id. */
+export function loopWorktreeIdentity(absPath: string): { primaryPath: string; id: string } | null {
+  const resolved = path.resolve(absPath);
+  const parent = path.dirname(resolved);
+  const loopsDir = path.basename(parent);
+  if (!loopsDir.endsWith(".loops")) return null;
+  const id = path.basename(resolved);
+  if (!/^lp-[0-9a-f]{8}$/i.test(id)) return null;
+  return {
+    primaryPath: path.join(path.dirname(parent), loopsDir.slice(0, -".loops".length)),
+    id,
+  };
+}
+
+export function localBaseRef(baseRef: string): string {
+  return baseRef.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+}
+
+export function refsAreSameBranch(a: string, b: string): boolean {
+  return localBaseRef(a).toLowerCase() === localBaseRef(b).toLowerCase();
+}
+
+/** True when `head` is missing, detached, or the same branch as the loop base (main/master). */
+export function isBaseBranch(head: string | null | undefined, baseRef: string): boolean {
+  if (!head || head === "HEAD" || head === "DETACHED") return true;
+  return refsAreSameBranch(head, baseRef);
+}
+
+async function branchExists(cwd: string, name: string): Promise<boolean> {
+  const ref = localBaseRef(name);
+  const result = await git(cwd, ["rev-parse", "--verify", `refs/heads/${ref}`], {
+    allowFail: true,
+  });
+  return result.code === 0;
+}
+
+/**
+ * Pick (or create) a feature branch this loop can export.
+ * Never uses the loop base. If this checkout is on the base, switch it onto the new branch.
+ * If the requested head is already checked out elsewhere, create `<id>` from that commit instead.
+ */
+export async function ensureLoopFeatureBranch(
   cwd: string,
-  loop: { id: string; headRef: string; headSha: string },
-): Promise<string> {
-  const trees = await listWorktrees(cwd);
-  const existing = worktreeForBranch(trees, loop.headRef);
-  if (existing) return existing;
+  options: { id: string; requestedHead?: string | null; baseRef: string },
+): Promise<{ headRef: string; headSha: string }> {
   const current = await currentBranch(cwd);
-  if (current === loop.headRef) {
-    const here = await findGitRoot(cwd);
-    if (here) return here;
+  const wanted = options.requestedHead?.trim() || current;
+  const here = await findGitRoot(cwd);
+  const trees = await listWorktrees(cwd);
+
+  if (wanted && !isBaseBranch(wanted, options.baseRef)) {
+    const holder = trees.find((t) => t.branch === wanted);
+    if (!holder || (here && sameFsPath(holder.path, here))) {
+      return {
+        headRef: wanted,
+        headSha: await gitText(cwd, ["rev-parse", wanted]),
+      };
+    }
+    const headRef = options.id;
+    const headSha = await gitText(cwd, ["rev-parse", wanted]);
+    const created = await git(cwd, ["branch", headRef, wanted], { allowFail: true });
+    if (created.code !== 0 && !(await branchExists(cwd, headRef))) {
+      throw new Error(`Could not create loop branch ${headRef}: ${created.stderr.trim()}`);
+    }
+    return { headRef, headSha };
   }
 
-  const main = trees.find((t) => !t.bare)?.path;
-  if (!main) throw new Error("No git worktree to attach a loop to.");
-  const dest = loopWorktreeDir(main, loop.id);
+  const headRef = options.id;
+  if (here && isBaseBranch(current, options.baseRef)) {
+    const created = await git(cwd, ["checkout", "-b", headRef], { allowFail: true });
+    if (created.code !== 0) {
+      const switched = await git(cwd, ["checkout", headRef], { allowFail: true });
+      if (switched.code !== 0) {
+        throw new Error(
+          `Could not create loop branch ${headRef}: ${(created.stderr || switched.stderr).trim()}`,
+        );
+      }
+    }
+    return { headRef, headSha: await gitText(cwd, ["rev-parse", "HEAD"]) };
+  }
+
+  const created = await git(cwd, ["branch", headRef], { allowFail: true });
+  if (created.code !== 0 && !(await branchExists(cwd, headRef))) {
+    throw new Error(`Could not create loop branch ${headRef}: ${created.stderr.trim()}`);
+  }
+  return { headRef, headSha: await gitText(cwd, ["rev-parse", "HEAD"]) };
+}
+
+export function primaryWorktreePath(trees: WorktreeInfo[]): string | null {
+  const mains = trees.filter((t) => !t.bare && !loopWorktreeIdentity(t.path));
+  return mains[0]?.path ?? trees.find((t) => !t.bare)?.path ?? null;
+}
+
+export type ReleaseArchivedLoopResult = {
+  checkedOutBase: boolean;
+  prunedWorktree: boolean;
+  primaryPath: string | null;
+  /** This window is still the extra loop checkout; reopen primaryPath then prune. */
+  reopen: boolean;
+};
+
+async function checkoutPrimaryOffLoop(
+  primary: string,
+  loop: { headRef: string; baseRef: string },
+): Promise<boolean> {
+  const base = localBaseRef(loop.baseRef);
+  if (!base || base === loop.headRef) return false;
+  const branch = await currentBranch(primary);
+  if (branch !== loop.headRef) return false;
+  const switched = await git(primary, ["checkout", base], { allowFail: true });
+  return switched.code === 0;
+}
+
+/** Drop a sibling .loops checkout after export. Never remove the primary repo folder. */
+export async function pruneArchivedLoopWorktree(
+  cwd: string,
+  loop: { id: string; worktreePath: string | null },
+  options: { keepPaths?: string[] } = {},
+): Promise<boolean> {
+  const trees = await listWorktrees(cwd);
+  const primary = primaryWorktreePath(trees);
+  if (!primary) return false;
+  const dest = loopWorktreeDir(primary, loop.id);
+  const extra = trees.find((t) => sameFsPath(t.path, dest));
+  if (!extra) return false;
+  const ident = loopWorktreeIdentity(extra.path);
+  if (ident && ident.id.toLowerCase() !== loop.id.toLowerCase()) return false;
+  const here = await findGitRoot(cwd);
+  if (here && sameFsPath(here, extra.path)) return false;
+  if (sameFsPath(extra.path, primary)) return false;
+  const keep = options.keepPaths ?? [];
+  if (keep.some((p) => sameFsPath(p, extra.path))) return false;
+  const otherLoops = trees.filter((t) => {
+    const other = loopWorktreeIdentity(t.path);
+    return other && other.id.toLowerCase() !== loop.id.toLowerCase();
+  });
+  if (otherLoops.some((t) => sameFsPath(t.path, extra.path))) return false;
+  const removed = await git(cwd, ["worktree", "remove", extra.path], { allowFail: true });
+  if (removed.code !== 0) return false;
+  await git(cwd, ["worktree", "prune"], { allowFail: true });
+  return true;
+}
+
+/** After export: take the loop branch off the main workspace and remove the extra worktree. */
+export async function releaseArchivedLoop(
+  cwd: string,
+  loop: { id: string; headRef: string; baseRef: string; worktreePath: string | null },
+): Promise<ReleaseArchivedLoopResult> {
+  const trees = await listWorktrees(cwd);
+  const primary = primaryWorktreePath(trees);
+  const checkedOutBase = primary ? await checkoutPrimaryOffLoop(primary, loop) : false;
+  const keepPaths = trees
+    .filter((t) => {
+      const ident = loopWorktreeIdentity(t.path);
+      return ident && ident.id.toLowerCase() !== loop.id.toLowerCase();
+    })
+    .map((t) => t.path);
+  const prunedWorktree = await pruneArchivedLoopWorktree(cwd, loop, { keepPaths });
+  const here = await findGitRoot(cwd);
+  const dest = primary ? loopWorktreeDir(primary, loop.id) : null;
+  const stillExtra = dest
+    ? (await listWorktrees(cwd)).some((t) => sameFsPath(t.path, dest))
+    : false;
+  const reopen = Boolean(
+    stillExtra && here && dest && sameFsPath(here, dest),
+  );
+  return { checkedOutBase, prunedWorktree, primaryPath: primary, reopen };
+}
+
+async function freeStaleLoopWorktree(cwd: string, treePath: string): Promise<void> {
+  const here = await findGitRoot(cwd);
+  if (here && sameFsPath(here, treePath)) {
+    await git(treePath, ["checkout", "--detach"], { allowFail: true });
+    return;
+  }
+  await git(cwd, ["worktree", "remove", treePath], { allowFail: true });
+  await git(cwd, ["worktree", "prune"], { allowFail: true });
+}
+
+async function addLoopWorktree(
+  cwd: string,
+  dest: string,
+  loop: { id: string; headRef: string; headSha: string },
+): Promise<string> {
   if (existsSync(dest)) {
     const already = await findGitRoot(dest);
     if (already) return dest;
   }
-
   await mkdir(path.dirname(dest), { recursive: true });
   await git(cwd, ["worktree", "prune"], { allowFail: true });
-  const branched = await git(cwd, ["worktree", "add", dest, loop.headRef], {
-    allowFail: true,
-  });
-  if (branched.code === 0) return dest;
-  const detached = await git(cwd, ["worktree", "add", "--detach", dest, loop.headSha], {
-    allowFail: true,
-  });
-  if (detached.code === 0) return dest;
+  const trees = await listWorktrees(cwd);
+  const held = trees.some((t) => t.branch === loop.headRef);
+  if (!held && (await branchExists(cwd, loop.headRef))) {
+    const added = await git(cwd, ["worktree", "add", dest, loop.headRef], { allowFail: true });
+    if (added.code === 0) return dest;
+  }
+  if (!held && !(await branchExists(cwd, loop.headRef))) {
+    const created = await git(
+      cwd,
+      ["worktree", "add", "-b", loop.headRef, dest, loop.headSha],
+      { allowFail: true },
+    );
+    if (created.code === 0) return dest;
+    throw new Error(
+      `Could not create a worktree for loop ${loop.id} on branch ${loop.headRef}: ${created.stderr.trim()}`,
+    );
+  }
   throw new Error(
-    `Could not create a worktree for loop ${loop.id} (${loop.headRef}): ${(branched.stderr || detached.stderr).trim()}`,
+    `Could not create a worktree for loop ${loop.id}: branch ${loop.headRef} is already checked out.`,
   );
+}
+
+/** One git worktree per loop branch so the developer can switch this window onto the implementor's files. */
+export async function ensureWorktreeForLoop(
+  cwd: string,
+  loop: { id: string; headRef: string; headSha: string },
+  options: { staleLoopIds?: Iterable<string>; liveLoopIds?: Iterable<string> } = {},
+): Promise<string> {
+  const stale = new Set(
+    [...(options.staleLoopIds ?? [])].map((id) => id.toLowerCase()),
+  );
+  const live = new Set(
+    [...(options.liveLoopIds ?? [])].map((id) => id.toLowerCase()),
+  );
+  live.add(loop.id.toLowerCase());
+  let trees = await listWorktrees(cwd);
+  const primary = primaryWorktreePath(trees);
+  if (!primary) throw new Error("No git worktree to attach a loop to.");
+  const dest = loopWorktreeDir(primary, loop.id);
+  const own = trees.find((t) => sameFsPath(t.path, dest));
+  if (own) return own.path;
+
+  const holders = trees.filter((t) => t.branch === loop.headRef);
+  for (const holder of holders) {
+    if (sameFsPath(holder.path, dest)) return holder.path;
+    if (sameFsPath(holder.path, primary)) return holder.path;
+    const ident = loopWorktreeIdentity(holder.path);
+    if (ident && ident.id.toLowerCase() === loop.id.toLowerCase()) return holder.path;
+    if (ident) {
+      const otherId = ident.id.toLowerCase();
+      if (live.has(otherId) && !stale.has(otherId)) continue;
+      await freeStaleLoopWorktree(cwd, holder.path);
+    }
+  }
+
+  const here = await findGitRoot(cwd);
+  const current = await currentBranch(cwd);
+  if (current === loop.headRef && here && !loopWorktreeIdentity(here)) {
+    return here;
+  }
+
+  trees = await listWorktrees(cwd);
+  const stillOwn = trees.find((t) => sameFsPath(t.path, dest));
+  if (stillOwn) return stillOwn.path;
+  if (trees.some((t) => t.branch === loop.headRef && sameFsPath(t.path, primary))) {
+    return primary;
+  }
+  return addLoopWorktree(cwd, dest, loop);
 }
 
 export function displayPath(repoRoot: string, absPath: string | null): string | null {

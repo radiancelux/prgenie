@@ -157,42 +157,247 @@ async function detectDefaultBase(cwd) {
   }
   return "HEAD";
 }
-function worktreeForBranch(trees, branch) {
-  const match = trees.find((t) => t.branch === branch);
-  return match?.path ?? null;
+function worktreeForLoop(trees, loop) {
+  const primary = primaryWorktreePath(trees);
+  const dest = primary ? loopWorktreeDir(primary, loop.id) : null;
+  if (dest) {
+    const own = trees.find((t) => sameFsPath(t.path, dest));
+    if (own) return own.path;
+  }
+  const onBranch = trees.filter((t) => t.branch === loop.headRef);
+  const onPrimary = onBranch.find((t) => primary && sameFsPath(t.path, primary));
+  if (onPrimary) return onPrimary.path;
+  const ownLoops = onBranch.find((t) => {
+    const ident = loopWorktreeIdentity(t.path);
+    return ident && ident.id.toLowerCase() === loop.id.toLowerCase();
+  });
+  return ownLoops?.path ?? null;
+}
+function sameFsPath(a, b) {
+  try {
+    const leftStat = (0, import_node_fs.statSync)(a);
+    const rightStat = (0, import_node_fs.statSync)(b);
+    if (leftStat.ino !== 0 && leftStat.ino === rightStat.ino && leftStat.dev === rightStat.dev) {
+      return true;
+    }
+  } catch {
+  }
+  const canon = (p) => {
+    const normalized = import_node_path2.default.resolve(p);
+    try {
+      return import_node_fs.realpathSync.native(normalized);
+    } catch {
+      try {
+        return (0, import_node_fs.realpathSync)(normalized);
+      } catch {
+        return normalized;
+      }
+    }
+  };
+  const left = canon(a);
+  const right = canon(b);
+  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 function loopWorktreeDir(mainPath, id) {
   return import_node_path2.default.join(import_node_path2.default.dirname(mainPath), `${import_node_path2.default.basename(mainPath)}.loops`, id);
 }
-async function ensureWorktreeForLoop(cwd, loop) {
-  const trees = await listWorktrees(cwd);
-  const existing = worktreeForBranch(trees, loop.headRef);
-  if (existing) return existing;
+function loopWorktreeIdentity(absPath) {
+  const resolved = import_node_path2.default.resolve(absPath);
+  const parent = import_node_path2.default.dirname(resolved);
+  const loopsDir = import_node_path2.default.basename(parent);
+  if (!loopsDir.endsWith(".loops")) return null;
+  const id = import_node_path2.default.basename(resolved);
+  if (!/^lp-[0-9a-f]{8}$/i.test(id)) return null;
+  return {
+    primaryPath: import_node_path2.default.join(import_node_path2.default.dirname(parent), loopsDir.slice(0, -".loops".length)),
+    id
+  };
+}
+function localBaseRef(baseRef) {
+  return baseRef.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+}
+function refsAreSameBranch(a, b) {
+  return localBaseRef(a).toLowerCase() === localBaseRef(b).toLowerCase();
+}
+function isBaseBranch(head, baseRef) {
+  if (!head || head === "HEAD" || head === "DETACHED") return true;
+  return refsAreSameBranch(head, baseRef);
+}
+async function branchExists(cwd, name) {
+  const ref = localBaseRef(name);
+  const result = await git(cwd, ["rev-parse", "--verify", `refs/heads/${ref}`], {
+    allowFail: true
+  });
+  return result.code === 0;
+}
+async function ensureLoopFeatureBranch(cwd, options) {
   const current = await currentBranch(cwd);
-  if (current === loop.headRef) {
-    const here = await findGitRoot(cwd);
-    if (here) return here;
+  const wanted = options.requestedHead?.trim() || current;
+  const here = await findGitRoot(cwd);
+  const trees = await listWorktrees(cwd);
+  if (wanted && !isBaseBranch(wanted, options.baseRef)) {
+    const holder = trees.find((t) => t.branch === wanted);
+    if (!holder || here && sameFsPath(holder.path, here)) {
+      return {
+        headRef: wanted,
+        headSha: await gitText(cwd, ["rev-parse", wanted])
+      };
+    }
+    const headRef2 = options.id;
+    const headSha = await gitText(cwd, ["rev-parse", wanted]);
+    const created2 = await git(cwd, ["branch", headRef2, wanted], { allowFail: true });
+    if (created2.code !== 0 && !await branchExists(cwd, headRef2)) {
+      throw new Error(`Could not create loop branch ${headRef2}: ${created2.stderr.trim()}`);
+    }
+    return { headRef: headRef2, headSha };
   }
-  const main = trees.find((t) => !t.bare)?.path;
-  if (!main) throw new Error("No git worktree to attach a loop to.");
-  const dest = loopWorktreeDir(main, loop.id);
+  const headRef = options.id;
+  if (here && isBaseBranch(current, options.baseRef)) {
+    const created2 = await git(cwd, ["checkout", "-b", headRef], { allowFail: true });
+    if (created2.code !== 0) {
+      const switched = await git(cwd, ["checkout", headRef], { allowFail: true });
+      if (switched.code !== 0) {
+        throw new Error(
+          `Could not create loop branch ${headRef}: ${(created2.stderr || switched.stderr).trim()}`
+        );
+      }
+    }
+    return { headRef, headSha: await gitText(cwd, ["rev-parse", "HEAD"]) };
+  }
+  const created = await git(cwd, ["branch", headRef], { allowFail: true });
+  if (created.code !== 0 && !await branchExists(cwd, headRef)) {
+    throw new Error(`Could not create loop branch ${headRef}: ${created.stderr.trim()}`);
+  }
+  return { headRef, headSha: await gitText(cwd, ["rev-parse", "HEAD"]) };
+}
+function primaryWorktreePath(trees) {
+  const mains = trees.filter((t) => !t.bare && !loopWorktreeIdentity(t.path));
+  return mains[0]?.path ?? trees.find((t) => !t.bare)?.path ?? null;
+}
+async function checkoutPrimaryOffLoop(primary, loop) {
+  const base = localBaseRef(loop.baseRef);
+  if (!base || base === loop.headRef) return false;
+  const branch = await currentBranch(primary);
+  if (branch !== loop.headRef) return false;
+  const switched = await git(primary, ["checkout", base], { allowFail: true });
+  return switched.code === 0;
+}
+async function pruneArchivedLoopWorktree(cwd, loop, options = {}) {
+  const trees = await listWorktrees(cwd);
+  const primary = primaryWorktreePath(trees);
+  if (!primary) return false;
+  const dest = loopWorktreeDir(primary, loop.id);
+  const extra = trees.find((t) => sameFsPath(t.path, dest));
+  if (!extra) return false;
+  const ident = loopWorktreeIdentity(extra.path);
+  if (ident && ident.id.toLowerCase() !== loop.id.toLowerCase()) return false;
+  const here = await findGitRoot(cwd);
+  if (here && sameFsPath(here, extra.path)) return false;
+  if (sameFsPath(extra.path, primary)) return false;
+  const keep = options.keepPaths ?? [];
+  if (keep.some((p) => sameFsPath(p, extra.path))) return false;
+  const otherLoops = trees.filter((t) => {
+    const other = loopWorktreeIdentity(t.path);
+    return other && other.id.toLowerCase() !== loop.id.toLowerCase();
+  });
+  if (otherLoops.some((t) => sameFsPath(t.path, extra.path))) return false;
+  const removed = await git(cwd, ["worktree", "remove", extra.path], { allowFail: true });
+  if (removed.code !== 0) return false;
+  await git(cwd, ["worktree", "prune"], { allowFail: true });
+  return true;
+}
+async function releaseArchivedLoop(cwd, loop) {
+  const trees = await listWorktrees(cwd);
+  const primary = primaryWorktreePath(trees);
+  const checkedOutBase = primary ? await checkoutPrimaryOffLoop(primary, loop) : false;
+  const keepPaths = trees.filter((t) => {
+    const ident = loopWorktreeIdentity(t.path);
+    return ident && ident.id.toLowerCase() !== loop.id.toLowerCase();
+  }).map((t) => t.path);
+  const prunedWorktree = await pruneArchivedLoopWorktree(cwd, loop, { keepPaths });
+  const here = await findGitRoot(cwd);
+  const dest = primary ? loopWorktreeDir(primary, loop.id) : null;
+  const stillExtra = dest ? (await listWorktrees(cwd)).some((t) => sameFsPath(t.path, dest)) : false;
+  const reopen = Boolean(
+    stillExtra && here && dest && sameFsPath(here, dest)
+  );
+  return { checkedOutBase, prunedWorktree, primaryPath: primary, reopen };
+}
+async function freeStaleLoopWorktree(cwd, treePath) {
+  const here = await findGitRoot(cwd);
+  if (here && sameFsPath(here, treePath)) {
+    await git(treePath, ["checkout", "--detach"], { allowFail: true });
+    return;
+  }
+  await git(cwd, ["worktree", "remove", treePath], { allowFail: true });
+  await git(cwd, ["worktree", "prune"], { allowFail: true });
+}
+async function addLoopWorktree(cwd, dest, loop) {
   if ((0, import_node_fs.existsSync)(dest)) {
     const already = await findGitRoot(dest);
     if (already) return dest;
   }
   await (0, import_promises.mkdir)(import_node_path2.default.dirname(dest), { recursive: true });
   await git(cwd, ["worktree", "prune"], { allowFail: true });
-  const branched = await git(cwd, ["worktree", "add", dest, loop.headRef], {
-    allowFail: true
-  });
-  if (branched.code === 0) return dest;
-  const detached = await git(cwd, ["worktree", "add", "--detach", dest, loop.headSha], {
-    allowFail: true
-  });
-  if (detached.code === 0) return dest;
+  const trees = await listWorktrees(cwd);
+  const held = trees.some((t) => t.branch === loop.headRef);
+  if (!held && await branchExists(cwd, loop.headRef)) {
+    const added = await git(cwd, ["worktree", "add", dest, loop.headRef], { allowFail: true });
+    if (added.code === 0) return dest;
+  }
+  if (!held && !await branchExists(cwd, loop.headRef)) {
+    const created = await git(
+      cwd,
+      ["worktree", "add", "-b", loop.headRef, dest, loop.headSha],
+      { allowFail: true }
+    );
+    if (created.code === 0) return dest;
+    throw new Error(
+      `Could not create a worktree for loop ${loop.id} on branch ${loop.headRef}: ${created.stderr.trim()}`
+    );
+  }
   throw new Error(
-    `Could not create a worktree for loop ${loop.id} (${loop.headRef}): ${(branched.stderr || detached.stderr).trim()}`
+    `Could not create a worktree for loop ${loop.id}: branch ${loop.headRef} is already checked out.`
   );
+}
+async function ensureWorktreeForLoop(cwd, loop, options = {}) {
+  const stale = new Set(
+    [...options.staleLoopIds ?? []].map((id) => id.toLowerCase())
+  );
+  const live = new Set(
+    [...options.liveLoopIds ?? []].map((id) => id.toLowerCase())
+  );
+  live.add(loop.id.toLowerCase());
+  let trees = await listWorktrees(cwd);
+  const primary = primaryWorktreePath(trees);
+  if (!primary) throw new Error("No git worktree to attach a loop to.");
+  const dest = loopWorktreeDir(primary, loop.id);
+  const own = trees.find((t) => sameFsPath(t.path, dest));
+  if (own) return own.path;
+  const holders = trees.filter((t) => t.branch === loop.headRef);
+  for (const holder of holders) {
+    if (sameFsPath(holder.path, dest)) return holder.path;
+    if (sameFsPath(holder.path, primary)) return holder.path;
+    const ident = loopWorktreeIdentity(holder.path);
+    if (ident && ident.id.toLowerCase() === loop.id.toLowerCase()) return holder.path;
+    if (ident) {
+      const otherId = ident.id.toLowerCase();
+      if (live.has(otherId) && !stale.has(otherId)) continue;
+      await freeStaleLoopWorktree(cwd, holder.path);
+    }
+  }
+  const here = await findGitRoot(cwd);
+  const current = await currentBranch(cwd);
+  if (current === loop.headRef && here && !loopWorktreeIdentity(here)) {
+    return here;
+  }
+  trees = await listWorktrees(cwd);
+  const stillOwn = trees.find((t) => sameFsPath(t.path, dest));
+  if (stillOwn) return stillOwn.path;
+  if (trees.some((t) => t.branch === loop.headRef && sameFsPath(t.path, primary))) {
+    return primary;
+  }
+  return addLoopWorktree(cwd, dest, loop);
 }
 async function userName(cwd) {
   const result = await git(cwd, ["config", "user.name"], { allowFail: true });
@@ -363,6 +568,9 @@ async function withPrLock(cwd, id, fn) {
     return pr;
   });
 }
+function isArchivedPr(pr) {
+  return pr.status === "approved";
+}
 async function listLocalPrs(cwd) {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
@@ -385,7 +593,7 @@ async function listLocalPrs(cwd) {
   prs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const trees = await listWorktrees(cwd);
   for (const pr of prs) {
-    pr.worktreePath = worktreeForBranch(trees, pr.headRef);
+    pr.worktreePath = worktreeForLoop(trees, pr);
   }
   return prs;
 }
@@ -397,8 +605,7 @@ async function getLocalPr(cwd, id) {
 }
 async function createLocalPr(cwd, input = {}) {
   const root = await requireGitRoot(cwd);
-  const headRef = input.head ?? await currentBranch(cwd) ?? await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  const headSha = await gitText(cwd, ["rev-parse", input.head ?? "HEAD"]);
+  const id = newId("lp");
   const baseRef = input.base ?? await detectDefaultBase(cwd);
   const baseResolved = await git(cwd, ["rev-parse", "--verify", baseRef], {
     allowFail: true
@@ -407,10 +614,16 @@ async function createLocalPr(cwd, input = {}) {
     throw new Error(`Cannot resolve base branch: ${baseRef}`);
   }
   const baseSha = baseResolved.stdout.trim();
+  const requestedHead = input.head ?? await currentBranch(cwd) ?? await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  const { headRef, headSha } = await ensureLoopFeatureBranch(root, {
+    id,
+    requestedHead,
+    baseRef
+  });
   const title = input.title?.trim() || await shortLogSubject(cwd, headSha).catch(() => "") || `Local PR from ${headRef}`;
   const createdAt = nowIso();
   const pr = {
-    id: newId("lp"),
+    id,
     title,
     body: input.body?.trim() ?? "",
     status: "draft",
@@ -426,7 +639,11 @@ async function createLocalPr(cwd, input = {}) {
     reviewRequestedSha: null
   };
   await writePr(root, pr);
-  pr.worktreePath = await ensureWorktreeForLoop(root, pr);
+  const others = await listLocalPrs(root);
+  pr.worktreePath = await ensureWorktreeForLoop(root, pr, {
+    staleLoopIds: others.filter((other) => other.id !== pr.id && isArchivedPr(other)).map((other) => other.id),
+    liveLoopIds: others.filter((other) => !isArchivedPr(other)).map((other) => other.id)
+  });
   return pr;
 }
 async function updateLocalPr(cwd, id, patch) {
@@ -944,7 +1161,9 @@ async function exportLocalPr(cwd, id) {
     if (pr.status !== "approved") {
       await setLocalPrStatus(cwd, pr.id, "approved");
     }
-    return { url, id: pr.id, alreadyExisted };
+    const archived = await getLocalPr(cwd, pr.id);
+    const released = await releaseArchivedLoop(cwd, archived);
+    return { url, id: pr.id, alreadyExisted, ...released };
   } catch (err) {
     await resumeWatch(cwd);
     throw err;
@@ -997,8 +1216,10 @@ async function handleTool(name, args) {
       const prs = (await listLocalPrs(cwd)).map(withCommentViews);
       const status = typeof args.status === "string" ? args.status : "";
       const inbox = args.inbox === true;
+      const all = args.all === true;
       return prs.filter((pr) => {
         if (status && pr.status !== status) return false;
+        if (!status && !all && isArchivedPr(pr)) return false;
         if (inbox && pr.pendingComments.length === 0) return false;
         return true;
       });
@@ -1070,7 +1291,10 @@ async function handleTool(name, args) {
       return resumeWatch(cwd);
     case "ensure_worktree": {
       const pr = await getLocalPr(cwd, String(args.id ?? ""));
-      const dest = await ensureWorktreeForLoop(cwd, pr);
+      const dest = await ensureWorktreeForLoop(cwd, pr, {
+        staleLoopIds: (await listLocalPrs(cwd)).filter((p) => p.id !== pr.id && isArchivedPr(p)).map((p) => p.id),
+        liveLoopIds: (await listLocalPrs(cwd)).filter((p) => !isArchivedPr(p)).map((p) => p.id)
+      });
       return { ...pr, worktreePath: dest };
     }
     case "export_local_pr":
@@ -1096,7 +1320,7 @@ var tools = [
   },
   {
     name: "list_local_prs",
-    description: "List unpublished local pull requests. status=ready is the reviewer queue. status=reviewed is waiting on the human. inbox=true is loops with open pendingComments for the implementor.",
+    description: "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue. status=reviewed is waiting on the human. inbox=true is loops with open pendingComments for the implementor.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1108,6 +1332,10 @@ var tools = [
         inbox: {
           type: "boolean",
           description: "Only loops with pending human/reviewer comments."
+        },
+        all: {
+          type: "boolean",
+          description: "Include archived (approved/exported) loops. Hidden by default."
         }
       }
     }
@@ -1255,7 +1483,7 @@ var tools = [
   },
   {
     name: "export_local_pr",
-    description: "Developer command: halt listen loops, approve the loop, git push, and open a GitHub PR at origin. Only when the developer explicitly asks to export.",
+    description: "Developer command: halt listen loops, git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export.",
     inputSchema: {
       type: "object",
       required: ["id"],

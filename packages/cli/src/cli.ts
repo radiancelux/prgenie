@@ -15,6 +15,7 @@ import {
   haltWatch,
   listGhAccounts,
   listLocalPrs,
+  isArchivedPr,
   listWorktrees,
   pendingReviewComments,
   resolveLocalPrComment,
@@ -31,7 +32,7 @@ function usage(): string {
 
 Usage:
   prgenie create [--title <t>] [--body <b>] [--base <ref>] [--head <ref>]
-  prgenie list
+  prgenie list [--all]
   prgenie queue
   prgenie inbox
   prgenie watch
@@ -125,12 +126,21 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (sub === "list") {
-    const prs = await listLocalPrs(repo);
+    const all = await listLocalPrs(repo);
+    const archived = all.filter(isArchivedPr);
+    const prs = flag(rest, "--all") ? all : all.filter((pr) => !isArchivedPr(pr));
     if (prs.length === 0) {
-      process.stdout.write("No local PRs.\n");
+      if (archived.length && !flag(rest, "--all")) {
+        process.stdout.write(`No active local PRs. ${archived.length} archived (prgenie list --all).\n`);
+      } else {
+        process.stdout.write("No local PRs.\n");
+      }
       return 0;
     }
     for (const pr of prs) printPr(pr);
+    if (!flag(rest, "--all") && archived.length) {
+      process.stdout.write(`  (${archived.length} archived — prgenie list --all)\n`);
+    }
     return 0;
   }
   if (sub === "queue") {
@@ -144,7 +154,7 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "inbox") {
     const waiting = (await listLocalPrs(repo)).filter(
-      (pr) => pendingReviewComments(pr).length > 0,
+      (pr) => !isArchivedPr(pr) && pendingReviewComments(pr).length > 0,
     );
     if (waiting.length === 0) {
       process.stdout.write("No pending review comments.\n");
@@ -183,9 +193,17 @@ export async function run(argv: string[]): Promise<number> {
       return 1;
     }
     const result = await exportLocalPr(repo, exportId);
-    process.stdout.write(
-      `${result.alreadyExisted ? "Existing" : "Opened"} GitHub PR ${result.url}\n`,
-    );
+    const lines = [`${result.alreadyExisted ? "Existing" : "Opened"} GitHub PR ${result.url}`];
+    if (result.checkedOutBase) {
+      lines.push("Main workspace is back on the loop base branch.");
+    }
+    if (result.prunedWorktree) {
+      lines.push("Removed the extra loop worktree.");
+    }
+    if (result.reopen && result.primaryPath) {
+      lines.push(`This window is still on the loop worktree. Reopen ${result.primaryPath}.`);
+    }
+    process.stdout.write(`${lines.join("\n")}\n`);
     return 0;
   }
   const id = rest[0];
@@ -222,7 +240,14 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "worktree") {
     const pr = await getLocalPr(repo, id);
-    const dest = await ensureWorktreeForLoop(repo, pr);
+    const dest = await ensureWorktreeForLoop(repo, pr, {
+      staleLoopIds: (await listLocalPrs(repo))
+        .filter((p) => p.id !== pr.id && isArchivedPr(p))
+        .map((p) => p.id),
+      liveLoopIds: (await listLocalPrs(repo))
+        .filter((p) => !isArchivedPr(p))
+        .map((p) => p.id),
+    });
     process.stdout.write(`${dest}\n`);
     return 0;
   }

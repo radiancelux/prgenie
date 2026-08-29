@@ -6,10 +6,12 @@ import { parseJsonObject, prFile, prsDir, withFileLock, writeJsonFile } from "./
 import {
   currentBranch,
   detectDefaultBase,
+  ensureLoopFeatureBranch,
+  isBaseBranch,
   listWorktrees,
   shortLogSubject,
   userName,
-  worktreeForBranch,
+  worktreeForLoop,
   ensureWorktreeForLoop,
   loopWorktreeDir,
   sameFsPath,
@@ -93,6 +95,10 @@ async function applyHeadRefresh(cwd: string, pr: LocalPr): Promise<void> {
   pr.updatedAt = nowIso();
 }
 
+export function isArchivedPr(pr: { status: LocalPrStatus }): boolean {
+  return pr.status === "approved";
+}
+
 export async function listLocalPrs(cwd: string): Promise<LocalPr[]> {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
@@ -115,7 +121,7 @@ export async function listLocalPrs(cwd: string): Promise<LocalPr[]> {
   prs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const trees = await listWorktrees(cwd);
   for (const pr of prs) {
-    pr.worktreePath = worktreeForBranch(trees, pr.headRef);
+    pr.worktreePath = worktreeForLoop(trees, pr);
   }
   return prs;
 }
@@ -132,9 +138,7 @@ export async function createLocalPr(
   input: CreateLocalPrInput = {},
 ): Promise<LocalPr> {
   const root = await requireGitRoot(cwd);
-  const headRef =
-    input.head ?? (await currentBranch(cwd)) ?? (await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]));
-  const headSha = await gitText(cwd, ["rev-parse", input.head ?? "HEAD"]);
+  const id = newId("lp");
   const baseRef = input.base ?? (await detectDefaultBase(cwd));
   const baseResolved = await git(cwd, ["rev-parse", "--verify", baseRef], {
     allowFail: true,
@@ -143,13 +147,20 @@ export async function createLocalPr(
     throw new Error(`Cannot resolve base branch: ${baseRef}`);
   }
   const baseSha = baseResolved.stdout.trim();
+  const requestedHead =
+    input.head ?? (await currentBranch(cwd)) ?? (await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]));
+  const { headRef, headSha } = await ensureLoopFeatureBranch(root, {
+    id,
+    requestedHead,
+    baseRef,
+  });
   const title =
     input.title?.trim() ||
     (await shortLogSubject(cwd, headSha).catch(() => "")) ||
     `Local PR from ${headRef}`;
   const createdAt = nowIso();
   const pr: LocalPr = {
-    id: newId("lp"),
+    id,
     title,
     body: input.body?.trim() ?? "",
     status: "draft",
@@ -165,7 +176,11 @@ export async function createLocalPr(
     reviewRequestedSha: null,
   };
   await writePr(root, pr);
-  pr.worktreePath = await ensureWorktreeForLoop(root, pr);
+  const others = await listLocalPrs(root);
+  pr.worktreePath = await ensureWorktreeForLoop(root, pr, {
+    staleLoopIds: others.filter((other) => other.id !== pr.id && isArchivedPr(other)).map((other) => other.id),
+    liveLoopIds: others.filter((other) => !isArchivedPr(other)).map((other) => other.id),
+  });
   return pr;
 }
 
@@ -327,7 +342,9 @@ export async function markReviewRequested(cwd: string, id: string): Promise<Loca
 export async function findLocalPrForCurrentBranch(cwd: string): Promise<LocalPr | null> {
   const branch = await currentBranch(cwd);
   if (!branch) return null;
-  const matches = (await listLocalPrs(cwd)).filter((pr) => pr.headRef === branch);
+  const matches = (await listLocalPrs(cwd)).filter(
+    (pr) => pr.headRef === branch && !isArchivedPr(pr),
+  );
   if (matches.length === 0) return null;
   return matches.find((pr) => pr.status === "changes_requested") ?? matches[0];
 }
@@ -596,13 +613,16 @@ export async function captureAgentWork(
       reason: "no commits ahead of base",
     };
   }
+  const baseRef = input.base ?? (await detectDefaultBase(cwd));
   const headRef =
     input.head ??
     (await currentBranch(cwd)) ??
     (await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]));
-  const existing = (await listLocalPrs(cwd)).find(
-    (pr) => pr.headRef === headRef && pr.status !== "approved",
-  );
+  const existing = isBaseBranch(headRef, baseRef)
+    ? undefined
+    : (await listLocalPrs(cwd)).find(
+        (pr) => pr.headRef === headRef && !isArchivedPr(pr),
+      );
   if (existing) {
     const prevSha = existing.headSha;
     const updated = await withPrLock(cwd, existing.id, async (pr) => {
@@ -614,7 +634,14 @@ export async function captureAgentWork(
         pr.status = "ready";
       }
     });
-    updated.worktreePath = await ensureWorktreeForLoop(cwd, updated);
+    updated.worktreePath = await ensureWorktreeForLoop(cwd, updated, {
+      staleLoopIds: (await listLocalPrs(cwd))
+        .filter((other) => other.id !== updated.id && isArchivedPr(other))
+        .map((other) => other.id),
+      liveLoopIds: (await listLocalPrs(cwd))
+        .filter((other) => !isArchivedPr(other))
+        .map((other) => other.id),
+    });
     return { action: "updated", pr: updated };
   }
   const pr = await createLocalPr(cwd, input);

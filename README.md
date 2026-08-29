@@ -2,11 +2,11 @@
 
 Local pull requests for agent work. GitHub when you say so.
 
-PR Genie is a **pre-GitHub review lane** for Cursor (and any git checkout, including Conductor workspaces and GitLens worktrees). Each loop gets a git worktree so you can switch this window onto the implementor's files.
+PR Genie is a **pre-GitHub review lane** for Cursor (and any git checkout, including Conductor workspaces and GitLens worktrees). Each loop gets a feature branch (never the repo base) and a git worktree so you can switch this window onto the implementor's files.
 
 A local PR is a git-native review loop: branch, base, diff, comments, and status. It never leaves the machine until you export it. Agents are steered — and hooked — away from `git push` / `gh pr create`.
 
-When a **subagent** finishes with commits, PR Genie drafts a loop and puts it on the developer's watch list. Cursor still manages the subagents. The sidebar is the spectator GUI.
+When a **subagent** finishes with commits, PR Genie drafts a loop and puts it on the developer's watch list. Cursor still manages the subagents. The sidebar is the spectator GUI. An implementor chat starts with `/start-loop`: a ClickUp/Jira/Linear ticket or a brief typed in chat, then a feature branch and a local PR.
 
 ## What it is
 
@@ -48,7 +48,7 @@ prgenie create [--title t] [--body "summary"] [--base main] [--head branch]
 prgenie queue
 prgenie inbox
 prgenie update <id> [--title t] [--body "summary"]
-prgenie list
+prgenie list [--all]
 prgenie show <id>
 prgenie diff <id>
 prgenie approve <id>
@@ -78,9 +78,7 @@ Cursor may auto-clean worktrees. The loop remains.
 
 `draft` → `ready` → `changes_requested` → `reviewed` → `approved`
 
-Human and reviewer comments are **open** findings (`changes_requested`). The implementor **addresses** each with a reply under that comment (`address_comment`), then marks `ready` for a second review. The reviewer **resolves** addressed comments, or `complete_review` if nothing else is wrong — that sets `reviewed` so **you** can look. The **reviewer chat** runs `/watch-ready-prs`. The **implementor chat** runs `/watch-review-inbox`. `/stop-watch` ends both loops. `/export-local-pr` ends the loops and opens the GitHub PR at origin. Every loop should have a **summary** (`body`): why, what changed, how to test.
-
-Export to GitHub is an explicit later step (not in this slice).
+Human and reviewer comments are **open** findings (`changes_requested`). The implementor **addresses** each with a reply under that comment (`address_comment`), then marks `ready` for a second review. The reviewer **resolves** addressed comments, or `complete_review` if nothing else is wrong — that sets `reviewed` so **you** can look. The **reviewer chat** runs `/watch-ready-prs`. The **implementor chat** runs `/watch-review-inbox`. `/stop-watch` ends both loops. `/export-local-pr` opens the GitHub PR at origin and **archives** the loop (`approved`): it stays on disk (`prgenie show <id>`, `refs/local-pr/*`) but drops off `prgenie list`, Local PRs, and MCP `list_local_prs` unless you pass `--all` / `all=true`. Export checks the **main workspace** off the loop branch (onto the loop base) and removes a sibling `../<repo>.loops/<id>` checkout. If this window is still on that extra worktree, PR Genie reopens the primary folder and then clears it. Every loop should have a **summary** (`body`): why, what changed, how to test.
 
 ## License
 
