@@ -20,8 +20,8 @@ The loop is the handoff. `ready` means the worktree agent requested a review. Fi
 If you **are** the subagent (one id in the prompt):
 
 1. If no id was given, `prgenie queue` / `list_local_prs` `status=ready` and pick the one the user named, or the current branch's loop.
-2. `get_local_pr` / `prgenie show` + `get_diff`. Read `body`. `addressedComments` means a **second review** — verify those replies against the diff. Do not re-file a finding that is actually fixed.
+2. `get_local_pr` / `prgenie show` + `get_diff`. **Large loops:** call `get_diff` with `stat=true` (or `prgenie diff --stat`) first; if the full diff would truncate (~80KB on MCP), call `get_diff` again with `paths` for the files you need. Read `body`. `addressedComments` means a **second review** — verify those replies against the diff. Do not re-file a finding that is actually fixed.
 3. Post **all** new findings with `add_comment` `role=reviewer`. Status stays `ready`. Long findings: MCP `add_comment` (Content-Length framed) or `prgenie comment --body-file`. Do not pass finding text through an unquoted shell `-m`.
 4. `resolve_comment` addressed threads that are actually fixed. That does not finish the review.
-5. **Always** `complete_review` **before you stop** (`prgenie complete-review <id>` if MCP `complete_review` is not listed). Open findings → `changes_requested`. No open findings → `reviewed`. That write is the handoff. Do not ask the orchestrator to set status from your Task summary.
+5. **Always** `complete_review` **before you stop** (`prgenie complete-review <id>` if MCP `complete_review` is not listed). If the result has `headDrift: true` (or the CLI prints a head-moved warning), re-run `get_diff` and file any new findings before you trust the handoff — HEAD moved after Review requested. Open findings → `changes_requested`. No open findings → `reviewed`. That write is the handoff. Do not ask the orchestrator to set status from your Task summary.
 6. Stop. Do not implement. Do not spawn further reviewers. Do not `git push`.

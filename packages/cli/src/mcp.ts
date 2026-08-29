@@ -7,6 +7,7 @@ import {
   commentThreads,
   completeLocalPrReview,
   createLocalPr,
+  deleteLocalPr,
   exportLocalPr,
   ensureWorktreeForLoop,
   findGitRoot,
@@ -23,6 +24,7 @@ import {
   listWorktrees,
   pendingReviewComments,
   isArchivedPr,
+  reopenLocalPr,
   resolveLocalPrComment,
   resumeWatch,
   resumeWatchRole,
@@ -163,11 +165,25 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
         author: typeof args.author === "string" ? args.author : undefined,
         body: typeof args.body === "string" ? args.body : undefined,
       });
-    case "get_diff":
+    case "get_diff": {
+      const paths = Array.isArray(args.paths)
+        ? args.paths.filter((p): p is string => typeof p === "string")
+        : undefined;
       return {
         files: await getLocalPrNameStatus(cwd, String(args.id ?? "")),
-        diff: await getLocalPrDiff(cwd, String(args.id ?? ""), { maxBytes: 80_000 }),
+        diff: await getLocalPrDiff(cwd, String(args.id ?? ""), {
+          maxBytes: 80_000,
+          stat: args.stat === true,
+          paths,
+        }),
+        truncatedHint:
+          "If diff ends with truncated, call get_diff with stat=true then again with paths for individual files.",
       };
+    }
+    case "delete_local_pr":
+      return deleteLocalPr(cwd, String(args.id ?? ""));
+    case "reopen_local_pr":
+      return reopenLocalPr(cwd, String(args.id ?? ""));
     case "watch_status":
       return getRepoWatch(cwd);
     case "watch_stop": {
@@ -348,7 +364,7 @@ const tools = [
   {
     name: "complete_review",
     description:
-      "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed for the human. Resolves remaining addressed comments. Archived loops stay archived. Do not git push.",
+      "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed for the human. Resolves remaining addressed comments. Returns headDrift=true when HEAD moved after Review requested — re-diff before trusting the review. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -362,7 +378,40 @@ const tools = [
   },
   {
     name: "get_diff",
-    description: "Return name-status and diff for a local PR.",
+    description:
+      "Return name-status and diff for a local PR. Use stat=true for a summary first; use paths to fetch individual files when the full diff would truncate at 80KB.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        cwd: { type: "string" },
+        stat: {
+          type: "boolean",
+          description: "Return git diff --stat instead of the full patch.",
+        },
+        paths: {
+          type: "array",
+          items: { type: "string" },
+          description: "Limit the diff to these paths (after --).",
+        },
+      },
+    },
+  },
+  {
+    name: "delete_local_pr",
+    description:
+      "Permanently delete a local PR packet, its refs, and any sibling .loops worktree. Prefer archive via export for shipped work. Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } },
+    },
+  },
+  {
+    name: "reopen_local_pr",
+    description:
+      "Reopen an archived (approved) loop as changes_requested and recreate its worktree. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id"],

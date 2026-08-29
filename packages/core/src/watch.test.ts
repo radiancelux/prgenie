@@ -78,3 +78,41 @@ test("start inbox does not resume the reviewer queue", async () => {
   assert.equal(state.queue.halted, true);
   await resumeWatch(repo);
 });
+
+test("parallel lane mutations do not lose a lane", async () => {
+  await resumeWatch(repo);
+  await Promise.all([
+    haltWatchRole(repo, "inbox", "stop"),
+    haltWatchRole(repo, "queue", "stop"),
+  ]);
+  const both = await getRepoWatch(repo);
+  assert.equal(both.inbox.halted, true);
+  assert.equal(both.queue.halted, true);
+
+  await Promise.all([resumeWatchRole(repo, "inbox"), haltWatchRole(repo, "queue", "stop")]);
+  const mixed = await getRepoWatch(repo);
+  assert.equal(mixed.inbox.halted, false);
+  assert.equal(mixed.queue.halted, true);
+  await resumeWatch(repo);
+});
+
+test("listenWatchLane prints ticks and stops on halt", async () => {
+  const { listenWatchLane } = await import("./watch.js");
+  await resumeWatch(repo);
+  const lines: string[] = [];
+  let sleeps = 0;
+  const done = listenWatchLane(repo, "inbox", {
+    ticks: 3,
+    intervalMs: 5,
+    write: (line) => lines.push(line),
+    sleep: async () => {
+      sleeps += 1;
+      if (sleeps === 2) await haltWatchRole(repo, "inbox", "stop");
+    },
+  });
+  const result = await done;
+  assert.equal(result, "halted");
+  assert.ok(lines.some((l) => l.startsWith("AGENT_LOOP_TICK_review-inbox")));
+  assert.ok(lines.some((l) => l.startsWith("AGENT_LOOP_DONE_review-inbox")));
+  await resumeWatch(repo);
+});

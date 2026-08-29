@@ -497,35 +497,48 @@ function parseLane(raw) {
 function parseReason(value) {
   return value === "export" || value === "stop" ? value : null;
 }
+function parseWatchRaw(raw) {
+  const parsed = parseJsonObject(raw);
+  const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : idle().updatedAt;
+  const inbox = parseLane(parsed.inbox);
+  const queue = parseLane(parsed.queue);
+  if (inbox && queue) return derive(inbox, queue, updatedAt);
+  const legacy = {
+    halted: parsed.halted === true,
+    reason: parseReason(parsed.reason),
+    exportId: typeof parsed.exportId === "string" ? parsed.exportId : null
+  };
+  return derive(legacy, { ...legacy }, updatedAt);
+}
 async function getRepoWatch(cwd) {
   const root = await requireGitRoot(cwd);
   try {
     const raw = await (0, import_promises3.readFile)(watchFile(await consoleDir(root)), "utf8");
-    const parsed = parseJsonObject(raw);
-    const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : idle().updatedAt;
-    const inbox = parseLane(parsed.inbox);
-    const queue = parseLane(parsed.queue);
-    if (inbox && queue) return derive(inbox, queue, updatedAt);
-    const legacy = {
-      halted: parsed.halted === true,
-      reason: parseReason(parsed.reason),
-      exportId: typeof parsed.exportId === "string" ? parsed.exportId : null
-    };
-    return derive(legacy, { ...legacy }, updatedAt);
+    return parseWatchRaw(raw);
   } catch {
     return idle();
   }
 }
-async function writeWatch(cwd, state) {
+async function mutateWatch(cwd, fn) {
   const root = await requireGitRoot(cwd);
-  await writeJsonFile(watchFile(await consoleDir(root)), state);
-  return state;
+  const file = watchFile(await consoleDir(root));
+  return withFileLock(file, async () => {
+    let current = idle();
+    try {
+      current = parseWatchRaw(await (0, import_promises3.readFile)(file, "utf8"));
+    } catch {
+    }
+    const next = fn(current);
+    await writeJsonFile(file, next);
+    return next;
+  });
 }
 async function resumeWatchRole(cwd, role) {
-  const current = await getRepoWatch(cwd);
-  const inbox = role === "inbox" ? idleLane() : current.inbox;
-  const queue = role === "queue" ? idleLane() : current.queue;
-  return writeWatch(cwd, derive(inbox, queue, (/* @__PURE__ */ new Date()).toISOString()));
+  return mutateWatch(cwd, (current) => {
+    const inbox = role === "inbox" ? idleLane() : current.inbox;
+    const queue = role === "queue" ? idleLane() : current.queue;
+    return derive(inbox, queue, (/* @__PURE__ */ new Date()).toISOString());
+  });
 }
 
 // packages/core/src/prs.ts

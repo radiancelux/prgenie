@@ -80,5 +80,12 @@ async function main(): Promise<void> {
 }
 
 main().catch(() => {
-  process.stdout.write(JSON.stringify({ permission: "allow" }));
+  process.stdout.write(
+    JSON.stringify({
+      permission: "ask",
+      user_message: "PR Genie github gate failed unexpectedly. Allow only if you trust this command.",
+      agent_message:
+        "github-gate crashed. Do not git push or gh pr create/merge. Ask the user, or run prgenie doctor.",
+    }),
+  );
 });

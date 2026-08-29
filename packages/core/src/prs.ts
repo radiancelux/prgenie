@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { git, gitText, requireGitRoot, findGitRoot } from "./git.js";
 import { parseJsonObject, prFile, prsDir, withFileLock, writeJsonFile } from "./store.js";
@@ -14,6 +14,7 @@ import {
   worktreeForLoop,
   ensureWorktreeForLoop,
   loopWorktreeDir,
+  releaseArchivedLoop,
   sameFsPath,
 } from "./worktrees.js";
 import type {
@@ -98,6 +99,23 @@ async function applyHeadRefresh(cwd: string, pr: LocalPr): Promise<void> {
 
 export function isArchivedPr(pr: { status: LocalPrStatus }): boolean {
   return pr.status === "approved";
+}
+
+export async function listCorruptLocalPrFiles(cwd: string): Promise<string[]> {
+  await requireGitRoot(cwd);
+  const dir = await prsDir(cwd);
+  const names = await readdir(dir);
+  const corrupt: string[] = [];
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const file = path.join(dir, name);
+    try {
+      parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+    } catch {
+      corrupt.push(file);
+    }
+  }
+  return corrupt;
 }
 
 export async function listLocalPrs(cwd: string): Promise<LocalPr[]> {
@@ -573,17 +591,26 @@ export async function resolveLocalPrComment(
   });
 }
 
+export type CompleteLocalPrReviewResult = LocalPr & {
+  /** True when HEAD moved after Review requested (reviewRequestedSha set and differs). */
+  headDrift: boolean;
+  reviewedAgainstSha: string | null;
+};
+
 export async function completeLocalPrReview(
   cwd: string,
   id: string,
   options: { author?: string; body?: string } = {},
-): Promise<LocalPr> {
+): Promise<CompleteLocalPrReviewResult> {
   const resolved = await getLocalPr(cwd, id);
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
     const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
+    const reviewedAgainstSha = pr.reviewRequestedSha ?? null;
+    await applyHeadRefresh(cwd, pr);
+    const headDrift = Boolean(reviewedAgainstSha && reviewedAgainstSha !== pr.headSha);
     const open = pendingReviewComments(pr);
     const now = nowIso();
     const author = options.author?.trim() || (await userName(cwd));
@@ -614,25 +641,67 @@ export async function completeLocalPrReview(
     pr.updatedAt = now;
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;
-    return pr;
+    return { ...pr, headDrift, reviewedAgainstSha };
   });
 }
 
 export async function getLocalPrDiff(
   cwd: string,
   id: string,
-  options: { stat?: boolean; maxBytes?: number } = {},
+  options: { stat?: boolean; maxBytes?: number; paths?: string[] } = {},
 ): Promise<string> {
   const pr = await getLocalPr(cwd, id);
   const args = options.stat
     ? ["diff", "--stat", `${pr.baseSha}...${pr.headSha}`]
     : ["diff", `${pr.baseSha}...${pr.headSha}`];
+  if (options.paths?.length) {
+    args.push("--", ...options.paths);
+  }
   const { stdout } = await git(cwd, args);
   const max = options.maxBytes ?? 200_000;
   if (stdout.length > max) {
     return `${stdout.slice(0, max)}\n\n... truncated (${stdout.length} bytes) ...`;
   }
   return stdout;
+}
+
+/** Permanently remove a loop packet, its refs, and any sibling worktree. */
+export async function deleteLocalPr(
+  cwd: string,
+  id: string,
+): Promise<{ id: string; deleted: true }> {
+  const pr = await getLocalPr(cwd, id);
+  await releaseArchivedLoop(cwd, pr);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, pr.id);
+  await withFileLock(file, async () => {
+    await unlink(file).catch(() => undefined);
+  });
+  await git(cwd, ["update-ref", "-d", `refs/local-pr/${pr.id}/head`], { allowFail: true });
+  await git(cwd, ["update-ref", "-d", `refs/local-pr/${pr.id}/base`], { allowFail: true });
+  return { id: pr.id, deleted: true };
+}
+
+/** Bring an archived loop back as changes_requested and recreate its worktree. */
+export async function reopenLocalPr(cwd: string, id: string): Promise<LocalPr> {
+  const updated = await withPrLock(cwd, id, async (pr) => {
+    if (!isArchivedPr(pr)) {
+      throw new Error(`Loop ${pr.id} is not archived; only approved loops can be reopened.`);
+    }
+    pr.status = "changes_requested";
+    pr.reviewRequestedSha = null;
+    await applyHeadRefresh(cwd, pr);
+    pr.updatedAt = nowIso();
+  });
+  updated.worktreePath = await ensureWorktreeForLoop(cwd, updated, {
+    staleLoopIds: (await listLocalPrs(cwd))
+      .filter((other) => other.id !== updated.id && isArchivedPr(other))
+      .map((other) => other.id),
+    liveLoopIds: (await listLocalPrs(cwd))
+      .filter((other) => !isArchivedPr(other))
+      .map((other) => other.id),
+  });
+  return updated;
 }
 
 export async function getLocalPrNameStatus(

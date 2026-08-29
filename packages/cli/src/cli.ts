@@ -6,10 +6,12 @@ import {
   bindRepoGithub,
   completeLocalPrReview,
   createLocalPr,
+  deleteLocalPr,
   exportLocalPr,
   ensureWorktreeForLoop,
   findGitRoot,
   findLocalPrForCurrentWorktree,
+  formatDoctorReport,
   getLocalPr,
   getLocalPrDiff,
   getLocalPrNameStatus,
@@ -23,15 +25,19 @@ import {
   listLocalPrs,
   isArchivedPr,
   listWorktrees,
+  listenWatchLane,
   pendingReviewComments,
+  reopenLocalPr,
   resolveLocalPrComment,
   resumeWatch,
   resumeWatchRole,
+  runDoctor,
   setLocalPrStatus,
   updateLocalPr,
   type CommentRole,
   type LocalPr,
   type LocalPrStatus,
+  type WatchRole,
 } from "@prgenie/core";
 
 function usage(): string {
@@ -51,10 +57,14 @@ Usage:
   prgenie watch start
   prgenie watch start inbox
   prgenie watch start queue
+  prgenie watch listen inbox|queue [--ticks 60] [--interval 60]
+  prgenie doctor
   prgenie export <id>
   prgenie show <id>
   prgenie update <id> [--title <t>] [--body <summary>]
-  prgenie diff <id>
+  prgenie diff <id> [--stat] [-- <path>...]
+  prgenie delete <id> [--yes]
+  prgenie reopen <id>
   prgenie approve <id>
   prgenie ready <id>
   prgenie request-changes <id> [-m <message>]
@@ -194,6 +204,11 @@ export async function run(argv: string[]): Promise<number> {
     process.stdout.write(`  pending: ${pending.length}\n`);
     return 0;
   }
+  if (sub === "doctor") {
+    const report = await runDoctor(repo);
+    process.stdout.write(formatDoctorReport(report));
+    return report.ok ? 0 : 1;
+  }
   if (sub === "watch") {
     const action = rest[0] ?? "status";
     if (action === "stop") {
@@ -217,6 +232,24 @@ export async function run(argv: string[]): Promise<number> {
       await resumeWatch(repo);
       process.stdout.write("Watch resumed.\n");
       return 0;
+    }
+    if (action === "listen") {
+      const role = rest[1] as WatchRole | undefined;
+      if (role !== "inbox" && role !== "queue") {
+        process.stderr.write("prgenie watch listen inbox|queue [--ticks 60] [--interval 60]\n");
+        return 1;
+      }
+      const ticks = Number(arg(rest, "--ticks") ?? "60");
+      const intervalSec = Number(arg(rest, "--interval") ?? "60");
+      if (!Number.isFinite(ticks) || ticks < 1 || !Number.isFinite(intervalSec) || intervalSec < 1) {
+        process.stderr.write("--ticks and --interval must be positive numbers.\n");
+        return 1;
+      }
+      const result = await listenWatchLane(repo, role, {
+        ticks,
+        intervalMs: intervalSec * 1000,
+      });
+      return result === "halted" ? 0 : 0;
     }
     const state = await getRepoWatch(repo);
     if (action === "inbox" || action === "queue") {
@@ -274,8 +307,28 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (sub === "diff") {
-    process.stdout.write(await getLocalPrDiff(repo, id, { stat: flag(rest, "--stat") }));
+    const dash = rest.indexOf("--");
+    const paths = dash >= 0 ? rest.slice(dash + 1) : [];
+    process.stdout.write(
+      await getLocalPrDiff(repo, id, {
+        stat: flag(rest, "--stat"),
+        paths: paths.length ? paths : undefined,
+      }),
+    );
     if (!flag(rest, "--stat")) process.stdout.write("\n");
+    return 0;
+  }
+  if (sub === "delete") {
+    if (!flag(rest, "--yes") && !flag(rest, "-y")) {
+      process.stderr.write("prgenie delete <id> --yes\n");
+      return 1;
+    }
+    const result = await deleteLocalPr(repo, id);
+    process.stdout.write(`Deleted ${result.id}.\n`);
+    return 0;
+  }
+  if (sub === "reopen") {
+    printPr(await reopenLocalPr(repo, id));
     return 0;
   }
   if (sub === "worktree") {
@@ -351,11 +404,15 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (sub === "complete-review") {
-    printPr(
-      await completeLocalPrReview(repo, id, {
-        body: messageArg(rest),
-      }),
-    );
+    const done = await completeLocalPrReview(repo, id, {
+      body: messageArg(rest),
+    });
+    if (done.headDrift) {
+      process.stderr.write(
+        `warning: head moved since Review requested (${done.reviewedAgainstSha?.slice(0, 8)} → ${done.headSha.slice(0, 8)}). Re-diff before trusting this review.\n`,
+      );
+    }
+    printPr(done);
     return 0;
   }
   if (sub === "status") {

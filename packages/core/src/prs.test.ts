@@ -13,6 +13,7 @@ import {
   captureAgentWork,
   commentThreads,
   completeLocalPrReview,
+  deleteLocalPr,
   exportPushRefspec,
   findLocalPrForCurrentBranch,
   findLocalPrForCurrentWorktree,
@@ -20,10 +21,12 @@ import {
   getLocalPr,
   getLocalPrDiff,
   isArchivedPr,
+  listCorruptLocalPrFiles,
   listLocalPrs,
   listWorktrees,
   pruneArchivedLoopWorktree,
   releaseArchivedLoop,
+  reopenLocalPr,
   sameFsPath,
   ensureWorktreeForLoop,
   pendingReviewComments,
@@ -37,6 +40,7 @@ import {
   getRepoWatch,
   resumeWatch,
 } from "./index.js";
+import { prsDir } from "./store.js";
 
 let repo = "";
 
@@ -625,5 +629,53 @@ test("a missing export id is treated as shipped when creating the next loop", as
   await haltWatch(repo, "export", "lp-gonegone");
   await createLocalPr(repo, { title: "After missing export id", base: "main" });
   assert.equal((await getRepoWatch(repo)).halted, false);
+});
+
+test("complete_review reports headDrift when HEAD moved after Review requested", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, { title: "Drift guard", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready");
+  const marked = await markReviewRequested(repo, pr.id);
+  await writeFile(path.join(repo, "drift.txt"), "moved\n");
+  git(["add", "drift.txt"]);
+  git(["commit", "-m", "move head after review requested"]);
+  const done = await completeLocalPrReview(repo, marked.id);
+  assert.equal(done.headDrift, true);
+  assert.equal(done.reviewedAgainstSha, marked.reviewRequestedSha);
+  assert.notEqual(done.headSha, marked.reviewRequestedSha);
+});
+
+test("getLocalPrDiff supports paths filter", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, { title: "Paths filter", base: "main" });
+  await writeFile(path.join(repo, "a.txt"), "a\n");
+  await writeFile(path.join(repo, "b.txt"), "b\n");
+  git(["add", "a.txt", "b.txt"]);
+  git(["commit", "-m", "two files"]);
+  await setLocalPrStatus(repo, pr.id, "ready");
+  const onlyA = await getLocalPrDiff(repo, pr.id, { paths: ["a.txt"] });
+  assert.match(onlyA, /a\.txt/);
+  assert.doesNotMatch(onlyA, /b\.txt/);
+});
+
+test("listCorruptLocalPrFiles names unparsable packets", async () => {
+  const dir = await prsDir(repo);
+  const bad = path.join(dir, "lp-badbadad.json");
+  await writeFile(bad, "{not-json");
+  const corrupt = await listCorruptLocalPrFiles(repo);
+  assert.ok(corrupt.some((f) => f.endsWith("lp-badbadad.json")));
+  await rm(bad, { force: true });
+});
+
+test("reopen and delete local PR", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, { title: "Reopen me", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "approved");
+  const reopened = await reopenLocalPr(repo, pr.id);
+  assert.equal(reopened.status, "changes_requested");
+  assert.equal(isArchivedPr(reopened), false);
+  const deleted = await deleteLocalPr(repo, pr.id);
+  assert.equal(deleted.deleted, true);
+  await assert.rejects(() => getLocalPr(repo, pr.id), /not found/i);
 });
 

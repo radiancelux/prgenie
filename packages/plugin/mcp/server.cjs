@@ -550,49 +550,63 @@ function parseLane(raw) {
 function parseReason(value) {
   return value === "export" || value === "stop" ? value : null;
 }
+function parseWatchRaw(raw) {
+  const parsed = parseJsonObject(raw);
+  const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : idle().updatedAt;
+  const inbox = parseLane(parsed.inbox);
+  const queue = parseLane(parsed.queue);
+  if (inbox && queue) return derive(inbox, queue, updatedAt);
+  const legacy = {
+    halted: parsed.halted === true,
+    reason: parseReason(parsed.reason),
+    exportId: typeof parsed.exportId === "string" ? parsed.exportId : null
+  };
+  return derive(legacy, { ...legacy }, updatedAt);
+}
 async function getRepoWatch(cwd) {
   const root = await requireGitRoot(cwd);
   try {
     const raw = await (0, import_promises3.readFile)(watchFile(await consoleDir(root)), "utf8");
-    const parsed = parseJsonObject(raw);
-    const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : idle().updatedAt;
-    const inbox = parseLane(parsed.inbox);
-    const queue = parseLane(parsed.queue);
-    if (inbox && queue) return derive(inbox, queue, updatedAt);
-    const legacy = {
-      halted: parsed.halted === true,
-      reason: parseReason(parsed.reason),
-      exportId: typeof parsed.exportId === "string" ? parsed.exportId : null
-    };
-    return derive(legacy, { ...legacy }, updatedAt);
+    return parseWatchRaw(raw);
   } catch {
     return idle();
   }
 }
-async function writeWatch(cwd, state) {
+async function mutateWatch(cwd, fn) {
   const root = await requireGitRoot(cwd);
-  await writeJsonFile(watchFile(await consoleDir(root)), state);
-  return state;
+  const file = watchFile(await consoleDir(root));
+  return withFileLock(file, async () => {
+    let current = idle();
+    try {
+      current = parseWatchRaw(await (0, import_promises3.readFile)(file, "utf8"));
+    } catch {
+    }
+    const next = fn(current);
+    await writeJsonFile(file, next);
+    return next;
+  });
 }
 async function haltWatch(cwd, reason, exportId = null) {
   const lane = { halted: true, reason, exportId };
-  return writeWatch(cwd, derive(lane, { ...lane }, (/* @__PURE__ */ new Date()).toISOString()));
+  return mutateWatch(cwd, () => derive(lane, { ...lane }, (/* @__PURE__ */ new Date()).toISOString()));
 }
 async function haltWatchRole(cwd, role, reason = "stop") {
-  const current = await getRepoWatch(cwd);
   const lane = { halted: true, reason, exportId: null };
-  const inbox = role === "inbox" ? lane : current.inbox;
-  const queue = role === "queue" ? lane : current.queue;
-  return writeWatch(cwd, derive(inbox, queue, (/* @__PURE__ */ new Date()).toISOString()));
+  return mutateWatch(cwd, (current) => {
+    const inbox = role === "inbox" ? lane : current.inbox;
+    const queue = role === "queue" ? lane : current.queue;
+    return derive(inbox, queue, (/* @__PURE__ */ new Date()).toISOString());
+  });
 }
 async function resumeWatchRole(cwd, role) {
-  const current = await getRepoWatch(cwd);
-  const inbox = role === "inbox" ? idleLane() : current.inbox;
-  const queue = role === "queue" ? idleLane() : current.queue;
-  return writeWatch(cwd, derive(inbox, queue, (/* @__PURE__ */ new Date()).toISOString()));
+  return mutateWatch(cwd, (current) => {
+    const inbox = role === "inbox" ? idleLane() : current.inbox;
+    const queue = role === "queue" ? idleLane() : current.queue;
+    return derive(inbox, queue, (/* @__PURE__ */ new Date()).toISOString());
+  });
 }
 async function resumeWatch(cwd) {
-  return writeWatch(cwd, derive(idleLane(), idleLane(), (/* @__PURE__ */ new Date()).toISOString()));
+  return mutateWatch(cwd, () => derive(idleLane(), idleLane(), (/* @__PURE__ */ new Date()).toISOString()));
 }
 
 // packages/core/src/prs.ts
@@ -1014,6 +1028,9 @@ async function completeLocalPrReview(cwd, id, options = {}) {
   return withFileLock(file, async () => {
     const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
+    const reviewedAgainstSha = pr.reviewRequestedSha ?? null;
+    await applyHeadRefresh(cwd, pr);
+    const headDrift = Boolean(reviewedAgainstSha && reviewedAgainstSha !== pr.headSha);
     const open2 = pendingReviewComments(pr);
     const now = nowIso();
     const author = options.author?.trim() || await userName(cwd);
@@ -1039,12 +1056,15 @@ async function completeLocalPrReview(cwd, id, options = {}) {
     pr.updatedAt = now;
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;
-    return pr;
+    return { ...pr, headDrift, reviewedAgainstSha };
   });
 }
 async function getLocalPrDiff(cwd, id, options = {}) {
   const pr = await getLocalPr(cwd, id);
   const args = options.stat ? ["diff", "--stat", `${pr.baseSha}...${pr.headSha}`] : ["diff", `${pr.baseSha}...${pr.headSha}`];
+  if (options.paths?.length) {
+    args.push("--", ...options.paths);
+  }
   const { stdout } = await git(cwd, args);
   const max = options.maxBytes ?? 2e5;
   if (stdout.length > max) {
@@ -1053,6 +1073,34 @@ async function getLocalPrDiff(cwd, id, options = {}) {
 ... truncated (${stdout.length} bytes) ...`;
   }
   return stdout;
+}
+async function deleteLocalPr(cwd, id) {
+  const pr = await getLocalPr(cwd, id);
+  await releaseArchivedLoop(cwd, pr);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, pr.id);
+  await withFileLock(file, async () => {
+    await (0, import_promises4.unlink)(file).catch(() => void 0);
+  });
+  await git(cwd, ["update-ref", "-d", `refs/local-pr/${pr.id}/head`], { allowFail: true });
+  await git(cwd, ["update-ref", "-d", `refs/local-pr/${pr.id}/base`], { allowFail: true });
+  return { id: pr.id, deleted: true };
+}
+async function reopenLocalPr(cwd, id) {
+  const updated = await withPrLock(cwd, id, async (pr) => {
+    if (!isArchivedPr(pr)) {
+      throw new Error(`Loop ${pr.id} is not archived; only approved loops can be reopened.`);
+    }
+    pr.status = "changes_requested";
+    pr.reviewRequestedSha = null;
+    await applyHeadRefresh(cwd, pr);
+    pr.updatedAt = nowIso();
+  });
+  updated.worktreePath = await ensureWorktreeForLoop(cwd, updated, {
+    staleLoopIds: (await listLocalPrs(cwd)).filter((other) => other.id !== updated.id && isArchivedPr(other)).map((other) => other.id),
+    liveLoopIds: (await listLocalPrs(cwd)).filter((other) => !isArchivedPr(other)).map((other) => other.id)
+  });
+  return updated;
 }
 async function getLocalPrNameStatus(cwd, id) {
   const pr = await getLocalPr(cwd, id);
@@ -1478,11 +1526,22 @@ async function handleTool(name, args) {
         author: typeof args.author === "string" ? args.author : void 0,
         body: typeof args.body === "string" ? args.body : void 0
       });
-    case "get_diff":
+    case "get_diff": {
+      const paths = Array.isArray(args.paths) ? args.paths.filter((p) => typeof p === "string") : void 0;
       return {
         files: await getLocalPrNameStatus(cwd, String(args.id ?? "")),
-        diff: await getLocalPrDiff(cwd, String(args.id ?? ""), { maxBytes: 8e4 })
+        diff: await getLocalPrDiff(cwd, String(args.id ?? ""), {
+          maxBytes: 8e4,
+          stat: args.stat === true,
+          paths
+        }),
+        truncatedHint: "If diff ends with truncated, call get_diff with stat=true then again with paths for individual files."
       };
+    }
+    case "delete_local_pr":
+      return deleteLocalPr(cwd, String(args.id ?? ""));
+    case "reopen_local_pr":
+      return reopenLocalPr(cwd, String(args.id ?? ""));
     case "watch_status":
       return getRepoWatch(cwd);
     case "watch_stop": {
@@ -1649,7 +1708,7 @@ var tools = [
   },
   {
     name: "complete_review",
-    description: "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed for the human. Resolves remaining addressed comments. Archived loops stay archived. Do not git push.",
+    description: "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed for the human. Resolves remaining addressed comments. Returns headDrift=true when HEAD moved after Review requested \u2014 re-diff before trusting the review. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -1663,7 +1722,37 @@ var tools = [
   },
   {
     name: "get_diff",
-    description: "Return name-status and diff for a local PR.",
+    description: "Return name-status and diff for a local PR. Use stat=true for a summary first; use paths to fetch individual files when the full diff would truncate at 80KB.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        cwd: { type: "string" },
+        stat: {
+          type: "boolean",
+          description: "Return git diff --stat instead of the full patch."
+        },
+        paths: {
+          type: "array",
+          items: { type: "string" },
+          description: "Limit the diff to these paths (after --)."
+        }
+      }
+    }
+  },
+  {
+    name: "delete_local_pr",
+    description: "Permanently delete a local PR packet, its refs, and any sibling .loops worktree. Prefer archive via export for shipped work. Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } }
+    }
+  },
+  {
+    name: "reopen_local_pr",
+    description: "Reopen an archived (approved) loop as changes_requested and recreate its worktree. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id"],
