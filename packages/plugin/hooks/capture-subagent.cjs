@@ -351,8 +351,8 @@ async function shortLogSubject(cwd, rev = "HEAD") {
 
 // packages/core/src/prs.ts
 var import_node_crypto = require("node:crypto");
-var import_promises3 = require("node:fs/promises");
-var import_node_path4 = __toESM(require("node:path"), 1);
+var import_promises4 = require("node:fs/promises");
+var import_node_path5 = __toESM(require("node:path"), 1);
 
 // packages/core/src/store.ts
 var import_promises2 = require("node:fs/promises");
@@ -467,6 +467,64 @@ async function withFileLock(file, fn) {
   throw lastErr instanceof Error ? lastErr : new Error(`Timed out locking ${file}`);
 }
 
+// packages/core/src/watch.ts
+var import_promises3 = require("node:fs/promises");
+var import_node_path4 = __toESM(require("node:path"), 1);
+function watchFile(dir) {
+  return import_node_path4.default.join(dir, "watch.json");
+}
+var idleLane = () => ({
+  halted: false,
+  reason: null,
+  exportId: null
+});
+function derive(inbox, queue, updatedAt) {
+  const halted = inbox.halted && queue.halted;
+  const reason = halted ? inbox.reason === queue.reason ? inbox.reason : inbox.reason ?? queue.reason : null;
+  const exportId = inbox.exportId ?? queue.exportId;
+  return { halted, reason, exportId, inbox, queue, updatedAt };
+}
+var idle = () => derive(idleLane(), idleLane(), (/* @__PURE__ */ new Date(0)).toISOString());
+function parseLane(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const parsed = raw;
+  return {
+    halted: parsed.halted === true,
+    reason: parsed.reason === "export" || parsed.reason === "stop" ? parsed.reason : null,
+    exportId: typeof parsed.exportId === "string" ? parsed.exportId : null
+  };
+}
+function parseReason(value) {
+  return value === "export" || value === "stop" ? value : null;
+}
+async function getRepoWatch(cwd) {
+  const root = await requireGitRoot(cwd);
+  try {
+    const raw = await (0, import_promises3.readFile)(watchFile(await consoleDir(root)), "utf8");
+    const parsed = parseJsonObject(raw);
+    const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : idle().updatedAt;
+    const inbox = parseLane(parsed.inbox);
+    const queue = parseLane(parsed.queue);
+    if (inbox && queue) return derive(inbox, queue, updatedAt);
+    const legacy = {
+      halted: parsed.halted === true,
+      reason: parseReason(parsed.reason),
+      exportId: typeof parsed.exportId === "string" ? parsed.exportId : null
+    };
+    return derive(legacy, { ...legacy }, updatedAt);
+  } catch {
+    return idle();
+  }
+}
+async function writeWatch(cwd, state) {
+  const root = await requireGitRoot(cwd);
+  await writeJsonFile(watchFile(await consoleDir(root)), state);
+  return state;
+}
+async function resumeWatch(cwd) {
+  return writeWatch(cwd, derive(idleLane(), idleLane(), (/* @__PURE__ */ new Date()).toISOString()));
+}
+
 // packages/core/src/prs.ts
 function nowIso() {
   return (/* @__PURE__ */ new Date()).toISOString();
@@ -497,7 +555,7 @@ async function writePr(cwd, pr) {
   );
 }
 async function readPrFile(file) {
-  const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+  const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
   pr.source = pr.source ?? null;
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
   pr.comments = (pr.comments ?? []).map(normalizeComment);
@@ -530,11 +588,11 @@ function isArchivedPr(pr) {
 async function listLocalPrs(cwd) {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
-  const names = await (0, import_promises3.readdir)(dir);
+  const names = await (0, import_promises4.readdir)(dir);
   const prs = [];
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
-    const raw = await (0, import_promises3.readFile)(import_node_path4.default.join(dir, name), "utf8");
+    const raw = await (0, import_promises4.readFile)(import_node_path5.default.join(dir, name), "utf8");
     let pr;
     try {
       pr = parseJsonObject(raw);
@@ -558,6 +616,19 @@ async function getLocalPr(cwd, id) {
   const pr = prs.find((p) => p.id === id || p.id.startsWith(id));
   if (!pr) throw new Error(`Local PR not found: ${id}`);
   return pr;
+}
+async function resumeWatchForNextLoop(cwd) {
+  const watch = await getRepoWatch(cwd);
+  if (!watch.halted || watch.reason !== "export") return;
+  if (watch.exportId) {
+    try {
+      const exported = await getLocalPr(cwd, watch.exportId);
+      if (!isArchivedPr(exported)) return;
+    } catch (err) {
+      if (!(err instanceof Error) || !err.message.startsWith("Local PR not found:")) throw err;
+    }
+  }
+  await resumeWatch(cwd);
 }
 async function createLocalPr(cwd, input = {}) {
   const root = await requireGitRoot(cwd);
@@ -600,6 +671,7 @@ async function createLocalPr(cwd, input = {}) {
     staleLoopIds: others.filter((other) => other.id !== pr.id && isArchivedPr(other)).map((other) => other.id),
     liveLoopIds: others.filter((other) => !isArchivedPr(other)).map((other) => other.id)
   });
+  await resumeWatchForNextLoop(root);
   return pr;
 }
 function inferCommentStatus(comment, role) {
@@ -660,7 +732,7 @@ async function captureAgentWork(cwd, input = {}) {
 }
 
 // packages/core/src/sessions.ts
-var import_promises4 = require("node:fs/promises");
+var import_promises5 = require("node:fs/promises");
 async function appendSession(cwd, event) {
   const root = await findGitRoot(cwd);
   if (!root) return;
@@ -671,7 +743,7 @@ async function appendSession(cwd, event) {
     gitRoot: root,
     at: (/* @__PURE__ */ new Date()).toISOString()
   });
-  await (0, import_promises4.appendFile)(file, `${line}
+  await (0, import_promises5.appendFile)(file, `${line}
 `, "utf8");
 }
 

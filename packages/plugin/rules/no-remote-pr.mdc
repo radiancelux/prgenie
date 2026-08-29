@@ -9,11 +9,11 @@ Never run `git push`, `gh pr create`, or `gh pr merge` unless the developer clea
 
 Slash workflows live in `packages/plugin/skills/*/SKILL.md` only. Do not add a matching `commands/*.md` — Cursor lists both, so the user sees two `/start-loop` entries.
 
-`/stop-watch` halts both listen loops. `/stop-loop` is the implementor inbox. `/stop-review` is the reviewer queue. None of them push.
+`/stop-watch` halts **both** listen loops. `/stop-loop` is `prgenie watch stop inbox` (implementor only). `/stop-review` is `prgenie watch stop queue` (reviewer only). None of them push.
 
-Each `/review-queue` and `/review-inbox` tick must check halt first: MCP `watch_status` if that tool is in this chat's listing, otherwise `node packages/cli/dist/prgenie.cjs watch`. Cursor's plugin MCP is often stale and omits `watch_status` — do not stall looking for it. `halted reason=stop` → kill the loop and do not review or implement. `halted reason=export` → that packet shipped or export is in flight; do not keep working it. Do not `prgenie watch start` unless the export id is missing or archived. Creating the next loop (`create_local_pr`) resumes only then. Do not `prgenie watch start` after `/stop-watch`, `/stop-loop`, or `/stop-review`.
+Each `/review-queue` tick checks **`prgenie watch queue`**. Each `/review-inbox` tick checks **`prgenie watch inbox`**. MCP `watch_status` if listed (read that role's lane, not the combined `halted` flag). Cursor's plugin MCP is often stale and omits `watch_status` — do not stall looking for it. Inbox `halted reason=stop` → kill the implementor listen only. Queue `halted reason=stop` → kill the reviewer listen only. `halted reason=export` (either lane) → that packet shipped or export is in flight; do not keep working it. Do not `prgenie watch start` unless the export id is missing or archived. Creating the next loop (`create_local_pr`) resumes only then. Do not `prgenie watch start` after `/stop-watch`, `/stop-loop`, or `/stop-review`.
 
-Listen loops (`/loop 1m`) **cap at 60 ticks** (~1 hour). Then `prgenie watch stop` and tell the developer to re-run `/watch-review-inbox` or `/watch-ready-prs`. Do not arm `while ($true)` forever.
+Listen loops (`/loop 1m`) **cap at 60 ticks** (~1 hour). Then the matching one-sided stop (`/stop-loop` or `/stop-review`) — never `/stop-watch` from a cap, or one chat's hour limit would halt the other. Tell the developer to re-run `/watch-review-inbox` or `/watch-ready-prs`. Do not arm `while ($true)` forever.
 
 This repo may be bound to a GitHub login. If unbound and the user needs GitHub, ask which `gh` account to use, then `prgenie gh use <login>` or MCP `gh_use`. Do not guess. Do not `gh auth switch` to a different account than the bind.
 

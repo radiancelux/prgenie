@@ -526,48 +526,67 @@ var import_node_path4 = __toESM(require("node:path"), 1);
 function watchFile(dir) {
   return import_node_path4.default.join(dir, "watch.json");
 }
-var idle = () => ({
+var idleLane = () => ({
   halted: false,
   reason: null,
-  exportId: null,
-  updatedAt: (/* @__PURE__ */ new Date(0)).toISOString()
+  exportId: null
 });
+function derive(inbox, queue, updatedAt) {
+  const halted = inbox.halted && queue.halted;
+  const reason = halted ? inbox.reason === queue.reason ? inbox.reason : inbox.reason ?? queue.reason : null;
+  const exportId = inbox.exportId ?? queue.exportId;
+  return { halted, reason, exportId, inbox, queue, updatedAt };
+}
+var idle = () => derive(idleLane(), idleLane(), (/* @__PURE__ */ new Date(0)).toISOString());
+function parseLane(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const parsed = raw;
+  return {
+    halted: parsed.halted === true,
+    reason: parsed.reason === "export" || parsed.reason === "stop" ? parsed.reason : null,
+    exportId: typeof parsed.exportId === "string" ? parsed.exportId : null
+  };
+}
+function parseReason(value) {
+  return value === "export" || value === "stop" ? value : null;
+}
 async function getRepoWatch(cwd) {
   const root = await requireGitRoot(cwd);
   try {
     const raw = await (0, import_promises3.readFile)(watchFile(await consoleDir(root)), "utf8");
     const parsed = parseJsonObject(raw);
-    return {
+    const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : idle().updatedAt;
+    const inbox = parseLane(parsed.inbox);
+    const queue = parseLane(parsed.queue);
+    if (inbox && queue) return derive(inbox, queue, updatedAt);
+    const legacy = {
       halted: parsed.halted === true,
-      reason: parsed.reason === "export" || parsed.reason === "stop" ? parsed.reason : null,
-      exportId: parsed.exportId ?? null,
-      updatedAt: parsed.updatedAt ?? idle().updatedAt
+      reason: parseReason(parsed.reason),
+      exportId: typeof parsed.exportId === "string" ? parsed.exportId : null
     };
+    return derive(legacy, { ...legacy }, updatedAt);
   } catch {
     return idle();
   }
 }
-async function haltWatch(cwd, reason, exportId = null) {
+async function writeWatch(cwd, state) {
   const root = await requireGitRoot(cwd);
-  const state = {
-    halted: true,
-    reason,
-    exportId,
-    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-  };
   await writeJsonFile(watchFile(await consoleDir(root)), state);
   return state;
 }
+async function haltWatch(cwd, reason, exportId = null) {
+  const lane = { halted: true, reason, exportId };
+  return writeWatch(cwd, derive(lane, { ...lane }, (/* @__PURE__ */ new Date()).toISOString()));
+}
+async function haltWatchRole(cwd, role, reason = "stop") {
+  const current = await getRepoWatch(cwd);
+  const lane = { halted: true, reason, exportId: null };
+  const inbox = role === "inbox" ? lane : current.inbox;
+  const queue = role === "queue" ? lane : current.queue;
+  return writeWatch(cwd, derive(inbox, queue, (/* @__PURE__ */ new Date()).toISOString()));
+}
 async function resumeWatch(cwd) {
-  const root = await requireGitRoot(cwd);
-  const state = {
-    halted: false,
-    reason: null,
-    exportId: null,
-    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-  };
-  await writeJsonFile(watchFile(await consoleDir(root)), state);
-  return state;
+  return writeWatch(cwd, derive(idleLane(), idleLane(), (/* @__PURE__ */ new Date()).toISOString()));
 }
 
 // packages/core/src/prs.ts
@@ -1457,8 +1476,10 @@ async function handleTool(name, args) {
       };
     case "watch_status":
       return getRepoWatch(cwd);
-    case "watch_stop":
-      return haltWatch(cwd, "stop");
+    case "watch_stop": {
+      const role = args.role === "inbox" || args.role === "queue" ? args.role : void 0;
+      return role ? haltWatchRole(cwd, role, "stop") : haltWatch(cwd, "stop");
+    }
     case "watch_start":
       return resumeWatch(cwd);
     case "ensure_worktree": {
@@ -1640,13 +1661,23 @@ var tools = [
   },
   {
     name: "watch_status",
-    description: "Show whether the developer halted the review listen loops (stop or export).",
+    description: "Show listen-loop halt state. inbox is the implementor watch; queue is the reviewer watch. halted is true only when both are halted. Export halt sets both.",
     inputSchema: { type: "object", properties: { cwd: { type: "string" } } }
   },
   {
     name: "watch_stop",
-    description: "Developer command: halt reviewer and implementor listen loops. Does not push or open GitHub.",
-    inputSchema: { type: "object", properties: { cwd: { type: "string" } } }
+    description: "Halt listen loops. Omit role to halt both (same as /stop-watch). role=inbox is /stop-loop. role=queue is /stop-review. Does not push or open GitHub.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: { type: "string" },
+        role: {
+          type: "string",
+          enum: ["inbox", "queue"],
+          description: "inbox = implementor listen, queue = reviewer listen. Omit to halt both."
+        }
+      }
+    }
   },
   {
     name: "watch_start",

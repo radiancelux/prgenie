@@ -56,8 +56,8 @@ export {
   shouldSpawnReviewer,
   updateLocalPr,
 } from "./prs.js";
-export { haltWatch, getRepoWatch, resumeWatch } from "./watch.js";
-export type { RepoWatchState, WatchHaltReason } from "./watch.js";
+export { haltWatch, haltWatchRole, getRepoWatch, resumeWatch, formatWatchLane, formatWatchStatus, watchLane } from "./watch.js";
+export type { RepoWatchState, WatchHaltReason, WatchLaneState, WatchRole } from "./watch.js";
 export { exportLocalPr, exportPushRefspec, archiveLoopsMergedOnGithub, githubPrViewArgs } from "./export.js";
 export type { GithubPrHeadState } from "./export.js";
 export { appendSession } from "./sessions.js";

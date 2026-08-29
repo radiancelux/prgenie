@@ -26,13 +26,13 @@ for ($i = 1; $i -le $max; $i++) {
   Start-Sleep -Seconds 60
   Write-Output 'AGENT_LOOP_TICK_review-queue {"prompt":"/review-queue"}'
 }
-Write-Output 'AGENT_LOOP_DONE_review-queue {"prompt":"/stop-watch"}'
+Write-Output 'AGENT_LOOP_DONE_review-queue {"prompt":"/stop-review"}'
 ```
 
 - Cloud: subscription timer, same `/review-queue` prompt, **unsubscribe after 60 fires**.
 - Do not start a duplicate loop if one is already running for this purpose.
-- Each **TICK**: MCP `watch_status` if listed, otherwise `prgenie watch`. If `halted reason=stop`, kill the loop immediately. If `halted reason=export`, the last packet shipped — stop this listen pass. A new implementor loop (`create_local_pr`) resumes watch after that export id is archived or missing; re-arm if you killed the shell **and** watch is `listening`. Otherwise only dispatch loops you have not already Tasked for that `headSha`. Do not await those Tasks. Do not `complete_review` in this chat. If a Task later returns here, ignore its status text — `prgenie show` is the handoff.
-- Each **DONE** (or the shell exits after the cap): run `/stop-watch`. Tell the developer the listen cap hit ~1 hour. They re-run `/watch-ready-prs` to continue. Do not re-arm.
+- Each **TICK**: MCP `watch_status` if listed (read **`queue`**, not the combined `halted` flag), otherwise `prgenie watch queue`. If `halted reason=stop` on **queue**, kill this loop immediately (the implementor inbox may still be listening). If `halted reason=export`, the last packet shipped — stop this listen pass. A new implementor loop (`create_local_pr`) resumes watch after that export id is archived or missing; re-arm if you killed the shell **and** `prgenie watch queue` is `listening`. Otherwise only dispatch loops you have not already Tasked for that `headSha`. Do not await those Tasks. Do not `complete_review` in this chat. If a Task later returns here, ignore its status text — `prgenie show` is the handoff.
+- Each **DONE** (or the shell exits after the cap): run `/stop-review` (queue only). Tell the developer the reviewer listen cap hit ~1 hour. They re-run `/watch-ready-prs` to continue. Do not re-arm. Do **not** `/stop-watch` — that would halt the implementor inbox too.
 
 Developer commands in this chat:
 

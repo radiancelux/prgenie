@@ -28,7 +28,8 @@ User-only skills set `disable-model-invocation: true` so the agent does not star
 Keep terminology fixed: **loop** (local PR packet), **halt** (`stop` vs `export`), **address** (implementor) vs **resolve** (reviewer) vs **complete_review** (end of review). Do not push unless `/export-local-pr`.
 
 - Export halt resumes only when that export id is **missing or archived**. Id inequality is not enough. Stop halt never auto-resumes.
-- Listen shells are **60 ticks max** (~1 hour at 1m), then `/stop-watch`. Never `while ($true)`.
+- Listen shells are **60 ticks max** (~1 hour at 1m), then `/stop-loop` or `/stop-review` for that chat only. Never `while ($true)`. Never `/stop-watch` from a cap.
+- `prgenie watch stop inbox` / `stop queue` are independent. `prgenie watch stop` with no role is both. Ticks read `prgenie watch inbox` or `prgenie watch queue`.
 - Implementor acts only on **this worktree** when `changes_requested`. Reviewer Tasks must not be awaited.
 
 Edit `packages/plugin/rules/no-remote-pr.mdc` when the flywheel protocol changes — it is always applied. Skills stay the procedure; the rule stays the guardrail.

@@ -28,13 +28,13 @@ for ($i = 1; $i -le $max; $i++) {
   Start-Sleep -Seconds 60
   Write-Output 'AGENT_LOOP_TICK_review-inbox {"prompt":"/review-inbox"}'
 }
-Write-Output 'AGENT_LOOP_DONE_review-inbox {"prompt":"/stop-watch"}'
+Write-Output 'AGENT_LOOP_DONE_review-inbox {"prompt":"/stop-loop"}'
 ```
 
 - Cloud: subscription timer, same `/review-inbox` prompt, **unsubscribe after 60 fires**.
 - Do not start a duplicate loop if one is already running for this purpose.
-- Each **TICK**: MCP `watch_status` if listed, otherwise `node packages/cli/dist/prgenie.cjs watch`. Do not stall looking for MCP. `listening` continues. `halted reason=stop` → kill the listen loop; the developer ended it. `halted reason=export` → do not implement that packet. Do **not** `prgenie watch start` unless the export id is missing or archived. A different live loop on this checkout is not enough. `create_local_pr` resumes only after that id is archived or gone. Otherwise only act when `prgenie inbox` shows **this worktree's** loop (`changes_requested` with new open findings). Never pick another loop.
-- Each **DONE** (or the shell exits after the cap): run `/stop-watch`. Tell the developer the listen cap hit ~1 hour. They re-run `/watch-review-inbox` to continue. Do not re-arm.
+- Each **TICK**: MCP `watch_status` if listed (read **`inbox`**, not the combined `halted` flag), otherwise `node packages/cli/dist/prgenie.cjs watch inbox`. Do not stall looking for MCP. `listening` continues. `halted reason=stop` on **inbox** → kill this listen loop; the developer ended it (the reviewer queue may still be listening). `halted reason=export` → do not implement that packet. Do **not** `prgenie watch start` unless the export id is missing or archived. A different live loop on this checkout is not enough. `create_local_pr` resumes only after that id is archived or gone. Otherwise only act when `prgenie inbox` shows **this worktree's** loop (`changes_requested` with new open findings). Never pick another loop.
+- Each **DONE** (or the shell exits after the cap): run `/stop-loop` (inbox only). Tell the developer the implementor listen cap hit ~1 hour. They re-run `/watch-review-inbox` to continue. Do not re-arm. Do **not** `/stop-watch` — that would halt the reviewer queue too.
 
 Developer commands in this chat:
 

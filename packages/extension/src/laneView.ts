@@ -199,6 +199,18 @@ export class LaneHub implements vscode.Disposable {
     }
   }
 
+  private async rejectIfArchived(cwd: string, id: string): Promise<boolean> {
+    const prs = await listLocalPrs(cwd);
+    const pr = prs.find((p) => p.id === id);
+    if (pr && isArchivedPr(pr)) {
+      void vscode.window.showInformationMessage(
+        "This loop is archived. The record is read-only.",
+      );
+      return true;
+    }
+    return false;
+  }
+
   private async onMessage(msg: ClientMessage): Promise<void> {
     if (msg.type === "ready" || msg.type === "refresh") {
       await this.pushSnapshot(true);
@@ -261,9 +273,11 @@ export class LaneHub implements vscode.Disposable {
         await this.pushSnapshot();
         await vscode.commands.executeCommand("prgenie.panel.focus");
       } else if (msg.type === "status") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
         await setLocalPrStatus(cwd, msg.id, msg.status);
         await this.pushSnapshot();
       } else if (msg.type === "export") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
         const prs = await listLocalPrs(cwd);
         const pr = prs.find((p) => p.id === msg.id);
         const title = pr?.title ?? msg.id;
@@ -281,9 +295,11 @@ export class LaneHub implements vscode.Disposable {
         );
         if (open === "Open") await vscode.env.openExternal(vscode.Uri.parse(result.url));
       } else if (msg.type === "comment") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
         await addLocalPrComment(cwd, msg.id, msg.body, { role: "human" });
         await this.pushSnapshot();
       } else if (msg.type === "address") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
         const note = await vscode.window.showInputBox({
           title: "Address comment",
           prompt: "How did you address this? This reply sits under the reviewer comment.",
@@ -292,6 +308,7 @@ export class LaneHub implements vscode.Disposable {
         await addressLocalPrComment(cwd, msg.id, msg.commentId, note);
         await this.pushSnapshot();
       } else if (msg.type === "resolve") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
         const note = await vscode.window.showInputBox({
           title: "Resolve comment",
           prompt: "Confirm this is fixed. This marks the thread resolved for human review.",
@@ -300,9 +317,11 @@ export class LaneHub implements vscode.Disposable {
         await resolveLocalPrComment(cwd, msg.id, msg.commentId, note, { role: "human" });
         await this.pushSnapshot();
       } else if (msg.type === "summary") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
         await updateLocalPr(cwd, msg.id, { body: msg.body });
         await this.pushSnapshot();
       } else if (msg.type === "copyReviewPrompt") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
         const prompt = [
           `Review local PR ${msg.id} with PR Genie.`,
           "Call get_diff. Post all findings with add_comment role=reviewer (status stays ready).",
@@ -848,7 +867,7 @@ function panelHtml(webview: vscode.Webview): string {
       const hint = root.querySelector("#hint");
       if (hint) {
         hint.textContent = selected.status === "approved"
-          ? "Archived after export. The record stays on disk. Status changes cannot un-archive it."
+          ? "Archived after export. The record is read-only."
           : selected.status === "reviewed"
             ? "Agent review is done. Export opens the GitHub PR at origin. Archive keeps it local only."
             : selected.status === "ready"
@@ -857,8 +876,15 @@ function panelHtml(webview: vscode.Webview): string {
       }
       const sum = root.querySelector("#sum");
       const next = selected.body || "";
-      if (sum && document.activeElement !== sum && sum.value === serverSum) setTextarea(sum, next);
+      if (sum) {
+        sum.readOnly = selected.status === "approved";
+        if (document.activeElement !== sum && sum.value === serverSum) setTextarea(sum, next);
+      }
       serverSum = next;
+      const save = root.querySelector("#saveSum");
+      if (save) save.hidden = selected.status === "approved";
+      const composer = root.querySelector(".composer");
+      if (composer) composer.hidden = selected.status === "approved";
     }
     function setList(el, html, paintedKey) {
       if (!el) return false;
@@ -901,17 +927,20 @@ function panelHtml(webview: vscode.Webview): string {
         const st = stLabel(f.status);
         return '<div class="file" data-path="' + esc(f.path) + '" data-status="' + esc(f.status) + '"><span class="st ' + st.c + '">' + esc(st.t) + '</span><span>' + esc(fileLabel(f.path)) + "</span></div>";
       }).join("") || '<p class="muted empty">No files changed</p>';
+      const archivedView = selected.status === "approved";
       const commentHtml = threads.map((t) => {
         const c = t.root;
         const st = c.status || (c.resolvedAt ? "resolved" : "open");
         const loc = c.path
           ? '<button type="button" class="loc secondary" data-path="' + esc(c.path) + '" data-line="' + (c.line || "") + '">' + esc(c.path) + (c.line ? ":" + c.line : "") + "</button>"
           : "";
-        const action = st === "open" && (c.role === "human" || c.role === "reviewer")
-          ? '<button type="button" class="address secondary" data-cid="' + esc(c.id) + '">Addressed</button>'
-          : st === "addressed"
-            ? '<button type="button" class="resolve secondary" data-cid="' + esc(c.id) + '">Resolve</button>'
-            : "";
+        const action = archivedView
+          ? ""
+          : st === "open" && (c.role === "human" || c.role === "reviewer")
+            ? '<button type="button" class="address secondary" data-cid="' + esc(c.id) + '">Addressed</button>'
+            : st === "addressed"
+              ? '<button type="button" class="resolve secondary" data-cid="' + esc(c.id) + '">Resolve</button>'
+              : "";
         const replies = (t.replies || []).map((r) =>
           '<div class="reply"><div class="who muted"><span class="role">' + esc(roleLabel(r.role)) + "</span>" + esc(r.author || "agent") + " · " + esc(new Date(r.createdAt).toLocaleString()) + '</div><div class="body">' + esc(r.body) + "</div></div>"
         ).join("");

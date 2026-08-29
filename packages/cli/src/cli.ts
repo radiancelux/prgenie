@@ -16,6 +16,9 @@ import {
   getRepoGithubBind,
   getRepoWatch,
   haltWatch,
+  haltWatchRole,
+  formatWatchLane,
+  formatWatchStatus,
   listGhAccounts,
   listLocalPrs,
   isArchivedPr,
@@ -39,7 +42,11 @@ Usage:
   prgenie queue
   prgenie inbox
   prgenie watch
+  prgenie watch inbox
+  prgenie watch queue
   prgenie watch stop
+  prgenie watch stop inbox
+  prgenie watch stop queue
   prgenie watch start
   prgenie export <id>
   prgenie show <id>
@@ -187,6 +194,12 @@ export async function run(argv: string[]): Promise<number> {
   if (sub === "watch") {
     const action = rest[0] ?? "status";
     if (action === "stop") {
+      const role = rest[1];
+      if (role === "inbox" || role === "queue") {
+        const state = await haltWatchRole(repo, role, "stop");
+        process.stdout.write(`${role} halted (${state[role].reason}).\n`);
+        return 0;
+      }
       const state = await haltWatch(repo, "stop");
       process.stdout.write(`Watch halted (${state.reason}).\n`);
       return 0;
@@ -197,11 +210,11 @@ export async function run(argv: string[]): Promise<number> {
       return 0;
     }
     const state = await getRepoWatch(repo);
-    process.stdout.write(
-      state.halted
-        ? `halted  reason=${state.reason ?? "stop"}${state.exportId ? `  export=${state.exportId}` : ""}\n`
-        : "listening\n",
-    );
+    if (action === "inbox" || action === "queue") {
+      process.stdout.write(`${formatWatchLane(state, action)}\n`);
+      return 0;
+    }
+    process.stdout.write(formatWatchStatus(state));
     return 0;
   }
   if (sub === "export") {
