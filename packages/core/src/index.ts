@@ -56,7 +56,8 @@ export {
 } from "./prs.js";
 export { haltWatch, getRepoWatch, resumeWatch } from "./watch.js";
 export type { RepoWatchState, WatchHaltReason } from "./watch.js";
-export { exportLocalPr, exportPushRefspec } from "./export.js";
+export { exportLocalPr, exportPushRefspec, archiveLoopsMergedOnGithub } from "./export.js";
+export type { GithubPrHeadState } from "./export.js";
 export { appendSession } from "./sessions.js";
 export { consoleDir, parseJsonObject, writeJsonFile } from "./store.js";
 export { parseGhAuthStatus } from "./github.js";

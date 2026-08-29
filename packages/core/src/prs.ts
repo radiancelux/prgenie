@@ -211,6 +211,11 @@ export async function setLocalPrStatus(
     throw new Error(`Invalid status: ${status}`);
   }
   return withPrLock(cwd, id, (pr) => {
+    if (isArchivedPr(pr) && status !== "approved") {
+      throw new Error(
+        `Loop ${pr.id} is archived. Start a new loop on a feature branch instead of reopening it.`,
+      );
+    }
     pr.status = status;
     pr.updatedAt = nowIso();
   });
@@ -397,7 +402,7 @@ export async function addLocalPrComment(
       if (parent) comment.replyTo = parent.id;
     }
     pr.comments.push(comment);
-    if (role !== "agent" && comment.status === "open") {
+    if (!isArchivedPr(pr) && role !== "agent" && comment.status === "open") {
       pr.status = "changes_requested";
     }
     pr.updatedAt = comment.createdAt;

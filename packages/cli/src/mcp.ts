@@ -2,6 +2,7 @@ import {
   addLocalPrComment,
   addressLocalPrComment,
   addressedReviewComments,
+  archiveLoopsMergedOnGithub,
   bindRepoGithub,
   commentThreads,
   completeLocalPrReview,
@@ -77,6 +78,7 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
     case "list_worktrees":
       return listWorktrees(cwd);
     case "list_local_prs": {
+      await archiveLoopsMergedOnGithub(cwd).catch(() => []);
       const prs = (await listLocalPrs(cwd)).map(withCommentViews);
       const status = typeof args.status === "string" ? args.status : "";
       const inbox = args.inbox === true;
@@ -270,7 +272,7 @@ const tools = [
   {
     name: "add_comment",
     description:
-      "Add a local review comment. role=human or role=reviewer is an open finding (status=open) and sets the loop to changes_requested. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Do not git push.",
+      "Add a local review comment. role=human or role=reviewer is an open finding (status=open) and sets the loop to changes_requested unless the loop is already archived (approved). Archived loops stay archived. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "body"],

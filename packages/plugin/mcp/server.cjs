@@ -664,6 +664,11 @@ async function setLocalPrStatus(cwd, id, status) {
     throw new Error(`Invalid status: ${status}`);
   }
   return withPrLock(cwd, id, (pr) => {
+    if (isArchivedPr(pr) && status !== "approved") {
+      throw new Error(
+        `Loop ${pr.id} is archived. Start a new loop on a feature branch instead of reopening it.`
+      );
+    }
     pr.status = status;
     pr.updatedAt = nowIso();
   });
@@ -772,7 +777,7 @@ async function addLocalPrComment(cwd, id, body, options = {}) {
       if (parent) comment.replyTo = parent.id;
     }
     pr.comments.push(comment);
-    if (role !== "agent" && comment.status === "open") {
+    if (!isArchivedPr(pr) && role !== "agent" && comment.status === "open") {
       pr.status = "changes_requested";
     }
     pr.updatedAt = comment.createdAt;
@@ -1105,6 +1110,39 @@ async function ensureRepoGithub(cwd) {
 function ghBase(ref) {
   return ref.replace(/^origin\//, "").replace(/^refs\/heads\//, "");
 }
+async function githubPrStateForHead(cwd, headRef) {
+  const result = await runGh(
+    ["pr", "view", "--head", headRef, "--json", "state"],
+    { cwd }
+  );
+  if (result.code !== 0) return null;
+  try {
+    const parsed = JSON.parse(result.stdout);
+    const state = parsed.state?.toUpperCase();
+    if (state === "MERGED" || state === "OPEN" || state === "CLOSED") return state;
+  } catch {
+  }
+  return null;
+}
+async function archiveLoopsMergedOnGithub(cwd, lookup = (head) => githubPrStateForHead(cwd, head)) {
+  const ids = [];
+  const prs = await listLocalPrs(cwd);
+  for (const pr of prs) {
+    if (isArchivedPr(pr)) continue;
+    let state = null;
+    try {
+      state = await lookup(pr.headRef);
+    } catch {
+      continue;
+    }
+    if (state !== "MERGED") continue;
+    await setLocalPrStatus(cwd, pr.id, "approved");
+    const archived = await getLocalPr(cwd, pr.id);
+    await releaseArchivedLoop(cwd, archived);
+    ids.push(pr.id);
+  }
+  return ids;
+}
 function exportPushRefspec(pr) {
   return `${pr.headSha}:refs/heads/${pr.headRef}`;
 }
@@ -1213,6 +1251,7 @@ async function handleTool(name, args) {
     case "list_worktrees":
       return listWorktrees(cwd);
     case "list_local_prs": {
+      await archiveLoopsMergedOnGithub(cwd).catch(() => []);
       const prs = (await listLocalPrs(cwd)).map(withCommentViews);
       const status = typeof args.status === "string" ? args.status : "";
       const inbox = args.inbox === true;
@@ -1395,7 +1434,7 @@ var tools = [
   },
   {
     name: "add_comment",
-    description: "Add a local review comment. role=human or role=reviewer is an open finding (status=open) and sets the loop to changes_requested. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Do not git push.",
+    description: "Add a local review comment. role=human or role=reviewer is an open finding (status=open) and sets the loop to changes_requested unless the loop is already archived (approved). Archived loops stay archived. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "body"],

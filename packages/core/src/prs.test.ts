@@ -8,6 +8,7 @@ import {
   addLocalPrComment,
   addressLocalPrComment,
   addressedReviewComments,
+  archiveLoopsMergedOnGithub,
   createLocalPr,
   captureAgentWork,
   commentThreads,
@@ -459,5 +460,27 @@ test("a peeled worktree is created on the loop branch, not detached", async () =
   assert.equal(extra?.branch, "lp-bbbbbbbb");
   assert.equal(extra?.detached, false);
   git(["worktree", "remove", "--force", "--", dest]);
+});
+
+test("comments do not un-archive an approved loop", async () => {
+  const pr = await createLocalPr(repo, { title: "Keep archived", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "approved");
+  const after = await addLocalPrComment(repo, pr.id, "Late finding.", { role: "reviewer" });
+  assert.equal(after.status, "approved");
+  assert.equal(isArchivedPr(after), true);
+  await assert.rejects(
+    () => setLocalPrStatus(repo, pr.id, "changes_requested"),
+    /archived/,
+  );
+});
+
+test("archiveLoopsMergedOnGithub archives a loop whose GitHub PR is merged", async () => {
+  const pr = await createLocalPr(repo, { title: "Merged on origin", base: "main" });
+  assert.equal(isArchivedPr(pr), false);
+  const ids = await archiveLoopsMergedOnGithub(repo, async (head) =>
+    head === pr.headRef ? "MERGED" : null,
+  );
+  assert.ok(ids.includes(pr.id));
+  assert.equal((await getLocalPr(repo, pr.id)).status, "approved");
 });
 

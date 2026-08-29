@@ -18,6 +18,8 @@ import {
   sameFsPath,
   setLocalPrStatus,
   updateLocalPr,
+  archiveLoopsMergedOnGithub,
+  exportLocalPr,
   type LocalPr,
 } from "@prgenie/core";
 import { openAllChanges, openFileChange } from "./gitDiff.js";
@@ -39,7 +41,8 @@ type ClientMessage =
   | { type: "openComment"; path: string; line?: number }
   | { type: "address"; id: string; commentId: string }
   | { type: "resolve"; id: string; commentId: string }
-  | { type: "openDiffs" };
+  | { type: "openDiffs" }
+  | { type: "export"; id: string };
 
 type Snapshot = {
   type: "snapshot";
@@ -66,6 +69,7 @@ export class LaneHub implements vscode.Disposable {
   private userPinned = false;
   private lastPosted = "";
   private reopeningMain = false;
+  private lastGithubArchive = 0;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.poller = setInterval(() => void this.pushSnapshot(), 2000);
@@ -249,6 +253,23 @@ export class LaneHub implements vscode.Disposable {
       } else if (msg.type === "status") {
         await setLocalPrStatus(cwd, msg.id, msg.status);
         await this.pushSnapshot();
+      } else if (msg.type === "export") {
+        const prs = await listLocalPrs(cwd);
+        const pr = prs.find((p) => p.id === msg.id);
+        const title = pr?.title ?? msg.id;
+        const pick = await vscode.window.showInformationMessage(
+          `Export "${title}" to GitHub? This pushes the loop branch and opens a pull request.`,
+          { modal: true },
+          "Export",
+        );
+        if (pick !== "Export") return;
+        const result = await exportLocalPr(cwd, msg.id);
+        await this.pushSnapshot(true);
+        const open = await vscode.window.showInformationMessage(
+          result.alreadyExisted ? `GitHub PR already exists: ${result.url}` : `Opened ${result.url}`,
+          "Open",
+        );
+        if (open === "Open") await vscode.env.openExternal(vscode.Uri.parse(result.url));
       } else if (msg.type === "comment") {
         await addLocalPrComment(cwd, msg.id, msg.body, { role: "human" });
         await this.pushSnapshot();
@@ -357,6 +378,11 @@ export class LaneHub implements vscode.Disposable {
       }
     }
     try {
+      const due = force || Date.now() - this.lastGithubArchive > 30_000;
+      if (due) {
+        this.lastGithubArchive = Date.now();
+        await archiveLoopsMergedOnGithub(root).catch(() => []);
+      }
       const all = await listLocalPrs(root);
       const livePaths = all
         .filter((p) => !isArchivedPr(p) && p.worktreePath)
@@ -555,7 +581,9 @@ function laneHtml(webview: vscode.Webview): string {
           ? (pr.source.subagentType || "subagent")
           : (pr.source && pr.source.kind) || "local";
         const info = el.querySelector(".info");
-        info.children[0].textContent = pr.status.replace("_", " ");
+        info.children[0].textContent = pr.status === "reviewed"
+          ? "reviewed — your turn"
+          : pr.status.replace("_", " ");
         info.children[1].textContent = pr.title;
         info.children[2].textContent = src + " · " + pr.headRef + " → " + pr.baseRef;
         const go = el.querySelector(".go");
@@ -708,6 +736,8 @@ function panelHtml(webview: vscode.Webview): string {
       root.querySelector("#openWt").onclick = () => vscode.postMessage({ type: "openFolder", id: selected.id });
       root.querySelector("#copyReview").onclick = () => vscode.postMessage({ type: "copyReviewPrompt", id: selected.id });
       root.querySelector("#openDiffs").onclick = () => vscode.postMessage({ type: "openDiffs" });
+      const exp = root.querySelector("#exportPr");
+      if (exp) exp.onclick = () => vscode.postMessage({ type: "export", id: selected.id });
       root.querySelector("#send").onclick = () => {
         const body = root.querySelector("#cmt").value;
         if (body.trim()) vscode.postMessage({ type: "comment", id: selected.id, body });
@@ -760,6 +790,20 @@ function panelHtml(webview: vscode.Webview): string {
       if (filesH2) filesH2.textContent = "Changes (" + (selected.worktreePath ? "worktree" : "head") + ")";
       root.querySelector("#openWt").textContent = selected.id === msg.hereId ? "This window" : "Switch to this loop";
       root.querySelector("#openWt").disabled = selected.id === msg.hereId;
+      const exp = root.querySelector("#exportPr");
+      if (exp) {
+        const canExport = selected.status === "reviewed" || selected.status === "ready";
+        exp.disabled = !canExport;
+        exp.textContent = selected.status === "reviewed" ? "Export to GitHub" : "Export";
+      }
+      const hint = root.querySelector("#hint");
+      if (hint) {
+        hint.textContent = selected.status === "reviewed"
+          ? "Agent review is done. Export opens the GitHub PR at origin. Archive keeps it local only."
+          : selected.status === "ready"
+            ? "Waiting on the reviewer, or Export now if you have looked at the diff."
+            : "Open findings go to the implementor. Address nests a reply underneath. When status is reviewed, Export publishes the GitHub PR.";
+      }
       const sum = root.querySelector("#sum");
       const next = selected.body || "";
       if (sum && document.activeElement !== sum && sum.value === serverSum) setTextarea(sum, next);
@@ -830,7 +874,8 @@ function panelHtml(webview: vscode.Webview): string {
           '<span class="grow"></span>',
           '<button id="openDiffs">Open diffs</button>',
           '<button data-s="ready">Ready</button>',
-          '<button data-s="approved">Approve</button>',
+          '<button id="exportPr">Export</button>',
+          '<button class="secondary" data-s="approved">Archive</button>',
           '<button class="secondary" data-s="changes_requested">Request changes</button>',
           '<button class="secondary" id="copyReview">Copy review prompt</button>',
           '<button class="secondary" id="openWt"></button>',
@@ -838,7 +883,7 @@ function panelHtml(webview: vscode.Webview): string {
           '<div class="summary"><h2>Summary</h2><div class="pad"><textarea id="sum" placeholder="Why this exists, what changed, how to test. The implementing agent writes this for reviewers."></textarea><div style="margin-top:6px"><button id="saveSum">Save summary</button></div></div></div>',
           '<div class="body">',
           '<div class="files"><h2>Changes (' + where + ')</h2><div id="flist">' + fileHtml + '</div><p class="muted empty">Click a file to open the VS Code diff — loop base on the left, this worktree on the right.</p></div>',
-          '<div class="comments"><h2>Comments</h2><div id="clist">' + commentHtml + '</div><div class="composer"><p class="muted hint">Open findings go to the implementor. Address nests a reply underneath. Reviewer Resolve (or complete_review) hands a clean pass to you.</p><textarea id="cmt" placeholder="Comment for the agent working this PR"></textarea><div style="margin-top:6px"><button id="send">Comment</button></div></div></div>',
+          '<div class="comments"><h2>Comments</h2><div id="clist">' + commentHtml + '</div><div class="composer"><p class="muted hint" id="hint">Open findings go to the implementor. Address nests a reply underneath. When status is reviewed, Export publishes the GitHub PR.</p><textarea id="cmt" placeholder="Comment for the agent working this PR"></textarea><div style="margin-top:6px"><button id="send">Comment</button></div></div></div>',
           "</div>"
         ].join("");
         paintedFiles = fileHtml;

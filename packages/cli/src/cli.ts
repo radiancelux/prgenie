@@ -1,6 +1,7 @@
 import {
   addLocalPrComment,
   addressLocalPrComment,
+  archiveLoopsMergedOnGithub,
   bindRepoGithub,
   completeLocalPrReview,
   createLocalPr,
@@ -126,6 +127,7 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (sub === "list") {
+    await archiveLoopsMergedOnGithub(repo).catch(() => []);
     const all = await listLocalPrs(repo);
     const archived = all.filter(isArchivedPr);
     const prs = flag(rest, "--all") ? all : all.filter((pr) => !isArchivedPr(pr));

@@ -112,4 +112,6 @@ prgenie gh use <login>
 
 ## Export
 
-Only if the user explicitly asks to publish. That is not the default, and V1 of the plugin does not auto-export. Export marks the loop `approved` (archived), checks the main workspace off the loop branch onto the loop base, and removes the extra `.loops` worktree. If this window is still on that extra checkout, reopen the primary folder so it can be cleared.
+`reviewed` means the automated reviewer is done and **you** should look. In Local PRs / the loop panel, **Export to GitHub** pushes the loop branch and opens the GitHub PR (`/export-local-pr` does the same). **Archive** keeps it local only (no GitHub).
+
+Only export if you explicitly want to publish. Export marks the loop `approved` (archived). Late reviewer comments cannot un-archive it. If GitHub already merged that head, PR Genie archives the local packet on list/refresh.
