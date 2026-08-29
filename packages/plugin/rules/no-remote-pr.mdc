@@ -9,7 +9,7 @@ Never run `git push`, `gh pr create`, or `gh pr merge` unless the developer clea
 
 `/stop-watch` (MCP `watch_stop`) only stops the reviewer and implementor listen loops. It does not push.
 
-Each `/review-queue` and `/review-inbox` tick must check halt first: MCP `watch_status` if that tool is in this chat's listing, otherwise `node packages/cli/dist/prgenie.cjs watch`. Cursor's plugin MCP is often stale and omits `watch_status` — do not stall looking for it. `halted reason=stop` → kill the loop and do not review or implement. `halted reason=export` → that packet shipped; do not keep working it. Do not `prgenie watch start` if this checkout's live loop is the export id. Creating the **next** loop (`create_local_pr`) resumes watch. Do not `prgenie watch start` after `/stop-watch`.
+Each `/review-queue` and `/review-inbox` tick must check halt first: MCP `watch_status` if that tool is in this chat's listing, otherwise `node packages/cli/dist/prgenie.cjs watch`. Cursor's plugin MCP is often stale and omits `watch_status` — do not stall looking for it. `halted reason=stop` → kill the loop and do not review or implement. `halted reason=export` → that packet shipped or export is in flight; do not keep working it. Do not `prgenie watch start` unless the export id is missing or archived. Creating the next loop (`create_local_pr`) resumes only then. Do not `prgenie watch start` after `/stop-watch`.
 
 This repo may be bound to a GitHub login. If unbound and the user needs GitHub, ask which `gh` account to use, then `prgenie gh use <login>` or MCP `gh_use`. Do not guess. Do not `gh auth switch` to a different account than the bind.
 
