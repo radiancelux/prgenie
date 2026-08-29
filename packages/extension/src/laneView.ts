@@ -60,6 +60,7 @@ export class LaneHub implements vscode.Disposable {
   private knownIds = new Set<string>();
   private primed = false;
   private userPinned = false;
+  private lastPosted = "";
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.poller = setInterval(() => void this.pushSnapshot(), 2000);
@@ -72,7 +73,7 @@ export class LaneHub implements vscode.Disposable {
   }
 
   refresh(): void {
-    void this.pushSnapshot();
+    void this.pushSnapshot(true);
   }
 
   async switchSelected(): Promise<void> {
@@ -151,7 +152,7 @@ export class LaneHub implements vscode.Disposable {
       if (this.views.get(surface) === webviewView) this.views.delete(surface);
     });
     void this.watchStore();
-    void this.pushSnapshot();
+    void this.pushSnapshot(true);
   }
 
   private async repoCwd(options: { warn?: boolean } = { warn: true }): Promise<string | undefined> {
@@ -187,7 +188,7 @@ export class LaneHub implements vscode.Disposable {
 
   private async onMessage(msg: ClientMessage): Promise<void> {
     if (msg.type === "ready" || msg.type === "refresh") {
-      await this.pushSnapshot();
+      await this.pushSnapshot(true);
       return;
     }
     if (msg.type === "create") {
@@ -297,22 +298,28 @@ export class LaneHub implements vscode.Disposable {
     }
   }
 
-  private post(payload: Snapshot | { type: "snapshot"; error: string; prs: [] }): void {
+  private post(
+    payload: Snapshot | { type: "snapshot"; error: string; prs: [] },
+    force = false,
+  ): void {
+    const sig = snapshotKey(payload);
+    if (!force && sig === this.lastPosted) return;
+    this.lastPosted = sig;
     for (const view of this.views.values()) {
       void view.webview.postMessage(payload);
     }
   }
 
-  private async pushSnapshot(): Promise<void> {
+  private async pushSnapshot(force = false): Promise<void> {
     if (this.views.size === 0) return;
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!cwd) {
-      this.post({ type: "snapshot", error: "Open a git repository.", prs: [] });
+      this.post({ type: "snapshot", error: "Open a git repository.", prs: [] }, force);
       return;
     }
     const root = await findGitRoot(cwd);
     if (!root) {
-      this.post({ type: "snapshot", error: "Not a git repository.", prs: [] });
+      this.post({ type: "snapshot", error: "Not a git repository.", prs: [] }, force);
       return;
     }
     try {
@@ -341,16 +348,30 @@ export class LaneHub implements vscode.Disposable {
         freshIds,
         watching: true,
         hereId,
-      });
+      }, force);
       await this.watchStore();
     } catch (err) {
       this.post({
         type: "snapshot",
         error: err instanceof Error ? err.message : String(err),
         prs: [],
-      });
+      }, force);
     }
   }
+}
+
+function snapshotKey(
+  payload: Snapshot | { type: "snapshot"; error: string; prs: [] },
+): string {
+  return JSON.stringify({
+    error: payload.error ?? null,
+    selectedId: "selectedId" in payload ? payload.selectedId : null,
+    hereId: "hereId" in payload ? payload.hereId : null,
+    repo: "repo" in payload ? payload.repo : "",
+    files: "files" in payload ? payload.files : [],
+    threads: "threads" in payload ? payload.threads : [],
+    prs: payload.prs,
+  });
 }
 
 function csp(webview: vscode.Webview, nonce: string): string {
@@ -431,6 +452,17 @@ function laneHtml(webview: vscode.Webview): string {
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const list = document.getElementById("list");
+    function prRow(id) {
+      const el = document.createElement("div");
+      el.dataset.id = id;
+      el.innerHTML = '<div class="info"><div class="status"></div><div class="title"></div><div class="muted"></div></div><button class="go secondary"></button>';
+      el.querySelector(".go").onclick = (e) => {
+        e.stopPropagation();
+        vscode.postMessage({ type: "openFolder", id: el.dataset.id });
+      };
+      el.onclick = () => vscode.postMessage({ type: "select", id: el.dataset.id });
+      return el;
+    }
     window.addEventListener("message", (event) => {
       const msg = event.data;
       if (msg.type !== "snapshot") return;
@@ -444,19 +476,31 @@ function laneHtml(webview: vscode.Webview): string {
       const prs = msg.prs || [];
       const fresh = new Set(msg.freshIds || []);
       meta.textContent = (msg.repo ? msg.repo + " · " : "") + prs.length + " loop" + (prs.length === 1 ? "" : "s");
-      list.innerHTML = "";
       if (!prs.length) {
-        list.innerHTML = '<p class="muted empty">Waiting for agents. Loops land here when work is committed.</p>';
+        if (list.dataset.empty !== "1") {
+          list.innerHTML = '<p class="muted empty">Waiting for agents. Loops land here when work is committed.</p>';
+          list.dataset.empty = "1";
+        }
         return;
       }
+      delete list.dataset.empty;
+      const y = list.scrollTop;
+      const nodes = new Map();
+      for (const el of list.querySelectorAll(".pr")) nodes.set(el.dataset.id, el);
+      const used = new Set();
       for (const pr of prs) {
-        const el = document.createElement("div");
+        used.add(pr.id);
+        let el = nodes.get(pr.id);
+        if (!el) {
+          el = prRow(pr.id);
+          nodes.set(pr.id, el);
+          list.appendChild(el);
+        }
         const here = pr.id === msg.hereId;
         el.className = "pr" + (pr.id === msg.selectedId ? " active" : "") + (fresh.has(pr.id) ? " fresh" : "") + (here ? " here" : "");
         const src = pr.source && pr.source.kind === "subagent"
           ? (pr.source.subagentType || "subagent")
           : (pr.source && pr.source.kind) || "local";
-        el.innerHTML = '<div class="info"><div class="status"></div><div class="title"></div><div class="muted"></div></div><button class="go secondary"></button>';
         const info = el.querySelector(".info");
         info.children[0].textContent = pr.status.replace("_", " ");
         info.children[1].textContent = pr.title;
@@ -464,13 +508,13 @@ function laneHtml(webview: vscode.Webview): string {
         const go = el.querySelector(".go");
         go.textContent = here ? "Here" : "Switch";
         go.disabled = here;
-        go.onclick = (e) => {
-          e.stopPropagation();
-          vscode.postMessage({ type: "openFolder", id: pr.id });
-        };
-        el.onclick = () => vscode.postMessage({ type: "select", id: pr.id });
-        list.appendChild(el);
       }
+      for (const [id, el] of nodes) if (!used.has(id)) el.remove();
+      for (let i = 0; i < prs.length; i++) {
+        const el = nodes.get(prs[i].id);
+        if (el && list.children[i] !== el) list.insertBefore(el, list.children[i] || null);
+      }
+      list.scrollTop = y;
     });
     vscode.postMessage({ type: "ready" });
   </script>
@@ -648,7 +692,11 @@ function panelHtml(webview: vscode.Webview): string {
         });
       }
     }
-    function paintChrome(selected, msg, draftSum, draftCmt) {
+    function setTextarea(el, next) {
+      if (!el || document.activeElement === el || el.value === next) return;
+      el.value = next;
+    }
+    function paintChrome(selected, msg) {
       const short = (sha) => (sha || "").slice(0, 7);
       const when = selected.updatedAt ? new Date(selected.updatedAt).toLocaleString() : "";
       root.querySelector("h1").textContent = selected.title;
@@ -659,8 +707,10 @@ function panelHtml(webview: vscode.Webview): string {
       if (filesH2) filesH2.textContent = "Changes (" + (selected.worktreePath ? "worktree" : "head") + ")";
       root.querySelector("#openWt").textContent = selected.id === msg.hereId ? "This window" : "Switch to this loop";
       root.querySelector("#openWt").disabled = selected.id === msg.hereId;
-      if (draftSum !== undefined) root.querySelector("#sum").value = draftSum;
-      if (draftCmt !== undefined) root.querySelector("#cmt").value = draftCmt;
+      const sum = root.querySelector("#sum");
+      const next = selected.body || "";
+      if (sum && document.activeElement !== sum && sum.value === serverSum) setTextarea(sum, next);
+      serverSum = next;
     }
     function setList(el, html, paintedKey) {
       if (!el) return false;
@@ -692,13 +742,7 @@ function panelHtml(webview: vscode.Webview): string {
         root.innerHTML = '<p class="muted empty">Select a loop in Local PRs. File diffs open in the editor like Source Control, for that loop\\'s worktree.</p>';
         return;
       }
-      const prevSum = root.querySelector("#sum");
-      const prevCmt = root.querySelector("#cmt");
-      const reuse = layoutId === selected.id && prevSum && prevCmt && root.querySelector("#clist") && root.querySelector("#flist");
-      const keepSum = reuse && (document.activeElement === prevSum || prevSum.value !== serverSum);
-      const keepCmt = reuse && (document.activeElement === prevCmt || prevCmt.value.length > 0);
-      const draftSum = keepSum ? prevSum.value : (selected.body || "");
-      const draftCmt = keepCmt ? prevCmt.value : "";
+      const reuse = layoutId === selected.id && root.querySelector("#sum") && root.querySelector("#cmt") && root.querySelector("#clist") && root.querySelector("#flist");
       const files = msg.files || [];
       const threads = msg.threads || [];
       const where = selected.worktreePath ? "worktree" : "head";
@@ -749,6 +793,9 @@ function panelHtml(webview: vscode.Webview): string {
         bindChrome(selected, msg);
         bindFiles();
         bindComments(selected);
+        const sum = root.querySelector("#sum");
+        if (sum) sum.value = selected.body || "";
+        root.querySelector("#cmt").value = "";
       } else {
         const filesChanged = setList(root.querySelector("#flist"), fileHtml, "files");
         const commentsChanged = setList(root.querySelector("#clist"), commentHtml, "comments");
@@ -756,8 +803,7 @@ function panelHtml(webview: vscode.Webview): string {
         if (commentsChanged) bindComments(selected);
       }
       layoutId = selected.id;
-      serverSum = selected.body || "";
-      paintChrome(selected, msg, keepSum ? undefined : draftSum, keepCmt ? undefined : draftCmt);
+      paintChrome(selected, msg);
     });
     vscode.postMessage({ type: "ready" });
   </script>
