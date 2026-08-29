@@ -156,7 +156,7 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "inbox") {
     const waiting = (await listLocalPrs(repo)).filter(
-      (pr) => !isArchivedPr(pr) && pendingReviewComments(pr).length > 0,
+      (pr) => pr.status === "changes_requested" && pendingReviewComments(pr).length > 0,
     );
     if (waiting.length === 0) {
       process.stdout.write("No pending review comments.\n");

@@ -1,7 +1,7 @@
 import { git } from "./git.js";
 import { ensureRepoGithub, runGh } from "./github-ops.js";
 import { getLocalPr, isArchivedPr, listLocalPrs, setLocalPrStatus } from "./prs.js";
-import { releaseArchivedLoop } from "./worktrees.js";
+import { localBaseRef, releaseArchivedLoop } from "./worktrees.js";
 import { haltWatch, resumeWatch } from "./watch.js";
 
 function ghBase(ref: string): string {
@@ -10,14 +10,20 @@ function ghBase(ref: string): string {
 
 export type GithubPrHeadState = "MERGED" | "OPEN" | "CLOSED" | null;
 
+export function githubPrViewArgs(
+  headRef: string,
+  options: { json: string; jq?: string },
+): string[] {
+  const args = ["pr", "view", localBaseRef(headRef), "--json", options.json];
+  if (options.jq) args.push("-q", options.jq);
+  return args;
+}
+
 export async function githubPrStateForHead(
   cwd: string,
   headRef: string,
 ): Promise<GithubPrHeadState> {
-  const result = await runGh(
-    ["pr", "view", "--head", headRef, "--json", "state"],
-    { cwd },
-  );
+  const result = await runGh(githubPrViewArgs(headRef, { json: "state" }), { cwd });
   if (result.code !== 0) return null;
   try {
     const parsed = JSON.parse(result.stdout) as { state?: string };
@@ -92,7 +98,7 @@ export async function exportLocalPr(
     }
 
     const existing = await runGh(
-      ["pr", "view", "--head", pr.headRef, "--json", "url", "-q", ".url"],
+      githubPrViewArgs(pr.headRef, { json: "url", jq: ".url" }),
       { cwd },
     );
     let url: string;

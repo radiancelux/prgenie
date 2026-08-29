@@ -295,8 +295,8 @@ export class LaneHub implements vscode.Disposable {
       } else if (msg.type === "copyReviewPrompt") {
         const prompt = [
           `Review local PR ${msg.id} with PR Genie.`,
-          "Call get_diff. Post new findings with add_comment role=reviewer.",
-          "On a second pass, resolve_comment each addressed finding or complete_review if nothing else is wrong.",
+          "Call get_diff. Post all findings with add_comment role=reviewer (status stays ready).",
+          "Always complete_review last: open findings become changes_requested; none becomes reviewed.",
           "Do not implement fixes unless I ask. Do not git push.",
         ].join(" ");
         await vscode.env.clipboard.writeText(prompt);

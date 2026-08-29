@@ -20,7 +20,7 @@ Arm a recurring wake using the **loop** skill (`/loop 1m /review-queue`):
 - Local IDE: monitored shell tick every 1 minute with prompt `/review-queue`.
 - Cloud: subscription timer, same prompt.
 - Do not start a duplicate loop if one is already running for this purpose.
-- Each tick: MCP `watch_status` first. If halted (`stop` or `export`), kill the loop immediately. Otherwise only dispatch loops you have not already Tasked for that `headSha`.
+- Each tick: MCP `watch_status` first. If halted (`stop` or `export`), kill the loop immediately. Otherwise only dispatch loops you have not already Tasked for that `headSha`. After a Task returns, confirm `changes_requested` or `reviewed`.
 
 Developer commands in this chat:
 

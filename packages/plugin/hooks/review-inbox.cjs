@@ -423,6 +423,7 @@ function pendingReviewComments(pr) {
   return (pr.comments ?? []).map(normalizeComment).filter((c) => isFindingComment(c) && c.status === "open");
 }
 function formatReviewInbox(pr) {
+  if (pr.status !== "changes_requested") return null;
   const pending = pendingReviewComments(pr);
   if (pending.length === 0) return null;
   const lines = [

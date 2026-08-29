@@ -731,7 +731,7 @@ function commentThreads(comments) {
   return threads;
 }
 function maybePromoteToReviewed(pr) {
-  if (pr.status !== "ready" && pr.status !== "changes_requested") return;
+  if (pr.status !== "changes_requested") return;
   const open2 = pendingReviewComments(pr);
   const addressed = addressedReviewComments(pr);
   if (open2.length > 0 || addressed.length > 0) return;
@@ -777,7 +777,7 @@ async function addLocalPrComment(cwd, id, body, options = {}) {
       if (parent) comment.replyTo = parent.id;
     }
     pr.comments.push(comment);
-    if (!isArchivedPr(pr) && role !== "agent" && comment.status === "open") {
+    if (!isArchivedPr(pr) && role !== "agent" && role !== "reviewer" && comment.status === "open") {
       pr.status = "changes_requested";
     }
     pr.updatedAt = comment.createdAt;
@@ -877,11 +877,6 @@ async function completeLocalPrReview(cwd, id, options = {}) {
     const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const open2 = pendingReviewComments(pr);
-    if (open2.length > 0) {
-      throw new Error(
-        `Open findings remain (${open2.length}). File them as addressed first, or add no new findings and resolve the rest.`
-      );
-    }
     const now = nowIso();
     const author = options.author?.trim() || await userName(cwd);
     for (const comment of pr.comments) {
@@ -891,15 +886,18 @@ async function completeLocalPrReview(cwd, id, options = {}) {
         comment.resolvedBy = author;
       }
     }
+    const handedToImplementor = open2.length > 0;
     pr.comments.push({
       id: newId("c"),
-      body: (options.body?.trim() || "Review complete. Ready for human review.").trim(),
+      body: (options.body?.trim() || (handedToImplementor ? "Review complete. Findings are ready for the implementor." : "Review complete. Ready for human review.")).trim(),
       createdAt: now,
       author,
       role: "reviewer",
       status: "resolved"
     });
-    pr.status = "reviewed";
+    if (!isArchivedPr(pr)) {
+      pr.status = handedToImplementor ? "changes_requested" : "reviewed";
+    }
     pr.updatedAt = now;
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;
@@ -1110,11 +1108,13 @@ async function ensureRepoGithub(cwd) {
 function ghBase(ref) {
   return ref.replace(/^origin\//, "").replace(/^refs\/heads\//, "");
 }
+function githubPrViewArgs(headRef, options) {
+  const args = ["pr", "view", localBaseRef(headRef), "--json", options.json];
+  if (options.jq) args.push("-q", options.jq);
+  return args;
+}
 async function githubPrStateForHead(cwd, headRef) {
-  const result = await runGh(
-    ["pr", "view", "--head", headRef, "--json", "state"],
-    { cwd }
-  );
+  const result = await runGh(githubPrViewArgs(headRef, { json: "state" }), { cwd });
   if (result.code !== 0) return null;
   try {
     const parsed = JSON.parse(result.stdout);
@@ -1166,7 +1166,7 @@ async function exportLocalPr(cwd, id) {
       throw new Error(push.stderr.trim() || `git push failed for ${pr.headRef}`);
     }
     const existing = await runGh(
-      ["pr", "view", "--head", pr.headRef, "--json", "url", "-q", ".url"],
+      githubPrViewArgs(pr.headRef, { json: "url", jq: ".url" }),
       { cwd }
     );
     let url;
@@ -1259,7 +1259,7 @@ async function handleTool(name, args) {
       return prs.filter((pr) => {
         if (status && pr.status !== status) return false;
         if (!status && !all && isArchivedPr(pr)) return false;
-        if (inbox && pr.pendingComments.length === 0) return false;
+        if (inbox && (pr.status !== "changes_requested" || pr.pendingComments.length === 0)) return false;
         return true;
       });
     }
@@ -1359,7 +1359,7 @@ var tools = [
   },
   {
     name: "list_local_prs",
-    description: "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue. status=reviewed is waiting on the human. inbox=true is loops with open pendingComments for the implementor.",
+    description: "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue (comments may still be accumulating). status=reviewed is waiting on the human. inbox=true is only changes_requested loops with open pendingComments for the implementor.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1370,7 +1370,7 @@ var tools = [
         },
         inbox: {
           type: "boolean",
-          description: "Only loops with pending human/reviewer comments."
+          description: "Only loops in changes_requested with open pendingComments for the implementor."
         },
         all: {
           type: "boolean",
@@ -1412,7 +1412,7 @@ var tools = [
   },
   {
     name: "get_local_pr",
-    description: "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are open findings for the implementor. addressedComments are waiting for the reviewer to resolve. threads nest agent replies under those findings.",
+    description: "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are open findings. The implementor inbox only acts on them when status is changes_requested. addressedComments are waiting for the reviewer to resolve. threads nest agent replies under those findings.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -1434,7 +1434,7 @@ var tools = [
   },
   {
     name: "add_comment",
-    description: "Add a local review comment. role=human or role=reviewer is an open finding (status=open) and sets the loop to changes_requested unless the loop is already archived (approved). Archived loops stay archived. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Do not git push.",
+    description: "Add a local review comment. role=human is an open finding and sets the loop to changes_requested unless archived. role=reviewer files a finding but does not change status \u2014 call complete_review when the review is finished. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "body"],
@@ -1484,7 +1484,7 @@ var tools = [
   },
   {
     name: "complete_review",
-    description: "Reviewer: no new findings. Resolves remaining addressed comments and sets the loop to reviewed so the human can review. Fails if open findings remain. Do not git push.",
+    description: "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed for the human. Resolves remaining addressed comments. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id"],

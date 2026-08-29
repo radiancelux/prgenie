@@ -7,7 +7,7 @@ description: Implementor chat listen loop. If there is no loop yet, take a ticke
 
 You are the **implementor** on this worktree. Stay in this conversation. Do not review your own loop. Do not push.
 
-Reviewer `role=reviewer` comments (and human comments) are how review completion reaches you. `pendingComments` is the brief.
+`changes_requested` is how review completion reaches you. Reviewer comments on a still-`ready` loop are in progress — wait for `complete_review`. Then `pendingComments` is the brief.
 
 ## Now
 
@@ -22,7 +22,7 @@ Arm a recurring wake using the **loop** skill (`/loop 1m /review-inbox`):
 - Local IDE: monitored shell tick every 1 minute with prompt `/review-inbox`.
 - Cloud: subscription timer, same prompt.
 - Do not start a duplicate loop if one is already running for this purpose.
-- Each tick: MCP `watch_status` first. If halted (`stop` or `export`), kill the loop immediately. Otherwise only act when new `pendingComments` exist.
+- Each tick: MCP `watch_status` first. If halted (`stop` or `export`), kill the loop immediately. Otherwise only act when `inbox=true` shows this loop (`changes_requested` with new open findings).
 
 Developer commands in this chat:
 

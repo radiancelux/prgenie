@@ -37,7 +37,7 @@ If the loop already exists, `update_local_pr` with `body` (or `prgenie update <i
 
 ## Status
 
-`draft` → `ready` → `changes_requested` → `ready` (second pass) → `reviewed` → `approved`
+`draft` → `ready` (reviewer files findings; status stays `ready`) → `complete_review` → `changes_requested` (findings) or `reviewed` (clean) → `ready` (second pass) → `reviewed` → `approved`
 
 `reviewed` means the automated reviewer found nothing else and the **human** should look. `approved` is you signing off / export. Approved loops are **archived**: JSON and `refs/local-pr/*` stay; they are hidden from the default list and Local PRs. `get_local_pr` / `prgenie show` still work. A later `create_local_pr` / `captureAgentWork` on that branch starts a new loop.
 
@@ -47,21 +47,21 @@ Findings (`role=human` or `role=reviewer`) have their own status:
 
 | status | Who sets it | Meaning |
 | --- | --- | --- |
-| `open` | Human or reviewer filing a finding | Implementor inbox (`pendingComments`) |
+| `open` | Human or reviewer filing a finding | Implementor inbox **after** `complete_review` (`pendingComments`) |
 | `addressed` | Implementor via `address_comment` (reply nested under the finding) | Waiting for the reviewer to verify |
 | `resolved` | Reviewer via `resolve_comment`, or `complete_review` | Closed |
 
-If the reviewer has no new findings, `complete_review` resolves remaining addressed comments and sets the loop to `reviewed`.
+`complete_review` is always the end of a reviewer Task. Open findings set the loop to `changes_requested`. No open findings set `reviewed`. Resolving addressed comments does not finish the review.
 
 Comments are the review protocol for the agent on that loop:
 
 | role | Who | Effect |
 | --- | --- | --- |
-| `human` | You (GUI, CLI, chat) | Open finding. Loop → `changes_requested` (including from **draft** — that is intended). |
-| `reviewer` | Automated review agent | Same as human. Findings only — that agent does not implement unless asked. |
+| `human` | You (GUI, CLI, chat) | Open finding. Loop → `changes_requested` immediately (including from **draft** — that is intended). |
+| `reviewer` | Automated review agent | Open finding. **Does not** change loop status. Call `complete_review` when finished. |
 | `agent` | The implementer on this PR | Reply, nested under the finding. Use `address_comment`. Does not change loop status. Then `set_status ready` for a second review. |
 
-`pendingComments` are **open** findings. `addressedComments` are waiting for the reviewer. Agent replies render **under** the parent finding, not as a stack of sibling comments.
+`pendingComments` are **open** findings. The implementor inbox (`inbox=true`, `/review-inbox`) only includes them when status is `changes_requested`. Comments on a `ready` loop mean the reviewer is still writing. `addressedComments` are waiting for the reviewer. Agent replies render **under** the parent finding, not as a stack of sibling comments.
 
 ## Address comments
 
@@ -72,6 +72,7 @@ If the current branch's local PR is `changes_requested`:
 3. For **each** open comment, MCP `address_comment` with that `commentId` and a reply (what you changed). Status stays `changes_requested`. The reply sits under that reviewer comment.
 4. When the inbox is done: `set_status` `ready` and `add_comment` `role=agent` **Review requested.** That is the second review for the reviewer chat.
 5. Do not `git push`. Do not review your own loop. Do not `resolve_comment` — that is the reviewer's job.
+6. If status is still `ready`, wait. Do not address comments until `complete_review` flips the loop to `changes_requested`.
 
 ## Requesting review
 
@@ -81,7 +82,7 @@ You are the agent **on the worktree** (implementor). On completion:
 2. `set_status` `ready`.
 3. `add_comment` `role=agent`: `Review requested.`
 4. Stop. Start **`/watch-review-inbox`** in this chat if it is not already listening. The **reviewer chat** should be on **`/watch-ready-prs`**. It Tasks subagents — one per `ready` loop.
-5. When review is done, the loop has `role=reviewer` comments. `/review-inbox` (or the watch loop) treats `pendingComments` as the brief. Do not wait for a DM; the loop is the channel.
+5. When review is done, status is `changes_requested` (findings) or `reviewed` (clean). `/review-inbox` (or the watch loop) only treats `pendingComments` as the brief after `changes_requested`. Do not wait for a DM; the loop is the channel. Do not start on comments while the loop is still `ready`.
 
 If there is **no** reviewer chat, Task one reviewer subagent yourself for this id only.
 

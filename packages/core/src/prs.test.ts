@@ -114,26 +114,29 @@ test("comments move ready PRs back to changes_requested", async () => {
   assert.equal(fetched.id, pr.id);
 });
 
-test("reviewer comments request changes; agent replies do not", async () => {
+test("reviewer comments stay on ready until complete_review", async () => {
   const pr = await createLocalPr(repo, { title: "Roles", base: "main" });
-  const reviewed = await addLocalPrComment(repo, pr.id, "Missing tests.", {
+  await setLocalPrStatus(repo, pr.id, "ready");
+  const filed = await addLocalPrComment(repo, pr.id, "Missing tests.", {
     role: "reviewer",
     author: "review-agent",
   });
-  assert.equal(reviewed.status, "changes_requested");
-  assert.equal(reviewed.comments[0].role, "reviewer");
-  assert.equal(pendingReviewComments(reviewed).length, 1);
+  assert.equal(filed.status, "ready");
+  assert.equal(filed.comments[0].role, "reviewer");
+  assert.equal(pendingReviewComments(filed).length, 1);
+  assert.equal(formatReviewInbox(filed), null);
 
   const replied = await addLocalPrComment(repo, pr.id, "Working on it.", {
     role: "agent",
   });
-  assert.equal(replied.status, "changes_requested");
+  assert.equal(replied.status, "ready");
   assert.equal(pendingReviewComments(replied).length, 1);
 
   const followup = await addLocalPrComment(repo, pr.id, "Also document the flag.", {
     path: "widget.txt",
     line: 1,
   });
+  assert.equal(followup.status, "changes_requested");
   assert.equal(pendingReviewComments(followup).length, 2);
   const inbox = formatReviewInbox(followup);
   assert.ok(inbox);
@@ -159,7 +162,10 @@ test("address_comment marks a finding addressed; reviewer resolve can hand off t
     role: "reviewer",
     author: "review-agent",
   });
-  assert.equal(pendingReviewComments(second).length, 2);
+  assert.equal(second.status, "ready");
+  const submitted = await completeLocalPrReview(repo, pr.id);
+  assert.equal(submitted.status, "changes_requested");
+  assert.equal(pendingReviewComments(submitted).length, 2);
   const addressed = await addressLocalPrComment(
     repo,
     pr.id,
@@ -198,12 +204,42 @@ test("complete_review with no findings is ready for human review", async () => {
   assert.equal(done.comments[0].status, "resolved");
 });
 
+test("complete_review with findings hands the loop to the implementor", async () => {
+  const pr = await createLocalPr(repo, { title: "Batch", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready");
+  await addLocalPrComment(repo, pr.id, "Missing tests.", { role: "reviewer" });
+  assert.equal((await getLocalPr(repo, pr.id)).status, "ready");
+  const done = await completeLocalPrReview(repo, pr.id);
+  assert.equal(done.status, "changes_requested");
+  assert.equal(pendingReviewComments(done).length, 1);
+  assert.match(done.comments.at(-1)?.body ?? "", /implementor/);
+});
+
+test("resolve_comment on ready does not finish the review", async () => {
+  const pr = await createLocalPr(repo, { title: "Stay ready", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready");
+  const filed = await addLocalPrComment(repo, pr.id, "Missing tests.", { role: "reviewer" });
+  await completeLocalPrReview(repo, pr.id);
+  await addressLocalPrComment(repo, pr.id, filed.comments[0].id, "Added tests.");
+  await setLocalPrStatus(repo, pr.id, "ready");
+  const verified = await resolveLocalPrComment(
+    repo,
+    pr.id,
+    filed.comments[0].id,
+    "Tests look good.",
+  );
+  assert.equal(verified.status, "ready");
+  const done = await completeLocalPrReview(repo, pr.id);
+  assert.equal(done.status, "reviewed");
+});
+
 test("findLocalPrForCurrentBranch prefers changes_requested", async () => {
   git(["checkout", "feat/widget"]);
   const ready = await createLocalPr(repo, { title: "Ready twin", base: "main" });
   await setLocalPrStatus(repo, ready.id, "ready");
   const blocked = await createLocalPr(repo, { title: "Blocked twin", base: "main" });
   await addLocalPrComment(repo, blocked.id, "Fix the widget.", { role: "reviewer" });
+  await completeLocalPrReview(repo, blocked.id);
   const found = await findLocalPrForCurrentBranch(repo);
   assert.ok(found);
   assert.equal(found.id, blocked.id);
@@ -482,5 +518,13 @@ test("archiveLoopsMergedOnGithub archives a loop whose GitHub PR is merged", asy
   );
   assert.ok(ids.includes(pr.id));
   assert.equal((await getLocalPr(repo, pr.id)).status, "approved");
+});
+
+test("complete_review does not un-archive an approved loop", async () => {
+  const pr = await createLocalPr(repo, { title: "Stay approved", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "approved");
+  const after = await completeLocalPrReview(repo, pr.id);
+  assert.equal(after.status, "approved");
+  assert.equal(isArchivedPr(after), true);
 });
 

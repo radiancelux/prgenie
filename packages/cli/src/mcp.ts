@@ -86,7 +86,7 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
       return prs.filter((pr) => {
         if (status && pr.status !== status) return false;
         if (!status && !all && isArchivedPr(pr)) return false;
-        if (inbox && pr.pendingComments.length === 0) return false;
+        if (inbox && (pr.status !== "changes_requested" || pr.pendingComments.length === 0)) return false;
         return true;
       });
     }
@@ -193,7 +193,7 @@ const tools = [
   {
     name: "list_local_prs",
     description:
-      "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue. status=reviewed is waiting on the human. inbox=true is loops with open pendingComments for the implementor.",
+      "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue (comments may still be accumulating). status=reviewed is waiting on the human. inbox=true is only changes_requested loops with open pendingComments for the implementor.",
     inputSchema: {
       type: "object",
       properties: {
@@ -204,7 +204,7 @@ const tools = [
         },
         inbox: {
           type: "boolean",
-          description: "Only loops with pending human/reviewer comments.",
+          description: "Only loops in changes_requested with open pendingComments for the implementor.",
         },
         all: {
           type: "boolean",
@@ -249,7 +249,7 @@ const tools = [
   {
     name: "get_local_pr",
     description:
-      "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are open findings for the implementor. addressedComments are waiting for the reviewer to resolve. threads nest agent replies under those findings.",
+      "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are open findings. The implementor inbox only acts on them when status is changes_requested. addressedComments are waiting for the reviewer to resolve. threads nest agent replies under those findings.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -272,7 +272,7 @@ const tools = [
   {
     name: "add_comment",
     description:
-      "Add a local review comment. role=human or role=reviewer is an open finding (status=open) and sets the loop to changes_requested unless the loop is already archived (approved). Archived loops stay archived. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Do not git push.",
+      "Add a local review comment. role=human is an open finding and sets the loop to changes_requested unless archived. role=reviewer files a finding but does not change status — call complete_review when the review is finished. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "body"],
@@ -325,7 +325,7 @@ const tools = [
   {
     name: "complete_review",
     description:
-      "Reviewer: no new findings. Resolves remaining addressed comments and sets the loop to reviewed so the human can review. Fails if open findings remain. Do not git push.",
+      "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed for the human. Resolves remaining addressed comments. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id"],

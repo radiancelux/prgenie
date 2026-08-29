@@ -291,7 +291,9 @@ export function commentThreads(comments: LocalPrComment[]): CommentThread[] {
 }
 
 function maybePromoteToReviewed(pr: LocalPr): void {
-  if (pr.status !== "ready" && pr.status !== "changes_requested") return;
+  // Only auto-finish from changes_requested (human resolving the last finding).
+  // A ready loop is still with the reviewer until complete_review.
+  if (pr.status !== "changes_requested") return;
   const open = pendingReviewComments(pr);
   const addressed = addressedReviewComments(pr);
   if (open.length > 0 || addressed.length > 0) return;
@@ -304,6 +306,7 @@ function lastFinding(pr: LocalPr): LocalPrComment | undefined {
 }
 
 export function formatReviewInbox(pr: LocalPr): string | null {
+  if (pr.status !== "changes_requested") return null;
   const pending = pendingReviewComments(pr);
   if (pending.length === 0) return null;
   const lines = [
@@ -402,7 +405,12 @@ export async function addLocalPrComment(
       if (parent) comment.replyTo = parent.id;
     }
     pr.comments.push(comment);
-    if (!isArchivedPr(pr) && role !== "agent" && comment.status === "open") {
+    if (
+      !isArchivedPr(pr) &&
+      role !== "agent" &&
+      role !== "reviewer" &&
+      comment.status === "open"
+    ) {
       pr.status = "changes_requested";
     }
     pr.updatedAt = comment.createdAt;
@@ -521,11 +529,6 @@ export async function completeLocalPrReview(
     const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const open = pendingReviewComments(pr);
-    if (open.length > 0) {
-      throw new Error(
-        `Open findings remain (${open.length}). File them as addressed first, or add no new findings and resolve the rest.`,
-      );
-    }
     const now = nowIso();
     const author = options.author?.trim() || (await userName(cwd));
     for (const comment of pr.comments) {
@@ -535,15 +538,23 @@ export async function completeLocalPrReview(
         comment.resolvedBy = author;
       }
     }
+    const handedToImplementor = open.length > 0;
     pr.comments.push({
       id: newId("c"),
-      body: (options.body?.trim() || "Review complete. Ready for human review.").trim(),
+      body: (
+        options.body?.trim() ||
+        (handedToImplementor
+          ? "Review complete. Findings are ready for the implementor."
+          : "Review complete. Ready for human review.")
+      ).trim(),
       createdAt: now,
       author,
       role: "reviewer",
       status: "resolved",
     });
-    pr.status = "reviewed";
+    if (!isArchivedPr(pr)) {
+      pr.status = handedToImplementor ? "changes_requested" : "reviewed";
+    }
     pr.updatedAt = now;
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;
