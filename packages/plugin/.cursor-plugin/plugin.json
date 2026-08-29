@@ -1,6 +1,6 @@
 {
   "name": "prgenie",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local pull requests for agent work. GitHub when you say so.",
   "author": {
     "name": "PR Genie"

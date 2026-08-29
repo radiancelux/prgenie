@@ -568,6 +568,15 @@ async function withPrLock(cwd, id, fn) {
     return pr;
   });
 }
+async function applyHeadRefresh(cwd, pr) {
+  const named = await git(cwd, ["rev-parse", "--verify", pr.headRef], { allowFail: true });
+  if (named.code !== 0) {
+    const branch = await currentBranch(cwd);
+    if (branch) pr.headRef = branch;
+  }
+  pr.headSha = await gitText(cwd, ["rev-parse", named.code === 0 ? pr.headRef : "HEAD"]);
+  pr.updatedAt = nowIso();
+}
 function isArchivedPr(pr) {
   return pr.status === "approved";
 }
@@ -663,8 +672,14 @@ async function setLocalPrStatus(cwd, id, status) {
   if (!STATUSES.includes(status)) {
     throw new Error(`Invalid status: ${status}`);
   }
-  return withPrLock(cwd, id, (pr) => {
+  return withPrLock(cwd, id, async (pr) => {
+    if (isArchivedPr(pr) && status !== "approved") {
+      throw new Error(
+        `Loop ${pr.id} is archived. Start a new loop on a feature branch instead of reopening it.`
+      );
+    }
     pr.status = status;
+    if (status === "ready") await applyHeadRefresh(cwd, pr);
     pr.updatedAt = nowIso();
   });
 }
@@ -726,15 +741,50 @@ function commentThreads(comments) {
   return threads;
 }
 function maybePromoteToReviewed(pr) {
-  if (pr.status !== "ready" && pr.status !== "changes_requested") return;
+  if (pr.status !== "changes_requested") return;
   const open2 = pendingReviewComments(pr);
   const addressed = addressedReviewComments(pr);
   if (open2.length > 0 || addressed.length > 0) return;
   pr.status = "reviewed";
 }
+async function maybeHandoffToReviewer(cwd, pr, now, author) {
+  if (isArchivedPr(pr)) return;
+  if (pr.status !== "changes_requested") return;
+  if (pendingReviewComments(pr).length > 0) return;
+  await applyHeadRefresh(cwd, pr);
+  pr.status = "ready";
+  pr.comments.push({
+    id: newId("c"),
+    body: "Review requested.",
+    createdAt: now,
+    author,
+    role: "agent",
+    status: "resolved"
+  });
+  pr.updatedAt = now;
+}
 function lastFinding(pr) {
   const findings = (pr.comments ?? []).map(normalizeComment).filter(isFindingComment);
   return findings[findings.length - 1];
+}
+async function findLocalPrForCurrentBranch(cwd) {
+  const branch = await currentBranch(cwd);
+  if (!branch) return null;
+  const matches = (await listLocalPrs(cwd)).filter(
+    (pr) => pr.headRef === branch && !isArchivedPr(pr)
+  );
+  if (matches.length === 0) return null;
+  return matches.find((pr) => pr.status === "changes_requested") ?? matches[0];
+}
+async function findLocalPrForCurrentWorktree(cwd) {
+  const byBranch = await findLocalPrForCurrentBranch(cwd);
+  if (byBranch) return byBranch;
+  const branch = await currentBranch(cwd);
+  if (branch) return null;
+  const root = await findGitRoot(cwd);
+  if (!root) return null;
+  const live = (await listLocalPrs(cwd)).filter((pr) => !isArchivedPr(pr) && pr.worktreePath);
+  return live.find((pr) => sameFsPath(pr.worktreePath ?? "", root)) ?? null;
 }
 async function addLocalPrComment(cwd, id, body, options = {}) {
   const text = body.trim();
@@ -772,7 +822,7 @@ async function addLocalPrComment(cwd, id, body, options = {}) {
       if (parent) comment.replyTo = parent.id;
     }
     pr.comments.push(comment);
-    if (role !== "agent" && comment.status === "open") {
+    if (!isArchivedPr(pr) && role !== "agent" && role !== "reviewer" && comment.status === "open") {
       pr.status = "changes_requested";
     }
     pr.updatedAt = comment.createdAt;
@@ -813,6 +863,7 @@ async function addressLocalPrComment(cwd, id, commentId, body, options = {}) {
       replyTo: target.id
     });
     pr.updatedAt = now;
+    await maybeHandoffToReviewer(cwd, pr, now, author);
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;
     return pr;
@@ -872,11 +923,6 @@ async function completeLocalPrReview(cwd, id, options = {}) {
     const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const open2 = pendingReviewComments(pr);
-    if (open2.length > 0) {
-      throw new Error(
-        `Open findings remain (${open2.length}). File them as addressed first, or add no new findings and resolve the rest.`
-      );
-    }
     const now = nowIso();
     const author = options.author?.trim() || await userName(cwd);
     for (const comment of pr.comments) {
@@ -886,15 +932,18 @@ async function completeLocalPrReview(cwd, id, options = {}) {
         comment.resolvedBy = author;
       }
     }
+    const handedToImplementor = open2.length > 0;
     pr.comments.push({
       id: newId("c"),
-      body: (options.body?.trim() || "Review complete. Ready for human review.").trim(),
+      body: (options.body?.trim() || (handedToImplementor ? "Review complete. Findings are ready for the implementor." : "Review complete. Ready for human review.")).trim(),
       createdAt: now,
       author,
       role: "reviewer",
       status: "resolved"
     });
-    pr.status = "reviewed";
+    if (!isArchivedPr(pr)) {
+      pr.status = handedToImplementor ? "changes_requested" : "reviewed";
+    }
     pr.updatedAt = now;
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;
@@ -1105,6 +1154,41 @@ async function ensureRepoGithub(cwd) {
 function ghBase(ref) {
   return ref.replace(/^origin\//, "").replace(/^refs\/heads\//, "");
 }
+function githubPrViewArgs(headRef, options) {
+  const args = ["pr", "view", localBaseRef(headRef), "--json", options.json];
+  if (options.jq) args.push("-q", options.jq);
+  return args;
+}
+async function githubPrStateForHead(cwd, headRef) {
+  const result = await runGh(githubPrViewArgs(headRef, { json: "state" }), { cwd });
+  if (result.code !== 0) return null;
+  try {
+    const parsed = JSON.parse(result.stdout);
+    const state = parsed.state?.toUpperCase();
+    if (state === "MERGED" || state === "OPEN" || state === "CLOSED") return state;
+  } catch {
+  }
+  return null;
+}
+async function archiveLoopsMergedOnGithub(cwd, lookup = (head) => githubPrStateForHead(cwd, head)) {
+  const ids = [];
+  const prs = await listLocalPrs(cwd);
+  for (const pr of prs) {
+    if (isArchivedPr(pr)) continue;
+    let state = null;
+    try {
+      state = await lookup(pr.headRef);
+    } catch {
+      continue;
+    }
+    if (state !== "MERGED") continue;
+    await setLocalPrStatus(cwd, pr.id, "approved");
+    const archived = await getLocalPr(cwd, pr.id);
+    await releaseArchivedLoop(cwd, archived);
+    ids.push(pr.id);
+  }
+  return ids;
+}
 function exportPushRefspec(pr) {
   return `${pr.headSha}:refs/heads/${pr.headRef}`;
 }
@@ -1128,7 +1212,7 @@ async function exportLocalPr(cwd, id) {
       throw new Error(push.stderr.trim() || `git push failed for ${pr.headRef}`);
     }
     const existing = await runGh(
-      ["pr", "view", "--head", pr.headRef, "--json", "url", "-q", ".url"],
+      githubPrViewArgs(pr.headRef, { json: "url", jq: ".url" }),
       { cwd }
     );
     let url;
@@ -1178,6 +1262,9 @@ function writeMessage(msg) {
 function ok(id, result) {
   writeMessage({ jsonrpc: "2.0", id, result });
 }
+function notify(method, params) {
+  writeMessage(params ? { jsonrpc: "2.0", method, params } : { jsonrpc: "2.0", method });
+}
 function fail(id, code, message) {
   writeMessage({ jsonrpc: "2.0", id, error: { code, message } });
 }
@@ -1213,14 +1300,21 @@ async function handleTool(name, args) {
     case "list_worktrees":
       return listWorktrees(cwd);
     case "list_local_prs": {
+      await archiveLoopsMergedOnGithub(cwd).catch(() => []);
       const prs = (await listLocalPrs(cwd)).map(withCommentViews);
       const status = typeof args.status === "string" ? args.status : "";
       const inbox = args.inbox === true;
       const all = args.all === true;
+      if (inbox) {
+        const mine = await findLocalPrForCurrentWorktree(cwd);
+        if (!mine || mine.status !== "changes_requested" || pendingReviewComments(mine).length === 0) {
+          return [];
+        }
+        return [withCommentViews(mine)];
+      }
       return prs.filter((pr) => {
         if (status && pr.status !== status) return false;
         if (!status && !all && isArchivedPr(pr)) return false;
-        if (inbox && pr.pendingComments.length === 0) return false;
         return true;
       });
     }
@@ -1320,7 +1414,7 @@ var tools = [
   },
   {
     name: "list_local_prs",
-    description: "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue. status=reviewed is waiting on the human. inbox=true is loops with open pendingComments for the implementor.",
+    description: "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue (comments may still be accumulating). status=reviewed is waiting on the human. inbox=true is only this worktree's loop when it is changes_requested with open pendingComments.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1331,7 +1425,7 @@ var tools = [
         },
         inbox: {
           type: "boolean",
-          description: "Only loops with pending human/reviewer comments."
+          description: "Only this worktree's loop, and only if it is changes_requested with open pendingComments."
         },
         all: {
           type: "boolean",
@@ -1373,7 +1467,7 @@ var tools = [
   },
   {
     name: "get_local_pr",
-    description: "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are open findings for the implementor. addressedComments are waiting for the reviewer to resolve. threads nest agent replies under those findings.",
+    description: "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are open findings. The implementor inbox only acts on them when status is changes_requested. addressedComments are waiting for the reviewer to resolve. threads nest agent replies under those findings.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -1395,7 +1489,7 @@ var tools = [
   },
   {
     name: "add_comment",
-    description: "Add a local review comment. role=human or role=reviewer is an open finding (status=open) and sets the loop to changes_requested. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Do not git push.",
+    description: "Add a local review comment. role=human is an open finding and sets the loop to changes_requested unless archived. role=reviewer files a finding but does not change status \u2014 call complete_review when the review is finished. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "body"],
@@ -1414,7 +1508,7 @@ var tools = [
   },
   {
     name: "address_comment",
-    description: "Implementor: mark an open finding addressed and attach a reply under it. Does not set ready. After the inbox is empty, set_status ready and add_comment role=agent Review requested. The reviewer resolves addressed comments. Do not git push.",
+    description: "Implementor: mark an open finding addressed and attach a reply under it. Addressing the last open finding sets the loop to ready, refreshes HEAD, and posts Review requested so the reviewer queue can pick it up. The reviewer resolves addressed comments. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "commentId", "body"],
@@ -1445,7 +1539,7 @@ var tools = [
   },
   {
     name: "complete_review",
-    description: "Reviewer: no new findings. Resolves remaining addressed comments and sets the loop to reviewed so the human can review. Fails if open findings remain. Do not git push.",
+    description: "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed for the human. Resolves remaining addressed comments. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -1519,12 +1613,13 @@ async function onRequest(msg) {
       const requested = typeof params.protocolVersion === "string" ? params.protocolVersion : "2024-11-05";
       ok(id, {
         protocolVersion: requested,
-        capabilities: { tools: {} },
-        serverInfo: { name: "prgenie", version: "0.1.0" }
+        capabilities: { tools: { listChanged: true } },
+        serverInfo: { name: "prgenie", version: "0.1.1" }
       });
       return;
     }
     if (method === "notifications/initialized" || method === "initialized") {
+      notify("notifications/tools/list_changed");
       return;
     }
     if (method === "notifications/cancelled") {

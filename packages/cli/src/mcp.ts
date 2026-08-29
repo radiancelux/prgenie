@@ -2,6 +2,7 @@ import {
   addLocalPrComment,
   addressLocalPrComment,
   addressedReviewComments,
+  archiveLoopsMergedOnGithub,
   bindRepoGithub,
   commentThreads,
   completeLocalPrReview,
@@ -9,6 +10,7 @@ import {
   exportLocalPr,
   ensureWorktreeForLoop,
   findGitRoot,
+  findLocalPrForCurrentWorktree,
   getLocalPr,
   getLocalPrDiff,
   getLocalPrNameStatus,
@@ -37,6 +39,10 @@ function writeMessage(msg: Json): void {
 
 function ok(id: unknown, result: unknown): void {
   writeMessage({ jsonrpc: "2.0", id, result });
+}
+
+function notify(method: string, params?: Json): void {
+  writeMessage(params ? { jsonrpc: "2.0", method, params } : { jsonrpc: "2.0", method });
 }
 
 function fail(id: unknown, code: number, message: string): void {
@@ -77,14 +83,25 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
     case "list_worktrees":
       return listWorktrees(cwd);
     case "list_local_prs": {
+      await archiveLoopsMergedOnGithub(cwd).catch(() => []);
       const prs = (await listLocalPrs(cwd)).map(withCommentViews);
       const status = typeof args.status === "string" ? args.status : "";
       const inbox = args.inbox === true;
       const all = args.all === true;
+      if (inbox) {
+        const mine = await findLocalPrForCurrentWorktree(cwd);
+        if (
+          !mine ||
+          mine.status !== "changes_requested" ||
+          pendingReviewComments(mine).length === 0
+        ) {
+          return [];
+        }
+        return [withCommentViews(mine)];
+      }
       return prs.filter((pr) => {
         if (status && pr.status !== status) return false;
         if (!status && !all && isArchivedPr(pr)) return false;
-        if (inbox && pr.pendingComments.length === 0) return false;
         return true;
       });
     }
@@ -191,7 +208,7 @@ const tools = [
   {
     name: "list_local_prs",
     description:
-      "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue. status=reviewed is waiting on the human. inbox=true is loops with open pendingComments for the implementor.",
+      "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue (comments may still be accumulating). status=reviewed is waiting on the human. inbox=true is only this worktree's loop when it is changes_requested with open pendingComments.",
     inputSchema: {
       type: "object",
       properties: {
@@ -202,7 +219,7 @@ const tools = [
         },
         inbox: {
           type: "boolean",
-          description: "Only loops with pending human/reviewer comments.",
+          description: "Only this worktree's loop, and only if it is changes_requested with open pendingComments.",
         },
         all: {
           type: "boolean",
@@ -247,7 +264,7 @@ const tools = [
   {
     name: "get_local_pr",
     description:
-      "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are open findings for the implementor. addressedComments are waiting for the reviewer to resolve. threads nest agent replies under those findings.",
+      "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are open findings. The implementor inbox only acts on them when status is changes_requested. addressedComments are waiting for the reviewer to resolve. threads nest agent replies under those findings.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -270,7 +287,7 @@ const tools = [
   {
     name: "add_comment",
     description:
-      "Add a local review comment. role=human or role=reviewer is an open finding (status=open) and sets the loop to changes_requested. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Do not git push.",
+      "Add a local review comment. role=human is an open finding and sets the loop to changes_requested unless archived. role=reviewer files a finding but does not change status — call complete_review when the review is finished. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "body"],
@@ -290,7 +307,7 @@ const tools = [
   {
     name: "address_comment",
     description:
-      "Implementor: mark an open finding addressed and attach a reply under it. Does not set ready. After the inbox is empty, set_status ready and add_comment role=agent Review requested. The reviewer resolves addressed comments. Do not git push.",
+      "Implementor: mark an open finding addressed and attach a reply under it. Addressing the last open finding sets the loop to ready, refreshes HEAD, and posts Review requested so the reviewer queue can pick it up. The reviewer resolves addressed comments. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "commentId", "body"],
@@ -323,7 +340,7 @@ const tools = [
   {
     name: "complete_review",
     description:
-      "Reviewer: no new findings. Resolves remaining addressed comments and sets the loop to reviewed so the human can review. Fails if open findings remain. Do not git push.",
+      "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed for the human. Resolves remaining addressed comments. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -403,12 +420,13 @@ async function onRequest(msg: Json): Promise<void> {
         typeof params.protocolVersion === "string" ? params.protocolVersion : "2024-11-05";
       ok(id, {
         protocolVersion: requested,
-        capabilities: { tools: {} },
-        serverInfo: { name: "prgenie", version: "0.1.0" },
+        capabilities: { tools: { listChanged: true } },
+        serverInfo: { name: "prgenie", version: "0.1.1" },
       });
       return;
     }
     if (method === "notifications/initialized" || method === "initialized") {
+      notify("notifications/tools/list_changed");
       return;
     }
     if (method === "notifications/cancelled") {

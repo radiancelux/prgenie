@@ -423,11 +423,12 @@ function pendingReviewComments(pr) {
   return (pr.comments ?? []).map(normalizeComment).filter((c) => isFindingComment(c) && c.status === "open");
 }
 function formatReviewInbox(pr) {
+  if (pr.status !== "changes_requested") return null;
   const pending = pendingReviewComments(pr);
   if (pending.length === 0) return null;
   const lines = [
     `PR Genie: local PR ${pr.id} ("${pr.title}") on branch ${pr.headRef} has review comments for the agent working this loop.`,
-    `Status is ${pr.status}. Address each open comment with MCP address_comment (this loop id, that commentId, and a reply). Then set_status ready and add_comment role=agent "Review requested." for a second review. The reviewer resolves addressed comments. Do not git push.`,
+    `Status is ${pr.status}. Address each open comment with MCP address_comment (this loop id, that commentId, and a reply). Addressing the last open finding sets the loop to ready and posts Review requested. The reviewer resolves addressed comments. Do not git push.`,
     ""
   ];
   for (const comment of pending) {
@@ -446,8 +447,8 @@ function formatSpawnReviewer(pr) {
   return [
     `PR Genie: local PR ${pr.id} ("${pr.title}") on ${pr.headRef} is ready.`,
     'That is the review request. add_comment role=agent "Review requested." if you have not already. Do not git push.',
-    "You are the implementor. Do not review this loop yourself. The reviewer chat should list_local_prs (status=ready) and Task a generalPurpose subagent per loop to run the review.",
-    "If you are covering review in this conversation because no reviewer chat exists, Task one generalPurpose reviewer for this id. If several loops are ready, Task one reviewer subagent each, in parallel."
+    "You are the implementor. Do not review this loop yourself. The reviewer chat should list_local_prs (status=ready) and Task a generalPurpose subagent per loop. Do not await those Tasks in the listen loop.",
+    "If you are covering review in this conversation because no reviewer chat exists, Task one generalPurpose reviewer for this id. If several loops are ready, Task one reviewer subagent each, in parallel. Do not sit waiting on them."
   ].join("\n");
 }
 async function markReviewRequested(cwd, id) {
@@ -464,6 +465,16 @@ async function findLocalPrForCurrentBranch(cwd) {
   );
   if (matches.length === 0) return null;
   return matches.find((pr) => pr.status === "changes_requested") ?? matches[0];
+}
+async function findLocalPrForCurrentWorktree(cwd) {
+  const byBranch = await findLocalPrForCurrentBranch(cwd);
+  if (byBranch) return byBranch;
+  const branch = await currentBranch(cwd);
+  if (branch) return null;
+  const root = await findGitRoot(cwd);
+  if (!root) return null;
+  const live = (await listLocalPrs(cwd)).filter((pr) => !isArchivedPr(pr) && pr.worktreePath);
+  return live.find((pr) => sameFsPath(pr.worktreePath ?? "", root)) ?? null;
 }
 async function refreshLocalPrHead(cwd, id) {
   return withPrLock(cwd, id, (pr) => applyHeadRefresh(cwd, pr));
@@ -498,7 +509,7 @@ async function main() {
     silent();
     return;
   }
-  const pr = await findLocalPrForCurrentBranch(root);
+  const pr = await findLocalPrForCurrentWorktree(root);
   if (!pr) {
     silent();
     return;

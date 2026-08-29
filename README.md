@@ -31,15 +31,16 @@ pnpm install
 pnpm build
 pnpm test
 pnpm link-plugin
+pnpm link-extension
 ```
 
 Then:
 
 1. **CLI** — `pnpm cli --help` or `node packages/cli/dist/prgenie.cjs list`
-2. **Cursor Plugin** — Reload Window, open Customize, confirm PR Genie (rules, `/local-pr`, MCP `prgenie`)
-3. **Sidebar** — F5 (`Run PR Genie Extension`) against a real git repo. Rebuild first with `pnpm build` (or Ctrl+Shift+B) if you changed extension code.
+2. **Cursor Plugin** (rules, `/local-pr`, MCP) — `link-plugin` copies to `%USERPROFILE%\.cursor\plugins\local\prgenie`. A reload often **does not** refresh the MCP tool list. In **Customize → Plugins**, turn PR Genie **off and on**. This repo also has `.cursor/mcp.json` so the workspace MCP is the live `packages/plugin/mcp/server.cjs` (approve it if Cursor prompts).
+3. **Sidebar / Local PRs** — that is a **VS Code extension**, not the plugin. `link-plugin` does not update it. Run `pnpm link-extension`, then **quit Cursor fully and reopen** (or F5 `Run PR Genie Extension` for a debug host).
 
-Junction target: `%USERPROFILE%\.cursor\plugins\local\prgenie` (real copy of `packages/plugin`). `link-plugin` pins MCP `server.cjs` to that folder so Cursor does not look for `mcp/server.cjs` in the workspace.
+`link-plugin` pins MCP `server.cjs` to the plugin folder so Cursor does not look for `mcp/server.cjs` in the workspace root.
 
 ## CLI
 
@@ -76,9 +77,9 @@ Cursor may auto-clean worktrees. The loop remains.
 
 ## Status
 
-`draft` → `ready` → `changes_requested` → `reviewed` → `approved`
+`draft` → `ready` (reviewer may file comments) → `complete_review` → `changes_requested` or `reviewed` → `approved`
 
-Human and reviewer comments are **open** findings (`changes_requested`). The implementor **addresses** each with a reply under that comment (`address_comment`), then marks `ready` for a second review. The reviewer **resolves** addressed comments, or `complete_review` if nothing else is wrong — that sets `reviewed` so **you** can look. The **reviewer chat** runs `/watch-ready-prs`. The **implementor chat** runs `/watch-review-inbox`. `/stop-watch` ends both loops. `/export-local-pr` opens the GitHub PR at origin and **archives** the loop (`approved`): it stays on disk (`prgenie show <id>`, `refs/local-pr/*`) but drops off `prgenie list`, Local PRs, and MCP `list_local_prs` unless you pass `--all` / `all=true`. Export checks the **main workspace** off the loop branch (onto the loop base) and removes a sibling `../<repo>.loops/<id>` checkout. If this window is still on that extra worktree, PR Genie reopens the primary folder and then clears it. Every loop should have a **summary** (`body`): why, what changed, how to test.
+Reviewer comments stay on `ready` until **`complete_review`**. That flip is what wakes the implementor (`changes_requested`) or you (`reviewed`). Human comments still request changes immediately. The implementor **addresses** each open finding with a reply under that comment (`address_comment`). Addressing the **last** open finding sets `ready` and posts Review requested so the reviewer queue can run again. The reviewer **resolves** addressed comments, then **always** `complete_review`. The **reviewer chat** runs `/watch-ready-prs`. The **implementor chat** runs `/watch-review-inbox` and must not act while the loop is still `ready`. `/stop-watch` ends both loops. `/export-local-pr` opens the GitHub PR at origin and **archives** the loop (`approved`): it stays on disk (`prgenie show <id>`, `refs/local-pr/*`) but drops off `prgenie list`, Local PRs, and MCP `list_local_prs` unless you pass `--all` / `all=true`. Export checks the **main workspace** off the loop branch (onto the loop base) and removes a sibling `../<repo>.loops/<id>` checkout. If this window is still on that extra worktree, PR Genie reopens the primary folder and then clears it. Every loop should have a **summary** (`body`): why, what changed, how to test.
 
 ## License
 

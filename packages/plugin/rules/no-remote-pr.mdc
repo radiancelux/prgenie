@@ -9,7 +9,7 @@ Never run `git push`, `gh pr create`, or `gh pr merge` unless the developer clea
 
 `/stop-watch` (MCP `watch_stop`) only stops the reviewer and implementor listen loops. It does not push.
 
-Each `/review-queue` and `/review-inbox` tick must call `watch_status` first. If halted, kill the loop and do not review or implement.
+Each `/review-queue` and `/review-inbox` tick must check halt first: MCP `watch_status` if that tool is in this chat's listing, otherwise `node packages/cli/dist/prgenie.cjs watch`. Cursor's plugin MCP is often stale and omits `watch_status` — do not stall looking for it. If halted, kill the loop and do not review or implement.
 
 This repo may be bound to a GitHub login. If unbound and the user needs GitHub, ask which `gh` account to use, then `prgenie gh use <login>` or MCP `gh_use`. Do not guess. Do not `gh auth switch` to a different account than the bind.
 
@@ -19,8 +19,8 @@ When work on this branch is ready for review:
 2. Create or update a local PR with `create_local_pr` / `update_local_pr`. Always set `body` to a reviewer summary: why, what changed, how to test. Title is not enough.
 3. `set_status` ready and `add_comment` with `role=agent` saying review is requested. That is the handoff to the **reviewer chat**. Do not review this loop yourself. Do not open a GitHub pull request.
 
-If this branch already has a local PR in `changes_requested`, call `get_local_pr` and treat `pendingComments` as the brief. Address each with `address_comment` (reply required). Then `add_comment` with `role=agent` **Review requested.** and `set_status` ready. Do not `resolve_comment` (reviewer). Do not push.
+If this branch already has a local PR in `changes_requested`, call `get_local_pr` and treat `pendingComments` as the brief. Address each with `address_comment` (reply required). Addressing the last open finding sets `ready` and posts **Review requested.** Do not `resolve_comment` (reviewer). Do not push. If the loop is still `ready`, the reviewer has not finished — wait for `complete_review` / `changes_requested`. Do not address comments on a `ready` loop.
 
-The reviewer chat runs **`/watch-ready-prs`** and Tasks **subagents** to review — one Task per ready loop. You are the implementor on this worktree; run **`/watch-review-inbox`** so reviewer comments reach you. You do not spawn review Tasks unless there is no reviewer chat.
+The reviewer chat runs **`/watch-ready-prs`** and Tasks **subagents** to review — one Task per ready loop. It must not await those Tasks. You are the implementor on this worktree; run **`/watch-review-inbox`** so reviewer comments reach you. You do not spawn review Tasks unless there is no reviewer chat.
 
 Each loop has a git worktree so the developer can Switch this window onto the implementor's files. PR Genie creates that checkout when needed (`../<repo>.loops/<id>` if the branch is free). Do not delete worktrees unless asked. Do not create extra ones.

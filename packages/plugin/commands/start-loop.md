@@ -37,4 +37,4 @@ Stay off the repo base (`main`/`master`). `create_local_pr` checks out `lp-<id>`
 1. Commit on this branch if needed. Do not push.
 2. Refresh `body` to a reviewer summary: why, what changed, how to test (keep the ticket link).
 3. `set_status` `ready` and `add_comment` `role=agent` **Review requested.**
-4. Start **`/watch-review-inbox`** in this chat if it is not already listening. The reviewer chat should be on **`/watch-ready-prs`**.
+4. Start **`/watch-review-inbox`** in this chat if it is not already listening. The reviewer chat should be on **`/watch-ready-prs`**. It Tasks reviewers and must not await them.

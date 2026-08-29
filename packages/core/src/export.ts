@@ -1,11 +1,63 @@
 import { git } from "./git.js";
 import { ensureRepoGithub, runGh } from "./github-ops.js";
-import { getLocalPr, setLocalPrStatus } from "./prs.js";
-import { releaseArchivedLoop } from "./worktrees.js";
+import { getLocalPr, isArchivedPr, listLocalPrs, setLocalPrStatus } from "./prs.js";
+import { localBaseRef, releaseArchivedLoop } from "./worktrees.js";
 import { haltWatch, resumeWatch } from "./watch.js";
 
 function ghBase(ref: string): string {
   return ref.replace(/^origin\//, "").replace(/^refs\/heads\//, "");
+}
+
+export type GithubPrHeadState = "MERGED" | "OPEN" | "CLOSED" | null;
+
+export function githubPrViewArgs(
+  headRef: string,
+  options: { json: string; jq?: string },
+): string[] {
+  const args = ["pr", "view", localBaseRef(headRef), "--json", options.json];
+  if (options.jq) args.push("-q", options.jq);
+  return args;
+}
+
+export async function githubPrStateForHead(
+  cwd: string,
+  headRef: string,
+): Promise<GithubPrHeadState> {
+  const result = await runGh(githubPrViewArgs(headRef, { json: "state" }), { cwd });
+  if (result.code !== 0) return null;
+  try {
+    const parsed = JSON.parse(result.stdout) as { state?: string };
+    const state = parsed.state?.toUpperCase();
+    if (state === "MERGED" || state === "OPEN" || state === "CLOSED") return state;
+  } catch {
+    // ignore malformed gh output
+  }
+  return null;
+}
+
+/** Archive live loops whose GitHub PR is already merged. Does not un-archive. */
+export async function archiveLoopsMergedOnGithub(
+  cwd: string,
+  lookup: (headRef: string) => Promise<GithubPrHeadState> = (head) =>
+    githubPrStateForHead(cwd, head),
+): Promise<string[]> {
+  const ids: string[] = [];
+  const prs = await listLocalPrs(cwd);
+  for (const pr of prs) {
+    if (isArchivedPr(pr)) continue;
+    let state: GithubPrHeadState = null;
+    try {
+      state = await lookup(pr.headRef);
+    } catch {
+      continue;
+    }
+    if (state !== "MERGED") continue;
+    await setLocalPrStatus(cwd, pr.id, "approved");
+    const archived = await getLocalPr(cwd, pr.id);
+    await releaseArchivedLoop(cwd, archived);
+    ids.push(pr.id);
+  }
+  return ids;
 }
 
 /** Push this loop's recorded SHA, not whatever HEAD is in cwd. */
@@ -46,7 +98,7 @@ export async function exportLocalPr(
     }
 
     const existing = await runGh(
-      ["pr", "view", "--head", pr.headRef, "--json", "url", "-q", ".url"],
+      githubPrViewArgs(pr.headRef, { json: "url", jq: ".url" }),
       { cwd },
     );
     let url: string;

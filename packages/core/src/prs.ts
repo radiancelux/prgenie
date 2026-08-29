@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { git, gitText, requireGitRoot } from "./git.js";
+import { git, gitText, requireGitRoot, findGitRoot } from "./git.js";
 import { parseJsonObject, prFile, prsDir, withFileLock, writeJsonFile } from "./store.js";
 import {
   currentBranch,
@@ -210,8 +210,14 @@ export async function setLocalPrStatus(
   if (!STATUSES.includes(status)) {
     throw new Error(`Invalid status: ${status}`);
   }
-  return withPrLock(cwd, id, (pr) => {
+  return withPrLock(cwd, id, async (pr) => {
+    if (isArchivedPr(pr) && status !== "approved") {
+      throw new Error(
+        `Loop ${pr.id} is archived. Start a new loop on a feature branch instead of reopening it.`,
+      );
+    }
     pr.status = status;
+    if (status === "ready") await applyHeadRefresh(cwd, pr);
     pr.updatedAt = nowIso();
   });
 }
@@ -286,11 +292,35 @@ export function commentThreads(comments: LocalPrComment[]): CommentThread[] {
 }
 
 function maybePromoteToReviewed(pr: LocalPr): void {
-  if (pr.status !== "ready" && pr.status !== "changes_requested") return;
+  // Only auto-finish from changes_requested (human resolving the last finding).
+  // A ready loop is still with the reviewer until complete_review.
+  if (pr.status !== "changes_requested") return;
   const open = pendingReviewComments(pr);
   const addressed = addressedReviewComments(pr);
   if (open.length > 0 || addressed.length > 0) return;
   pr.status = "reviewed";
+}
+
+async function maybeHandoffToReviewer(
+  cwd: string,
+  pr: LocalPr,
+  now: string,
+  author: string,
+): Promise<void> {
+  if (isArchivedPr(pr)) return;
+  if (pr.status !== "changes_requested") return;
+  if (pendingReviewComments(pr).length > 0) return;
+  await applyHeadRefresh(cwd, pr);
+  pr.status = "ready";
+  pr.comments.push({
+    id: newId("c"),
+    body: "Review requested.",
+    createdAt: now,
+    author,
+    role: "agent",
+    status: "resolved",
+  });
+  pr.updatedAt = now;
 }
 
 function lastFinding(pr: LocalPr): LocalPrComment | undefined {
@@ -299,11 +329,12 @@ function lastFinding(pr: LocalPr): LocalPrComment | undefined {
 }
 
 export function formatReviewInbox(pr: LocalPr): string | null {
+  if (pr.status !== "changes_requested") return null;
   const pending = pendingReviewComments(pr);
   if (pending.length === 0) return null;
   const lines = [
     `PR Genie: local PR ${pr.id} ("${pr.title}") on branch ${pr.headRef} has review comments for the agent working this loop.`,
-    `Status is ${pr.status}. Address each open comment with MCP address_comment (this loop id, that commentId, and a reply). Then set_status ready and add_comment role=agent "Review requested." for a second review. The reviewer resolves addressed comments. Do not git push.`,
+    `Status is ${pr.status}. Address each open comment with MCP address_comment (this loop id, that commentId, and a reply). Addressing the last open finding sets the loop to ready and posts Review requested. The reviewer resolves addressed comments. Do not git push.`,
     "",
   ];
   for (const comment of pending) {
@@ -327,8 +358,8 @@ export function formatSpawnReviewer(pr: LocalPr): string {
   return [
     `PR Genie: local PR ${pr.id} ("${pr.title}") on ${pr.headRef} is ready.`,
     "That is the review request. add_comment role=agent \"Review requested.\" if you have not already. Do not git push.",
-    "You are the implementor. Do not review this loop yourself. The reviewer chat should list_local_prs (status=ready) and Task a generalPurpose subagent per loop to run the review.",
-    "If you are covering review in this conversation because no reviewer chat exists, Task one generalPurpose reviewer for this id. If several loops are ready, Task one reviewer subagent each, in parallel.",
+    "You are the implementor. Do not review this loop yourself. The reviewer chat should list_local_prs (status=ready) and Task a generalPurpose subagent per loop. Do not await those Tasks in the listen loop.",
+    "If you are covering review in this conversation because no reviewer chat exists, Task one generalPurpose reviewer for this id. If several loops are ready, Task one reviewer subagent each, in parallel. Do not sit waiting on them.",
   ].join("\n");
 }
 
@@ -347,6 +378,18 @@ export async function findLocalPrForCurrentBranch(cwd: string): Promise<LocalPr 
   );
   if (matches.length === 0) return null;
   return matches.find((pr) => pr.status === "changes_requested") ?? matches[0];
+}
+
+/** Live loop for this checkout only — never another branch's packet. */
+export async function findLocalPrForCurrentWorktree(cwd: string): Promise<LocalPr | null> {
+  const byBranch = await findLocalPrForCurrentBranch(cwd);
+  if (byBranch) return byBranch;
+  const branch = await currentBranch(cwd);
+  if (branch) return null;
+  const root = await findGitRoot(cwd);
+  if (!root) return null;
+  const live = (await listLocalPrs(cwd)).filter((pr) => !isArchivedPr(pr) && pr.worktreePath);
+  return live.find((pr) => sameFsPath(pr.worktreePath ?? "", root)) ?? null;
 }
 
 export async function addLocalPrComment(
@@ -397,7 +440,12 @@ export async function addLocalPrComment(
       if (parent) comment.replyTo = parent.id;
     }
     pr.comments.push(comment);
-    if (role !== "agent" && comment.status === "open") {
+    if (
+      !isArchivedPr(pr) &&
+      role !== "agent" &&
+      role !== "reviewer" &&
+      comment.status === "open"
+    ) {
       pr.status = "changes_requested";
     }
     pr.updatedAt = comment.createdAt;
@@ -445,6 +493,7 @@ export async function addressLocalPrComment(
       replyTo: target.id,
     });
     pr.updatedAt = now;
+    await maybeHandoffToReviewer(cwd, pr, now, author);
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;
     return pr;
@@ -516,11 +565,6 @@ export async function completeLocalPrReview(
     const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const open = pendingReviewComments(pr);
-    if (open.length > 0) {
-      throw new Error(
-        `Open findings remain (${open.length}). File them as addressed first, or add no new findings and resolve the rest.`,
-      );
-    }
     const now = nowIso();
     const author = options.author?.trim() || (await userName(cwd));
     for (const comment of pr.comments) {
@@ -530,15 +574,23 @@ export async function completeLocalPrReview(
         comment.resolvedBy = author;
       }
     }
+    const handedToImplementor = open.length > 0;
     pr.comments.push({
       id: newId("c"),
-      body: (options.body?.trim() || "Review complete. Ready for human review.").trim(),
+      body: (
+        options.body?.trim() ||
+        (handedToImplementor
+          ? "Review complete. Findings are ready for the implementor."
+          : "Review complete. Ready for human review.")
+      ).trim(),
       createdAt: now,
       author,
       role: "reviewer",
       status: "resolved",
     });
-    pr.status = "reviewed";
+    if (!isArchivedPr(pr)) {
+      pr.status = handedToImplementor ? "changes_requested" : "reviewed";
+    }
     pr.updatedAt = now;
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;
