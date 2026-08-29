@@ -28,7 +28,7 @@ Write the brief down as:
 
 Stay off the repo base (`main`/`master`). `create_local_pr` checks out `lp-<id>` when this window is on the base, and peels a branched worktree when it must — never detached, never a PR whose head is the base. Creating the loop **resumes** listen loops if they were halted for **export** (the previous packet shipped). It does **not** resume after `/stop-watch`.
 
-1. If this branch already has a live (not archived) local PR, use it (`update_local_pr` to put the brief in `body` if empty). Do not open a second loop on the same branch. If `prgenie watch` is still `halted reason=export` and this checkout already has that live loop, `prgenie watch start`.
+1. If this branch already has a live (not archived) local PR, use it (`update_local_pr` to put the brief in `body` if empty). Do not open a second loop on the same branch. If `prgenie watch` is `halted reason=export` and this live loop's id is **not** the export id, `prgenie watch start`. If it **is** the export id, do not resume — export is in flight.
 2. Otherwise MCP `create_local_pr` with `title` and `body` (the brief). That creates the feature branch and the draft loop, and clears an export halt.
 3. Show the id, `head → base`, and the brief. Then implement against it.
 

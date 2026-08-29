@@ -142,8 +142,8 @@ export async function resumeWatchForNextLoop(cwd: string): Promise<void> {
     try {
       const exported = await getLocalPr(cwd, watch.exportId);
       if (!isArchivedPr(exported)) return;
-    } catch {
-      // Exported packet is gone — treat the ship as finished.
+    } catch (err) {
+      if (!(err instanceof Error) || !err.message.startsWith("Local PR not found:")) throw err;
     }
   }
   await resumeWatch(cwd);

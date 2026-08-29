@@ -31,10 +31,12 @@ import {
   type LocalPrStatus,
 } from "@prgenie/core";
 
+import { encodeMcpFrame, takeMcpMessages } from "./mcp-stdio.js";
+
 type Json = Record<string, unknown>;
 
 function writeMessage(msg: Json): void {
-  process.stdout.write(`${JSON.stringify(msg)}\n`);
+  process.stdout.write(encodeMcpFrame(msg));
 }
 
 function ok(id: unknown, result: unknown): void {
@@ -458,28 +460,30 @@ async function onRequest(msg: Json): Promise<void> {
 }
 
 export async function startMcp(): Promise<void> {
-  let buffer = "";
-  process.stdin.setEncoding("utf8");
+  let buffer = Buffer.alloc(0);
+  let draining = false;
   process.stdin.resume();
-  process.stdin.on("data", (chunk: string) => {
-    buffer += chunk;
+  process.stdin.on("data", (chunk: Buffer | string) => {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8");
+    buffer = Buffer.concat([buffer, bytes]);
     void drain();
   });
 
   async function drain(): Promise<void> {
-    while (true) {
-      const nl = buffer.indexOf("\n");
-      if (nl === -1) return;
-      const line = buffer.slice(0, nl).replace(/\r$/, "").trim();
-      buffer = buffer.slice(nl + 1);
-      if (!line || /^Content-Length:/i.test(line)) continue;
-      let msg: Json;
-      try {
-        msg = JSON.parse(line) as Json;
-      } catch {
-        continue;
+    if (draining) return;
+    draining = true;
+    try {
+      while (true) {
+        const taken = takeMcpMessages(buffer);
+        buffer = Buffer.from(taken.rest);
+        if (taken.messages.length === 0) break;
+        for (const raw of taken.messages) {
+          const msg = raw as Json;
+          if (msg && typeof msg === "object" && msg.method) await onRequest(msg);
+        }
       }
-      if (msg.method) await onRequest(msg);
+    } finally {
+      draining = false;
     }
   }
 }

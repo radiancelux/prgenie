@@ -553,6 +553,15 @@ test("complete_review does not un-archive an approved loop", async () => {
   assert.equal(isArchivedPr(after), true);
 });
 
+test("a long comment body is stored in full", async () => {
+  const pr = await createLocalPr(repo, { title: "Long note", base: "main" });
+  const body = `Reviewer finding \u2014 ${"n".repeat(8000)} \`complete_review\` before stop.`;
+  const after = await addLocalPrComment(repo, pr.id, body, { role: "reviewer" });
+  assert.equal(after.comments.at(-1)?.body, body);
+  assert.equal((await getLocalPr(repo, pr.id)).comments.at(-1)?.body, body);
+});
+
+
 test("creating a loop resumes watch after an archived export halt", async () => {
   git(["checkout", "main"]);
   const shipped = await createLocalPr(repo, { title: "Already shipped", base: "main" });
@@ -584,5 +593,12 @@ test("creating a loop does not resume export halt while that id is still live", 
   assert.equal(watch.halted, true);
   assert.equal(watch.reason, "export");
   await resumeWatch(repo);
+});
+
+test("a missing export id is treated as shipped when creating the next loop", async () => {
+  git(["checkout", "main"]);
+  await haltWatch(repo, "export", "lp-gonegone");
+  await createLocalPr(repo, { title: "After missing export id", base: "main" });
+  assert.equal((await getRepoWatch(repo)).halted, false);
 });
 
