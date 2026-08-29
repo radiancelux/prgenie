@@ -409,8 +409,8 @@ async function shortLogSubject(cwd, rev = "HEAD") {
 
 // packages/core/src/prs.ts
 var import_node_crypto = require("node:crypto");
-var import_promises3 = require("node:fs/promises");
-var import_node_path4 = __toESM(require("node:path"), 1);
+var import_promises4 = require("node:fs/promises");
+var import_node_path5 = __toESM(require("node:path"), 1);
 
 // packages/core/src/store.ts
 var import_promises2 = require("node:fs/promises");
@@ -520,6 +520,56 @@ async function withFileLock(file, fn) {
   throw lastErr instanceof Error ? lastErr : new Error(`Timed out locking ${file}`);
 }
 
+// packages/core/src/watch.ts
+var import_promises3 = require("node:fs/promises");
+var import_node_path4 = __toESM(require("node:path"), 1);
+function watchFile(dir) {
+  return import_node_path4.default.join(dir, "watch.json");
+}
+var idle = () => ({
+  halted: false,
+  reason: null,
+  exportId: null,
+  updatedAt: (/* @__PURE__ */ new Date(0)).toISOString()
+});
+async function getRepoWatch(cwd) {
+  const root = await requireGitRoot(cwd);
+  try {
+    const raw = await (0, import_promises3.readFile)(watchFile(await consoleDir(root)), "utf8");
+    const parsed = parseJsonObject(raw);
+    return {
+      halted: parsed.halted === true,
+      reason: parsed.reason === "export" || parsed.reason === "stop" ? parsed.reason : null,
+      exportId: parsed.exportId ?? null,
+      updatedAt: parsed.updatedAt ?? idle().updatedAt
+    };
+  } catch {
+    return idle();
+  }
+}
+async function haltWatch(cwd, reason, exportId = null) {
+  const root = await requireGitRoot(cwd);
+  const state = {
+    halted: true,
+    reason,
+    exportId,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  await writeJsonFile(watchFile(await consoleDir(root)), state);
+  return state;
+}
+async function resumeWatch(cwd) {
+  const root = await requireGitRoot(cwd);
+  const state = {
+    halted: false,
+    reason: null,
+    exportId: null,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  await writeJsonFile(watchFile(await consoleDir(root)), state);
+  return state;
+}
+
 // packages/core/src/prs.ts
 function nowIso() {
   return (/* @__PURE__ */ new Date()).toISOString();
@@ -550,7 +600,7 @@ async function writePr(cwd, pr) {
   );
 }
 async function readPrFile(file) {
-  const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+  const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
   pr.source = pr.source ?? null;
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
   pr.comments = (pr.comments ?? []).map(normalizeComment);
@@ -583,11 +633,11 @@ function isArchivedPr(pr) {
 async function listLocalPrs(cwd) {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
-  const names = await (0, import_promises3.readdir)(dir);
+  const names = await (0, import_promises4.readdir)(dir);
   const prs = [];
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
-    const raw = await (0, import_promises3.readFile)(import_node_path4.default.join(dir, name), "utf8");
+    const raw = await (0, import_promises4.readFile)(import_node_path5.default.join(dir, name), "utf8");
     let pr;
     try {
       pr = parseJsonObject(raw);
@@ -611,6 +661,19 @@ async function getLocalPr(cwd, id) {
   const pr = prs.find((p) => p.id === id || p.id.startsWith(id));
   if (!pr) throw new Error(`Local PR not found: ${id}`);
   return pr;
+}
+async function resumeWatchForNextLoop(cwd) {
+  const watch = await getRepoWatch(cwd);
+  if (!watch.halted || watch.reason !== "export") return;
+  if (watch.exportId) {
+    try {
+      const exported = await getLocalPr(cwd, watch.exportId);
+      if (!isArchivedPr(exported)) return;
+    } catch (err) {
+      if (!(err instanceof Error) || !err.message.startsWith("Local PR not found:")) throw err;
+    }
+  }
+  await resumeWatch(cwd);
 }
 async function createLocalPr(cwd, input = {}) {
   const root = await requireGitRoot(cwd);
@@ -653,6 +716,7 @@ async function createLocalPr(cwd, input = {}) {
     staleLoopIds: others.filter((other) => other.id !== pr.id && isArchivedPr(other)).map((other) => other.id),
     liveLoopIds: others.filter((other) => !isArchivedPr(other)).map((other) => other.id)
   });
+  await resumeWatchForNextLoop(root);
   return pr;
 }
 async function updateLocalPr(cwd, id, patch) {
@@ -797,7 +861,7 @@ async function addLocalPrComment(cwd, id, body, options = {}) {
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+    const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const comment = {
       id: newId("c"),
@@ -840,7 +904,7 @@ async function addressLocalPrComment(cwd, id, commentId, body, options = {}) {
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+    const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
     if (!target) throw new Error(`Comment not found: ${commentId}`);
@@ -879,7 +943,7 @@ async function resolveLocalPrComment(cwd, id, commentId, body, options = {}) {
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+    const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
     if (!target) throw new Error(`Comment not found: ${commentId}`);
@@ -920,7 +984,7 @@ async function completeLocalPrReview(cwd, id, options = {}) {
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+    const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const open2 = pendingReviewComments(pr);
     const now = nowIso();
@@ -973,56 +1037,6 @@ async function getLocalPrNameStatus(cwd, id) {
     const [status, ...rest] = line.split("	");
     return { status, path: rest.join("	") };
   });
-}
-
-// packages/core/src/watch.ts
-var import_promises4 = require("node:fs/promises");
-var import_node_path5 = __toESM(require("node:path"), 1);
-function watchFile(dir) {
-  return import_node_path5.default.join(dir, "watch.json");
-}
-var idle = () => ({
-  halted: false,
-  reason: null,
-  exportId: null,
-  updatedAt: (/* @__PURE__ */ new Date(0)).toISOString()
-});
-async function getRepoWatch(cwd) {
-  const root = await requireGitRoot(cwd);
-  try {
-    const raw = await (0, import_promises4.readFile)(watchFile(await consoleDir(root)), "utf8");
-    const parsed = parseJsonObject(raw);
-    return {
-      halted: parsed.halted === true,
-      reason: parsed.reason === "export" || parsed.reason === "stop" ? parsed.reason : null,
-      exportId: parsed.exportId ?? null,
-      updatedAt: parsed.updatedAt ?? idle().updatedAt
-    };
-  } catch {
-    return idle();
-  }
-}
-async function haltWatch(cwd, reason, exportId = null) {
-  const root = await requireGitRoot(cwd);
-  const state = {
-    halted: true,
-    reason,
-    exportId,
-    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-  };
-  await writeJsonFile(watchFile(await consoleDir(root)), state);
-  return state;
-}
-async function resumeWatch(cwd) {
-  const root = await requireGitRoot(cwd);
-  const state = {
-    halted: false,
-    reason: null,
-    exportId: null,
-    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-  };
-  await writeJsonFile(watchFile(await consoleDir(root)), state);
-  return state;
 }
 
 // packages/core/src/github-ops.ts
@@ -1254,10 +1268,74 @@ async function exportLocalPr(cwd, id) {
   }
 }
 
+// packages/cli/src/mcp-stdio.ts
+function encodeMcpFrame(msg) {
+  const body = Buffer.from(JSON.stringify(msg), "utf8");
+  const header = Buffer.from(`Content-Length: ${body.length}\r
+\r
+`, "ascii");
+  return Buffer.concat([header, body]);
+}
+function headerEnd(buffer) {
+  const crlf = buffer.indexOf("\r\n\r\n");
+  if (crlf !== -1) return crlf + 4;
+  const lf = buffer.indexOf("\n\n");
+  if (lf !== -1) return lf + 2;
+  return -1;
+}
+function contentLengthOf(headers) {
+  const match = headers.match(/^content-length:\s*(\d+)\s*$/im);
+  if (!match) return null;
+  return Number(match[1]);
+}
+function takeMcpMessages(buffer) {
+  const messages = [];
+  let rest = buffer;
+  while (rest.length > 0) {
+    const trimmedStart = rest.findIndex((b) => b !== 32 && b !== 9 && b !== 13 && b !== 10);
+    if (trimmedStart > 0) rest = rest.subarray(trimmedStart);
+    if (rest.length === 0) break;
+    const asStart = rest.toString("ascii", 0, Math.min(rest.length, 64));
+    if (/^content-length:/i.test(asStart) || /^content-type:/i.test(asStart)) {
+      const end = headerEnd(rest);
+      if (end === -1) break;
+      const headers = rest.subarray(0, end).toString("ascii");
+      const length = contentLengthOf(headers);
+      if (length === null) {
+        rest = rest.subarray(end);
+        continue;
+      }
+      if (rest.length < end + length) break;
+      const body = rest.subarray(end, end + length);
+      rest = rest.subarray(end + length);
+      try {
+        messages.push(JSON.parse(body.toString("utf8")));
+      } catch {
+      }
+      continue;
+    }
+    if (rest[0] === 123) {
+      const nl2 = rest.indexOf(10);
+      if (nl2 === -1) break;
+      const line = rest.subarray(0, nl2).toString("utf8").replace(/\r$/, "").trim();
+      rest = rest.subarray(nl2 + 1);
+      if (!line) continue;
+      try {
+        messages.push(JSON.parse(line));
+      } catch {
+      }
+      continue;
+    }
+    const nl = rest.indexOf(10);
+    if (nl === -1) break;
+    rest = rest.subarray(nl + 1);
+  }
+  return { messages, rest };
+}
+
 // packages/cli/src/mcp.ts
 function writeMessage(msg) {
-  process.stdout.write(`${JSON.stringify(msg)}
-`);
+  process.stdout.write(encodeMcpFrame(msg));
 }
 function ok(id, result) {
   writeMessage({ jsonrpc: "2.0", id, result });
@@ -1572,7 +1650,7 @@ var tools = [
   },
   {
     name: "watch_start",
-    description: "Resume listen loops after watch_stop.",
+    description: "Resume listen loops after watch_stop. Creating a new loop also resumes after an export halt.",
     inputSchema: { type: "object", properties: { cwd: { type: "string" } } }
   },
   {
@@ -1650,27 +1728,29 @@ async function onRequest(msg) {
   }
 }
 async function startMcp() {
-  let buffer = "";
-  process.stdin.setEncoding("utf8");
+  let buffer = Buffer.alloc(0);
+  let draining = false;
   process.stdin.resume();
   process.stdin.on("data", (chunk) => {
-    buffer += chunk;
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8");
+    buffer = Buffer.concat([buffer, bytes]);
     void drain();
   });
   async function drain() {
-    while (true) {
-      const nl = buffer.indexOf("\n");
-      if (nl === -1) return;
-      const line = buffer.slice(0, nl).replace(/\r$/, "").trim();
-      buffer = buffer.slice(nl + 1);
-      if (!line || /^Content-Length:/i.test(line)) continue;
-      let msg;
-      try {
-        msg = JSON.parse(line);
-      } catch {
-        continue;
+    if (draining) return;
+    draining = true;
+    try {
+      while (true) {
+        const taken = takeMcpMessages(buffer);
+        buffer = Buffer.from(taken.rest);
+        if (taken.messages.length === 0) break;
+        for (const raw of taken.messages) {
+          const msg = raw;
+          if (msg && typeof msg === "object" && msg.method) await onRequest(msg);
+        }
       }
-      if (msg.method) await onRequest(msg);
+    } finally {
+      draining = false;
     }
   }
 }
