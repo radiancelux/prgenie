@@ -1,16 +1,27 @@
 import {
   addLocalPrComment,
+  addressLocalPrComment,
   bindRepoGithub,
+  completeLocalPrReview,
   createLocalPr,
+  exportLocalPr,
+  ensureWorktreeForLoop,
   findGitRoot,
   getLocalPr,
   getLocalPrDiff,
   getLocalPrNameStatus,
   getRepoGithubBind,
+  getRepoWatch,
+  haltWatch,
   listGhAccounts,
   listLocalPrs,
   listWorktrees,
+  pendingReviewComments,
+  resolveLocalPrComment,
+  resumeWatch,
   setLocalPrStatus,
+  updateLocalPr,
+  type CommentRole,
   type LocalPr,
   type LocalPrStatus,
 } from "@prgenie/core";
@@ -21,20 +32,31 @@ function usage(): string {
 Usage:
   prgenie create [--title <t>] [--body <b>] [--base <ref>] [--head <ref>]
   prgenie list
+  prgenie queue
+  prgenie inbox
+  prgenie watch
+  prgenie watch stop
+  prgenie watch start
+  prgenie export <id>
   prgenie show <id>
+  prgenie update <id> [--title <t>] [--body <summary>]
   prgenie diff <id>
   prgenie approve <id>
   prgenie ready <id>
   prgenie request-changes <id> [-m <message>]
-  prgenie comment <id> -m <message>
-  prgenie status <id> <draft|ready|approved|changes_requested>
+  prgenie comment <id> -m <message> [--role human|agent|reviewer] [--author <name>] [--path <file>] [--line <n>] [--side left|right] [--reply-to <commentId>]
+  prgenie address <id> <commentId> -m <message>
+  prgenie resolve <id> <commentId> -m <message>
+  prgenie complete-review <id> [-m <message>]
+  prgenie status <id> <draft|ready|changes_requested|reviewed|approved>
   prgenie worktrees
+  prgenie worktree <id>
   prgenie gh list
   prgenie gh status
   prgenie gh use <login>
   prgenie mcp
 
-Run from any worktree. Packets are stored in the repo's .git/agent-console/.
+Run from any worktree. Loops are stored in the repo's .git/agent-console/.
 `;
 }
 
@@ -49,9 +71,12 @@ function flag(args: string[], name: string): boolean {
 }
 
 function printPr(pr: LocalPr): void {
-  const filesNote = pr.worktreePath ? `\n  worktree: ${pr.worktreePath}` : "\n  worktree: (gone — packet still exists)";
+  const filesNote = pr.worktreePath ? `\n  worktree: ${pr.worktreePath}` : "\n  worktree: (gone — loop still exists)";
+  const summary = pr.body.trim()
+    ? `\n  summary: ${pr.body.trim().split("\n")[0].slice(0, 100)}`
+    : "\n  summary: (none)";
   process.stdout.write(
-    `${pr.id}  ${pr.status.padEnd(18)}  ${pr.headRef} -> ${pr.baseRef}\n  ${pr.title}${filesNote}\n`,
+    `${pr.id}  ${pr.status.padEnd(18)}  ${pr.headRef} -> ${pr.baseRef}\n  ${pr.title}${filesNote}${summary}\n`,
   );
 }
 
@@ -108,6 +133,61 @@ export async function run(argv: string[]): Promise<number> {
     for (const pr of prs) printPr(pr);
     return 0;
   }
+  if (sub === "queue") {
+    const ready = (await listLocalPrs(repo)).filter((pr) => pr.status === "ready");
+    if (ready.length === 0) {
+      process.stdout.write("No ready local PRs.\n");
+      return 0;
+    }
+    for (const pr of ready) printPr(pr);
+    return 0;
+  }
+  if (sub === "inbox") {
+    const waiting = (await listLocalPrs(repo)).filter(
+      (pr) => pendingReviewComments(pr).length > 0,
+    );
+    if (waiting.length === 0) {
+      process.stdout.write("No pending review comments.\n");
+      return 0;
+    }
+    for (const pr of waiting) {
+      printPr(pr);
+      process.stdout.write(`  pending: ${pendingReviewComments(pr).length}\n`);
+    }
+    return 0;
+  }
+  if (sub === "watch") {
+    const action = rest[0] ?? "status";
+    if (action === "stop") {
+      const state = await haltWatch(repo, "stop");
+      process.stdout.write(`Watch halted (${state.reason}).\n`);
+      return 0;
+    }
+    if (action === "start") {
+      await resumeWatch(repo);
+      process.stdout.write("Watch resumed.\n");
+      return 0;
+    }
+    const state = await getRepoWatch(repo);
+    process.stdout.write(
+      state.halted
+        ? `halted  reason=${state.reason ?? "stop"}${state.exportId ? `  export=${state.exportId}` : ""}\n`
+        : "listening\n",
+    );
+    return 0;
+  }
+  if (sub === "export") {
+    const exportId = rest[0];
+    if (!exportId) {
+      process.stderr.write("prgenie export <id>\n");
+      return 1;
+    }
+    const result = await exportLocalPr(repo, exportId);
+    process.stdout.write(
+      `${result.alreadyExisted ? "Existing" : "Opened"} GitHub PR ${result.url}\n`,
+    );
+    return 0;
+  }
   const id = rest[0];
   if (!id) {
     process.stderr.write("Missing local PR id.\n");
@@ -115,7 +195,9 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "show") {
     const pr = await getLocalPr(repo, id);
-    process.stdout.write(JSON.stringify(pr, null, 2) + "\n");
+    process.stdout.write(
+      JSON.stringify({ ...pr, pendingComments: pendingReviewComments(pr) }, null, 2) + "\n",
+    );
     const files = await getLocalPrNameStatus(repo, pr.id);
     if (files.length) {
       process.stdout.write("\nFiles:\n");
@@ -123,9 +205,25 @@ export async function run(argv: string[]): Promise<number> {
     }
     return 0;
   }
+  if (sub === "update") {
+    const title = arg(rest, "--title");
+    const body = arg(rest, "--body");
+    if (title === undefined && body === undefined) {
+      process.stderr.write("prgenie update <id> [--title <t>] [--body <summary>]\n");
+      return 1;
+    }
+    printPr(await updateLocalPr(repo, id, { title, body }));
+    return 0;
+  }
   if (sub === "diff") {
     process.stdout.write(await getLocalPrDiff(repo, id, { stat: flag(rest, "--stat") }));
     if (!flag(rest, "--stat")) process.stdout.write("\n");
+    return 0;
+  }
+  if (sub === "worktree") {
+    const pr = await getLocalPr(repo, id);
+    const dest = await ensureWorktreeForLoop(repo, pr);
+    process.stdout.write(`${dest}\n`);
     return 0;
   }
   if (sub === "approve") {
@@ -138,17 +236,61 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "request-changes") {
     const message = arg(rest, "-m") ?? arg(rest, "--message");
-    if (message) await addLocalPrComment(repo, id, message);
+    if (message) await addLocalPrComment(repo, id, message, { role: "human" });
     printPr(await setLocalPrStatus(repo, id, "changes_requested"));
     return 0;
   }
   if (sub === "comment") {
     const message = arg(rest, "-m") ?? arg(rest, "--message");
     if (!message) {
-      process.stderr.write("prgenie comment <id> -m <message>\n");
+      process.stderr.write(
+        "prgenie comment <id> -m <message> [--role human|agent|reviewer] [--path <file>] [--line <n>]\n",
+      );
       return 1;
     }
-    printPr(await addLocalPrComment(repo, id, message));
+    const role = (arg(rest, "--role") ?? "human") as CommentRole;
+    const author = arg(rest, "--author");
+    const filePath = arg(rest, "--path");
+    const lineRaw = arg(rest, "--line");
+    const sideRaw = arg(rest, "--side");
+    printPr(
+      await addLocalPrComment(repo, id, message, {
+        role,
+        author,
+        path: filePath,
+        line: lineRaw ? Number(lineRaw) : undefined,
+        side: sideRaw === "left" || sideRaw === "right" ? sideRaw : undefined,
+        replyTo: arg(rest, "--reply-to"),
+      }),
+    );
+    return 0;
+  }
+  if (sub === "address") {
+    const commentId = rest[1];
+    const message = arg(rest, "-m") ?? arg(rest, "--message");
+    if (!commentId || !message) {
+      process.stderr.write("prgenie address <id> <commentId> -m <message>\n");
+      return 1;
+    }
+    printPr(await addressLocalPrComment(repo, id, commentId, message));
+    return 0;
+  }
+  if (sub === "resolve") {
+    const commentId = rest[1];
+    const message = arg(rest, "-m") ?? arg(rest, "--message");
+    if (!commentId || !message) {
+      process.stderr.write("prgenie resolve <id> <commentId> -m <message>\n");
+      return 1;
+    }
+    printPr(await resolveLocalPrComment(repo, id, commentId, message, { role: "reviewer" }));
+    return 0;
+  }
+  if (sub === "complete-review") {
+    printPr(
+      await completeLocalPrReview(repo, id, {
+        body: arg(rest, "-m") ?? arg(rest, "--message"),
+      }),
+    );
     return 0;
   }
   if (sub === "status") {

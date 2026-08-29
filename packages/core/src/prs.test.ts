@@ -6,13 +6,25 @@ import path from "node:path";
 import { after, before, test } from "node:test";
 import {
   addLocalPrComment,
+  addressLocalPrComment,
+  addressedReviewComments,
   createLocalPr,
   captureAgentWork,
+  commentThreads,
+  completeLocalPrReview,
+  exportPushRefspec,
+  findLocalPrForCurrentBranch,
+  formatReviewInbox,
   getLocalPr,
   getLocalPrDiff,
   listLocalPrs,
   listWorktrees,
+  pendingReviewComments,
+  resolveLocalPrComment,
   setLocalPrStatus,
+  shouldSpawnReviewer,
+  markReviewRequested,
+  updateLocalPr,
 } from "./index.js";
 
 let repo = "";
@@ -46,15 +58,27 @@ test("lists the main worktree", async () => {
 });
 
 test("creates, lists, and approves a local PR", async () => {
-  const created = await createLocalPr(repo, { title: "Add widget", base: "main" });
+  const created = await createLocalPr(repo, {
+    title: "Add widget",
+    body: "Adds widget.txt so the playground has a diff.",
+    base: "main",
+  });
   assert.match(created.id, /^lp-[0-9a-f]{8}$/);
   assert.equal(created.status, "draft");
   assert.equal(created.headRef, "feat/widget");
   assert.equal(created.baseRef, "main");
+  assert.match(created.body, /widget\.txt/);
+  assert.ok(created.worktreePath);
+  assert.equal(path.basename(created.worktreePath), path.basename(repo));
 
   const listed = await listLocalPrs(repo);
   assert.equal(listed.length, 1);
   assert.equal(listed[0].id, created.id);
+
+  const updated = await updateLocalPr(repo, created.id, {
+    body: "## Summary\n- Add widget.txt\n\n## Test\n- Open the loop diff.",
+  });
+  assert.match(updated.body, /## Summary/);
 
   const diff = await getLocalPrDiff(repo, created.id, { stat: true });
   assert.match(diff, /widget\.txt/);
@@ -74,9 +98,136 @@ test("comments move ready PRs back to changes_requested", async () => {
   const commented = await addLocalPrComment(repo, pr.id, "Please rename the file.");
   assert.equal(commented.status, "changes_requested");
   assert.equal(commented.comments.length, 1);
+  assert.equal(commented.comments[0].role, "human");
 
   const fetched = await getLocalPr(repo, pr.id.slice(0, 6));
   assert.equal(fetched.id, pr.id);
+});
+
+test("reviewer comments request changes; agent replies do not", async () => {
+  const pr = await createLocalPr(repo, { title: "Roles", base: "main" });
+  const reviewed = await addLocalPrComment(repo, pr.id, "Missing tests.", {
+    role: "reviewer",
+    author: "review-agent",
+  });
+  assert.equal(reviewed.status, "changes_requested");
+  assert.equal(reviewed.comments[0].role, "reviewer");
+  assert.equal(pendingReviewComments(reviewed).length, 1);
+
+  const replied = await addLocalPrComment(repo, pr.id, "Working on it.", {
+    role: "agent",
+  });
+  assert.equal(replied.status, "changes_requested");
+  assert.equal(pendingReviewComments(replied).length, 1);
+
+  const followup = await addLocalPrComment(repo, pr.id, "Also document the flag.", {
+    path: "widget.txt",
+    line: 1,
+  });
+  assert.equal(pendingReviewComments(followup).length, 2);
+  const inbox = formatReviewInbox(followup);
+  assert.ok(inbox);
+  assert.match(inbox, /Human \(PR Genie Test\)/);
+  assert.match(inbox, /Also document the flag/);
+  assert.match(inbox, /@ widget\.txt:1/);
+  assert.match(inbox, /\[c-/);
+
+  const threads = commentThreads(followup.comments);
+  const finding = threads.find((t) => t.root.body === "Missing tests.");
+  assert.ok(finding);
+  assert.equal(finding.replies.some((r) => r.body === "Working on it."), true);
+});
+
+test("address_comment marks a finding addressed; reviewer resolve can hand off to human", async () => {
+  const pr = await createLocalPr(repo, { title: "Resolve", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready");
+  const first = await addLocalPrComment(repo, pr.id, "Missing tests.", {
+    role: "reviewer",
+    author: "review-agent",
+  });
+  const second = await addLocalPrComment(repo, pr.id, "Rename the file.", {
+    role: "reviewer",
+    author: "review-agent",
+  });
+  assert.equal(pendingReviewComments(second).length, 2);
+  const addressed = await addressLocalPrComment(
+    repo,
+    pr.id,
+    first.comments[0].id,
+    "Added widget.test.ts.",
+  );
+  assert.equal(addressed.status, "changes_requested");
+  assert.equal(pendingReviewComments(addressed).length, 1);
+  assert.equal(addressedReviewComments(addressed).length, 1);
+  assert.equal(pendingReviewComments(addressed)[0].body, "Rename the file.");
+  const reply = addressed.comments.find((c) => c.replyTo === first.comments[0].id);
+  assert.ok(reply);
+  assert.equal(reply.role, "agent");
+  assert.equal(addressed.comments.find((c) => c.id === first.comments[0].id)?.status, "addressed");
+
+  await addressLocalPrComment(repo, pr.id, second.comments[1].id, "Renamed the file.");
+  const verified = await resolveLocalPrComment(
+    repo,
+    pr.id,
+    first.comments[0].id,
+    "Tests look good.",
+  );
+  assert.equal(verified.status, "changes_requested");
+  const done = await completeLocalPrReview(repo, pr.id);
+  assert.equal(done.status, "reviewed");
+  assert.equal(pendingReviewComments(done).length, 0);
+  assert.equal(addressedReviewComments(done).length, 0);
+});
+
+test("complete_review with no findings is ready for human review", async () => {
+  const pr = await createLocalPr(repo, { title: "Clean", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready");
+  const done = await completeLocalPrReview(repo, pr.id, { body: "LGTM" });
+  assert.equal(done.status, "reviewed");
+  assert.match(done.comments[0].body, /LGTM/);
+  assert.equal(done.comments[0].status, "resolved");
+});
+
+test("findLocalPrForCurrentBranch prefers changes_requested", async () => {
+  git(["checkout", "feat/widget"]);
+  const ready = await createLocalPr(repo, { title: "Ready twin", base: "main" });
+  await setLocalPrStatus(repo, ready.id, "ready");
+  const blocked = await createLocalPr(repo, { title: "Blocked twin", base: "main" });
+  await addLocalPrComment(repo, blocked.id, "Fix the widget.", { role: "reviewer" });
+  const found = await findLocalPrForCurrentBranch(repo);
+  assert.ok(found);
+  assert.equal(found.id, blocked.id);
+  assert.equal(found.status, "changes_requested");
+});
+
+test("parallel reviewer comments both survive", async () => {
+  const pr = await createLocalPr(repo, { title: "Lock", base: "main" });
+  await Promise.all([
+    addLocalPrComment(repo, pr.id, "First finding.", { role: "reviewer", author: "a" }),
+    addLocalPrComment(repo, pr.id, "Second finding.", { role: "reviewer", author: "b" }),
+  ]);
+  const fresh = await getLocalPr(repo, pr.id);
+  assert.equal(fresh.comments.length, 2);
+  const bodies = fresh.comments.map((c) => c.body).sort();
+  assert.deepEqual(bodies, ["First finding.", "Second finding."]);
+});
+
+test("status write overlapping a comment keeps the finding", async () => {
+  const pr = await createLocalPr(repo, { title: "Status lock", base: "main" });
+  await Promise.all([
+    setLocalPrStatus(repo, pr.id, "ready"),
+    addLocalPrComment(repo, pr.id, "Do not drop this.", { role: "reviewer" }),
+  ]);
+  const fresh = await getLocalPr(repo, pr.id);
+  assert.equal(fresh.comments.length, 1);
+  assert.equal(fresh.comments[0].body, "Do not drop this.");
+});
+
+test("export pushes the loop SHA, not cwd HEAD", () => {
+  assert.equal(
+    exportPushRefspec({ headSha: "abc123", headRef: "ui/loop-panel" }),
+    "abc123:refs/heads/ui/loop-panel",
+  );
 });
 
 test("captureAgentWork skips when HEAD is not ahead of base", async () => {
@@ -85,7 +236,7 @@ test("captureAgentWork skips when HEAD is not ahead of base", async () => {
   assert.equal(skipped.action, "skipped");
 });
 
-test("captureAgentWork creates then updates a packet for the same branch", async () => {
+test("captureAgentWork creates then updates a loop for the same branch", async () => {
   git(["checkout", "-b", "feat/capture"]);
   await writeFile(path.join(repo, "capture.txt"), "one\n");
   git(["add", "."]);
@@ -108,5 +259,32 @@ test("captureAgentWork creates then updates a packet for the same branch", async
   });
   assert.equal(second.action, "updated");
   assert.equal(second.pr?.id, first.pr?.id);
+});
+
+test("reviewer Task is requested once per loop HEAD", async () => {
+  const pr = await createLocalPr(repo, { title: "Spawn", base: "main" });
+  const ready = await setLocalPrStatus(repo, pr.id, "ready");
+  assert.equal(shouldSpawnReviewer(ready), true);
+  const marked = await markReviewRequested(repo, pr.id);
+  assert.equal(shouldSpawnReviewer(marked), false);
+  assert.equal(marked.reviewRequestedSha, marked.headSha);
+});
+
+test("a loop whose branch is not checked out gets a sibling worktree", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, {
+    title: "Widget sibling",
+    base: "main",
+    head: "feat/widget",
+  });
+  assert.ok(pr.worktreePath);
+  assert.match(pr.worktreePath.replace(/\\/g, "/"), /\.loops\//);
+  const trees = await listWorktrees(repo);
+  assert.ok(trees.some((t) => t.branch === "feat/widget"));
+  try {
+    git(["worktree", "remove", "--force", "--", pr.worktreePath]);
+  } catch {
+    // temp leftover
+  }
 });
 

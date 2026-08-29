@@ -22,8 +22,8 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// packages/cli/src/capture-hook.ts
-var import_node_fs2 = require("node:fs");
+// packages/cli/src/review-hook.ts
+var import_node_fs = require("node:fs");
 
 // packages/core/src/types.ts
 var COMMENT_STATUSES = ["open", "addressed", "resolved"];
@@ -101,9 +101,6 @@ async function requireGitRoot(cwd) {
 }
 
 // packages/core/src/worktrees.ts
-var import_node_fs = require("node:fs");
-var import_promises = require("node:fs/promises");
-var import_node_path2 = __toESM(require("node:path"), 1);
 async function listWorktrees(cwd) {
   const { stdout } = await git(cwd, ["worktree", "list", "--porcelain"]);
   const blocks = stdout.split(/\n\n+/).map((b) => b.trim()).filter(Boolean);
@@ -137,88 +134,31 @@ async function currentBranch(cwd) {
   const name = result.stdout.trim();
   return name || null;
 }
-async function detectDefaultBase(cwd) {
-  const originHead = await git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD"], {
-    allowFail: true
-  });
-  if (originHead.code === 0) {
-    return originHead.stdout.trim().replace(/^refs\/remotes\//, "");
-  }
-  for (const candidate of ["origin/main", "origin/master", "main", "master"]) {
-    const probe = await git(cwd, ["rev-parse", "--verify", candidate], {
-      allowFail: true
-    });
-    if (probe.code === 0) return candidate;
-  }
-  return "HEAD";
-}
 function worktreeForBranch(trees, branch) {
   const match = trees.find((t) => t.branch === branch);
   return match?.path ?? null;
 }
-function loopWorktreeDir(mainPath, id) {
-  return import_node_path2.default.join(import_node_path2.default.dirname(mainPath), `${import_node_path2.default.basename(mainPath)}.loops`, id);
-}
-async function ensureWorktreeForLoop(cwd, loop) {
-  const trees = await listWorktrees(cwd);
-  const existing = worktreeForBranch(trees, loop.headRef);
-  if (existing) return existing;
-  const current = await currentBranch(cwd);
-  if (current === loop.headRef) {
-    const here = await findGitRoot(cwd);
-    if (here) return here;
-  }
-  const main2 = trees.find((t) => !t.bare)?.path;
-  if (!main2) throw new Error("No git worktree to attach a loop to.");
-  const dest = loopWorktreeDir(main2, loop.id);
-  if ((0, import_node_fs.existsSync)(dest)) {
-    const already = await findGitRoot(dest);
-    if (already) return dest;
-  }
-  await (0, import_promises.mkdir)(import_node_path2.default.dirname(dest), { recursive: true });
-  await git(cwd, ["worktree", "prune"], { allowFail: true });
-  const branched = await git(cwd, ["worktree", "add", dest, loop.headRef], {
-    allowFail: true
-  });
-  if (branched.code === 0) return dest;
-  const detached = await git(cwd, ["worktree", "add", "--detach", dest, loop.headSha], {
-    allowFail: true
-  });
-  if (detached.code === 0) return dest;
-  throw new Error(
-    `Could not create a worktree for loop ${loop.id} (${loop.headRef}): ${(branched.stderr || detached.stderr).trim()}`
-  );
-}
-async function shortLogSubject(cwd, rev = "HEAD") {
-  return gitText(cwd, ["log", "-1", "--format=%s", rev]);
-}
 
 // packages/core/src/prs.ts
-var import_node_crypto = require("node:crypto");
-var import_promises3 = require("node:fs/promises");
-var import_node_path4 = __toESM(require("node:path"), 1);
-
-// packages/core/src/store.ts
 var import_promises2 = require("node:fs/promises");
 var import_node_path3 = __toESM(require("node:path"), 1);
+
+// packages/core/src/store.ts
+var import_promises = require("node:fs/promises");
+var import_node_path2 = __toESM(require("node:path"), 1);
 async function consoleDir(cwd) {
   const common = await gitCommonDir(cwd);
-  const dir = import_node_path3.default.join(common, "agent-console");
-  await (0, import_promises2.mkdir)(dir, { recursive: true });
+  const dir = import_node_path2.default.join(common, "agent-console");
+  await (0, import_promises.mkdir)(dir, { recursive: true });
   return dir;
 }
 async function prsDir(cwd) {
-  const dir = import_node_path3.default.join(await consoleDir(cwd), "prs");
-  await (0, import_promises2.mkdir)(dir, { recursive: true });
+  const dir = import_node_path2.default.join(await consoleDir(cwd), "prs");
+  await (0, import_promises.mkdir)(dir, { recursive: true });
   return dir;
 }
 function prFile(dir, id) {
-  return import_node_path3.default.join(dir, `${id}.json`);
-}
-async function sessionsFile(cwd) {
-  const dir = await consoleDir(cwd);
-  await (0, import_promises2.mkdir)(dir, { recursive: true });
-  return import_node_path3.default.join(dir, "sessions.jsonl");
+  return import_node_path2.default.join(dir, `${id}.json`);
 }
 function firstJsonObject(raw) {
   const start = raw.indexOf("{");
@@ -265,7 +205,7 @@ async function writeJsonFile(file, value) {
   const body = `${JSON.stringify(value, null, 2)}
 `;
   const tmp = `${file}.${process.pid}.tmp`;
-  const tmpHandle = await (0, import_promises2.open)(tmp, "w");
+  const tmpHandle = await (0, import_promises.open)(tmp, "w");
   try {
     await tmpHandle.writeFile(body, "utf8");
     await tmpHandle.sync();
@@ -273,11 +213,11 @@ async function writeJsonFile(file, value) {
     await tmpHandle.close();
   }
   try {
-    await (0, import_promises2.rename)(tmp, file);
+    await (0, import_promises.rename)(tmp, file);
     return;
   } catch {
   }
-  const dest = await (0, import_promises2.open)(file, "w");
+  const dest = await (0, import_promises.open)(file, "w");
   try {
     const buf = Buffer.from(body, "utf8");
     await dest.write(buf, 0, buf.length, 0);
@@ -286,7 +226,7 @@ async function writeJsonFile(file, value) {
   } finally {
     await dest.close();
   }
-  await (0, import_promises2.unlink)(tmp).catch(() => void 0);
+  await (0, import_promises.unlink)(tmp).catch(() => void 0);
 }
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -296,12 +236,12 @@ async function withFileLock(file, fn) {
   let lastErr;
   for (let i = 0; i < 50; i++) {
     try {
-      const handle = await (0, import_promises2.open)(lock, "wx");
+      const handle = await (0, import_promises.open)(lock, "wx");
       try {
         return await fn();
       } finally {
         await handle.close();
-        await (0, import_promises2.unlink)(lock).catch(() => void 0);
+        await (0, import_promises.unlink)(lock).catch(() => void 0);
       }
     } catch (err) {
       lastErr = err;
@@ -314,9 +254,6 @@ async function withFileLock(file, fn) {
 // packages/core/src/prs.ts
 function nowIso() {
   return (/* @__PURE__ */ new Date()).toISOString();
-}
-function newId(prefix) {
-  return `${prefix}-${(0, import_node_crypto.randomBytes)(4).toString("hex")}`;
 }
 async function writePr(cwd, pr) {
   const dir = await prsDir(cwd);
@@ -341,7 +278,7 @@ async function writePr(cwd, pr) {
   );
 }
 async function readPrFile(file) {
-  const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+  const pr = parseJsonObject(await (0, import_promises2.readFile)(file, "utf8"));
   pr.source = pr.source ?? null;
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
   pr.comments = (pr.comments ?? []).map(normalizeComment);
@@ -371,11 +308,11 @@ async function applyHeadRefresh(cwd, pr) {
 async function listLocalPrs(cwd) {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
-  const names = await (0, import_promises3.readdir)(dir);
+  const names = await (0, import_promises2.readdir)(dir);
   const prs = [];
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
-    const raw = await (0, import_promises3.readFile)(import_node_path4.default.join(dir, name), "utf8");
+    const raw = await (0, import_promises2.readFile)(import_node_path3.default.join(dir, name), "utf8");
     let pr;
     try {
       pr = parseJsonObject(raw);
@@ -400,40 +337,6 @@ async function getLocalPr(cwd, id) {
   if (!pr) throw new Error(`Local PR not found: ${id}`);
   return pr;
 }
-async function createLocalPr(cwd, input = {}) {
-  const root = await requireGitRoot(cwd);
-  const headRef = input.head ?? await currentBranch(cwd) ?? await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  const headSha = await gitText(cwd, ["rev-parse", input.head ?? "HEAD"]);
-  const baseRef = input.base ?? await detectDefaultBase(cwd);
-  const baseResolved = await git(cwd, ["rev-parse", "--verify", baseRef], {
-    allowFail: true
-  });
-  if (baseResolved.code !== 0) {
-    throw new Error(`Cannot resolve base branch: ${baseRef}`);
-  }
-  const baseSha = baseResolved.stdout.trim();
-  const title = input.title?.trim() || await shortLogSubject(cwd, headSha).catch(() => "") || `Local PR from ${headRef}`;
-  const createdAt = nowIso();
-  const pr = {
-    id: newId("lp"),
-    title,
-    body: input.body?.trim() ?? "",
-    status: "draft",
-    headRef,
-    baseRef,
-    headSha,
-    baseSha,
-    worktreePath: null,
-    comments: [],
-    source: input.source ?? { kind: "cli" },
-    createdAt,
-    updatedAt: createdAt,
-    reviewRequestedSha: null
-  };
-  await writePr(root, pr);
-  pr.worktreePath = await ensureWorktreeForLoop(root, pr);
-  return pr;
-}
 function inferCommentStatus(comment, role) {
   if (comment.status && COMMENT_STATUSES.includes(comment.status)) return comment.status;
   if (comment.resolvedAt) return "resolved";
@@ -449,66 +352,69 @@ function normalizeComment(comment) {
     status: inferCommentStatus(comment, role)
   };
 }
-async function hasCommitsAheadOfBase(cwd, baseRef) {
-  const base = baseRef ?? await detectDefaultBase(cwd);
-  const ahead = await git(cwd, ["rev-list", "--count", `${base}..HEAD`], {
-    allowFail: true
-  });
-  if (ahead.code !== 0) return false;
-  return Number(ahead.stdout.trim()) > 0;
+function isFindingComment(comment) {
+  const c = normalizeComment(comment);
+  if (c.role !== "human" && c.role !== "reviewer") return false;
+  if (c.replyTo) return false;
+  return true;
 }
-async function captureAgentWork(cwd, input = {}) {
-  await requireGitRoot(cwd);
-  if (!await hasCommitsAheadOfBase(cwd, input.base)) {
-    return {
-      action: "skipped",
-      reason: "no commits ahead of base"
-    };
+function pendingReviewComments(pr) {
+  return (pr.comments ?? []).map(normalizeComment).filter((c) => isFindingComment(c) && c.status === "open");
+}
+function formatReviewInbox(pr) {
+  const pending = pendingReviewComments(pr);
+  if (pending.length === 0) return null;
+  const lines = [
+    `PR Genie: local PR ${pr.id} ("${pr.title}") on branch ${pr.headRef} has review comments for the agent working this loop.`,
+    `Status is ${pr.status}. Address each open comment with MCP address_comment (this loop id, that commentId, and a reply). Then set_status ready and add_comment role=agent "Review requested." for a second review. The reviewer resolves addressed comments. Do not git push.`,
+    ""
+  ];
+  for (const comment of pending) {
+    const who = comment.role === "reviewer" ? `Reviewer (${comment.author})` : `Human (${comment.author})`;
+    const loc = comment.path ? ` @ ${comment.path}${comment.line ? `:${comment.line}` : ""}` : "";
+    lines.push(`${who} [${comment.id}] open${loc} at ${comment.createdAt}:`);
+    lines.push(comment.body);
+    lines.push("");
   }
-  const headRef = input.head ?? await currentBranch(cwd) ?? await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  const existing = (await listLocalPrs(cwd)).find(
-    (pr2) => pr2.headRef === headRef && pr2.status !== "approved"
-  );
-  if (existing) {
-    const prevSha = existing.headSha;
-    const updated = await withPrLock(cwd, existing.id, async (pr2) => {
-      if (input.source) pr2.source = input.source;
-      if (input.title?.trim()) pr2.title = input.title.trim();
-      if (input.body?.trim()) pr2.body = input.body.trim();
-      await applyHeadRefresh(cwd, pr2);
-      if (pr2.status === "reviewed" && pr2.headSha !== prevSha) {
-        pr2.status = "ready";
-      }
-    });
-    updated.worktreePath = await ensureWorktreeForLoop(cwd, updated);
-    return { action: "updated", pr: updated };
-  }
-  const pr = await createLocalPr(cwd, input);
-  return { action: "created", pr };
+  return lines.join("\n").trimEnd();
+}
+function shouldSpawnReviewer(pr) {
+  return pr.status === "ready" && (pr.reviewRequestedSha ?? null) !== pr.headSha;
+}
+function formatSpawnReviewer(pr) {
+  return [
+    `PR Genie: local PR ${pr.id} ("${pr.title}") on ${pr.headRef} is ready.`,
+    'That is the review request. add_comment role=agent "Review requested." if you have not already. Do not git push.',
+    "You are the implementor. Do not review this loop yourself. The reviewer chat should list_local_prs (status=ready) and Task a generalPurpose subagent per loop to run the review.",
+    "If you are covering review in this conversation because no reviewer chat exists, Task one generalPurpose reviewer for this id. If several loops are ready, Task one reviewer subagent each, in parallel."
+  ].join("\n");
+}
+async function markReviewRequested(cwd, id) {
+  return withPrLock(cwd, id, (pr) => {
+    pr.reviewRequestedSha = pr.headSha;
+    pr.updatedAt = nowIso();
+  });
+}
+async function findLocalPrForCurrentBranch(cwd) {
+  const branch = await currentBranch(cwd);
+  if (!branch) return null;
+  const matches = (await listLocalPrs(cwd)).filter((pr) => pr.headRef === branch);
+  if (matches.length === 0) return null;
+  return matches.find((pr) => pr.status === "changes_requested") ?? matches[0];
+}
+async function refreshLocalPrHead(cwd, id) {
+  return withPrLock(cwd, id, (pr) => applyHeadRefresh(cwd, pr));
 }
 
-// packages/core/src/sessions.ts
-var import_promises4 = require("node:fs/promises");
-async function appendSession(cwd, event) {
-  const root = await findGitRoot(cwd);
-  if (!root) return;
-  const file = await sessionsFile(root);
-  const line = JSON.stringify({
-    ...event,
-    cwd,
-    gitRoot: root,
-    at: (/* @__PURE__ */ new Date()).toISOString()
-  });
-  await (0, import_promises4.appendFile)(file, `${line}
-`, "utf8");
-}
-
-// packages/cli/src/capture-hook.ts
+// packages/cli/src/review-hook.ts
 function inferCwd(input) {
   if (typeof input.cwd === "string" && input.cwd) return input.cwd;
   const roots = input.workspace_roots;
   if (Array.isArray(roots) && typeof roots[0] === "string" && roots[0]) return roots[0];
   return process.cwd();
+}
+function eventName(input) {
+  return String(input.hook_event_name ?? input.event ?? "");
 }
 function silent() {
   process.stdout.write("{}\n");
@@ -516,72 +422,64 @@ function silent() {
 async function main() {
   let input = {};
   try {
-    const raw = (0, import_node_fs2.readFileSync)(0, "utf8");
+    const raw = (0, import_node_fs.readFileSync)(0, "utf8");
     input = raw ? JSON.parse(raw) : {};
   } catch {
     input = {};
   }
-  const status = String(input.status ?? "completed");
-  const subagentType = String(input.subagent_type ?? "");
-  const task = String(input.task ?? input.description ?? "Subagent work");
-  const modified = Array.isArray(input.modified_files) ? input.modified_files : [];
+  const event = eventName(input);
   const loopCount = Number(input.loop_count ?? 0);
   const cwd = inferCwd(input);
   const root = await findGitRoot(cwd);
-  if (root) {
-    await appendSession(root, {
-      hook: "subagentStop",
-      subagent_type: subagentType,
-      status,
-      task,
-      modified_files: modified
-    });
-  }
-  if (status === "aborted") {
-    silent();
-    return;
-  }
-  const readOnly = subagentType === "explore" || subagentType === "shell";
-  if (readOnly && modified.length === 0) {
-    silent();
-    return;
-  }
   if (!root) {
     silent();
     return;
   }
-  const result = await captureAgentWork(root, {
-    title: task.slice(0, 120),
-    body: typeof input.summary === "string" ? input.summary : "",
-    source: {
-      kind: "subagent",
-      subagentType,
-      subagentId: typeof input.subagent_id === "string" ? input.subagent_id : void 0,
-      task
-    }
-  });
-  if (result.action === "skipped") {
-    if (modified.length > 0 && loopCount === 0) {
-      process.stdout.write(
-        JSON.stringify({
-          followup_message: "PR Genie: the subagent changed files but did not commit. Commit on the current branch if this should become a local PR. Do not git push."
-        }) + "\n"
-      );
-      return;
-    }
-    silent();
-    return;
-  }
-  const pr = result.pr;
+  const pr = await findLocalPrForCurrentBranch(root);
   if (!pr) {
     silent();
     return;
   }
-  process.stdout.write(
-    JSON.stringify({
-      followup_message: `PR Genie ${result.action} local PR ${pr.id} (${pr.status}) on ${pr.headRef}. It is on the developer's watch list. Do not git push or gh pr create.`
-    }) + "\n"
-  );
+  const inbox = formatReviewInbox(pr);
+  if (event === "sessionStart") {
+    if (!inbox) {
+      silent();
+      return;
+    }
+    process.stdout.write(JSON.stringify({ additional_context: inbox }) + "\n");
+    return;
+  }
+  if (event === "subagentStop") {
+    if (!inbox || loopCount >= 2) {
+      silent();
+      return;
+    }
+    process.stdout.write(JSON.stringify({ followup_message: inbox }) + "\n");
+    return;
+  }
+  if (event === "stop") {
+    if (loopCount >= 1) {
+      silent();
+      return;
+    }
+    const pending = pendingReviewComments(pr);
+    const newest = pending[pending.length - 1];
+    if (newest?.role === "human" && inbox) {
+      process.stdout.write(JSON.stringify({ followup_message: inbox }) + "\n");
+      return;
+    }
+    if (pr.status === "ready") {
+      const fresh = await refreshLocalPrHead(root, pr.id);
+      if (shouldSpawnReviewer(fresh)) {
+        await markReviewRequested(root, fresh.id);
+        process.stdout.write(JSON.stringify({ followup_message: formatSpawnReviewer(fresh) }) + "\n");
+        return;
+      }
+    }
+    silent();
+    return;
+  }
+  silent();
 }
 main().catch(() => {
   silent();

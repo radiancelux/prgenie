@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs";
-import path from "node:path";
 import { appendSession, captureAgentWork, findGitRoot } from "@prgenie/core";
 
 type HookInput = Record<string, unknown>;
@@ -7,10 +6,7 @@ type HookInput = Record<string, unknown>;
 function inferCwd(input: HookInput): string {
   if (typeof input.cwd === "string" && input.cwd) return input.cwd;
   const roots = input.workspace_roots;
-  if (Array.isArray(roots) && typeof roots[0] === "string") return roots[0];
-  if (typeof input.agent_transcript_path === "string") {
-    return path.dirname(input.agent_transcript_path);
-  }
+  if (Array.isArray(roots) && typeof roots[0] === "string" && roots[0]) return roots[0];
   return process.cwd();
 }
 
@@ -81,7 +77,7 @@ async function main(): Promise<void> {
         JSON.stringify({
           followup_message:
             "PR Genie: the subagent changed files but did not commit. Commit on the current branch if this should become a local PR. Do not git push.",
-        }),
+        }) + "\n",
       );
       return;
     }
@@ -98,7 +94,7 @@ async function main(): Promise<void> {
   process.stdout.write(
     JSON.stringify({
       followup_message: `PR Genie ${result.action} local PR ${pr.id} (${pr.status}) on ${pr.headRef}. It is on the developer's watch list. Do not git push or gh pr create.`,
-    }),
+    }) + "\n",
   );
 }
 

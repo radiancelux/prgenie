@@ -26,9 +26,12 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var STATUSES = [
   "draft",
   "ready",
-  "approved",
-  "changes_requested"
+  "changes_requested",
+  "reviewed",
+  "approved"
 ];
+var COMMENT_ROLES = ["human", "agent", "reviewer"];
+var COMMENT_STATUSES = ["open", "addressed", "resolved"];
 
 // packages/core/src/git.ts
 var import_node_child_process = require("node:child_process");
@@ -103,6 +106,9 @@ async function requireGitRoot(cwd) {
 }
 
 // packages/core/src/worktrees.ts
+var import_node_fs = require("node:fs");
+var import_promises = require("node:fs/promises");
+var import_node_path2 = __toESM(require("node:path"), 1);
 async function listWorktrees(cwd) {
   const { stdout } = await git(cwd, ["worktree", "list", "--porcelain"]);
   const blocks = stdout.split(/\n\n+/).map((b) => b.trim()).filter(Boolean);
@@ -117,13 +123,14 @@ async function listWorktrees(cwd) {
       detached: false
     };
     for (const line of lines) {
-      if (line.startsWith("worktree ")) info.path = line.slice("worktree ".length);
-      else if (line.startsWith("HEAD ")) info.head = line.slice("HEAD ".length);
-      else if (line.startsWith("branch ")) {
-        const ref = line.slice("branch ".length);
+      const text = line.replace(/\r$/, "");
+      if (text.startsWith("worktree ")) info.path = text.slice("worktree ".length);
+      else if (text.startsWith("HEAD ")) info.head = text.slice("HEAD ".length);
+      else if (text.startsWith("branch ")) {
+        const ref = text.slice("branch ".length);
         info.branch = ref.replace(/^refs\/heads\//, "");
-      } else if (line === "bare") info.bare = true;
-      else if (line === "detached") info.detached = true;
+      } else if (text === "bare") info.bare = true;
+      else if (text === "detached") info.detached = true;
     }
     if (info.path) trees.push(info);
   }
@@ -154,6 +161,39 @@ function worktreeForBranch(trees, branch) {
   const match = trees.find((t) => t.branch === branch);
   return match?.path ?? null;
 }
+function loopWorktreeDir(mainPath, id) {
+  return import_node_path2.default.join(import_node_path2.default.dirname(mainPath), `${import_node_path2.default.basename(mainPath)}.loops`, id);
+}
+async function ensureWorktreeForLoop(cwd, loop) {
+  const trees = await listWorktrees(cwd);
+  const existing = worktreeForBranch(trees, loop.headRef);
+  if (existing) return existing;
+  const current = await currentBranch(cwd);
+  if (current === loop.headRef) {
+    const here = await findGitRoot(cwd);
+    if (here) return here;
+  }
+  const main = trees.find((t) => !t.bare)?.path;
+  if (!main) throw new Error("No git worktree to attach a loop to.");
+  const dest = loopWorktreeDir(main, loop.id);
+  if ((0, import_node_fs.existsSync)(dest)) {
+    const already = await findGitRoot(dest);
+    if (already) return dest;
+  }
+  await (0, import_promises.mkdir)(import_node_path2.default.dirname(dest), { recursive: true });
+  await git(cwd, ["worktree", "prune"], { allowFail: true });
+  const branched = await git(cwd, ["worktree", "add", dest, loop.headRef], {
+    allowFail: true
+  });
+  if (branched.code === 0) return dest;
+  const detached = await git(cwd, ["worktree", "add", "--detach", dest, loop.headSha], {
+    allowFail: true
+  });
+  if (detached.code === 0) return dest;
+  throw new Error(
+    `Could not create a worktree for loop ${loop.id} (${loop.headRef}): ${(branched.stderr || detached.stderr).trim()}`
+  );
+}
 async function userName(cwd) {
   const result = await git(cwd, ["config", "user.name"], { allowFail: true });
   return result.stdout.trim() || "local";
@@ -164,23 +204,115 @@ async function shortLogSubject(cwd, rev = "HEAD") {
 
 // packages/core/src/prs.ts
 var import_node_crypto = require("node:crypto");
-var import_promises2 = require("node:fs/promises");
-var import_node_path3 = __toESM(require("node:path"), 1);
+var import_promises3 = require("node:fs/promises");
+var import_node_path4 = __toESM(require("node:path"), 1);
 
 // packages/core/src/store.ts
-var import_promises = require("node:fs/promises");
-var import_node_path2 = __toESM(require("node:path"), 1);
+var import_promises2 = require("node:fs/promises");
+var import_node_path3 = __toESM(require("node:path"), 1);
 async function consoleDir(cwd) {
   const common = await gitCommonDir(cwd);
-  return import_node_path2.default.join(common, "agent-console");
+  const dir = import_node_path3.default.join(common, "agent-console");
+  await (0, import_promises2.mkdir)(dir, { recursive: true });
+  return dir;
 }
 async function prsDir(cwd) {
-  const dir = import_node_path2.default.join(await consoleDir(cwd), "prs");
-  await (0, import_promises.mkdir)(dir, { recursive: true });
+  const dir = import_node_path3.default.join(await consoleDir(cwd), "prs");
+  await (0, import_promises2.mkdir)(dir, { recursive: true });
   return dir;
 }
 function prFile(dir, id) {
-  return import_node_path2.default.join(dir, `${id}.json`);
+  return import_node_path3.default.join(dir, `${id}.json`);
+}
+function firstJsonObject(raw) {
+  const start = raw.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < raw.length; i++) {
+    const c = raw[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (c === "\\") {
+        escape = true;
+        continue;
+      }
+      if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      continue;
+    }
+    if (c === "{") depth += 1;
+    else if (c === "}") {
+      depth -= 1;
+      if (depth === 0) return raw.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+function parseJsonObject(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const slice = firstJsonObject(raw);
+    if (!slice) throw new SyntaxError("No JSON object in file");
+    return JSON.parse(slice);
+  }
+}
+async function writeJsonFile(file, value) {
+  const body = `${JSON.stringify(value, null, 2)}
+`;
+  const tmp = `${file}.${process.pid}.tmp`;
+  const tmpHandle = await (0, import_promises2.open)(tmp, "w");
+  try {
+    await tmpHandle.writeFile(body, "utf8");
+    await tmpHandle.sync();
+  } finally {
+    await tmpHandle.close();
+  }
+  try {
+    await (0, import_promises2.rename)(tmp, file);
+    return;
+  } catch {
+  }
+  const dest = await (0, import_promises2.open)(file, "w");
+  try {
+    const buf = Buffer.from(body, "utf8");
+    await dest.write(buf, 0, buf.length, 0);
+    await dest.truncate(buf.length);
+    await dest.sync();
+  } finally {
+    await dest.close();
+  }
+  await (0, import_promises2.unlink)(tmp).catch(() => void 0);
+}
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+async function withFileLock(file, fn) {
+  const lock = `${file}.lock`;
+  let lastErr;
+  for (let i = 0; i < 50; i++) {
+    try {
+      const handle = await (0, import_promises2.open)(lock, "wx");
+      try {
+        return await fn();
+      } finally {
+        await handle.close();
+        await (0, import_promises2.unlink)(lock).catch(() => void 0);
+      }
+    } catch (err) {
+      lastErr = err;
+      await delay(20);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(`Timed out locking ${file}`);
 }
 
 // packages/core/src/prs.ts
@@ -192,7 +324,7 @@ function newId(prefix) {
 }
 async function writePr(cwd, pr) {
   const dir = await prsDir(cwd);
-  await (0, import_promises2.writeFile)(prFile(dir, pr.id), JSON.stringify(pr, null, 2), "utf8");
+  await writeJsonFile(prFile(dir, pr.id), pr);
   await git(cwd, [
     "update-ref",
     `refs/local-pr/${pr.id}/head`,
@@ -212,16 +344,42 @@ async function writePr(cwd, pr) {
     { allowFail: true }
   );
 }
+async function readPrFile(file) {
+  const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+  pr.source = pr.source ?? null;
+  pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
+  pr.comments = (pr.comments ?? []).map(normalizeComment);
+  return pr;
+}
+async function withPrLock(cwd, id, fn) {
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = await readPrFile(file);
+    await fn(pr);
+    await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
+    return pr;
+  });
+}
 async function listLocalPrs(cwd) {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
-  const names = await (0, import_promises2.readdir)(dir);
+  const names = await (0, import_promises3.readdir)(dir);
   const prs = [];
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
-    const raw = await (0, import_promises2.readFile)(import_node_path3.default.join(dir, name), "utf8");
-    const pr = JSON.parse(raw);
+    const raw = await (0, import_promises3.readFile)(import_node_path4.default.join(dir, name), "utf8");
+    let pr;
+    try {
+      pr = parseJsonObject(raw);
+    } catch {
+      continue;
+    }
     pr.source = pr.source ?? null;
+    pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
+    pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
   }
   prs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -249,7 +407,6 @@ async function createLocalPr(cwd, input = {}) {
     throw new Error(`Cannot resolve base branch: ${baseRef}`);
   }
   const baseSha = baseResolved.stdout.trim();
-  const trees = await listWorktrees(root);
   const title = input.title?.trim() || await shortLogSubject(cwd, headSha).catch(() => "") || `Local PR from ${headRef}`;
   const createdAt = nowIso();
   const pr = {
@@ -261,42 +418,271 @@ async function createLocalPr(cwd, input = {}) {
     baseRef,
     headSha,
     baseSha,
-    worktreePath: worktreeForBranch(trees, headRef),
+    worktreePath: null,
     comments: [],
     source: input.source ?? { kind: "cli" },
     createdAt,
-    updatedAt: createdAt
+    updatedAt: createdAt,
+    reviewRequestedSha: null
   };
   await writePr(root, pr);
+  pr.worktreePath = await ensureWorktreeForLoop(root, pr);
   return pr;
+}
+async function updateLocalPr(cwd, id, patch) {
+  return withPrLock(cwd, id, (pr) => {
+    if (patch.title !== void 0) {
+      const title = patch.title.trim();
+      if (!title) throw new Error("Title is empty");
+      pr.title = title;
+    }
+    if (patch.body !== void 0) {
+      pr.body = patch.body.trim();
+    }
+    pr.updatedAt = nowIso();
+  });
 }
 async function setLocalPrStatus(cwd, id, status) {
   if (!STATUSES.includes(status)) {
     throw new Error(`Invalid status: ${status}`);
   }
-  const pr = await getLocalPr(cwd, id);
-  pr.status = status;
-  pr.updatedAt = nowIso();
-  await writePr(cwd, pr);
-  return pr;
+  return withPrLock(cwd, id, (pr) => {
+    pr.status = status;
+    pr.updatedAt = nowIso();
+  });
 }
-async function addLocalPrComment(cwd, id, body) {
+function isReviewRequestBody(body) {
+  return /^review requested\.?$/i.test(body.trim());
+}
+function inferCommentStatus(comment, role) {
+  if (comment.status && COMMENT_STATUSES.includes(comment.status)) return comment.status;
+  if (comment.resolvedAt) return "resolved";
+  if (comment.replyTo || role === "agent") return "resolved";
+  return "open";
+}
+function normalizeComment(comment) {
+  const role = comment.role === "agent" || comment.role === "reviewer" || comment.role === "human" ? comment.role : "human";
+  return {
+    ...comment,
+    author: comment.author || "reviewer",
+    role,
+    status: inferCommentStatus(comment, role)
+  };
+}
+function isFindingComment(comment) {
+  const c = normalizeComment(comment);
+  if (c.role !== "human" && c.role !== "reviewer") return false;
+  if (c.replyTo) return false;
+  return true;
+}
+function pendingReviewComments(pr) {
+  return (pr.comments ?? []).map(normalizeComment).filter((c) => isFindingComment(c) && c.status === "open");
+}
+function addressedReviewComments(pr) {
+  return (pr.comments ?? []).map(normalizeComment).filter((c) => isFindingComment(c) && c.status === "addressed");
+}
+function commentThreads(comments) {
+  const list = (comments ?? []).map(normalizeComment);
+  const ids = new Set(list.map((c) => c.id));
+  const assigned = /* @__PURE__ */ new Set();
+  const repliesByParent = /* @__PURE__ */ new Map();
+  for (const c of list) {
+    if (c.replyTo && ids.has(c.replyTo)) {
+      const bucket = repliesByParent.get(c.replyTo) ?? [];
+      bucket.push(c);
+      repliesByParent.set(c.replyTo, bucket);
+      assigned.add(c.id);
+    }
+  }
+  const threads = [];
+  let lastFinding2;
+  for (const c of list) {
+    if (assigned.has(c.id)) continue;
+    if (c.role === "agent" && !isReviewRequestBody(c.body) && lastFinding2) {
+      lastFinding2.replies.push(c);
+      continue;
+    }
+    const thread = { root: c, replies: repliesByParent.get(c.id) ?? [] };
+    threads.push(thread);
+    if (isFindingComment(c)) lastFinding2 = thread;
+  }
+  return threads;
+}
+function maybePromoteToReviewed(pr) {
+  if (pr.status !== "ready" && pr.status !== "changes_requested") return;
+  const open2 = pendingReviewComments(pr);
+  const addressed = addressedReviewComments(pr);
+  if (open2.length > 0 || addressed.length > 0) return;
+  pr.status = "reviewed";
+}
+function lastFinding(pr) {
+  const findings = (pr.comments ?? []).map(normalizeComment).filter(isFindingComment);
+  return findings[findings.length - 1];
+}
+async function addLocalPrComment(cwd, id, body, options = {}) {
   const text = body.trim();
   if (!text) throw new Error("Comment body is empty");
-  const pr = await getLocalPr(cwd, id);
-  const comment = {
-    id: newId("c"),
-    body: text,
-    createdAt: nowIso(),
-    author: await userName(cwd)
-  };
-  pr.comments.push(comment);
-  if (pr.status === "ready" || pr.status === "approved") {
-    pr.status = "changes_requested";
+  const role = options.role ?? "human";
+  if (!COMMENT_ROLES.includes(role)) {
+    throw new Error(`Invalid comment role: ${role}`);
   }
-  pr.updatedAt = comment.createdAt;
-  await writePr(cwd, pr);
-  return pr;
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+    pr.comments = (pr.comments ?? []).map(normalizeComment);
+    const comment = {
+      id: newId("c"),
+      body: text,
+      createdAt: nowIso(),
+      author: options.author?.trim() || await userName(cwd),
+      role,
+      status: role === "agent" ? "resolved" : "open"
+    };
+    const loc = options.path?.trim();
+    if (loc) comment.path = loc.replace(/\\/g, "/");
+    if (options.line && options.line > 0) comment.line = Math.floor(options.line);
+    if (options.side === "left" || options.side === "right") comment.side = options.side;
+    const replyTo = options.replyTo?.trim();
+    if (replyTo) {
+      const target = pr.comments.find((c) => c.id === replyTo || c.id.startsWith(replyTo));
+      if (!target) throw new Error(`Comment not found: ${replyTo}`);
+      comment.replyTo = target.id;
+      comment.status = "resolved";
+    } else if (role === "agent" && !isReviewRequestBody(text)) {
+      const parent = lastFinding(pr);
+      if (parent) comment.replyTo = parent.id;
+    }
+    pr.comments.push(comment);
+    if (role !== "agent" && comment.status === "open") {
+      pr.status = "changes_requested";
+    }
+    pr.updatedAt = comment.createdAt;
+    await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
+    return pr;
+  });
+}
+async function addressLocalPrComment(cwd, id, commentId, body, options = {}) {
+  const text = body.trim();
+  if (!text) throw new Error("Address comment is empty");
+  const needle = commentId.trim();
+  if (!needle) throw new Error("Comment id is empty");
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+    pr.comments = (pr.comments ?? []).map(normalizeComment);
+    const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
+    if (!target) throw new Error(`Comment not found: ${commentId}`);
+    if (!isFindingComment(target)) {
+      throw new Error("Only human or reviewer findings can be addressed");
+    }
+    if (target.status !== "open") {
+      throw new Error(`Comment ${target.id} is ${target.status}, not open`);
+    }
+    const now = nowIso();
+    const author = options.author?.trim() || await userName(cwd);
+    target.status = "addressed";
+    pr.comments.push({
+      id: newId("c"),
+      body: text,
+      createdAt: now,
+      author,
+      role: "agent",
+      status: "resolved",
+      replyTo: target.id
+    });
+    pr.updatedAt = now;
+    await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
+    return pr;
+  });
+}
+async function resolveLocalPrComment(cwd, id, commentId, body, options = {}) {
+  const text = body.trim();
+  if (!text) throw new Error("Resolution comment is empty");
+  const needle = commentId.trim();
+  if (!needle) throw new Error("Comment id is empty");
+  const role = options.role === "human" ? "human" : "reviewer";
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+    pr.comments = (pr.comments ?? []).map(normalizeComment);
+    const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
+    if (!target) throw new Error(`Comment not found: ${commentId}`);
+    if (!isFindingComment(target)) {
+      throw new Error("Only human or reviewer findings can be resolved");
+    }
+    if (target.status === "resolved") {
+      throw new Error(`Comment ${target.id} is already resolved`);
+    }
+    if (target.status === "open" && role !== "human") {
+      throw new Error(
+        `Comment ${target.id} is still open. The implementor must address_comment it before the reviewer resolves it.`
+      );
+    }
+    const now = nowIso();
+    const author = options.author?.trim() || await userName(cwd);
+    target.status = "resolved";
+    target.resolvedAt = now;
+    target.resolvedBy = author;
+    pr.comments.push({
+      id: newId("c"),
+      body: text,
+      createdAt: now,
+      author,
+      role,
+      status: "resolved",
+      replyTo: target.id
+    });
+    pr.updatedAt = now;
+    maybePromoteToReviewed(pr);
+    await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
+    return pr;
+  });
+}
+async function completeLocalPrReview(cwd, id, options = {}) {
+  const resolved = await getLocalPr(cwd, id);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, resolved.id);
+  return withFileLock(file, async () => {
+    const pr = parseJsonObject(await (0, import_promises3.readFile)(file, "utf8"));
+    pr.comments = (pr.comments ?? []).map(normalizeComment);
+    const open2 = pendingReviewComments(pr);
+    if (open2.length > 0) {
+      throw new Error(
+        `Open findings remain (${open2.length}). File them as addressed first, or add no new findings and resolve the rest.`
+      );
+    }
+    const now = nowIso();
+    const author = options.author?.trim() || await userName(cwd);
+    for (const comment of pr.comments) {
+      if (isFindingComment(comment) && comment.status === "addressed") {
+        comment.status = "resolved";
+        comment.resolvedAt = now;
+        comment.resolvedBy = author;
+      }
+    }
+    pr.comments.push({
+      id: newId("c"),
+      body: (options.body?.trim() || "Review complete. Ready for human review.").trim(),
+      createdAt: now,
+      author,
+      role: "reviewer",
+      status: "resolved"
+    });
+    pr.status = "reviewed";
+    pr.updatedAt = now;
+    await writePr(cwd, pr);
+    pr.worktreePath = resolved.worktreePath;
+    return pr;
+  });
 }
 async function getLocalPrDiff(cwd, id, options = {}) {
   const pr = await getLocalPr(cwd, id);
@@ -322,6 +708,61 @@ async function getLocalPrNameStatus(cwd, id) {
     return { status, path: rest.join("	") };
   });
 }
+
+// packages/core/src/watch.ts
+var import_promises4 = require("node:fs/promises");
+var import_node_path5 = __toESM(require("node:path"), 1);
+function watchFile(dir) {
+  return import_node_path5.default.join(dir, "watch.json");
+}
+var idle = () => ({
+  halted: false,
+  reason: null,
+  exportId: null,
+  updatedAt: (/* @__PURE__ */ new Date(0)).toISOString()
+});
+async function getRepoWatch(cwd) {
+  const root = await requireGitRoot(cwd);
+  try {
+    const raw = await (0, import_promises4.readFile)(watchFile(await consoleDir(root)), "utf8");
+    const parsed = parseJsonObject(raw);
+    return {
+      halted: parsed.halted === true,
+      reason: parsed.reason === "export" || parsed.reason === "stop" ? parsed.reason : null,
+      exportId: parsed.exportId ?? null,
+      updatedAt: parsed.updatedAt ?? idle().updatedAt
+    };
+  } catch {
+    return idle();
+  }
+}
+async function haltWatch(cwd, reason, exportId = null) {
+  const root = await requireGitRoot(cwd);
+  const state = {
+    halted: true,
+    reason,
+    exportId,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  await writeJsonFile(watchFile(await consoleDir(root)), state);
+  return state;
+}
+async function resumeWatch(cwd) {
+  const root = await requireGitRoot(cwd);
+  const state = {
+    halted: false,
+    reason: null,
+    exportId: null,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  await writeJsonFile(watchFile(await consoleDir(root)), state);
+  return state;
+}
+
+// packages/core/src/github-ops.ts
+var import_node_child_process2 = require("node:child_process");
+var import_promises5 = require("node:fs/promises");
+var import_node_path6 = __toESM(require("node:path"), 1);
 
 // packages/core/src/github.ts
 function parseGhAuthStatus(text) {
@@ -350,9 +791,6 @@ function parseGhAuthStatus(text) {
 }
 
 // packages/core/src/github-ops.ts
-var import_node_child_process2 = require("node:child_process");
-var import_promises3 = require("node:fs/promises");
-var import_node_path4 = __toESM(require("node:path"), 1);
 function gh(args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = (0, import_node_child_process2.spawn)("gh", args, {
@@ -380,10 +818,17 @@ function gh(args, options = {}) {
     });
   });
 }
+function runGh(args, options = {}) {
+  return gh(args, options);
+}
 async function listGhAccounts() {
   const result = await gh(["auth", "status"]);
   return parseGhAuthStatus(`${result.stdout}
 ${result.stderr}`);
+}
+async function activeGhLogin(host = "github.com") {
+  const accounts = await listGhAccounts();
+  return accounts.find((a) => a.host === host && a.active)?.login ?? null;
 }
 async function switchGhUser(login, host = "github.com") {
   const accounts = await listGhAccounts();
@@ -402,14 +847,14 @@ async function switchGhUser(login, host = "github.com") {
   }
 }
 function bindFile(dir) {
-  return import_node_path4.default.join(dir, "github.json");
+  return import_node_path6.default.join(dir, "github.json");
 }
 async function getRepoGithubBind(cwd) {
   const root = await findGitRoot(cwd);
   if (!root) return null;
   try {
-    const raw = await (0, import_promises3.readFile)(bindFile(await consoleDir(root)), "utf8");
-    const parsed = JSON.parse(raw);
+    const raw = await (0, import_promises5.readFile)(bindFile(await consoleDir(root)), "utf8");
+    const parsed = parseJsonObject(raw);
     if (!parsed.login) return null;
     return { host: parsed.host || "github.com", login: parsed.login };
   } catch {
@@ -422,9 +867,88 @@ async function bindRepoGithub(cwd, login, host = "github.com") {
   await switchGhUser(login, host);
   const bind = { host, login };
   const dir = await consoleDir(root);
-  await (0, import_promises3.mkdir)(dir, { recursive: true });
-  await (0, import_promises3.writeFile)(bindFile(dir), JSON.stringify(bind, null, 2), "utf8");
+  await (0, import_promises5.mkdir)(dir, { recursive: true });
+  await writeJsonFile(bindFile(dir), bind);
   return bind;
+}
+async function ensureRepoGithub(cwd) {
+  const bind = await getRepoGithubBind(cwd);
+  if (!bind) {
+    return { login: await activeGhLogin(), switched: false, bound: false };
+  }
+  const before = await activeGhLogin(bind.host);
+  if (before === bind.login) {
+    return { login: bind.login, switched: false, bound: true };
+  }
+  await switchGhUser(bind.login, bind.host);
+  return { login: bind.login, switched: true, bound: true };
+}
+
+// packages/core/src/export.ts
+function ghBase(ref) {
+  return ref.replace(/^origin\//, "").replace(/^refs\/heads\//, "");
+}
+function exportPushRefspec(pr) {
+  return `${pr.headSha}:refs/heads/${pr.headRef}`;
+}
+async function exportLocalPr(cwd, id) {
+  const pr = await getLocalPr(cwd, id);
+  const ghState = await ensureRepoGithub(cwd);
+  if (!ghState.bound && !ghState.login) {
+    throw new Error("No GitHub account. Run: gh auth login, then prgenie gh use <login>");
+  }
+  if (!ghState.bound) {
+    throw new Error(
+      `This repo is not bound to a GitHub login. Ask which account, then prgenie gh use <login> (active is ${ghState.login}).`
+    );
+  }
+  await haltWatch(cwd, "export", pr.id);
+  try {
+    const push = await git(cwd, ["push", "-u", "origin", exportPushRefspec(pr)], {
+      allowFail: true
+    });
+    if (push.code !== 0) {
+      throw new Error(push.stderr.trim() || `git push failed for ${pr.headRef}`);
+    }
+    const existing = await runGh(
+      ["pr", "view", "--head", pr.headRef, "--json", "url", "-q", ".url"],
+      { cwd }
+    );
+    let url;
+    let alreadyExisted = false;
+    if (existing.code === 0 && existing.stdout.trim().startsWith("http")) {
+      url = existing.stdout.trim();
+      alreadyExisted = true;
+    } else {
+      const created = await runGh(
+        [
+          "pr",
+          "create",
+          "--title",
+          pr.title,
+          "--body",
+          pr.body.trim() || pr.title,
+          "--base",
+          ghBase(pr.baseRef),
+          "--head",
+          pr.headRef
+        ],
+        { cwd }
+      );
+      if (created.code !== 0) {
+        throw new Error(created.stderr.trim() || created.stdout.trim() || "gh pr create failed");
+      }
+      url = created.stdout.trim().split("\n").find((line) => /^https?:\/\//.test(line)) ?? created.stdout.trim();
+      if (!url) throw new Error("gh pr create succeeded but returned no URL");
+    }
+    if (pr.status !== "approved") {
+      await setLocalPrStatus(cwd, pr.id, "approved");
+    }
+    return { url, id: pr.id, alreadyExisted };
+  } catch (err) {
+    await resumeWatch(cwd);
+    throw err;
+  }
 }
 
 // packages/cli/src/mcp.ts
@@ -437,6 +961,14 @@ function ok(id, result) {
 }
 function fail(id, code, message) {
   writeMessage({ jsonrpc: "2.0", id, error: { code, message } });
+}
+function withCommentViews(pr) {
+  return {
+    ...pr,
+    pendingComments: pendingReviewComments(pr),
+    addressedComments: addressedReviewComments(pr),
+    threads: commentThreads(pr.comments)
+  };
 }
 async function repoCwd() {
   const cwd = process.cwd();
@@ -461,8 +993,16 @@ async function handleTool(name, args) {
       return bindRepoGithub(cwd, String(args.login ?? ""));
     case "list_worktrees":
       return listWorktrees(cwd);
-    case "list_local_prs":
-      return listLocalPrs(cwd);
+    case "list_local_prs": {
+      const prs = (await listLocalPrs(cwd)).map(withCommentViews);
+      const status = typeof args.status === "string" ? args.status : "";
+      const inbox = args.inbox === true;
+      return prs.filter((pr) => {
+        if (status && pr.status !== status) return false;
+        if (inbox && pr.pendingComments.length === 0) return false;
+        return true;
+      });
+    }
     case "create_local_pr":
       return createLocalPr(cwd, {
         title: typeof args.title === "string" ? args.title : void 0,
@@ -470,17 +1010,71 @@ async function handleTool(name, args) {
         base: typeof args.base === "string" ? args.base : void 0,
         head: typeof args.head === "string" ? args.head : void 0
       });
-    case "get_local_pr":
-      return getLocalPr(cwd, String(args.id ?? ""));
+    case "update_local_pr":
+      return updateLocalPr(cwd, String(args.id ?? ""), {
+        title: typeof args.title === "string" ? args.title : void 0,
+        body: typeof args.body === "string" ? args.body : void 0
+      });
+    case "get_local_pr": {
+      const pr = await getLocalPr(cwd, String(args.id ?? ""));
+      return withCommentViews(pr);
+    }
     case "set_status":
       return setLocalPrStatus(cwd, String(args.id ?? ""), args.status);
-    case "add_comment":
-      return addLocalPrComment(cwd, String(args.id ?? ""), String(args.body ?? ""));
+    case "add_comment": {
+      const role = typeof args.role === "string" ? args.role : void 0;
+      const author = typeof args.author === "string" ? args.author : void 0;
+      return addLocalPrComment(cwd, String(args.id ?? ""), String(args.body ?? ""), {
+        role,
+        author,
+        path: typeof args.path === "string" ? args.path : void 0,
+        line: typeof args.line === "number" ? args.line : void 0,
+        side: args.side === "left" || args.side === "right" ? args.side : void 0,
+        replyTo: typeof args.replyTo === "string" ? args.replyTo : void 0
+      });
+    }
+    case "address_comment":
+      return addressLocalPrComment(
+        cwd,
+        String(args.id ?? ""),
+        String(args.commentId ?? ""),
+        String(args.body ?? ""),
+        { author: typeof args.author === "string" ? args.author : void 0 }
+      );
+    case "resolve_comment":
+      return resolveLocalPrComment(
+        cwd,
+        String(args.id ?? ""),
+        String(args.commentId ?? ""),
+        String(args.body ?? ""),
+        {
+          author: typeof args.author === "string" ? args.author : void 0,
+          role: args.role === "human" ? "human" : "reviewer"
+        }
+      );
+    case "complete_review":
+      return completeLocalPrReview(cwd, String(args.id ?? ""), {
+        author: typeof args.author === "string" ? args.author : void 0,
+        body: typeof args.body === "string" ? args.body : void 0
+      });
     case "get_diff":
       return {
         files: await getLocalPrNameStatus(cwd, String(args.id ?? "")),
         diff: await getLocalPrDiff(cwd, String(args.id ?? ""), { maxBytes: 8e4 })
       };
+    case "watch_status":
+      return getRepoWatch(cwd);
+    case "watch_stop":
+      return haltWatch(cwd, "stop");
+    case "watch_start":
+      return resumeWatch(cwd);
+    case "ensure_worktree": {
+      const pr = await getLocalPr(cwd, String(args.id ?? ""));
+      const dest = await ensureWorktreeForLoop(cwd, pr);
+      return { ...pr, worktreePath: dest };
+    }
+    case "export_local_pr":
+      return exportLocalPr(cwd, String(args.id ?? ""));
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -488,22 +1082,47 @@ async function handleTool(name, args) {
 var tools = [
   {
     name: "list_worktrees",
-    description: "Discover existing git worktrees. Does not create or delete them.",
+    description: "List git worktrees. PR Genie also ensures one worktree per loop.",
     inputSchema: { type: "object", properties: { cwd: { type: "string" } } }
+  },
+  {
+    name: "ensure_worktree",
+    description: "Ensure this loop has a git worktree and return its path. Creates a sibling <repo>.loops/<id> checkout when the branch is not already checked out.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } }
+    }
   },
   {
     name: "list_local_prs",
-    description: "List unpublished local pull requests in this repository.",
-    inputSchema: { type: "object", properties: { cwd: { type: "string" } } }
+    description: "List unpublished local pull requests. status=ready is the reviewer queue. status=reviewed is waiting on the human. inbox=true is loops with open pendingComments for the implementor.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: { type: "string" },
+        status: {
+          type: "string",
+          enum: ["draft", "ready", "changes_requested", "reviewed", "approved"]
+        },
+        inbox: {
+          type: "boolean",
+          description: "Only loops with pending human/reviewer comments."
+        }
+      }
+    }
   },
   {
     name: "create_local_pr",
-    description: "Create a local PR (unpublished review packet) from the current branch or a named head. Do not git push or gh pr create.",
+    description: "Create a local PR (unpublished review loop) from the current branch or a named head. Always set body to a reviewer summary (why, what changed, how to test). Do not git push or gh pr create.",
     inputSchema: {
       type: "object",
       properties: {
         title: { type: "string" },
-        body: { type: "string" },
+        body: {
+          type: "string",
+          description: "Loop summary for reviewers: why, what changed, how to test."
+        },
         base: { type: "string" },
         head: { type: "string" },
         cwd: { type: "string" }
@@ -511,8 +1130,22 @@ var tools = [
     }
   },
   {
+    name: "update_local_pr",
+    description: "Update a local PR title and/or body (the reviewer summary). Use this to fill or refresh the summary before set_status ready.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        title: { type: "string" },
+        body: { type: "string" },
+        cwd: { type: "string" }
+      }
+    }
+  },
+  {
     name: "get_local_pr",
-    description: "Show one local PR by id (prefix allowed).",
+    description: "Show one local PR by id (prefix allowed). body is the author summary for reviewers. pendingComments are open findings for the implementor. addressedComments are waiting for the reviewer to resolve. threads nest agent replies under those findings.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -521,26 +1154,77 @@ var tools = [
   },
   {
     name: "set_status",
-    description: "Set local PR status: draft, ready, approved, changes_requested.",
+    description: "Set local PR status: draft, ready, changes_requested, reviewed, approved. reviewed means the automated reviewer signed off and the human should look.",
     inputSchema: {
       type: "object",
       required: ["id", "status"],
       properties: {
         id: { type: "string" },
-        status: { type: "string", enum: ["draft", "ready", "approved", "changes_requested"] },
+        status: { type: "string", enum: ["draft", "ready", "changes_requested", "reviewed", "approved"] },
         cwd: { type: "string" }
       }
     }
   },
   {
     name: "add_comment",
-    description: "Add a local review comment. Moves ready/approved packets back to changes_requested.",
+    description: "Add a local review comment. role=human or role=reviewer is an open finding (status=open) and sets the loop to changes_requested. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "body"],
       properties: {
         id: { type: "string" },
         body: { type: "string" },
+        role: { type: "string", enum: ["human", "agent", "reviewer"] },
+        author: { type: "string" },
+        path: { type: "string" },
+        line: { type: "number" },
+        side: { type: "string", enum: ["left", "right"] },
+        replyTo: { type: "string", description: "Nest this comment under an existing comment id." },
+        cwd: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "address_comment",
+    description: "Implementor: mark an open finding addressed and attach a reply under it. Does not set ready. After the inbox is empty, set_status ready and add_comment role=agent Review requested. The reviewer resolves addressed comments. Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id", "commentId", "body"],
+      properties: {
+        id: { type: "string" },
+        commentId: { type: "string" },
+        body: { type: "string" },
+        author: { type: "string" },
+        cwd: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "resolve_comment",
+    description: "Reviewer or human: mark an addressed finding resolved and attach a reply under it. If nothing open or addressed remains, the loop becomes reviewed (ready for human review). Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id", "commentId", "body"],
+      properties: {
+        id: { type: "string" },
+        commentId: { type: "string" },
+        body: { type: "string" },
+        author: { type: "string" },
+        role: { type: "string", enum: ["reviewer", "human"] },
+        cwd: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "complete_review",
+    description: "Reviewer: no new findings. Resolves remaining addressed comments and sets the loop to reviewed so the human can review. Fails if open findings remain. Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        body: { type: "string" },
+        author: { type: "string" },
         cwd: { type: "string" }
       }
     }
@@ -548,6 +1232,30 @@ var tools = [
   {
     name: "get_diff",
     description: "Return name-status and diff for a local PR.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } }
+    }
+  },
+  {
+    name: "watch_status",
+    description: "Show whether the developer halted the review listen loops (stop or export).",
+    inputSchema: { type: "object", properties: { cwd: { type: "string" } } }
+  },
+  {
+    name: "watch_stop",
+    description: "Developer command: halt reviewer and implementor listen loops. Does not push or open GitHub.",
+    inputSchema: { type: "object", properties: { cwd: { type: "string" } } }
+  },
+  {
+    name: "watch_start",
+    description: "Resume listen loops after watch_stop.",
+    inputSchema: { type: "object", properties: { cwd: { type: "string" } } }
+  },
+  {
+    name: "export_local_pr",
+    description: "Developer command: halt listen loops, approve the loop, git push, and open a GitHub PR at origin. Only when the developer explicitly asks to export.",
     inputSchema: {
       type: "object",
       required: ["id"],
