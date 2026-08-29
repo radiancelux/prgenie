@@ -20,7 +20,7 @@ Arm a recurring wake using the **loop** skill (`/loop 1m /review-queue`):
 - Local IDE: monitored shell tick every 1 minute with prompt `/review-queue`.
 - Cloud: subscription timer, same prompt.
 - Do not start a duplicate loop if one is already running for this purpose.
-- Each tick: MCP `watch_status` if listed, otherwise `prgenie watch`. If halted (`stop` or `export`), kill the loop immediately. Otherwise only dispatch loops you have not already Tasked for that `headSha`. Do not await those Tasks. Do not `complete_review` in this chat. If a Task later returns here, ignore its status text — `prgenie show` is the handoff.
+- Each tick: MCP `watch_status` if listed, otherwise `prgenie watch`. If `halted reason=stop`, kill the loop immediately. If `halted reason=export`, the last packet shipped — stop this listen pass. A new implementor loop (`create_local_pr`) resumes watch; re-arm if you killed the shell. Otherwise only dispatch loops you have not already Tasked for that `headSha`. Do not await those Tasks. Do not `complete_review` in this chat. If a Task later returns here, ignore its status text — `prgenie show` is the handoff.
 
 Developer commands in this chat:
 

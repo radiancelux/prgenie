@@ -27,6 +27,7 @@ import type {
   LocalPrStatus,
 } from "./types.js";
 import { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
+import { getRepoWatch, resumeWatch } from "./watch.js";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -133,6 +134,21 @@ export async function getLocalPr(cwd: string, id: string): Promise<LocalPr> {
   return pr;
 }
 
+/** Export halt lasts until the next loop. `/stop-watch` never auto-resumes. */
+export async function resumeWatchForNextLoop(cwd: string): Promise<void> {
+  const watch = await getRepoWatch(cwd);
+  if (!watch.halted || watch.reason !== "export") return;
+  if (watch.exportId) {
+    try {
+      const exported = await getLocalPr(cwd, watch.exportId);
+      if (!isArchivedPr(exported)) return;
+    } catch {
+      // Exported packet is gone — treat the ship as finished.
+    }
+  }
+  await resumeWatch(cwd);
+}
+
 export async function createLocalPr(
   cwd: string,
   input: CreateLocalPrInput = {},
@@ -181,6 +197,7 @@ export async function createLocalPr(
     staleLoopIds: others.filter((other) => other.id !== pr.id && isArchivedPr(other)).map((other) => other.id),
     liveLoopIds: others.filter((other) => !isArchivedPr(other)).map((other) => other.id),
   });
+  await resumeWatchForNextLoop(root);
   return pr;
 }
 

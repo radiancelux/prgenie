@@ -375,7 +375,7 @@ const tools = [
   },
   {
     name: "watch_start",
-    description: "Resume listen loops after watch_stop.",
+    description: "Resume listen loops after watch_stop. Creating a new loop also resumes after an export halt.",
     inputSchema: { type: "object", properties: { cwd: { type: "string" } } },
   },
   {

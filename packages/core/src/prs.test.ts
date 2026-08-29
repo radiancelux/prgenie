@@ -32,6 +32,9 @@ import {
   shouldSpawnReviewer,
   markReviewRequested,
   updateLocalPr,
+  haltWatch,
+  getRepoWatch,
+  resumeWatch,
 } from "./index.js";
 
 let repo = "";
@@ -548,5 +551,38 @@ test("complete_review does not un-archive an approved loop", async () => {
   const after = await completeLocalPrReview(repo, pr.id);
   assert.equal(after.status, "approved");
   assert.equal(isArchivedPr(after), true);
+});
+
+test("creating a loop resumes watch after an archived export halt", async () => {
+  git(["checkout", "main"]);
+  const shipped = await createLocalPr(repo, { title: "Already shipped", base: "main" });
+  await setLocalPrStatus(repo, shipped.id, "approved");
+  await haltWatch(repo, "export", shipped.id);
+  assert.equal((await getRepoWatch(repo)).halted, true);
+  const next = await createLocalPr(repo, { title: "Next after export", base: "main" });
+  assert.equal((await getRepoWatch(repo)).halted, false);
+  assert.equal((await getRepoWatch(repo)).reason, null);
+  assert.ok(next.id);
+});
+
+test("creating a loop does not resume a stop halt", async () => {
+  git(["checkout", "main"]);
+  await haltWatch(repo, "stop");
+  await createLocalPr(repo, { title: "After stop", base: "main" });
+  const watch = await getRepoWatch(repo);
+  assert.equal(watch.halted, true);
+  assert.equal(watch.reason, "stop");
+  await resumeWatch(repo);
+});
+
+test("creating a loop does not resume export halt while that id is still live", async () => {
+  git(["checkout", "main"]);
+  const live = await createLocalPr(repo, { title: "Export in flight", base: "main" });
+  await haltWatch(repo, "export", live.id);
+  await createLocalPr(repo, { title: "Sibling during export", base: "main" });
+  const watch = await getRepoWatch(repo);
+  assert.equal(watch.halted, true);
+  assert.equal(watch.reason, "export");
+  await resumeWatch(repo);
 });
 
