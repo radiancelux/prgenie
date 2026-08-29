@@ -7,9 +7,13 @@ PR Genie owns unpublished review. GitHub is an explicit later step.
 
 Never run `git push`, `gh pr create`, or `gh pr merge` unless the developer clearly asks to export — `/export-local-pr`, MCP `export_local_pr`, or `prgenie export`. That command also **halts** listen loops.
 
-`/stop-watch` (MCP `watch_stop`) only stops the reviewer and implementor listen loops. It does not push.
+Slash workflows live in `packages/plugin/skills/*/SKILL.md` only. Do not add a matching `commands/*.md` — Cursor lists both, so the user sees two `/start-loop` entries.
 
-Each `/review-queue` and `/review-inbox` tick must check halt first: MCP `watch_status` if that tool is in this chat's listing, otherwise `node packages/cli/dist/prgenie.cjs watch`. Cursor's plugin MCP is often stale and omits `watch_status` — do not stall looking for it. `halted reason=stop` → kill the loop and do not review or implement. `halted reason=export` → that packet shipped or export is in flight; do not keep working it. Do not `prgenie watch start` unless the export id is missing or archived. Creating the next loop (`create_local_pr`) resumes only then. Do not `prgenie watch start` after `/stop-watch`.
+`/stop-watch` halts **both** listen loops. `/stop-loop` is `prgenie watch stop inbox` (implementor only). `/stop-review` is `prgenie watch stop queue` (reviewer only). None of them push.
+
+Each `/review-queue` tick checks **`prgenie watch queue`**. Each `/review-inbox` tick checks **`prgenie watch inbox`**. MCP `watch_status` if listed (read that role's lane, not the combined `halted` flag). Cursor's plugin MCP is often stale and omits `watch_status` — do not stall looking for it. Inbox `halted reason=stop` → kill the implementor listen only. Queue `halted reason=stop` → kill the reviewer listen only. `halted reason=export` (that lane) → that packet shipped or export is in flight; do not keep working it. Ticks must **not** `prgenie watch start` (no role or any role). `/watch-review-inbox` may `prgenie watch start inbox` only. `/watch-ready-prs` may `prgenie watch start queue` only. Never a two-sided `watch start` after `/stop-loop` / `/stop-review` / `/stop-watch`. `create_local_pr` resumes export-halted lanes after that id is archived or missing; it does not clear a stop halt.
+
+Listen loops (`/loop 1m`) **cap at 60 ticks** (~1 hour). Then the matching one-sided stop (`/stop-loop` or `/stop-review`) — never `/stop-watch` from a cap, or one chat's hour limit would halt the other. Tell the developer to re-run `/watch-review-inbox` or `/watch-ready-prs`. Do not arm `while ($true)` forever.
 
 This repo may be bound to a GitHub login. If unbound and the user needs GitHub, ask which `gh` account to use, then `prgenie gh use <login>` or MCP `gh_use`. Do not guess. Do not `gh auth switch` to a different account than the bind.
 

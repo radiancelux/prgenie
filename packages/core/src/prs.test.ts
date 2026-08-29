@@ -33,6 +33,7 @@ import {
   markReviewRequested,
   updateLocalPr,
   haltWatch,
+  haltWatchRole,
   getRepoWatch,
   resumeWatch,
 } from "./index.js";
@@ -581,6 +582,30 @@ test("creating a loop does not resume a stop halt", async () => {
   const watch = await getRepoWatch(repo);
   assert.equal(watch.halted, true);
   assert.equal(watch.reason, "stop");
+  await resumeWatch(repo);
+});
+
+test("creating a loop does not resume an inbox-only stop halt", async () => {
+  git(["checkout", "main"]);
+  await haltWatchRole(repo, "inbox", "stop");
+  await createLocalPr(repo, { title: "After inbox stop", base: "main" });
+  const watch = await getRepoWatch(repo);
+  assert.equal(watch.inbox.halted, true);
+  assert.equal(watch.queue.halted, false);
+  await resumeWatch(repo);
+});
+
+test("creating a loop resumes export lanes even if the other lane is stop-halted", async () => {
+  git(["checkout", "main"]);
+  const shipped = await createLocalPr(repo, { title: "Shipped then cap", base: "main" });
+  await setLocalPrStatus(repo, shipped.id, "approved");
+  await haltWatch(repo, "export", shipped.id);
+  await haltWatchRole(repo, "inbox", "stop");
+  await createLocalPr(repo, { title: "Next after mixed halt", base: "main" });
+  const watch = await getRepoWatch(repo);
+  assert.equal(watch.inbox.halted, true);
+  assert.equal(watch.inbox.reason, "stop");
+  assert.equal(watch.queue.halted, false);
   await resumeWatch(repo);
 });
 

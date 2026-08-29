@@ -42,7 +42,8 @@ type ClientMessage =
   | { type: "address"; id: string; commentId: string }
   | { type: "resolve"; id: string; commentId: string }
   | { type: "openDiffs" }
-  | { type: "export"; id: string };
+  | { type: "export"; id: string }
+  | { type: "showArchived"; value: boolean };
 
 type Snapshot = {
   type: "snapshot";
@@ -56,6 +57,7 @@ type Snapshot = {
   watching: boolean;
   hereId: string | null;
   archivedCount?: number;
+  showArchived?: boolean;
 };
 
 export class LaneHub implements vscode.Disposable {
@@ -70,8 +72,10 @@ export class LaneHub implements vscode.Disposable {
   private lastPosted = "";
   private reopeningMain = false;
   private lastGithubArchive = 0;
+  private showArchived = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
+    this.showArchived = this.context.workspaceState.get("prgenie.showArchived", false);
     this.poller = setInterval(() => void this.pushSnapshot(), 2000);
   }
 
@@ -195,8 +199,26 @@ export class LaneHub implements vscode.Disposable {
     }
   }
 
+  private async rejectIfArchived(cwd: string, id: string): Promise<boolean> {
+    const prs = await listLocalPrs(cwd);
+    const pr = prs.find((p) => p.id === id);
+    if (pr && isArchivedPr(pr)) {
+      void vscode.window.showInformationMessage(
+        "This loop is archived. The record is read-only.",
+      );
+      return true;
+    }
+    return false;
+  }
+
   private async onMessage(msg: ClientMessage): Promise<void> {
     if (msg.type === "ready" || msg.type === "refresh") {
+      await this.pushSnapshot(true);
+      return;
+    }
+    if (msg.type === "showArchived") {
+      this.showArchived = msg.value;
+      await this.context.workspaceState.update("prgenie.showArchived", msg.value);
       await this.pushSnapshot(true);
       return;
     }
@@ -251,9 +273,11 @@ export class LaneHub implements vscode.Disposable {
         await this.pushSnapshot();
         await vscode.commands.executeCommand("prgenie.panel.focus");
       } else if (msg.type === "status") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
         await setLocalPrStatus(cwd, msg.id, msg.status);
         await this.pushSnapshot();
       } else if (msg.type === "export") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
         const prs = await listLocalPrs(cwd);
         const pr = prs.find((p) => p.id === msg.id);
         const title = pr?.title ?? msg.id;
@@ -271,9 +295,11 @@ export class LaneHub implements vscode.Disposable {
         );
         if (open === "Open") await vscode.env.openExternal(vscode.Uri.parse(result.url));
       } else if (msg.type === "comment") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
         await addLocalPrComment(cwd, msg.id, msg.body, { role: "human" });
         await this.pushSnapshot();
       } else if (msg.type === "address") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
         const note = await vscode.window.showInputBox({
           title: "Address comment",
           prompt: "How did you address this? This reply sits under the reviewer comment.",
@@ -282,6 +308,7 @@ export class LaneHub implements vscode.Disposable {
         await addressLocalPrComment(cwd, msg.id, msg.commentId, note);
         await this.pushSnapshot();
       } else if (msg.type === "resolve") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
         const note = await vscode.window.showInputBox({
           title: "Resolve comment",
           prompt: "Confirm this is fixed. This marks the thread resolved for human review.",
@@ -290,9 +317,11 @@ export class LaneHub implements vscode.Disposable {
         await resolveLocalPrComment(cwd, msg.id, msg.commentId, note, { role: "human" });
         await this.pushSnapshot();
       } else if (msg.type === "summary") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
         await updateLocalPr(cwd, msg.id, { body: msg.body });
         await this.pushSnapshot();
       } else if (msg.type === "copyReviewPrompt") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
         const prompt = [
           `Review local PR ${msg.id} with PR Genie.`,
           "Call get_diff. Post all findings with add_comment role=reviewer (status stays ready).",
@@ -307,6 +336,12 @@ export class LaneHub implements vscode.Disposable {
         const prs = await listLocalPrs(cwd);
         const pr = prs.find((p) => p.id === msg.id);
         if (!pr) return;
+        if (isArchivedPr(pr)) {
+          void vscode.window.showInformationMessage(
+            "This loop is archived. The worktree was removed after export. Use the panel to read the record.",
+          );
+          return;
+        }
         const dest = await ensureWorktreeForLoop(cwd, pr, {
           staleLoopIds: prs.filter((p) => p.id !== pr.id && isArchivedPr(p)).map((p) => p.id),
           liveLoopIds: prs.filter((p) => !isArchivedPr(p)).map((p) => p.id),
@@ -394,18 +429,25 @@ export class LaneHub implements vscode.Disposable {
         }
       }
       const archivedCount = all.filter(isArchivedPr).length;
-      const prs = all.filter((p) => !isArchivedPr(p));
-      const ids = prs.map((p) => p.id);
+      const live = all.filter((p) => !isArchivedPr(p));
+      const archived = all.filter(isArchivedPr);
+      const prs = this.showArchived ? [...live, ...archived] : live;
+      const ids = live.map((p) => p.id);
       const freshIds = this.primed ? ids.filter((id) => !this.knownIds.has(id)) : [];
       this.primed = true;
       for (const id of ids) this.knownIds.add(id);
       if (freshIds.length && !this.userPinned) this.selectedId = freshIds[0];
       if (this.selectedId && !prs.some((p) => p.id === this.selectedId)) {
-        this.selectedId = prs[0]?.id;
+        this.selectedId = live[0]?.id ?? (this.showArchived ? archived[0]?.id : undefined);
       }
-      if (!this.selectedId) this.selectedId = prs[0]?.id;
+      if (!this.selectedId) this.selectedId = live[0]?.id ?? (this.showArchived ? archived[0]?.id : undefined);
       const selected = prs.find((p) => p.id === this.selectedId);
-      const files = selected ? await getLocalPrNameStatus(root, selected.id) : [];
+      let files: { status: string; path: string }[] = [];
+      try {
+        files = selected ? await getLocalPrNameStatus(root, selected.id) : [];
+      } catch {
+        files = [];
+      }
       const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
       const hereId =
         prs.find((p) => p.worktreePath && sameFsPath(p.worktreePath, folder))?.id ?? null;
@@ -420,6 +462,7 @@ export class LaneHub implements vscode.Disposable {
         watching: true,
         hereId,
         archivedCount,
+        showArchived: this.showArchived,
       }, force);
       await this.watchStore();
     } catch (err) {
@@ -440,6 +483,7 @@ function snapshotKey(
     selectedId: "selectedId" in payload ? payload.selectedId : null,
     hereId: "hereId" in payload ? payload.hereId : null,
     archivedCount: "archivedCount" in payload ? payload.archivedCount : 0,
+    showArchived: "showArchived" in payload ? payload.showArchived : false,
     repo: "repo" in payload ? payload.repo : "",
     files: "files" in payload ? payload.files : [],
     threads: "threads" in payload ? payload.threads : [],
@@ -515,16 +559,21 @@ function laneHtml(webview: vscode.Webview): string {
     }
     .pr.here { border-left-color: var(--vscode-charts-green, #3fb950); }
     .pr.fresh { box-shadow: inset 2px 0 0 var(--vscode-focusBorder); }
+    .pr.archived { opacity: 0.72; }
     .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .empty { padding: 12px; }
+    .meta button { margin-left: auto; font-size: 11px; }
+    .meta button.on { outline: 1px solid var(--vscode-focusBorder); }
   </style>
 </head>
 <body>
-  <div class="meta"><span class="dot"></span><span class="muted" id="meta">Watching</span></div>
+  <div class="meta"><span class="dot"></span><span class="muted" id="meta">Watching</span><button type="button" class="secondary" id="archivedToggle">Show archived</button></div>
   <div id="list"></div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const list = document.getElementById("list");
+    const toggle = document.getElementById("archivedToggle");
+    toggle.onclick = () => vscode.postMessage({ type: "showArchived", value: !toggle.classList.contains("on") });
     function prRow(id) {
       const el = document.createElement("div");
       el.dataset.id = id;
@@ -542,6 +591,7 @@ function laneHtml(webview: vscode.Webview): string {
       const meta = document.getElementById("meta");
       if (msg.error) {
         meta.textContent = "Watching";
+        toggle.hidden = true;
         list.innerHTML = '<p class="error"></p>';
         list.firstChild.textContent = msg.error;
         return;
@@ -549,11 +599,14 @@ function laneHtml(webview: vscode.Webview): string {
       const prs = msg.prs || [];
       const fresh = new Set(msg.freshIds || []);
       const archived = msg.archivedCount || 0;
+      toggle.classList.toggle("on", !!msg.showArchived);
+      toggle.textContent = msg.showArchived ? "Hide archived" : "Show archived";
+      toggle.hidden = !(archived || msg.showArchived);
       meta.textContent = (msg.repo ? msg.repo + " · " : "") + prs.length + " loop" + (prs.length === 1 ? "" : "s")
         + (archived ? " · " + archived + " archived" : "");
       if (!prs.length) {
         const emptyText = archived
-          ? "No active loops. " + archived + " archived after export."
+          ? "No active loops. " + archived + " archived after export. Show archived to view them."
           : "Waiting for agents. Loops land here when work is committed.";
         if (list.dataset.empty !== emptyText) {
           list.innerHTML = '<p class="muted empty"></p>';
@@ -577,20 +630,23 @@ function laneHtml(webview: vscode.Webview): string {
           list.appendChild(el);
         }
         const here = pr.id === msg.hereId;
-        el.className = "pr" + (pr.id === msg.selectedId ? " active" : "") + (fresh.has(pr.id) ? " fresh" : "") + (here ? " here" : "");
+        const archivedPr = pr.status === "approved";
+        el.className = "pr" + (pr.id === msg.selectedId ? " active" : "") + (fresh.has(pr.id) ? " fresh" : "") + (here ? " here" : "") + (archivedPr ? " archived" : "");
         const src = pr.source && pr.source.kind === "subagent"
           ? (pr.source.subagentType || "subagent")
           : (pr.source && pr.source.kind) || "local";
         const info = el.querySelector(".info");
-        info.children[0].textContent = pr.status === "reviewed"
-          ? "reviewed — your turn"
-          : pr.status.replace("_", " ");
+        info.children[0].textContent = archivedPr
+          ? "archived"
+          : pr.status === "reviewed"
+            ? "reviewed — your turn"
+            : pr.status.replace("_", " ");
         info.children[1].textContent = pr.title;
         info.children[1].title = pr.title;
         info.children[2].textContent = src + " · " + pr.headRef + " → " + pr.baseRef;
         const go = el.querySelector(".go");
-        go.textContent = here ? "Here" : "Switch";
-        go.disabled = here;
+        go.textContent = archivedPr ? "Archived" : here ? "Here" : "Switch";
+        go.disabled = archivedPr || here;
       }
       for (const [id, el] of nodes) if (!used.has(id)) el.remove();
       for (let i = 0; i < prs.length; i++) {
@@ -793,26 +849,42 @@ function panelHtml(webview: vscode.Webview): string {
         selected.id + " · " + selected.headRef + " → " + selected.baseRef + " · " + short(selected.headSha) + " " + (when ? "· " + when : "");
       const filesH2 = root.querySelector(".files h2");
       if (filesH2) filesH2.textContent = "Changes (" + (selected.worktreePath ? "worktree" : "head") + ")";
-      root.querySelector("#openWt").textContent = selected.id === msg.hereId ? "This window" : "Switch to this loop";
-      root.querySelector("#openWt").disabled = selected.id === msg.hereId;
+      root.querySelector("#openWt").textContent = selected.status === "approved"
+        ? "Archived"
+        : selected.id === msg.hereId ? "This window" : "Switch to this loop";
+      root.querySelector("#openWt").disabled = selected.status === "approved" || selected.id === msg.hereId;
+      root.querySelector("#copyReview").disabled = selected.status === "approved";
       const exp = root.querySelector("#exportPr");
       if (exp) {
-        const canExport = selected.status === "reviewed" || selected.status === "ready";
+        const archived = selected.status === "approved";
+        const canExport = !archived && (selected.status === "reviewed" || selected.status === "ready");
         exp.disabled = !canExport;
-        exp.textContent = selected.status === "reviewed" ? "Export to GitHub" : "Export";
+        exp.textContent = archived ? "Archived" : selected.status === "reviewed" ? "Export to GitHub" : "Export";
+      }
+      for (const btn of root.querySelectorAll("button[data-s]")) {
+        btn.disabled = selected.status === "approved";
       }
       const hint = root.querySelector("#hint");
       if (hint) {
-        hint.textContent = selected.status === "reviewed"
-          ? "Agent review is done. Export opens the GitHub PR at origin. Archive keeps it local only."
-          : selected.status === "ready"
-            ? "Waiting on the reviewer, or Export now if you have looked at the diff."
-            : "Open findings go to the implementor. Address nests a reply underneath. When status is reviewed, Export publishes the GitHub PR.";
+        hint.textContent = selected.status === "approved"
+          ? "Archived after export. The record is read-only."
+          : selected.status === "reviewed"
+            ? "Agent review is done. Export opens the GitHub PR at origin. Archive keeps it local only."
+            : selected.status === "ready"
+              ? "Waiting on the reviewer, or Export now if you have looked at the diff."
+              : "Open findings go to the implementor. Address nests a reply underneath. When status is reviewed, Export publishes the GitHub PR.";
       }
       const sum = root.querySelector("#sum");
       const next = selected.body || "";
-      if (sum && document.activeElement !== sum && sum.value === serverSum) setTextarea(sum, next);
+      if (sum) {
+        sum.readOnly = selected.status === "approved";
+        if (document.activeElement !== sum && sum.value === serverSum) setTextarea(sum, next);
+      }
       serverSum = next;
+      const save = root.querySelector("#saveSum");
+      if (save) save.hidden = selected.status === "approved";
+      const composer = root.querySelector(".composer");
+      if (composer) composer.hidden = selected.status === "approved";
     }
     function setList(el, html, paintedKey) {
       if (!el) return false;
@@ -841,7 +913,10 @@ function panelHtml(webview: vscode.Webview): string {
         layoutId = null;
         paintedFiles = "";
         paintedComments = "";
-        root.innerHTML = '<p class="muted empty">Select a loop in Local PRs. File diffs open in the editor like Source Control, for that loop\\'s worktree.</p>';
+        const n = msg.archivedCount || 0;
+        root.innerHTML = n
+          ? '<p class="muted empty">Select a loop in Local PRs. Show archived to view exported loops.</p>'
+          : '<p class="muted empty">Select a loop in Local PRs. File diffs open in the editor like Source Control, for that loop\\'s worktree.</p>';
         return;
       }
       const reuse = layoutId === selected.id && root.querySelector("#sum") && root.querySelector("#cmt") && root.querySelector("#clist") && root.querySelector("#flist");
@@ -852,17 +927,20 @@ function panelHtml(webview: vscode.Webview): string {
         const st = stLabel(f.status);
         return '<div class="file" data-path="' + esc(f.path) + '" data-status="' + esc(f.status) + '"><span class="st ' + st.c + '">' + esc(st.t) + '</span><span>' + esc(fileLabel(f.path)) + "</span></div>";
       }).join("") || '<p class="muted empty">No files changed</p>';
+      const archivedView = selected.status === "approved";
       const commentHtml = threads.map((t) => {
         const c = t.root;
         const st = c.status || (c.resolvedAt ? "resolved" : "open");
         const loc = c.path
           ? '<button type="button" class="loc secondary" data-path="' + esc(c.path) + '" data-line="' + (c.line || "") + '">' + esc(c.path) + (c.line ? ":" + c.line : "") + "</button>"
           : "";
-        const action = st === "open" && (c.role === "human" || c.role === "reviewer")
-          ? '<button type="button" class="address secondary" data-cid="' + esc(c.id) + '">Addressed</button>'
-          : st === "addressed"
-            ? '<button type="button" class="resolve secondary" data-cid="' + esc(c.id) + '">Resolve</button>'
-            : "";
+        const action = archivedView
+          ? ""
+          : st === "open" && (c.role === "human" || c.role === "reviewer")
+            ? '<button type="button" class="address secondary" data-cid="' + esc(c.id) + '">Addressed</button>'
+            : st === "addressed"
+              ? '<button type="button" class="resolve secondary" data-cid="' + esc(c.id) + '">Resolve</button>'
+              : "";
         const replies = (t.replies || []).map((r) =>
           '<div class="reply"><div class="who muted"><span class="role">' + esc(roleLabel(r.role)) + "</span>" + esc(r.author || "agent") + " · " + esc(new Date(r.createdAt).toLocaleString()) + '</div><div class="body">' + esc(r.body) + "</div></div>"
         ).join("");
