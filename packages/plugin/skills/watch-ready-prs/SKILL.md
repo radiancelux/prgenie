@@ -7,4 +7,4 @@ description: Reviewer listen loop for PR Genie. Use when the user runs /watch-re
 
 Reviewer orchestrator. Do not implement. Do not await leaf Tasks.
 
-Start `/watch-ready-prs`: one `/review-queue` now, then `/loop 1m /review-queue`. One Task subagent per new `ready` loop; more in parallel if the queue grows. Keep listening.
+Start `/watch-ready-prs`: one `/review-queue` now, then `/loop 1m /review-queue`. One Task subagent per new `ready` loop; more in parallel if the queue grows. Keep listening. Packet status is the handoff — do not set it from a Task return.
