@@ -49,6 +49,7 @@ export {
   listCorruptLocalPrFiles,
   listLocalPrs,
   markReviewRequested,
+  markReviewerNotified,
   normalizeComment,
   pendingReviewComments,
   refreshLocalPrHead,

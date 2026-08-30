@@ -34,6 +34,7 @@ import {
   setLocalPrStatus,
   shouldSpawnReviewer,
   markReviewRequested,
+  markReviewerNotified,
   updateLocalPr,
   haltWatch,
   haltWatchRole,
@@ -339,13 +340,14 @@ test("captureAgentWork creates then updates a loop for the same branch", async (
 
 test("reviewer Task is requested once per loop HEAD", async () => {
   const pr = await createLocalPr(repo, { title: "Spawn", base: "main" });
-  // set_status ready arms reviewRequestedSha (drift baseline for queue + hook paths)
   const ready = await setLocalPrStatus(repo, pr.id, "ready");
+  // Drift baseline is armed; spawn notify is still pending for this HEAD.
   assert.equal(ready.reviewRequestedSha, ready.headSha);
-  assert.equal(shouldSpawnReviewer(ready), false);
-  const marked = await markReviewRequested(repo, pr.id);
-  assert.equal(shouldSpawnReviewer(marked), false);
-  assert.equal(marked.reviewRequestedSha, marked.headSha);
+  assert.equal(ready.reviewerNotifiedSha, null);
+  assert.equal(shouldSpawnReviewer(ready), true);
+  const notified = await markReviewerNotified(repo, pr.id);
+  assert.equal(shouldSpawnReviewer(notified), false);
+  assert.equal(notified.reviewerNotifiedSha, notified.headSha);
 });
 
 test("a loop whose branch is not checked out gets a sibling worktree", async () => {

@@ -574,6 +574,7 @@ async function readPrFile(file) {
   const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
   pr.source = pr.source ?? null;
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
+  pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
   pr.comments = (pr.comments ?? []).map(normalizeComment);
   return pr;
 }
@@ -617,6 +618,7 @@ async function listLocalPrs(cwd) {
     }
     pr.source = pr.source ?? null;
     pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
+    pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
   }
@@ -682,7 +684,8 @@ async function createLocalPr(cwd, input = {}) {
     source: input.source ?? { kind: "cli" },
     createdAt,
     updatedAt: createdAt,
-    reviewRequestedSha: null
+    reviewRequestedSha: null,
+    reviewerNotifiedSha: null
   };
   await writePr(root, pr);
   const others = await listLocalPrs(root);
@@ -739,6 +742,7 @@ async function captureAgentWork(cwd, input = {}) {
       if (pr2.status === "reviewed" && pr2.headSha !== prevSha) {
         pr2.status = "ready";
         pr2.reviewRequestedSha = pr2.headSha;
+        pr2.reviewerNotifiedSha = null;
       }
     });
     updated.worktreePath = await ensureWorktreeForLoop(cwd, updated, {

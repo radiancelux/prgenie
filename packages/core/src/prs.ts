@@ -65,6 +65,7 @@ async function readPrFile(file: string): Promise<LocalPr> {
   const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
   pr.source = pr.source ?? null;
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
+  pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
   pr.comments = (pr.comments ?? []).map(normalizeComment);
   return pr;
 }
@@ -134,6 +135,7 @@ export async function listLocalPrs(cwd: string): Promise<LocalPr[]> {
     }
     pr.source = pr.source ?? null;
     pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
+    pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
   }
@@ -211,6 +213,7 @@ export async function createLocalPr(
     createdAt,
     updatedAt: createdAt,
     reviewRequestedSha: null,
+    reviewerNotifiedSha: null,
   };
   await writePr(root, pr);
   const others = await listLocalPrs(root);
@@ -342,6 +345,8 @@ function maybePromoteToReviewed(pr: LocalPr): void {
 async function armReviewRequest(cwd: string, pr: LocalPr): Promise<void> {
   await applyHeadRefresh(cwd, pr);
   pr.reviewRequestedSha = pr.headSha;
+  // New ready cycle — allow one implementor-chat spawn reminder for this HEAD.
+  pr.reviewerNotifiedSha = null;
 }
 
 async function maybeHandoffToReviewer(
@@ -394,7 +399,7 @@ export function formatReviewInbox(pr: LocalPr): string | null {
 }
 
 export function shouldSpawnReviewer(pr: LocalPr): boolean {
-  return pr.status === "ready" && (pr.reviewRequestedSha ?? null) !== pr.headSha;
+  return pr.status === "ready" && (pr.reviewerNotifiedSha ?? null) !== pr.headSha;
 }
 
 export function formatSpawnReviewer(pr: LocalPr): string {
@@ -402,13 +407,23 @@ export function formatSpawnReviewer(pr: LocalPr): string {
     `PR Genie: local PR ${pr.id} ("${pr.title}") on ${pr.headRef} is ready.`,
     "That is the review request. add_comment role=agent \"Review requested.\" if you have not already. Do not git push.",
     "You are the implementor. Do not review this loop yourself. The reviewer chat should list_local_prs (status=ready) and Task a generalPurpose subagent per loop. Do not await those Tasks in the listen loop.",
-    "If you are covering review in this conversation because no reviewer chat exists, Task one generalPurpose reviewer for this id. If several loops are ready, Task one reviewer subagent each, in parallel. Do not sit waiting on them.",
+    "If you are covering review in this conversation because no reviewer chat exists, Task one generalPurpose reviewer for this id — but only if you have not already Tasked a reviewer for this id and headSha this session. If several loops are ready, Task one reviewer subagent each, in parallel. Do not sit waiting on them.",
   ].join("\n");
 }
 
 export async function markReviewRequested(cwd: string, id: string): Promise<LocalPr> {
   return withPrLock(cwd, id, async (pr) => {
-    await armReviewRequest(cwd, pr);
+    await applyHeadRefresh(cwd, pr);
+    pr.reviewRequestedSha = pr.headSha;
+    pr.updatedAt = nowIso();
+  });
+}
+
+/** Record that the implementor chat was told to spawn a reviewer for this HEAD. */
+export async function markReviewerNotified(cwd: string, id: string): Promise<LocalPr> {
+  return withPrLock(cwd, id, async (pr) => {
+    await applyHeadRefresh(cwd, pr);
+    pr.reviewerNotifiedSha = pr.headSha;
     pr.updatedAt = nowIso();
   });
 }
@@ -700,6 +715,7 @@ export async function reopenLocalPr(cwd: string, id: string): Promise<LocalPr> {
     }
     pr.status = "changes_requested";
     pr.reviewRequestedSha = null;
+    pr.reviewerNotifiedSha = null;
     await applyHeadRefresh(cwd, pr);
     pr.updatedAt = nowIso();
   });
@@ -784,6 +800,7 @@ export async function captureAgentWork(
       if (pr.status === "reviewed" && pr.headSha !== prevSha) {
         pr.status = "ready";
         pr.reviewRequestedSha = pr.headSha;
+        pr.reviewerNotifiedSha = null;
       }
     });
     updated.worktreePath = await ensureWorktreeForLoop(cwd, updated, {

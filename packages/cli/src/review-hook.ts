@@ -5,6 +5,7 @@ import {
   formatReviewInbox,
   formatSpawnReviewer,
   markReviewRequested,
+  markReviewerNotified,
   pendingReviewComments,
   refreshLocalPrHead,
   shouldSpawnReviewer,
@@ -84,12 +85,16 @@ async function main(): Promise<void> {
     }
     if (pr.status === "ready") {
       const fresh = await refreshLocalPrHead(root, pr.id);
-      // Ready handoffs already set reviewRequestedSha. Re-arm only if HEAD moved while ready.
-      if (shouldSpawnReviewer(fresh)) {
+      // Drift baseline may lag if HEAD moved while ready.
+      if ((fresh.reviewRequestedSha ?? null) !== fresh.headSha) {
         await markReviewRequested(root, fresh.id);
       }
-      process.stdout.write(JSON.stringify({ followup_message: formatSpawnReviewer(fresh) }) + "\n");
-      return;
+      // Spawn reminder once per HEAD (separate from the drift baseline).
+      if (shouldSpawnReviewer(fresh)) {
+        await markReviewerNotified(root, fresh.id);
+        process.stdout.write(JSON.stringify({ followup_message: formatSpawnReviewer(fresh) }) + "\n");
+        return;
+      }
     }
     silent();
     return;

@@ -642,6 +642,7 @@ async function readPrFile(file) {
   const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
   pr.source = pr.source ?? null;
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
+  pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
   pr.comments = (pr.comments ?? []).map(normalizeComment);
   return pr;
 }
@@ -685,6 +686,7 @@ async function listLocalPrs(cwd) {
     }
     pr.source = pr.source ?? null;
     pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
+    pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
   }
@@ -750,7 +752,8 @@ async function createLocalPr(cwd, input = {}) {
     source: input.source ?? { kind: "cli" },
     createdAt,
     updatedAt: createdAt,
-    reviewRequestedSha: null
+    reviewRequestedSha: null,
+    reviewerNotifiedSha: null
   };
   await writePr(root, pr);
   const others = await listLocalPrs(root);
@@ -856,6 +859,7 @@ function maybePromoteToReviewed(pr) {
 async function armReviewRequest(cwd, pr) {
   await applyHeadRefresh(cwd, pr);
   pr.reviewRequestedSha = pr.headSha;
+  pr.reviewerNotifiedSha = null;
 }
 async function maybeHandoffToReviewer(cwd, pr, now, author) {
   if (isArchivedPr(pr)) return;
@@ -1104,6 +1108,7 @@ async function reopenLocalPr(cwd, id) {
     }
     pr.status = "changes_requested";
     pr.reviewRequestedSha = null;
+    pr.reviewerNotifiedSha = null;
     await applyHeadRefresh(cwd, pr);
     pr.updatedAt = nowIso();
   });
