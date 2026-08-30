@@ -312,7 +312,7 @@ const tools = [
   {
     name: "add_comment",
     description:
-      "Add a local review comment. role=human is an open finding and sets the loop to changes_requested unless archived. role=reviewer files a finding but does not change status — call complete_review when the review is finished. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Archived loops stay archived. Do not git push.",
+      "Add a local review comment. role=human is an open finding and sets the loop to changes_requested unless archived. role=reviewer files a finding while status stays ready until complete_review — except on a reviewed loop, where a new reviewer finding flips to changes_requested so the implementor is woken. role=agent is a reply nested under the last finding unless replyTo is set; Review requested stays a root. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "body"],
