@@ -236,7 +236,7 @@ test("listenActivityFingerprint queue tracks ready and live changes", async () =
   await setLocalPrStatus(repo, pr.id, "ready");
   const readyFp = await listenActivityFingerprint(repo, "queue");
   assert.notEqual(readyFp, draftFp);
-  assert.match(readyFp, new RegExp(`(^|\\|)${pr.id}:`));
+  assert.match(readyFp, new RegExp(`[=|]${pr.id}:`));
   assert.ok(readyFp.includes("ready=") && readyFp.indexOf(pr.id) < readyFp.indexOf(";live="));
 
   const notified = await markReviewerNotified(repo, pr.id);
