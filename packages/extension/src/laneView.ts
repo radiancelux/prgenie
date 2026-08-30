@@ -1155,9 +1155,9 @@ function panelHtml(webview: vscode.Webview): string {
       const hint = root.querySelector("#hint");
       if (hint) {
         hint.textContent = archived
-          ? "Archived after opening on GitHub (or Archive). Reopen to continue, or Delete to remove the record."
+          ? "Archived after opening on GitHub (or Archive locally). Reopen to continue, or Delete to remove the record."
           : reviewed
-            ? "Review is done — your turn. Open on GitHub pushes the branch and creates the pull request. Archive keeps it local only."
+            ? "Review is done — your turn. Open on GitHub pushes the branch and creates the pull request. Archive locally keeps it local only."
             : ready
               ? "Waiting on the reviewer. Complete review if you finished a sidebar pass, or Open on GitHub anyway to skip."
               : "Open findings go to the implementor. Address nests a reply underneath. When status is your turn, Open on GitHub creates the PR.";
