@@ -14,6 +14,8 @@ import {
   commentThreads,
   completeLocalPrReview,
   deleteLocalPr,
+  deleteLocalPrComment,
+  editLocalPrComment,
   exportPushRefspec,
   findLocalPrForCurrentBranch,
   findLocalPrForCurrentWorktree,
@@ -711,5 +713,22 @@ test("reopen and delete local PR", async () => {
   const deleted = await deleteLocalPr(repo, pr.id);
   assert.equal(deleted.deleted, true);
   await assert.rejects(() => getLocalPr(repo, pr.id), /not found/i);
+});
+
+test("edit and delete open findings", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, { title: "Comment edit", base: "main" });
+  const withFinding = await addLocalPrComment(repo, pr.id, "typo finding", { role: "reviewer" });
+  const finding = withFinding.comments.find((c) => c.body === "typo finding");
+  assert.ok(finding);
+  const edited = await editLocalPrComment(repo, pr.id, finding.id, "fixed finding");
+  assert.equal(edited.comments.find((c) => c.id === finding.id)?.body, "fixed finding");
+  await addLocalPrComment(repo, pr.id, "nested reply", {
+    role: "agent",
+    replyTo: finding.id,
+  });
+  const cleared = await deleteLocalPrComment(repo, pr.id, finding.id);
+  assert.equal(cleared.comments.some((c) => c.id === finding.id), false);
+  assert.equal(cleared.comments.some((c) => c.replyTo === finding.id), false);
 });
 

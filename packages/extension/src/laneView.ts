@@ -5,22 +5,32 @@ import {
   addLocalPrComment,
   addressLocalPrComment,
   commentThreads,
+  completeLocalPrReview,
   consoleDir,
   createLocalPr,
+  deleteLocalPr,
+  deleteLocalPrComment,
+  editLocalPrComment,
   ensureWorktreeForLoop,
   findGitRoot,
+  formatWatchLane,
   getLocalPrNameStatus,
+  getRepoWatch,
+  haltWatchRole,
   isArchivedPr,
   listLocalPrs,
   loopWorktreeIdentity,
   pruneArchivedLoopWorktree,
+  reopenLocalPr,
   resolveLocalPrComment,
+  resumeWatchRole,
   sameFsPath,
   setLocalPrStatus,
   updateLocalPr,
   archiveLoopsMergedOnGithub,
   exportLocalPr,
   type LocalPr,
+  type WatchRole,
 } from "@prgenie/core";
 import { openAllChanges, openFileChange } from "./gitDiff.js";
 
@@ -41,9 +51,23 @@ type ClientMessage =
   | { type: "openComment"; path: string; line?: number }
   | { type: "address"; id: string; commentId: string }
   | { type: "resolve"; id: string; commentId: string }
+  | { type: "editComment"; id: string; commentId: string; body?: string }
+  | { type: "deleteComment"; id: string; commentId: string }
+  | { type: "completeReview"; id: string; force?: boolean }
+  | { type: "deletePr"; id: string }
+  | { type: "reopenPr"; id: string }
+  | { type: "watchStart"; role: WatchRole }
+  | { type: "watchStop"; role: WatchRole }
   | { type: "openDiffs" }
   | { type: "export"; id: string }
   | { type: "showArchived"; value: boolean };
+
+type WatchLaneSnapshot = {
+  halted: boolean;
+  reason: string | null;
+  exportId: string | null;
+  label: string;
+};
 
 type Snapshot = {
   type: "snapshot";
@@ -58,6 +82,7 @@ type Snapshot = {
   hereId: string | null;
   archivedCount?: number;
   showArchived?: boolean;
+  watch?: { inbox: WatchLaneSnapshot; queue: WatchLaneSnapshot };
 };
 
 export class LaneHub implements vscode.Disposable {
@@ -222,6 +247,20 @@ export class LaneHub implements vscode.Disposable {
       await this.pushSnapshot(true);
       return;
     }
+    if (msg.type === "watchStart" || msg.type === "watchStop") {
+      const cwd = await this.repoCwd();
+      if (!cwd) return;
+      try {
+        if (msg.type === "watchStart") await resumeWatchRole(cwd, msg.role);
+        else await haltWatchRole(cwd, msg.role, "stop");
+        await this.pushSnapshot(true);
+      } catch (err) {
+        void vscode.window.showErrorMessage(
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      return;
+    }
     if (msg.type === "create") {
       await this.createPr();
       return;
@@ -316,6 +355,69 @@ export class LaneHub implements vscode.Disposable {
         if (note === undefined) return;
         await resolveLocalPrComment(cwd, msg.id, msg.commentId, note, { role: "human" });
         await this.pushSnapshot();
+      } else if (msg.type === "editComment") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
+        const prs = await listLocalPrs(cwd);
+        const pr = prs.find((p) => p.id === msg.id);
+        const existing = pr?.comments.find((c) => c.id === msg.commentId || c.id.startsWith(msg.commentId));
+        const body = await vscode.window.showInputBox({
+          title: "Edit finding",
+          value: existing?.body ?? msg.body ?? "",
+          prompt: "Update the open finding text.",
+        });
+        if (body === undefined) return;
+        await editLocalPrComment(cwd, msg.id, msg.commentId, body);
+        await this.pushSnapshot();
+      } else if (msg.type === "deleteComment") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
+        const pick = await vscode.window.showWarningMessage(
+          "Delete this open finding and its replies?",
+          { modal: true },
+          "Delete",
+        );
+        if (pick !== "Delete") return;
+        await deleteLocalPrComment(cwd, msg.id, msg.commentId);
+        await this.pushSnapshot();
+      } else if (msg.type === "completeReview") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
+        const pick = await vscode.window.showInformationMessage(
+          "Complete review? Open findings hand the loop to the implementor; none marks it reviewed.",
+          { modal: true },
+          "Complete review",
+        );
+        if (pick !== "Complete review") return;
+        try {
+          await completeLocalPrReview(cwd, msg.id, { allowDrift: msg.force === true });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (/HEAD moved since Review requested/i.test(message)) {
+            const force = await vscode.window.showWarningMessage(
+              `${message} Finalize anyway?`,
+              { modal: true },
+              "Force complete",
+            );
+            if (force !== "Force complete") return;
+            await completeLocalPrReview(cwd, msg.id, { allowDrift: true });
+          } else {
+            throw err;
+          }
+        }
+        await this.pushSnapshot();
+      } else if (msg.type === "deletePr") {
+        const pick = await vscode.window.showWarningMessage(
+          `Permanently delete loop ${msg.id}? This removes the packet and refs.`,
+          { modal: true },
+          "Delete",
+        );
+        if (pick !== "Delete") return;
+        await deleteLocalPr(cwd, msg.id);
+        if (this.selectedId === msg.id) this.selectedId = undefined;
+        await this.pushSnapshot(true);
+      } else if (msg.type === "reopenPr") {
+        const reopened = await reopenLocalPr(cwd, msg.id);
+        this.selectedId = reopened.id;
+        this.userPinned = true;
+        await this.pushSnapshot(true);
       } else if (msg.type === "summary") {
         if (await this.rejectIfArchived(cwd, msg.id)) return;
         await updateLocalPr(cwd, msg.id, { body: msg.body });
@@ -451,6 +553,13 @@ export class LaneHub implements vscode.Disposable {
       const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
       const hereId =
         prs.find((p) => p.worktreePath && sameFsPath(p.worktreePath, folder))?.id ?? null;
+      const watchState = await getRepoWatch(root);
+      const laneSnap = (role: WatchRole): WatchLaneSnapshot => ({
+        halted: watchState[role].halted,
+        reason: watchState[role].reason,
+        exportId: watchState[role].exportId,
+        label: formatWatchLane(watchState, role),
+      });
       this.post({
         type: "snapshot",
         prs,
@@ -463,6 +572,7 @@ export class LaneHub implements vscode.Disposable {
         hereId,
         archivedCount,
         showArchived: this.showArchived,
+        watch: { inbox: laneSnap("inbox"), queue: laneSnap("queue") },
       }, force);
       await this.watchStore();
     } catch (err) {
@@ -487,6 +597,7 @@ function snapshotKey(
     repo: "repo" in payload ? payload.repo : "",
     files: "files" in payload ? payload.files : [],
     threads: "threads" in payload ? payload.threads : [],
+    watch: "watch" in payload ? payload.watch : null,
     prs: payload.prs,
   });
 }
@@ -538,11 +649,27 @@ function laneHtml(webview: vscode.Webview): string {
     ${sharedCss()}
     body { padding: 4px 0 8px; }
     .meta {
-      display: flex; align-items: center; gap: 6px;
+      display: flex; flex-direction: column; gap: 6px;
       padding: 4px 12px 8px;
       font-size: 11px;
     }
+    .meta-top { display: flex; align-items: center; gap: 6px; }
+    .watch {
+      display: flex; flex-direction: column; gap: 4px;
+      padding: 6px 8px;
+      border: 1px solid var(--vscode-widget-border, rgba(127,127,127,0.35));
+    }
+    .watch-row {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .watch-row .role {
+      width: 42px; flex: none; text-transform: uppercase; letter-spacing: 0.04em;
+      font-size: 10px; color: var(--vscode-descriptionForeground);
+    }
+    .watch-row .state { flex: 1; min-width: 0; }
+    .watch-row button { flex: none; font-size: 11px; }
     .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--vscode-charts-green, #3fb950); flex: none; }
+    .dot.off { background: var(--vscode-descriptionForeground); }
     .pr {
       display: flex; align-items: flex-start; gap: 8px;
       padding: 6px 12px;
@@ -562,18 +689,74 @@ function laneHtml(webview: vscode.Webview): string {
     .pr.archived { opacity: 0.72; }
     .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .empty { padding: 12px; }
-    .meta button { margin-left: auto; font-size: 11px; }
-    .meta button.on { outline: 1px solid var(--vscode-focusBorder); }
+    .meta-top button { margin-left: auto; font-size: 11px; }
+    .meta-top button.on { outline: 1px solid var(--vscode-focusBorder); }
   </style>
 </head>
 <body>
-  <div class="meta"><span class="dot"></span><span class="muted" id="meta">Watching</span><button type="button" class="secondary" id="archivedToggle">Show archived</button></div>
+  <div class="meta">
+    <div class="watch" id="watch" hidden>
+      <div class="watch-row" data-role="inbox">
+        <span class="role">inbox</span>
+        <span class="state muted" id="inboxState">—</span>
+        <button type="button" class="secondary" id="inboxBtn" disabled>Start</button>
+      </div>
+      <div class="watch-row" data-role="queue">
+        <span class="role">queue</span>
+        <span class="state muted" id="queueState">—</span>
+        <button type="button" class="secondary" id="queueBtn" disabled>Start</button>
+      </div>
+    </div>
+    <div class="meta-top"><span class="dot off" id="dot"></span><span class="muted" id="meta">Watching</span><button type="button" class="secondary" id="archivedToggle">Show archived</button></div>
+  </div>
   <div id="list"></div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const list = document.getElementById("list");
     const toggle = document.getElementById("archivedToggle");
+    const watchBox = document.getElementById("watch");
     toggle.onclick = () => vscode.postMessage({ type: "showArchived", value: !toggle.classList.contains("on") });
+    function bindWatchBtn(role, btn) {
+      btn.onclick = () => {
+        if (btn.disabled) return;
+        const halted = btn.dataset.halted === "1";
+        vscode.postMessage({ type: halted ? "watchStart" : "watchStop", role });
+      };
+    }
+    bindWatchBtn("inbox", document.getElementById("inboxBtn"));
+    bindWatchBtn("queue", document.getElementById("queueBtn"));
+    function paintLane(role, lane) {
+      const state = document.getElementById(role + "State");
+      const btn = document.getElementById(role + "Btn");
+      if (!state || !btn) return;
+      if (!lane) {
+        state.textContent = "—";
+        btn.dataset.halted = "1";
+        btn.textContent = "Start";
+        btn.disabled = true;
+        return;
+      }
+      const halted = !!lane.halted;
+      state.textContent = lane.label || (halted ? "halted" : "listening");
+      btn.dataset.halted = halted ? "1" : "0";
+      btn.textContent = halted ? "Start" : "Stop";
+      btn.disabled = false;
+    }
+    function paintWatch(msg) {
+      const dot = document.getElementById("dot");
+      const hasWatch = !!(msg.watch && msg.watch.inbox && msg.watch.queue) && !msg.error;
+      if (watchBox) watchBox.hidden = !hasWatch;
+      if (!hasWatch) {
+        paintLane("inbox", null);
+        paintLane("queue", null);
+        if (dot) dot.classList.add("off");
+        return;
+      }
+      paintLane("inbox", msg.watch.inbox);
+      paintLane("queue", msg.watch.queue);
+      const anyListening = !msg.watch.inbox.halted || !msg.watch.queue.halted;
+      if (dot) dot.classList.toggle("off", !anyListening);
+    }
     function prRow(id) {
       const el = document.createElement("div");
       el.dataset.id = id;
@@ -589,6 +772,7 @@ function laneHtml(webview: vscode.Webview): string {
       const msg = event.data;
       if (msg.type !== "snapshot") return;
       const meta = document.getElementById("meta");
+      paintWatch(msg);
       if (msg.error) {
         meta.textContent = "Watching";
         toggle.hidden = true;
@@ -798,6 +982,12 @@ function panelHtml(webview: vscode.Webview): string {
       root.querySelector("#openDiffs").onclick = () => vscode.postMessage({ type: "openDiffs" });
       const exp = root.querySelector("#exportPr");
       if (exp) exp.onclick = () => vscode.postMessage({ type: "export", id: selected.id });
+      const complete = root.querySelector("#completeReview");
+      if (complete) complete.onclick = () => vscode.postMessage({ type: "completeReview", id: selected.id });
+      const del = root.querySelector("#deletePr");
+      if (del) del.onclick = () => vscode.postMessage({ type: "deletePr", id: selected.id });
+      const reopen = root.querySelector("#reopenPr");
+      if (reopen) reopen.onclick = () => vscode.postMessage({ type: "reopenPr", id: selected.id });
       root.querySelector("#send").onclick = () => {
         const body = root.querySelector("#cmt").value;
         if (body.trim()) vscode.postMessage({ type: "comment", id: selected.id, body });
@@ -823,6 +1013,20 @@ function panelHtml(webview: vscode.Webview): string {
       for (const el of root.querySelectorAll(".resolve[data-cid]")) {
         el.onclick = () => vscode.postMessage({
           type: "resolve",
+          id: selected.id,
+          commentId: el.getAttribute("data-cid")
+        });
+      }
+      for (const el of root.querySelectorAll(".edit[data-cid]")) {
+        el.onclick = () => vscode.postMessage({
+          type: "editComment",
+          id: selected.id,
+          commentId: el.getAttribute("data-cid")
+        });
+      }
+      for (const el of root.querySelectorAll(".delete-c[data-cid]")) {
+        el.onclick = () => vscode.postMessage({
+          type: "deleteComment",
           id: selected.id,
           commentId: el.getAttribute("data-cid")
         });
@@ -860,18 +1064,31 @@ function panelHtml(webview: vscode.Webview): string {
         const canExport = !archived && (selected.status === "reviewed" || selected.status === "ready");
         exp.disabled = !canExport;
         exp.textContent = archived ? "Archived" : selected.status === "reviewed" ? "Export to GitHub" : "Export";
+        exp.hidden = archived;
+      }
+      const complete = root.querySelector("#completeReview");
+      if (complete) {
+        complete.hidden = selected.status !== "ready";
+        complete.disabled = selected.status !== "ready";
+      }
+      const del = root.querySelector("#deletePr");
+      if (del) del.hidden = false;
+      const reopen = root.querySelector("#reopenPr");
+      if (reopen) {
+        reopen.hidden = selected.status !== "approved";
       }
       for (const btn of root.querySelectorAll("button[data-s]")) {
         btn.disabled = selected.status === "approved";
+        btn.hidden = selected.status === "approved";
       }
       const hint = root.querySelector("#hint");
       if (hint) {
         hint.textContent = selected.status === "approved"
-          ? "Archived after export. The record is read-only."
+          ? "Archived after export. Reopen to continue, or Delete to remove the record."
           : selected.status === "reviewed"
             ? "Agent review is done. Export opens the GitHub PR at origin. Archive keeps it local only."
             : selected.status === "ready"
-              ? "Waiting on the reviewer, or Export now if you have looked at the diff."
+              ? "Waiting on the reviewer, or Complete review / Export if you reviewed in the sidebar."
               : "Open findings go to the implementor. Address nests a reply underneath. When status is reviewed, Export publishes the GitHub PR.";
       }
       const sum = root.querySelector("#sum");
@@ -934,6 +1151,9 @@ function panelHtml(webview: vscode.Webview): string {
         const loc = c.path
           ? '<button type="button" class="loc secondary" data-path="' + esc(c.path) + '" data-line="' + (c.line || "") + '">' + esc(c.path) + (c.line ? ":" + c.line : "") + "</button>"
           : "";
+        const manage = !archivedView && st === "open" && (c.role === "human" || c.role === "reviewer")
+          ? '<button type="button" class="edit secondary" data-cid="' + esc(c.id) + '">Edit</button><button type="button" class="delete-c secondary" data-cid="' + esc(c.id) + '">Delete</button>'
+          : "";
         const action = archivedView
           ? ""
           : st === "open" && (c.role === "human" || c.role === "reviewer")
@@ -944,7 +1164,7 @@ function panelHtml(webview: vscode.Webview): string {
         const replies = (t.replies || []).map((r) =>
           '<div class="reply"><div class="who muted"><span class="role">' + esc(roleLabel(r.role)) + "</span>" + esc(r.author || "agent") + " · " + esc(new Date(r.createdAt).toLocaleString()) + '</div><div class="body">' + esc(r.body) + "</div></div>"
         ).join("");
-        return '<div class="thread ' + esc(st) + '"><div class="who muted"><span class="role">' + esc(roleLabel(c.role)) + '</span><span class="role">' + esc(st) + "</span>" + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + loc + action + '</div><div class="body">' + esc(c.body) + "</div>" + (replies ? '<div class="replies">' + replies + "</div>" : "") + "</div>";
+        return '<div class="thread ' + esc(st) + '"><div class="who muted"><span class="role">' + esc(roleLabel(c.role)) + '</span><span class="role">' + esc(st) + "</span>" + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + loc + manage + action + '</div><div class="body">' + esc(c.body) + "</div>" + (replies ? '<div class="replies">' + replies + "</div>" : "") + "</div>";
       }).join("") || '<p class="muted empty">No comments yet</p>';
       if (!reuse) {
         paintedFiles = "";
@@ -956,12 +1176,15 @@ function panelHtml(webview: vscode.Webview): string {
           '<span class="muted" id="range"></span>',
           '<span class="grow"></span>',
           '<button id="openDiffs">Open diffs</button>',
+          '<button id="completeReview">Complete review</button>',
           '<button data-s="ready">Ready</button>',
           '<button id="exportPr">Export</button>',
           '<button class="secondary" data-s="approved">Archive</button>',
           '<button class="secondary" data-s="changes_requested">Request changes</button>',
           '<button class="secondary" id="copyReview">Copy review prompt</button>',
           '<button class="secondary" id="openWt"></button>',
+          '<button class="secondary" id="reopenPr">Reopen</button>',
+          '<button class="secondary" id="deletePr">Delete</button>',
           "</div>",
           '<div class="summary"><h2>Summary</h2><div class="pad"><textarea id="sum" placeholder="Why this exists, what changed, how to test. The implementing agent writes this for reviewers."></textarea><div style="margin-top:6px"><button id="saveSum">Save summary</button></div></div></div>',
           '<div class="body">',

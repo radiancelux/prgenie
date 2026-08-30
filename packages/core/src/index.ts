@@ -35,6 +35,8 @@ export {
   completeLocalPrReview,
   createLocalPr,
   deleteLocalPr,
+  deleteLocalPrComment,
+  editLocalPrComment,
   findLocalPrForCurrentBranch,
   findLocalPrForCurrentWorktree,
   formatReviewInbox,

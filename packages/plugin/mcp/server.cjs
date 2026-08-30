@@ -947,6 +947,47 @@ async function addLocalPrComment(cwd, id, body, options = {}) {
     return pr;
   });
 }
+async function editLocalPrComment(cwd, id, commentId, body) {
+  const text = body.trim();
+  if (!text) throw new Error("Comment body is empty");
+  const needle = commentId.trim();
+  if (!needle) throw new Error("Comment id is empty");
+  return withPrLock(cwd, id, async (pr) => {
+    if (isArchivedPr(pr)) throw new Error(`Loop ${pr.id} is archived.`);
+    const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
+    if (!target) throw new Error(`Comment not found: ${commentId}`);
+    if (!isFindingComment(target) || target.status !== "open") {
+      throw new Error("Only open findings can be edited");
+    }
+    target.body = text;
+    pr.updatedAt = nowIso();
+  });
+}
+async function deleteLocalPrComment(cwd, id, commentId) {
+  const needle = commentId.trim();
+  if (!needle) throw new Error("Comment id is empty");
+  return withPrLock(cwd, id, async (pr) => {
+    if (isArchivedPr(pr)) throw new Error(`Loop ${pr.id} is archived.`);
+    const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
+    if (!target) throw new Error(`Comment not found: ${commentId}`);
+    if (!isFindingComment(target) || target.status !== "open") {
+      throw new Error("Only open findings can be deleted");
+    }
+    const drop = /* @__PURE__ */ new Set([target.id]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const c of pr.comments) {
+        if (c.replyTo && drop.has(c.replyTo) && !drop.has(c.id)) {
+          drop.add(c.id);
+          grew = true;
+        }
+      }
+    }
+    pr.comments = pr.comments.filter((c) => !drop.has(c.id));
+    pr.updatedAt = nowIso();
+  });
+}
 async function addressLocalPrComment(cwd, id, commentId, body, options = {}) {
   const text = body.trim();
   if (!text) throw new Error("Address comment is empty");
@@ -1537,6 +1578,15 @@ async function handleTool(name, args) {
           role: args.role === "human" ? "human" : "reviewer"
         }
       );
+    case "edit_comment":
+      return editLocalPrComment(
+        cwd,
+        String(args.id ?? ""),
+        String(args.commentId ?? ""),
+        String(args.body ?? "")
+      );
+    case "delete_comment":
+      return deleteLocalPrComment(cwd, String(args.id ?? ""), String(args.commentId ?? ""));
     case "complete_review":
       return completeLocalPrReview(cwd, String(args.id ?? ""), {
         author: typeof args.author === "string" ? args.author : void 0,
@@ -1719,6 +1769,33 @@ var tools = [
         body: { type: "string" },
         author: { type: "string" },
         role: { type: "string", enum: ["reviewer", "human"] },
+        cwd: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "edit_comment",
+    description: "Edit the body of an open finding (human or reviewer). Does not change status. Archived loops and non-open findings are refused. Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id", "commentId", "body"],
+      properties: {
+        id: { type: "string" },
+        commentId: { type: "string" },
+        body: { type: "string" },
+        cwd: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "delete_comment",
+    description: "Delete an open finding and replies under it. Addressed/resolved threads are refused. Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id", "commentId"],
+      properties: {
+        id: { type: "string" },
+        commentId: { type: "string" },
         cwd: { type: "string" }
       }
     }
