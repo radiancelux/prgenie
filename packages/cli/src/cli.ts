@@ -28,6 +28,7 @@ import {
   isArchivedPr,
   listWorktrees,
   listenWatchLane,
+  parseDurationMs,
   pendingReviewComments,
   reopenLocalPr,
   resolveLocalPrComment,
@@ -59,7 +60,7 @@ Usage:
   prgenie watch start
   prgenie watch start inbox
   prgenie watch start queue
-  prgenie watch listen inbox|queue [--ticks 60] [--interval 60]
+  prgenie watch listen inbox|queue [--idle 30m] [--max 8h] [--interval 60] [--ticks N]
   prgenie doctor
   prgenie export <id>
   prgenie show <id>
@@ -240,20 +241,38 @@ export async function run(argv: string[]): Promise<number> {
     if (action === "listen") {
       const role = rest[1] as WatchRole | undefined;
       if (role !== "inbox" && role !== "queue") {
-        process.stderr.write("prgenie watch listen inbox|queue [--ticks 60] [--interval 60]\n");
+        process.stderr.write(
+          "prgenie watch listen inbox|queue [--idle 30m] [--max 8h] [--interval 60] [--ticks N]\n",
+        );
         return 1;
       }
-      const ticks = Number(arg(rest, "--ticks") ?? "60");
       const intervalSec = Number(arg(rest, "--interval") ?? "60");
-      if (!Number.isFinite(ticks) || ticks < 1 || !Number.isFinite(intervalSec) || intervalSec < 1) {
-        process.stderr.write("--ticks and --interval must be positive numbers.\n");
+      if (!Number.isFinite(intervalSec) || intervalSec < 1) {
+        process.stderr.write("--interval must be a positive number of seconds.\n");
         return 1;
       }
-      const result = await listenWatchLane(repo, role, {
+      let idleMs: number;
+      let maxMs: number;
+      try {
+        idleMs = parseDurationMs(arg(rest, "--idle") ?? "30m", "--idle");
+        maxMs = parseDurationMs(arg(rest, "--max") ?? "8h", "--max");
+      } catch (err) {
+        process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+        return 1;
+      }
+      const ticksRaw = arg(rest, "--ticks");
+      const ticks = ticksRaw === undefined ? undefined : Number(ticksRaw);
+      if (ticks !== undefined && (!Number.isFinite(ticks) || ticks < 1)) {
+        process.stderr.write("--ticks must be a positive number when set.\n");
+        return 1;
+      }
+      await listenWatchLane(repo, role, {
+        idleMs,
+        maxMs,
         ticks,
         intervalMs: intervalSec * 1000,
       });
-      return result === "halted" ? 0 : 0;
+      return 0;
     }
     const state = await getRepoWatch(repo);
     if (action === "inbox" || action === "queue") {

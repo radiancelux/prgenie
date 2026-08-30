@@ -102,8 +102,11 @@ test("listenWatchLane prints ticks and stops on halt", async () => {
   const lines: string[] = [];
   let sleeps = 0;
   const done = listenWatchLane(repo, "inbox", {
-    ticks: 3,
+    ticks: 10,
+    idleMs: 60_000,
+    maxMs: 60_000,
     intervalMs: 5,
+    activityFingerprint: async () => "stable",
     write: (line) => lines.push(line),
     sleep: async () => {
       sleeps += 1;
@@ -113,6 +116,80 @@ test("listenWatchLane prints ticks and stops on halt", async () => {
   const result = await done;
   assert.equal(result, "halted");
   assert.ok(lines.some((l) => l.startsWith("AGENT_LOOP_TICK_review-inbox")));
-  assert.ok(lines.some((l) => l.startsWith("AGENT_LOOP_DONE_review-inbox")));
+  assert.ok(lines.some((l) => l.includes('"reason":"stop"')));
+  await resumeWatch(repo);
+});
+
+test("listenWatchLane ends on idle when activity is quiet", async () => {
+  const { listenWatchLane, parseDurationMs } = await import("./watch.js");
+  assert.equal(parseDurationMs("30m"), 30 * 60_000);
+  assert.equal(parseDurationMs("8h"), 8 * 60 * 60_000);
+  assert.equal(parseDurationMs("45"), 45 * 60_000);
+  await resumeWatch(repo);
+  const lines: string[] = [];
+  let clock = 0;
+  const result = await listenWatchLane(repo, "inbox", {
+    idleMs: 100,
+    maxMs: 10_000,
+    intervalMs: 50,
+    now: () => clock,
+    activityFingerprint: async () => "quiet",
+    write: (line) => lines.push(line),
+    sleep: async (ms) => {
+      clock += ms;
+    },
+  });
+  assert.equal(result, "done");
+  assert.ok(lines.some((l) => l.includes('"reason":"idle"')));
+  await resumeWatch(repo);
+});
+
+test("listenWatchLane idle resets when activity fingerprint changes", async () => {
+  const { listenWatchLane } = await import("./watch.js");
+  await resumeWatch(repo);
+  const lines: string[] = [];
+  let clock = 0;
+  let finger = "a";
+  let sleeps = 0;
+  const result = await listenWatchLane(repo, "queue", {
+    idleMs: 100,
+    maxMs: 10_000,
+    ticks: 5,
+    intervalMs: 40,
+    now: () => clock,
+    activityFingerprint: async () => finger,
+    write: (line) => lines.push(line),
+    sleep: async (ms) => {
+      sleeps += 1;
+      clock += ms;
+      if (sleeps === 2) finger = "b";
+    },
+  });
+  assert.equal(result, "done");
+  const ticks = lines.filter((l) => l.startsWith("AGENT_LOOP_TICK_review-queue"));
+  assert.ok(ticks.length >= 2);
+  assert.ok(lines.some((l) => l.includes('"reason":"ticks"') || l.includes('"reason":"idle"')));
+  await resumeWatch(repo);
+});
+
+test("listenWatchLane ends on max ceiling", async () => {
+  const { listenWatchLane } = await import("./watch.js");
+  await resumeWatch(repo);
+  const lines: string[] = [];
+  let clock = 0;
+  let n = 0;
+  const result = await listenWatchLane(repo, "inbox", {
+    idleMs: 10_000,
+    maxMs: 120,
+    intervalMs: 50,
+    now: () => clock,
+    activityFingerprint: async () => `move-${n++}`,
+    write: (line) => lines.push(line),
+    sleep: async (ms) => {
+      clock += ms;
+    },
+  });
+  assert.equal(result, "done");
+  assert.ok(lines.some((l) => l.includes('"reason":"max"')));
   await resumeWatch(repo);
 });
