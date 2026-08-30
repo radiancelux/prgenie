@@ -321,11 +321,11 @@ export class LaneHub implements vscode.Disposable {
         const pr = prs.find((p) => p.id === msg.id);
         const title = pr?.title ?? msg.id;
         const pick = await vscode.window.showInformationMessage(
-          `Export "${title}" to GitHub? This pushes the loop branch and opens a pull request.`,
+          `Open "${title}" on GitHub? This pushes the loop branch and creates a pull request.`,
           { modal: true },
-          "Export",
+          "Open on GitHub",
         );
-        if (pick !== "Export") return;
+        if (pick !== "Open on GitHub") return;
         const result = await exportLocalPr(cwd, msg.id);
         await this.pushSnapshot(true);
         const open = await vscode.window.showInformationMessage(
@@ -625,15 +625,32 @@ function sharedCss(): string {
       cursor: pointer;
       font-size: 12px;
     }
+    button:disabled { opacity: 0.55; cursor: default; }
     button.secondary {
       background: var(--vscode-button-secondaryBackground);
       color: var(--vscode-button-secondaryForeground);
+    }
+    button.cta {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      font-weight: 600;
+      padding: 5px 12px;
+      box-shadow: inset 0 0 0 1px var(--vscode-focusBorder, transparent);
+    }
+    button.danger {
+      background: var(--vscode-inputValidation-errorBackground, color-mix(in srgb, var(--vscode-errorForeground) 18%, transparent));
+      color: var(--vscode-errorForeground);
+      outline: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
     }
     .status {
       font-size: 10px;
       letter-spacing: 0.06em;
       text-transform: uppercase;
       color: var(--vscode-descriptionForeground);
+    }
+    .status.your-turn {
+      color: var(--vscode-charts-green, #3fb950);
+      font-weight: 600;
     }
   `;
 }
@@ -686,6 +703,7 @@ function laneHtml(webview: vscode.Webview): string {
     }
     .pr.here { border-left-color: var(--vscode-charts-green, #3fb950); }
     .pr.fresh { box-shadow: inset 2px 0 0 var(--vscode-focusBorder); }
+    .pr.reviewed-turn { border-left-color: var(--vscode-charts-green, #3fb950); }
     .pr.archived { opacity: 0.72; }
     .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .empty { padding: 12px; }
@@ -815,15 +833,23 @@ function laneHtml(webview: vscode.Webview): string {
         }
         const here = pr.id === msg.hereId;
         const archivedPr = pr.status === "approved";
-        el.className = "pr" + (pr.id === msg.selectedId ? " active" : "") + (fresh.has(pr.id) ? " fresh" : "") + (here ? " here" : "") + (archivedPr ? " archived" : "");
+        const yourTurn = pr.status === "reviewed";
+        el.className = "pr"
+          + (pr.id === msg.selectedId ? " active" : "")
+          + (fresh.has(pr.id) ? " fresh" : "")
+          + (here ? " here" : "")
+          + (archivedPr ? " archived" : "")
+          + (yourTurn ? " reviewed-turn" : "");
         const src = pr.source && pr.source.kind === "subagent"
           ? (pr.source.subagentType || "subagent")
           : (pr.source && pr.source.kind) || "local";
         const info = el.querySelector(".info");
-        info.children[0].textContent = archivedPr
+        const statusEl = info.children[0];
+        statusEl.className = "status" + (yourTurn ? " your-turn" : "");
+        statusEl.textContent = archivedPr
           ? "archived"
-          : pr.status === "reviewed"
-            ? "reviewed — your turn"
+          : yourTurn
+            ? "your turn — open on GitHub"
             : pr.status.replace("_", " ");
         info.children[1].textContent = pr.title;
         info.children[1].title = pr.title;
@@ -874,6 +900,17 @@ function panelHtml(webview: vscode.Webview): string {
       background: var(--vscode-badge-background);
       color: var(--vscode-badge-foreground);
     }
+    .pill.your-turn {
+      background: color-mix(in srgb, var(--vscode-charts-green, #3fb950) 28%, var(--vscode-badge-background));
+      color: var(--vscode-foreground);
+      font-weight: 600;
+    }
+    .actions {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      width: 100%;
+      flex: 1 1 100%;
+    }
+    .actions .spacer { flex: 1; min-width: 8px; }
     .grow { flex: 1; }
     .body { display: flex; flex: 1; min-height: 0; }
     .files {
@@ -1046,62 +1083,96 @@ function panelHtml(webview: vscode.Webview): string {
     function paintChrome(selected, msg) {
       const short = (sha) => (sha || "").slice(0, 7);
       const when = selected.updatedAt ? new Date(selected.updatedAt).toLocaleString() : "";
+      const archived = selected.status === "approved";
+      const reviewed = selected.status === "reviewed";
+      const ready = selected.status === "ready";
       root.querySelector("h1").textContent = selected.title;
       root.querySelector("h1").title = selected.title;
-      root.querySelector(".pill").textContent = selected.status.replace("_", " ");
+      const pill = root.querySelector(".pill");
+      pill.textContent = reviewed ? "your turn" : selected.status.replace("_", " ");
+      pill.className = "pill" + (reviewed ? " your-turn" : "");
       root.querySelector("#range").textContent =
         selected.id + " · " + selected.headRef + " → " + selected.baseRef + " · " + short(selected.headSha) + " " + (when ? "· " + when : "");
       const filesH2 = root.querySelector(".files h2");
       if (filesH2) filesH2.textContent = "Changes (" + (selected.worktreePath ? "worktree" : "head") + ")";
-      root.querySelector("#openWt").textContent = selected.status === "approved"
+      root.querySelector("#openWt").textContent = archived
         ? "Archived"
         : selected.id === msg.hereId ? "This window" : "Switch to this loop";
-      root.querySelector("#openWt").disabled = selected.status === "approved" || selected.id === msg.hereId;
-      root.querySelector("#copyReview").disabled = selected.status === "approved";
-      const exp = root.querySelector("#exportPr");
-      if (exp) {
-        const archived = selected.status === "approved";
-        const canExport = !archived && (selected.status === "reviewed" || selected.status === "ready");
-        exp.disabled = !canExport;
-        exp.textContent = archived ? "Archived" : selected.status === "reviewed" ? "Export to GitHub" : "Export";
-        exp.hidden = archived;
+      root.querySelector("#openWt").disabled = archived || selected.id === msg.hereId;
+      const copyReview = root.querySelector("#copyReview");
+      if (copyReview) {
+        copyReview.hidden = archived || reviewed;
+        copyReview.disabled = archived;
+      }
+      const ship = root.querySelector("#exportPr");
+      if (ship) {
+        if (archived) {
+          ship.hidden = true;
+        } else if (reviewed) {
+          ship.hidden = false;
+          ship.disabled = false;
+          ship.className = "cta";
+          ship.textContent = "Open on GitHub";
+        } else if (ready) {
+          ship.hidden = false;
+          ship.disabled = false;
+          ship.className = "secondary";
+          ship.textContent = "Open on GitHub anyway";
+        } else {
+          ship.hidden = true;
+        }
       }
       const complete = root.querySelector("#completeReview");
       if (complete) {
-        complete.hidden = selected.status !== "ready";
-        complete.disabled = selected.status !== "ready";
+        complete.hidden = !ready;
+        complete.disabled = !ready;
+        complete.className = ready ? "secondary" : "secondary";
+      }
+      const markReady = root.querySelector("#markReady");
+      if (markReady) {
+        markReady.hidden = archived || reviewed || ready;
+        markReady.disabled = archived;
+      }
+      const requestChanges = root.querySelector("#requestChanges");
+      if (requestChanges) {
+        requestChanges.hidden = archived || reviewed;
+        requestChanges.disabled = archived;
+      }
+      const archiveBtn = root.querySelector("#archivePr");
+      if (archiveBtn) {
+        archiveBtn.hidden = archived;
+        archiveBtn.disabled = archived;
       }
       const del = root.querySelector("#deletePr");
-      if (del) del.hidden = false;
+      if (del) {
+        del.hidden = false;
+        del.className = "danger";
+      }
       const reopen = root.querySelector("#reopenPr");
-      if (reopen) {
-        reopen.hidden = selected.status !== "approved";
-      }
-      for (const btn of root.querySelectorAll("button[data-s]")) {
-        btn.disabled = selected.status === "approved";
-        btn.hidden = selected.status === "approved";
-      }
+      if (reopen) reopen.hidden = !archived;
+      const openDiffs = root.querySelector("#openDiffs");
+      if (openDiffs) openDiffs.className = "secondary";
       const hint = root.querySelector("#hint");
       if (hint) {
-        hint.textContent = selected.status === "approved"
-          ? "Archived after export. Reopen to continue, or Delete to remove the record."
-          : selected.status === "reviewed"
-            ? "Agent review is done. Export opens the GitHub PR at origin. Archive keeps it local only."
-            : selected.status === "ready"
-              ? "Waiting on the reviewer, or Complete review / Export if you reviewed in the sidebar."
-              : "Open findings go to the implementor. Address nests a reply underneath. When status is reviewed, Export publishes the GitHub PR.";
+        hint.textContent = archived
+          ? "Archived after opening on GitHub (or Archive). Reopen to continue, or Delete to remove the record."
+          : reviewed
+            ? "Review is done — your turn. Open on GitHub pushes the branch and creates the pull request. Archive keeps it local only."
+            : ready
+              ? "Waiting on the reviewer. Complete review if you finished a sidebar pass, or Open on GitHub anyway to skip."
+              : "Open findings go to the implementor. Address nests a reply underneath. When status is your turn, Open on GitHub creates the PR.";
       }
       const sum = root.querySelector("#sum");
       const next = selected.body || "";
       if (sum) {
-        sum.readOnly = selected.status === "approved";
+        sum.readOnly = archived;
         if (document.activeElement !== sum && sum.value === serverSum) setTextarea(sum, next);
       }
       serverSum = next;
       const save = root.querySelector("#saveSum");
-      if (save) save.hidden = selected.status === "approved";
+      if (save) save.hidden = archived;
       const composer = root.querySelector(".composer");
-      if (composer) composer.hidden = selected.status === "approved";
+      if (composer) composer.hidden = archived;
     }
     function setList(el, html, paintedKey) {
       if (!el) return false;
@@ -1174,22 +1245,24 @@ function panelHtml(webview: vscode.Webview): string {
           "<h1></h1>",
           '<span class="pill"></span>',
           '<span class="muted" id="range"></span>',
-          '<span class="grow"></span>',
-          '<button id="openDiffs">Open diffs</button>',
-          '<button id="completeReview">Complete review</button>',
-          '<button data-s="ready">Ready</button>',
-          '<button id="exportPr">Export</button>',
-          '<button class="secondary" data-s="approved">Archive</button>',
-          '<button class="secondary" data-s="changes_requested">Request changes</button>',
+          '<div class="actions">',
+          '<button id="exportPr" class="cta">Open on GitHub</button>',
+          '<button class="secondary" id="completeReview">Complete review</button>',
+          '<button class="secondary" id="openDiffs">Open diffs</button>',
+          '<button class="secondary" id="markReady" data-s="ready">Mark ready</button>',
+          '<button class="secondary" id="requestChanges" data-s="changes_requested">Request changes</button>',
+          '<button class="secondary" id="archivePr" data-s="approved">Archive locally</button>',
           '<button class="secondary" id="copyReview">Copy review prompt</button>',
           '<button class="secondary" id="openWt"></button>',
           '<button class="secondary" id="reopenPr">Reopen</button>',
-          '<button class="secondary" id="deletePr">Delete</button>',
+          '<span class="spacer"></span>',
+          '<button class="danger" id="deletePr">Delete</button>',
+          "</div>",
           "</div>",
           '<div class="summary"><h2>Summary</h2><div class="pad"><textarea id="sum" placeholder="Why this exists, what changed, how to test. The implementing agent writes this for reviewers."></textarea><div style="margin-top:6px"><button id="saveSum">Save summary</button></div></div></div>',
           '<div class="body">',
           '<div class="files"><h2>Changes (' + where + ')</h2><div id="flist">' + fileHtml + '</div><p class="muted empty">Click a file to open the VS Code diff — loop base on the left, this worktree on the right.</p></div>',
-          '<div class="comments"><h2>Comments</h2><div id="clist">' + commentHtml + '</div><div class="composer"><p class="muted hint" id="hint">Open findings go to the implementor. Address nests a reply underneath. When status is reviewed, Export publishes the GitHub PR.</p><textarea id="cmt" placeholder="Comment for the agent working this PR"></textarea><div style="margin-top:6px"><button id="send">Comment</button></div></div></div>',
+          '<div class="comments"><h2>Comments</h2><div id="clist">' + commentHtml + '</div><div class="composer"><p class="muted hint" id="hint">Open findings go to the implementor. Address nests a reply underneath. When status is your turn, Open on GitHub creates the PR.</p><textarea id="cmt" placeholder="Comment for the agent working this PR"></textarea><div style="margin-top:6px"><button id="send">Comment</button></div></div></div>',
           "</div>"
         ].join("");
         paintedFiles = fileHtml;
