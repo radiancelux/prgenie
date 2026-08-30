@@ -695,28 +695,30 @@ function laneHtml(webview: vscode.Webview): string {
 </head>
 <body>
   <div class="meta">
-    <div class="watch" id="watch">
+    <div class="watch" id="watch" hidden>
       <div class="watch-row" data-role="inbox">
         <span class="role">inbox</span>
-        <span class="state muted" id="inboxState">…</span>
-        <button type="button" class="secondary" id="inboxBtn">Stop</button>
+        <span class="state muted" id="inboxState">—</span>
+        <button type="button" class="secondary" id="inboxBtn" disabled>Start</button>
       </div>
       <div class="watch-row" data-role="queue">
         <span class="role">queue</span>
-        <span class="state muted" id="queueState">…</span>
-        <button type="button" class="secondary" id="queueBtn">Stop</button>
+        <span class="state muted" id="queueState">—</span>
+        <button type="button" class="secondary" id="queueBtn" disabled>Start</button>
       </div>
     </div>
-    <div class="meta-top"><span class="dot" id="dot"></span><span class="muted" id="meta">Watching</span><button type="button" class="secondary" id="archivedToggle">Show archived</button></div>
+    <div class="meta-top"><span class="dot off" id="dot"></span><span class="muted" id="meta">Watching</span><button type="button" class="secondary" id="archivedToggle">Show archived</button></div>
   </div>
   <div id="list"></div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const list = document.getElementById("list");
     const toggle = document.getElementById("archivedToggle");
+    const watchBox = document.getElementById("watch");
     toggle.onclick = () => vscode.postMessage({ type: "showArchived", value: !toggle.classList.contains("on") });
     function bindWatchBtn(role, btn) {
       btn.onclick = () => {
+        if (btn.disabled) return;
         const halted = btn.dataset.halted === "1";
         vscode.postMessage({ type: halted ? "watchStart" : "watchStop", role });
       };
@@ -727,10 +729,33 @@ function laneHtml(webview: vscode.Webview): string {
       const state = document.getElementById(role + "State");
       const btn = document.getElementById(role + "Btn");
       if (!state || !btn) return;
-      const halted = !!(lane && lane.halted);
-      state.textContent = (lane && lane.label) || (halted ? "halted" : "listening");
+      if (!lane) {
+        state.textContent = "—";
+        btn.dataset.halted = "1";
+        btn.textContent = "Start";
+        btn.disabled = true;
+        return;
+      }
+      const halted = !!lane.halted;
+      state.textContent = lane.label || (halted ? "halted" : "listening");
       btn.dataset.halted = halted ? "1" : "0";
       btn.textContent = halted ? "Start" : "Stop";
+      btn.disabled = false;
+    }
+    function paintWatch(msg) {
+      const dot = document.getElementById("dot");
+      const hasWatch = !!(msg.watch && msg.watch.inbox && msg.watch.queue) && !msg.error;
+      if (watchBox) watchBox.hidden = !hasWatch;
+      if (!hasWatch) {
+        paintLane("inbox", null);
+        paintLane("queue", null);
+        if (dot) dot.classList.add("off");
+        return;
+      }
+      paintLane("inbox", msg.watch.inbox);
+      paintLane("queue", msg.watch.queue);
+      const anyListening = !msg.watch.inbox.halted || !msg.watch.queue.halted;
+      if (dot) dot.classList.toggle("off", !anyListening);
     }
     function prRow(id) {
       const el = document.createElement("div");
@@ -747,12 +772,7 @@ function laneHtml(webview: vscode.Webview): string {
       const msg = event.data;
       if (msg.type !== "snapshot") return;
       const meta = document.getElementById("meta");
-      const dot = document.getElementById("dot");
-      const watch = msg.watch || {};
-      paintLane("inbox", watch.inbox);
-      paintLane("queue", watch.queue);
-      const anyListening = (watch.inbox && !watch.inbox.halted) || (watch.queue && !watch.queue.halted);
-      if (dot) dot.classList.toggle("off", !anyListening);
+      paintWatch(msg);
       if (msg.error) {
         meta.textContent = "Watching";
         toggle.hidden = true;
