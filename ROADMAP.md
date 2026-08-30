@@ -19,7 +19,7 @@ The gaps are not missing lifecycle pieces — they are **operability** (recoveri
 | # | Gap | Evidence |
 | --- | --- | --- |
 | H1 | ~~No way to see or control watch lanes from the sidebar.~~ **Done:** Local PRs shows inbox/queue status with Start/Stop. | Extension `laneView.ts` + `getRepoWatch` / `haltWatchRole` / `resumeWatchRole`. |
-| H2 | ~~No rename for loops. Delete/reopen~~ **Done:** CLI/MCP and sidebar Delete / Reopen. | `laneView.ts`, `prgenie delete` / `reopen`. |
+| H2 | ~~Sidebar delete/reopen missing.~~ **Done:** CLI/MCP and Local PRs Delete / Reopen. Loop **rename** is still CLI/MCP-only (`prgenie update --title`); no sidebar rename. | `laneView.ts`, `prgenie delete` / `reopen` / `update`. |
 | H3 | Stale-install pain: plugin skills, MCP catalog, and the extension all go stale independently. | Mitigated by `prgenie doctor` (hash/version checks + fix text). Humans still must run link-plugin / quit Cursor. |
 | H4 | ~~No `complete_review` from the UI.~~ **Done:** Complete review on ready loops (with force on head drift). | `laneView.ts`. |
 | H5 | No search or filtering by title/body/comment/file. Status / inbox / `--all` filtering lives in the CLI (`prgenie list`/`queue`/`inbox`) and MCP `list_local_prs` — not in `listLocalPrs` itself (which returns every packet). | CLI/MCP list surfaces; `listLocalPrs` is unfiltered. |
@@ -62,7 +62,7 @@ The gaps are not missing lifecycle pieces — they are **operability** (recoveri
 ### Next — human surface and review quality — **shipped this loop**
 
 5. **Watch panel in the sidebar (H1).** ✅
-6. **Loop administration (H2).** ✅ CLI/MCP/UI delete + reopen.
+6. **Loop administration (H2).** ✅ CLI/MCP/UI delete + reopen. Sidebar rename remains open (Later).
 7. **Stale-review guard (A4).** ✅
 8. **Diff strategy for large loops (A5).** ✅
 9. **Comment edit/delete (A7).** ✅
@@ -76,6 +76,7 @@ The gaps are not missing lifecycle pieces — they are **operability** (recoveri
 14. **Release discipline (P4).**
 15. **`gh` bind in the UI (H7).**
 16. **Docs (H6).**
+17. **Sidebar rename for loops (H2 remainder).** Title edits stay on `prgenie update` / MCP until the panel gains a rename control.
 
 ---
 
