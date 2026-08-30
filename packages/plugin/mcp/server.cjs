@@ -785,7 +785,7 @@ async function setLocalPrStatus(cwd, id, status) {
       );
     }
     pr.status = status;
-    if (status === "ready") await applyHeadRefresh(cwd, pr);
+    if (status === "ready") await armReviewRequest(cwd, pr);
     pr.updatedAt = nowIso();
   });
 }
@@ -853,11 +853,15 @@ function maybePromoteToReviewed(pr) {
   if (open2.length > 0 || addressed.length > 0) return;
   pr.status = "reviewed";
 }
+async function armReviewRequest(cwd, pr) {
+  await applyHeadRefresh(cwd, pr);
+  pr.reviewRequestedSha = pr.headSha;
+}
 async function maybeHandoffToReviewer(cwd, pr, now, author) {
   if (isArchivedPr(pr)) return;
   if (pr.status !== "changes_requested") return;
   if (pendingReviewComments(pr).length > 0) return;
-  await applyHeadRefresh(cwd, pr);
+  await armReviewRequest(cwd, pr);
   pr.status = "ready";
   pr.comments.push({
     id: newId("c"),

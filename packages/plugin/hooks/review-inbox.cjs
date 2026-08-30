@@ -422,6 +422,10 @@ function isFindingComment(comment) {
 function pendingReviewComments(pr) {
   return (pr.comments ?? []).map(normalizeComment).filter((c) => isFindingComment(c) && c.status === "open");
 }
+async function armReviewRequest(cwd, pr) {
+  await applyHeadRefresh(cwd, pr);
+  pr.reviewRequestedSha = pr.headSha;
+}
 function formatReviewInbox(pr) {
   if (pr.status !== "changes_requested") return null;
   const pending = pendingReviewComments(pr);
@@ -452,8 +456,8 @@ function formatSpawnReviewer(pr) {
   ].join("\n");
 }
 async function markReviewRequested(cwd, id) {
-  return withPrLock(cwd, id, (pr) => {
-    pr.reviewRequestedSha = pr.headSha;
+  return withPrLock(cwd, id, async (pr) => {
+    await armReviewRequest(cwd, pr);
     pr.updatedAt = nowIso();
   });
 }
@@ -546,9 +550,9 @@ async function main() {
       const fresh = await refreshLocalPrHead(root, pr.id);
       if (shouldSpawnReviewer(fresh)) {
         await markReviewRequested(root, fresh.id);
-        process.stdout.write(JSON.stringify({ followup_message: formatSpawnReviewer(fresh) }) + "\n");
-        return;
       }
+      process.stdout.write(JSON.stringify({ followup_message: formatSpawnReviewer(fresh) }) + "\n");
+      return;
     }
     silent();
     return;

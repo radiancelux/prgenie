@@ -255,7 +255,7 @@ export async function setLocalPrStatus(
       );
     }
     pr.status = status;
-    if (status === "ready") await applyHeadRefresh(cwd, pr);
+    if (status === "ready") await armReviewRequest(cwd, pr);
     pr.updatedAt = nowIso();
   });
 }
@@ -339,6 +339,11 @@ function maybePromoteToReviewed(pr: LocalPr): void {
   pr.status = "reviewed";
 }
 
+async function armReviewRequest(cwd: string, pr: LocalPr): Promise<void> {
+  await applyHeadRefresh(cwd, pr);
+  pr.reviewRequestedSha = pr.headSha;
+}
+
 async function maybeHandoffToReviewer(
   cwd: string,
   pr: LocalPr,
@@ -348,7 +353,7 @@ async function maybeHandoffToReviewer(
   if (isArchivedPr(pr)) return;
   if (pr.status !== "changes_requested") return;
   if (pendingReviewComments(pr).length > 0) return;
-  await applyHeadRefresh(cwd, pr);
+  await armReviewRequest(cwd, pr);
   pr.status = "ready";
   pr.comments.push({
     id: newId("c"),
@@ -402,8 +407,8 @@ export function formatSpawnReviewer(pr: LocalPr): string {
 }
 
 export async function markReviewRequested(cwd: string, id: string): Promise<LocalPr> {
-  return withPrLock(cwd, id, (pr) => {
-    pr.reviewRequestedSha = pr.headSha;
+  return withPrLock(cwd, id, async (pr) => {
+    await armReviewRequest(cwd, pr);
     pr.updatedAt = nowIso();
   });
 }
@@ -778,6 +783,7 @@ export async function captureAgentWork(
       await applyHeadRefresh(cwd, pr);
       if (pr.status === "reviewed" && pr.headSha !== prevSha) {
         pr.status = "ready";
+        pr.reviewRequestedSha = pr.headSha;
       }
     });
     updated.worktreePath = await ensureWorktreeForLoop(cwd, updated, {

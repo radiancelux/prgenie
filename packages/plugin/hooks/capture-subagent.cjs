@@ -738,6 +738,7 @@ async function captureAgentWork(cwd, input = {}) {
       await applyHeadRefresh(cwd, pr2);
       if (pr2.status === "reviewed" && pr2.headSha !== prevSha) {
         pr2.status = "ready";
+        pr2.reviewRequestedSha = pr2.headSha;
       }
     });
     updated.worktreePath = await ensureWorktreeForLoop(cwd, updated, {

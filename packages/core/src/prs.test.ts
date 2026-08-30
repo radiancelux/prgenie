@@ -339,8 +339,10 @@ test("captureAgentWork creates then updates a loop for the same branch", async (
 
 test("reviewer Task is requested once per loop HEAD", async () => {
   const pr = await createLocalPr(repo, { title: "Spawn", base: "main" });
+  // set_status ready arms reviewRequestedSha (drift baseline for queue + hook paths)
   const ready = await setLocalPrStatus(repo, pr.id, "ready");
-  assert.equal(shouldSpawnReviewer(ready), true);
+  assert.equal(ready.reviewRequestedSha, ready.headSha);
+  assert.equal(shouldSpawnReviewer(ready), false);
   const marked = await markReviewRequested(repo, pr.id);
   assert.equal(shouldSpawnReviewer(marked), false);
   assert.equal(marked.reviewRequestedSha, marked.headSha);
@@ -629,6 +631,21 @@ test("a missing export id is treated as shipped when creating the next loop", as
   await haltWatch(repo, "export", "lp-gonegone");
   await createLocalPr(repo, { title: "After missing export id", base: "main" });
   assert.equal((await getRepoWatch(repo)).halted, false);
+});
+
+test("ready handoff arms reviewRequestedSha for the drift guard", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, { title: "Arm baseline", base: "main" });
+  const ready = await setLocalPrStatus(repo, pr.id, "ready");
+  assert.equal(ready.reviewRequestedSha, ready.headSha);
+  assert.ok(ready.reviewRequestedSha);
+
+  await setLocalPrStatus(repo, pr.id, "changes_requested");
+  const filed = await addLocalPrComment(repo, pr.id, "Fix me.", { role: "reviewer" });
+  await completeLocalPrReview(repo, pr.id);
+  const handed = await addressLocalPrComment(repo, pr.id, filed.comments[0].id, "Fixed.");
+  assert.equal(handed.status, "ready");
+  assert.equal(handed.reviewRequestedSha, handed.headSha);
 });
 
 test("complete_review refuses when HEAD moved after Review requested", async () => {
