@@ -13,7 +13,7 @@ The loop is the handoff. `ready` means the worktree agent requested a review. Fi
 
 ## Orchestrator (this chat)
 
-`/watch-ready-prs` listens (60-tick cap). Each tick is `/review-queue`: Task a `generalPurpose` subagent per new loop, in parallel if several are waiting. **Do not wait** for those Tasks. Do not duplicate the review here. Do not `complete_review` here. `/stop-review` or `/stop-watch` ends listen.
+`/watch-ready-prs` listens (idle 30m / max 8h). Each tick is `/review-queue`: Task a `generalPurpose` subagent per new loop, in parallel if several are waiting. **Do not wait** for those Tasks. Do not duplicate the review here. Do not `complete_review` here. `/stop-review` or `/stop-watch` ends listen.
 
 ## Leaf reviewer (Task)
 

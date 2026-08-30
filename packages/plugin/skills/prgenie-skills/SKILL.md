@@ -28,7 +28,7 @@ User-only skills set `disable-model-invocation: true` so the agent does not star
 Keep terminology fixed: **loop** (local PR packet), **halt** (`stop` vs `export`), **address** (implementor) vs **resolve** (reviewer) vs **complete_review** (end of review). Do not push unless `/export-local-pr`.
 
 - Export halt resumes only when that export id is **missing or archived**. Id inequality is not enough. Stop halt never auto-resumes.
-- Listen shells are **60 ticks max** (~1 hour at 1m), then `/stop-loop` or `/stop-review` for that chat only. Never `while ($true)`. Never `/stop-watch` from a cap.
+- Listen shells use **idle timeout** (default 30m quiet) with an **8h** wall ceiling, then `/stop-loop` or `/stop-review` for that chat only. Never `while ($true)`. Never `/stop-watch` from an idle/max DONE.
 - `prgenie watch start inbox` / `start queue` resume one lane. `/watch-review-inbox` and `/watch-ready-prs` start only their lane. Ticks never `watch start`.
 - Implementor acts only on **this worktree** when `changes_requested`. Reviewer Tasks must not be awaited.
 

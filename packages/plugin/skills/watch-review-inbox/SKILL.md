@@ -14,22 +14,22 @@ You are the **implementor** on this worktree. Stay in this conversation. Do not 
 
 If this branch has **no** live local PR yet, the user's message is the brief — follow `/start-loop` (ticket MCP or chat text), then come back here. Do not sit idle on `main` waiting for a packet.
 
-Otherwise run `prgenie watch start inbox` (MCP `watch_start` `role=inbox` if listed) so a prior `/stop-loop` or 60-tick cap can resume **this lane only**. Do not `prgenie watch start` with no role. Then run one `/review-inbox` pass.
+Otherwise run `prgenie watch start inbox` (MCP `watch_start` `role=inbox` if listed) so a prior `/stop-loop` or idle/max DONE can resume **this lane only**. Do not `prgenie watch start` with no role. Then run one `/review-inbox` pass.
 
 ## Listen
 
-Arm a **capped** listen with the built-in CLI (do **not** hand-roll `for`/`Start-Sleep` loops):
+Arm an **idle-timeout** listen with the built-in CLI (do **not** hand-roll `for`/`Start-Sleep` loops):
 
 ```powershell
-node packages/cli/dist/prgenie.cjs watch listen inbox --ticks 60 --interval 60
+node packages/cli/dist/prgenie.cjs watch listen inbox --idle 30m --max 8h --interval 60
 ```
 
-Or `prgenie watch listen inbox` if the CLI is on PATH. Notify on `^AGENT_LOOP_(TICK|DONE)_review-inbox`. The process prints the same TICK/DONE sentinels, exits early if the inbox lane is halted, and exits after 60 ticks. Then run `/stop-loop`.
+Or `prgenie watch listen inbox` if the CLI is on PATH (same defaults). Notify on `^AGENT_LOOP_(TICK|DONE)_review-inbox`. The process prints the same TICK/DONE sentinels, exits early if the inbox lane is halted, exits after **30m with no inbox activity**, or after the **8h** wall ceiling. Then run `/stop-loop`.
 
-- Cloud: subscription timer, same `/review-inbox` prompt, **unsubscribe after 60 fires** (or run `prgenie watch listen inbox` in the cloud shell).
+- Cloud: prefer `prgenie watch listen inbox` in the cloud shell (idle/max built in). If you must use a subscription timer, unsubscribe when DONE fires with `reason` idle/max/stop/export — do not hard-cap at 60 fires.
 - Do not start a duplicate loop if one is already running for this purpose.
 - Each **TICK**: MCP `watch_status` if listed (read **`inbox`**, not the combined `halted` flag), otherwise `node packages/cli/dist/prgenie.cjs watch inbox`. Do not stall looking for MCP. `listening` continues. `halted reason=stop` on **inbox** → kill this listen loop; the developer ended it (the reviewer queue may still be listening). `halted reason=export` → do not implement that packet. Do **not** `prgenie watch start` on a tick (no role, and not `start inbox`) — only this `/watch-review-inbox` command starts the inbox lane. A different live loop on this checkout is not enough. `create_local_pr` resumes export-halted lanes after that id is archived or gone; it does not clear a stop halt. Otherwise only act when `prgenie inbox` shows **this worktree's** loop (`changes_requested` with new open findings). Never pick another loop.
-- Each **DONE** (or the listen process exits): run `/stop-loop` (inbox only). Tell the developer the implementor listen cap hit ~1 hour. They re-run `/watch-review-inbox` to continue. Do not re-arm. Do **not** `/stop-watch` — that would halt the reviewer queue too.
+- Each **DONE** (or the listen process exits): run `/stop-loop` (inbox only). Tell the developer why from the DONE payload (`idle` = quiet 30m, `max` = 8h ceiling, `stop`/`export` = halt). They re-run `/watch-review-inbox` to continue. Do not re-arm. Do **not** `/stop-watch` — that would halt the reviewer queue too.
 
 Developer commands in this chat:
 
@@ -39,4 +39,4 @@ Developer commands in this chat:
 
 When the user says stop, kill the loop. Confirm it has stopped.
 
-Tell the user this chat is listening for review comments on the current branch's local PR, and that listen stops after 60 minutes unless they re-run it.
+Tell the user this chat is listening for review comments on the current branch's local PR, and that listen stops after **30 minutes of inactivity** (or 8h max) unless they re-run it.

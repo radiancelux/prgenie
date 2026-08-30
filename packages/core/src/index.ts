@@ -69,13 +69,22 @@ export {
   getRepoWatch,
   listenSentinel,
   listenWatchLane,
+  parseDurationMs,
   resumeWatch,
   resumeWatchRole,
   formatWatchLane,
   formatWatchStatus,
   watchLane,
 } from "./watch.js";
-export type { RepoWatchState, WatchHaltReason, WatchLaneState, WatchListenSentinel, WatchRole } from "./watch.js";
+export type {
+  ListenDoneReason,
+  RepoWatchState,
+  WatchHaltReason,
+  WatchLaneState,
+  WatchListenSentinel,
+  WatchRole,
+} from "./watch.js";
+export { listenActivityFingerprint } from "./watchActivity.js";
 export { formatDoctorReport, runDoctor } from "./doctor.js";
 export type { DoctorReport, DoctorCheck } from "./doctor.js";
 export { exportLocalPr, exportPushRefspec, archiveLoopsMergedOnGithub, githubPrViewArgs } from "./export.js";
