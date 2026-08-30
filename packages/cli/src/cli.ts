@@ -7,6 +7,8 @@ import {
   completeLocalPrReview,
   createLocalPr,
   deleteLocalPr,
+  deleteLocalPrComment,
+  editLocalPrComment,
   exportLocalPr,
   ensureWorktreeForLoop,
   findGitRoot,
@@ -71,6 +73,8 @@ Usage:
   prgenie comment <id> -m <message> [--role human|agent|reviewer] [--author <name>] [--path <file>] [--line <n>] [--side left|right] [--reply-to <commentId>] [--body-file <path>]
   prgenie address <id> <commentId> -m <message>
   prgenie resolve <id> <commentId> -m <message>
+  prgenie edit-comment <id> <commentId> -m <message>
+  prgenie delete-comment <id> <commentId> [--yes]
   prgenie complete-review <id> [-m <message>] [--force]
   prgenie status <id> <draft|ready|changes_requested|reviewed|approved>
   prgenie worktrees
@@ -401,6 +405,29 @@ export async function run(argv: string[]): Promise<number> {
       return 1;
     }
     printPr(await resolveLocalPrComment(repo, id, commentId, message, { role: "reviewer" }));
+    return 0;
+  }
+  if (sub === "edit-comment") {
+    const commentId = rest[1];
+    const message = messageArg(rest);
+    if (!commentId || !message) {
+      process.stderr.write("prgenie edit-comment <id> <commentId> -m <message>\n");
+      return 1;
+    }
+    printPr(await editLocalPrComment(repo, id, commentId, message));
+    return 0;
+  }
+  if (sub === "delete-comment") {
+    const commentId = rest[1];
+    if (!commentId) {
+      process.stderr.write("prgenie delete-comment <id> <commentId> [--yes]\n");
+      return 1;
+    }
+    if (!flag(rest, "--yes") && !flag(rest, "-y")) {
+      process.stderr.write("Pass --yes to permanently delete an open finding.\n");
+      return 1;
+    }
+    printPr(await deleteLocalPrComment(repo, id, commentId));
     return 0;
   }
   if (sub === "complete-review") {

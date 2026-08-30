@@ -513,6 +513,60 @@ export async function addLocalPrComment(
   });
 }
 
+/** Edit an open finding's body (human or reviewer root comments only). */
+export async function editLocalPrComment(
+  cwd: string,
+  id: string,
+  commentId: string,
+  body: string,
+): Promise<LocalPr> {
+  const text = body.trim();
+  if (!text) throw new Error("Comment body is empty");
+  const needle = commentId.trim();
+  if (!needle) throw new Error("Comment id is empty");
+  return withPrLock(cwd, id, async (pr) => {
+    if (isArchivedPr(pr)) throw new Error(`Loop ${pr.id} is archived.`);
+    const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
+    if (!target) throw new Error(`Comment not found: ${commentId}`);
+    if (!isFindingComment(target) || target.status !== "open") {
+      throw new Error("Only open findings can be edited");
+    }
+    target.body = text;
+    pr.updatedAt = nowIso();
+  });
+}
+
+/** Delete an open finding and replies that target it. */
+export async function deleteLocalPrComment(
+  cwd: string,
+  id: string,
+  commentId: string,
+): Promise<LocalPr> {
+  const needle = commentId.trim();
+  if (!needle) throw new Error("Comment id is empty");
+  return withPrLock(cwd, id, async (pr) => {
+    if (isArchivedPr(pr)) throw new Error(`Loop ${pr.id} is archived.`);
+    const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
+    if (!target) throw new Error(`Comment not found: ${commentId}`);
+    if (!isFindingComment(target) || target.status !== "open") {
+      throw new Error("Only open findings can be deleted");
+    }
+    const drop = new Set<string>([target.id]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const c of pr.comments) {
+        if (c.replyTo && drop.has(c.replyTo) && !drop.has(c.id)) {
+          drop.add(c.id);
+          grew = true;
+        }
+      }
+    }
+    pr.comments = pr.comments.filter((c) => !drop.has(c.id));
+    pr.updatedAt = nowIso();
+  });
+}
+
 export async function addressLocalPrComment(
   cwd: string,
   id: string,

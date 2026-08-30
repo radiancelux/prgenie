@@ -8,6 +8,8 @@ import {
   completeLocalPrReview,
   createLocalPr,
   deleteLocalPr,
+  deleteLocalPrComment,
+  editLocalPrComment,
   exportLocalPr,
   ensureWorktreeForLoop,
   findGitRoot,
@@ -160,6 +162,15 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
           role: args.role === "human" ? "human" : "reviewer",
         },
       );
+    case "edit_comment":
+      return editLocalPrComment(
+        cwd,
+        String(args.id ?? ""),
+        String(args.commentId ?? ""),
+        String(args.body ?? ""),
+      );
+    case "delete_comment":
+      return deleteLocalPrComment(cwd, String(args.id ?? ""), String(args.commentId ?? ""));
     case "complete_review":
       return completeLocalPrReview(cwd, String(args.id ?? ""), {
         author: typeof args.author === "string" ? args.author : undefined,
@@ -358,6 +369,35 @@ const tools = [
         body: { type: "string" },
         author: { type: "string" },
         role: { type: "string", enum: ["reviewer", "human"] },
+        cwd: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "edit_comment",
+    description:
+      "Edit the body of an open finding (human or reviewer). Does not change status. Archived loops and non-open findings are refused. Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id", "commentId", "body"],
+      properties: {
+        id: { type: "string" },
+        commentId: { type: "string" },
+        body: { type: "string" },
+        cwd: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "delete_comment",
+    description:
+      "Delete an open finding and replies under it. Addressed/resolved threads are refused. Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id", "commentId"],
+      properties: {
+        id: { type: "string" },
+        commentId: { type: "string" },
         cwd: { type: "string" },
       },
     },
