@@ -51,8 +51,10 @@ export interface LocalPr {
   source: LocalPrSource | null;
   createdAt: string;
   updatedAt: string;
-  /** HEAD sha we last asked a reviewer Task to look at. Blocks repeat review until HEAD moves. */
+  /** HEAD sha recorded when the loop became ready — drift baseline for complete_review. */
   reviewRequestedSha: string | null;
+  /** HEAD sha we last told the implementor chat to spawn a reviewer for (once per HEAD). */
+  reviewerNotifiedSha: string | null;
 }
 
 export interface WorktreeInfo {

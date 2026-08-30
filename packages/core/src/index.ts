@@ -34,6 +34,7 @@ export {
   commentThreads,
   completeLocalPrReview,
   createLocalPr,
+  deleteLocalPr,
   findLocalPrForCurrentBranch,
   findLocalPrForCurrentWorktree,
   formatReviewInbox,
@@ -45,19 +46,36 @@ export {
   isArchivedPr,
   isFindingComment,
   isReviewRequestBody,
+  listCorruptLocalPrFiles,
   listLocalPrs,
   markReviewRequested,
+  markReviewerNotified,
   normalizeComment,
   pendingReviewComments,
   refreshLocalPrHead,
+  reopenLocalPr,
   resolveLocalPrComment,
   resumeWatchForNextLoop,
   setLocalPrStatus,
   shouldSpawnReviewer,
   updateLocalPr,
 } from "./prs.js";
-export { haltWatch, haltWatchRole, getRepoWatch, resumeWatch, resumeWatchRole, formatWatchLane, formatWatchStatus, watchLane } from "./watch.js";
-export type { RepoWatchState, WatchHaltReason, WatchLaneState, WatchRole } from "./watch.js";
+export type { CompleteLocalPrReviewResult } from "./prs.js";
+export {
+  haltWatch,
+  haltWatchRole,
+  getRepoWatch,
+  listenSentinel,
+  listenWatchLane,
+  resumeWatch,
+  resumeWatchRole,
+  formatWatchLane,
+  formatWatchStatus,
+  watchLane,
+} from "./watch.js";
+export type { RepoWatchState, WatchHaltReason, WatchLaneState, WatchListenSentinel, WatchRole } from "./watch.js";
+export { formatDoctorReport, runDoctor } from "./doctor.js";
+export type { DoctorReport, DoctorCheck } from "./doctor.js";
 export { exportLocalPr, exportPushRefspec, archiveLoopsMergedOnGithub, githubPrViewArgs } from "./export.js";
 export type { GithubPrHeadState } from "./export.js";
 export { appendSession } from "./sessions.js";

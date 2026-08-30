@@ -48,10 +48,15 @@ Then:
 prgenie create [--title t] [--body "summary"] [--base main] [--head branch]
 prgenie queue
 prgenie inbox
+prgenie watch / watch inbox|queue / watch stop [inbox|queue] / watch start [inbox|queue]
+prgenie watch listen inbox|queue [--ticks 60] [--interval 60]
+prgenie doctor
 prgenie update <id> [--title t] [--body "summary"]
 prgenie list [--all]
 prgenie show <id>
-prgenie diff <id>
+prgenie diff <id> [--stat]
+prgenie delete <id> --yes
+prgenie reopen <id>
 prgenie approve <id>
 prgenie comment <id> -m "..." [--role human|agent|reviewer]
 prgenie address <id> <commentId> -m "..."
@@ -62,6 +67,8 @@ prgenie worktrees
 prgenie gh list
 prgenie gh use <login>
 ```
+
+`prgenie doctor` checks plugin/extension freshness, watch lanes, corrupt PR files, orphaned `.loops` worktrees, `gh` bind, and legacy hooks. `prgenie watch listen` is the capped implementor/reviewer wake process (skills should use it instead of hand-rolled sleep loops).
 
 Bind a GitHub login per repo (`prgenie gh use <login>`). Before `git push` / `gh`, PR Genie switches `gh` to that account. `gh auth` is global — only one account is active at a time — so the bind is how this project stays on `radiancelux` instead of `ccc-radiancelux`.
 
@@ -80,6 +87,10 @@ Cursor may auto-clean worktrees. The loop remains.
 `draft` → `ready` (reviewer may file comments) → `complete_review` → `changes_requested` or `reviewed` → `approved`
 
 Reviewer comments stay on `ready` until **`complete_review`**. That flip is what wakes the implementor (`changes_requested`) or you (`reviewed`). Human comments still request changes immediately. The implementor **addresses** each open finding with a reply under that comment (`address_comment`). Addressing the **last** open finding sets `ready` and posts Review requested so the reviewer queue can run again. The reviewer **resolves** addressed comments, then **always** `complete_review`. The **reviewer chat** runs `/watch-ready-prs`. The **implementor chat** runs `/watch-review-inbox` and must not act while the loop is still `ready`. Listen loops cap at 60 ticks (~1 hour), then halt that lane — re-run `/watch-review-inbox` or `/watch-ready-prs` to `watch start` that lane only. `/stop-loop` stops the implementor listen only (`prgenie watch stop inbox`). `/stop-review` stops the reviewer listen only. `/stop-watch` stops both. `/export-local-pr` opens the GitHub PR at origin, **archives** the loop (`approved`), and **halts** listen loops until `create_local_pr` runs after that export id is archived (or missing). Archived packets stay on disk (`prgenie show <id>`, `refs/local-pr/*`, Local PRs **Show archived**) but drop off `prgenie list` and MCP `list_local_prs` unless you pass `--all` / `all=true`. Export checks the **main workspace** off the loop branch (onto the loop base) and removes a sibling `../<repo>.loops/<id>` checkout. If this window is still on that extra worktree, PR Genie reopens the primary folder and then clears it. Every loop should have a **summary** (`body`): why, what changed, how to test.
+
+## Roadmap
+
+Gap analysis and prioritized roadmap: [ROADMAP.md](ROADMAP.md).
 
 ## License
 

@@ -16,23 +16,18 @@ Run `prgenie watch start queue` (MCP `watch_start` `role=queue` if listed) so a 
 
 ## Listen
 
-Arm a **capped** recurring wake using the **loop** skill (`/loop 1m /review-queue`). **Max 60 ticks** (~1 hour). Then halt. Do not `while ($true)` forever.
-
-Local IDE (PowerShell) — one shell, unique sentinel, `notify_on_output` on `^AGENT_LOOP_(TICK|DONE)_review-queue`:
+Arm a **capped** listen with the built-in CLI (do **not** hand-roll `for`/`Start-Sleep` loops):
 
 ```powershell
-$max = 60
-for ($i = 1; $i -le $max; $i++) {
-  Start-Sleep -Seconds 60
-  Write-Output 'AGENT_LOOP_TICK_review-queue {"prompt":"/review-queue"}'
-}
-Write-Output 'AGENT_LOOP_DONE_review-queue {"prompt":"/stop-review"}'
+node packages/cli/dist/prgenie.cjs watch listen queue --ticks 60 --interval 60
 ```
 
-- Cloud: subscription timer, same `/review-queue` prompt, **unsubscribe after 60 fires**.
+Or `prgenie watch listen queue` if the CLI is on PATH. Notify on `^AGENT_LOOP_(TICK|DONE)_review-queue`. The process prints the same TICK/DONE sentinels, exits early if the queue lane is halted, and exits after 60 ticks. Then run `/stop-review`.
+
+- Cloud: subscription timer, same `/review-queue` prompt, **unsubscribe after 60 fires** (or run `prgenie watch listen queue` in the cloud shell).
 - Do not start a duplicate loop if one is already running for this purpose.
 - Each **TICK**: MCP `watch_status` if listed (read **`queue`**, not the combined `halted` flag), otherwise `prgenie watch queue`. If `halted reason=stop` on **queue**, kill this loop immediately (the implementor inbox may still be listening). If `halted reason=export`, the last packet shipped — stop this listen pass. Do **not** `prgenie watch start` on a tick (no role, and not `start queue`) — only this `/watch-ready-prs` command starts the queue lane. A new implementor loop (`create_local_pr`) resumes export-halted lanes after that id is archived or missing; it does not clear a stop halt. Re-arm only if you killed the shell **and** `prgenie watch queue` is `listening`. Otherwise only dispatch loops you have not already Tasked for that `headSha`. Do not await those Tasks. Do not `complete_review` in this chat. If a Task later returns here, ignore its status text — `prgenie show` is the handoff.
-- Each **DONE** (or the shell exits after the cap): run `/stop-review` (queue only). Tell the developer the reviewer listen cap hit ~1 hour. They re-run `/watch-ready-prs` to continue. Do not re-arm. Do **not** `/stop-watch` — that would halt the implementor inbox too.
+- Each **DONE** (or the listen process exits): run `/stop-review` (queue only). Tell the developer the reviewer listen cap hit ~1 hour. They re-run `/watch-ready-prs` to continue. Do not re-arm. Do **not** `/stop-watch` — that would halt the implementor inbox too.
 
 Developer commands in this chat:
 

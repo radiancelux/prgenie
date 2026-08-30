@@ -18,23 +18,18 @@ Otherwise run `prgenie watch start inbox` (MCP `watch_start` `role=inbox` if lis
 
 ## Listen
 
-Arm a **capped** recurring wake using the **loop** skill (`/loop 1m /review-inbox`). **Max 60 ticks** (~1 hour). Then halt. Do not `while ($true)` forever.
-
-Local IDE (PowerShell) — one shell, unique sentinel, `notify_on_output` on `^AGENT_LOOP_(TICK|DONE)_review-inbox`:
+Arm a **capped** listen with the built-in CLI (do **not** hand-roll `for`/`Start-Sleep` loops):
 
 ```powershell
-$max = 60
-for ($i = 1; $i -le $max; $i++) {
-  Start-Sleep -Seconds 60
-  Write-Output 'AGENT_LOOP_TICK_review-inbox {"prompt":"/review-inbox"}'
-}
-Write-Output 'AGENT_LOOP_DONE_review-inbox {"prompt":"/stop-loop"}'
+node packages/cli/dist/prgenie.cjs watch listen inbox --ticks 60 --interval 60
 ```
 
-- Cloud: subscription timer, same `/review-inbox` prompt, **unsubscribe after 60 fires**.
+Or `prgenie watch listen inbox` if the CLI is on PATH. Notify on `^AGENT_LOOP_(TICK|DONE)_review-inbox`. The process prints the same TICK/DONE sentinels, exits early if the inbox lane is halted, and exits after 60 ticks. Then run `/stop-loop`.
+
+- Cloud: subscription timer, same `/review-inbox` prompt, **unsubscribe after 60 fires** (or run `prgenie watch listen inbox` in the cloud shell).
 - Do not start a duplicate loop if one is already running for this purpose.
 - Each **TICK**: MCP `watch_status` if listed (read **`inbox`**, not the combined `halted` flag), otherwise `node packages/cli/dist/prgenie.cjs watch inbox`. Do not stall looking for MCP. `listening` continues. `halted reason=stop` on **inbox** → kill this listen loop; the developer ended it (the reviewer queue may still be listening). `halted reason=export` → do not implement that packet. Do **not** `prgenie watch start` on a tick (no role, and not `start inbox`) — only this `/watch-review-inbox` command starts the inbox lane. A different live loop on this checkout is not enough. `create_local_pr` resumes export-halted lanes after that id is archived or gone; it does not clear a stop halt. Otherwise only act when `prgenie inbox` shows **this worktree's** loop (`changes_requested` with new open findings). Never pick another loop.
-- Each **DONE** (or the shell exits after the cap): run `/stop-loop` (inbox only). Tell the developer the implementor listen cap hit ~1 hour. They re-run `/watch-review-inbox` to continue. Do not re-arm. Do **not** `/stop-watch` — that would halt the reviewer queue too.
+- Each **DONE** (or the listen process exits): run `/stop-loop` (inbox only). Tell the developer the implementor listen cap hit ~1 hour. They re-run `/watch-review-inbox` to continue. Do not re-arm. Do **not** `/stop-watch` — that would halt the reviewer queue too.
 
 Developer commands in this chat:
 

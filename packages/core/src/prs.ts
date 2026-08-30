@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { git, gitText, requireGitRoot, findGitRoot } from "./git.js";
 import { parseJsonObject, prFile, prsDir, withFileLock, writeJsonFile } from "./store.js";
@@ -14,6 +14,7 @@ import {
   worktreeForLoop,
   ensureWorktreeForLoop,
   loopWorktreeDir,
+  releaseArchivedLoop,
   sameFsPath,
 } from "./worktrees.js";
 import type {
@@ -64,6 +65,7 @@ async function readPrFile(file: string): Promise<LocalPr> {
   const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
   pr.source = pr.source ?? null;
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
+  pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
   pr.comments = (pr.comments ?? []).map(normalizeComment);
   return pr;
 }
@@ -100,6 +102,23 @@ export function isArchivedPr(pr: { status: LocalPrStatus }): boolean {
   return pr.status === "approved";
 }
 
+export async function listCorruptLocalPrFiles(cwd: string): Promise<string[]> {
+  await requireGitRoot(cwd);
+  const dir = await prsDir(cwd);
+  const names = await readdir(dir);
+  const corrupt: string[] = [];
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const file = path.join(dir, name);
+    try {
+      parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+    } catch {
+      corrupt.push(file);
+    }
+  }
+  return corrupt;
+}
+
 export async function listLocalPrs(cwd: string): Promise<LocalPr[]> {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
@@ -116,6 +135,7 @@ export async function listLocalPrs(cwd: string): Promise<LocalPr[]> {
     }
     pr.source = pr.source ?? null;
     pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
+    pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
   }
@@ -193,6 +213,7 @@ export async function createLocalPr(
     createdAt,
     updatedAt: createdAt,
     reviewRequestedSha: null,
+    reviewerNotifiedSha: null,
   };
   await writePr(root, pr);
   const others = await listLocalPrs(root);
@@ -237,7 +258,7 @@ export async function setLocalPrStatus(
       );
     }
     pr.status = status;
-    if (status === "ready") await applyHeadRefresh(cwd, pr);
+    if (status === "ready") await armReviewRequest(cwd, pr);
     pr.updatedAt = nowIso();
   });
 }
@@ -321,6 +342,13 @@ function maybePromoteToReviewed(pr: LocalPr): void {
   pr.status = "reviewed";
 }
 
+async function armReviewRequest(cwd: string, pr: LocalPr): Promise<void> {
+  await applyHeadRefresh(cwd, pr);
+  pr.reviewRequestedSha = pr.headSha;
+  // New ready cycle — allow one implementor-chat spawn reminder for this HEAD.
+  pr.reviewerNotifiedSha = null;
+}
+
 async function maybeHandoffToReviewer(
   cwd: string,
   pr: LocalPr,
@@ -330,7 +358,7 @@ async function maybeHandoffToReviewer(
   if (isArchivedPr(pr)) return;
   if (pr.status !== "changes_requested") return;
   if (pendingReviewComments(pr).length > 0) return;
-  await applyHeadRefresh(cwd, pr);
+  await armReviewRequest(cwd, pr);
   pr.status = "ready";
   pr.comments.push({
     id: newId("c"),
@@ -371,7 +399,7 @@ export function formatReviewInbox(pr: LocalPr): string | null {
 }
 
 export function shouldSpawnReviewer(pr: LocalPr): boolean {
-  return pr.status === "ready" && (pr.reviewRequestedSha ?? null) !== pr.headSha;
+  return pr.status === "ready" && (pr.reviewerNotifiedSha ?? null) !== pr.headSha;
 }
 
 export function formatSpawnReviewer(pr: LocalPr): string {
@@ -379,13 +407,23 @@ export function formatSpawnReviewer(pr: LocalPr): string {
     `PR Genie: local PR ${pr.id} ("${pr.title}") on ${pr.headRef} is ready.`,
     "That is the review request. add_comment role=agent \"Review requested.\" if you have not already. Do not git push.",
     "You are the implementor. Do not review this loop yourself. The reviewer chat should list_local_prs (status=ready) and Task a generalPurpose subagent per loop. Do not await those Tasks in the listen loop.",
-    "If you are covering review in this conversation because no reviewer chat exists, Task one generalPurpose reviewer for this id. If several loops are ready, Task one reviewer subagent each, in parallel. Do not sit waiting on them.",
+    "If you are covering review in this conversation because no reviewer chat exists, Task one generalPurpose reviewer for this id — but only if you have not already Tasked a reviewer for this id and headSha this session. If several loops are ready, Task one reviewer subagent each, in parallel. Do not sit waiting on them.",
   ].join("\n");
 }
 
 export async function markReviewRequested(cwd: string, id: string): Promise<LocalPr> {
-  return withPrLock(cwd, id, (pr) => {
+  return withPrLock(cwd, id, async (pr) => {
+    await applyHeadRefresh(cwd, pr);
     pr.reviewRequestedSha = pr.headSha;
+    pr.updatedAt = nowIso();
+  });
+}
+
+/** Record that the implementor chat was told to spawn a reviewer for this HEAD. */
+export async function markReviewerNotified(cwd: string, id: string): Promise<LocalPr> {
+  return withPrLock(cwd, id, async (pr) => {
+    await applyHeadRefresh(cwd, pr);
+    pr.reviewerNotifiedSha = pr.headSha;
     pr.updatedAt = nowIso();
   });
 }
@@ -460,13 +498,13 @@ export async function addLocalPrComment(
       if (parent) comment.replyTo = parent.id;
     }
     pr.comments.push(comment);
-    if (
-      !isArchivedPr(pr) &&
-      role !== "agent" &&
-      role !== "reviewer" &&
-      comment.status === "open"
-    ) {
-      pr.status = "changes_requested";
+    if (!isArchivedPr(pr) && comment.status === "open") {
+      // Human findings always wake the implementor. Reviewer findings normally stay on
+      // ready until complete_review; if the loop is already reviewed, a new finding must
+      // flip to changes_requested or the implementor inbox never sees it.
+      if (role === "human" || (role === "reviewer" && pr.status === "reviewed")) {
+        pr.status = "changes_requested";
+      }
     }
     pr.updatedAt = comment.createdAt;
     await writePr(cwd, pr);
@@ -573,17 +611,31 @@ export async function resolveLocalPrComment(
   });
 }
 
+export type CompleteLocalPrReviewResult = LocalPr & {
+  /** True when HEAD moved after Review requested (reviewRequestedSha set and differs). */
+  headDrift: boolean;
+  reviewedAgainstSha: string | null;
+};
+
 export async function completeLocalPrReview(
   cwd: string,
   id: string,
-  options: { author?: string; body?: string } = {},
-): Promise<LocalPr> {
+  options: { author?: string; body?: string; allowDrift?: boolean } = {},
+): Promise<CompleteLocalPrReviewResult> {
   const resolved = await getLocalPr(cwd, id);
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
     const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
+    const reviewedAgainstSha = pr.reviewRequestedSha ?? null;
+    await applyHeadRefresh(cwd, pr);
+    const headDrift = Boolean(reviewedAgainstSha && reviewedAgainstSha !== pr.headSha);
+    if (headDrift && !options.allowDrift) {
+      throw new Error(
+        `HEAD moved since Review requested (${reviewedAgainstSha?.slice(0, 8)} → ${pr.headSha.slice(0, 8)}). Re-diff and file any new findings while status is still ready, then complete-review again. Use --force / allowDrift only to finalize on purpose.`,
+      );
+    }
     const open = pendingReviewComments(pr);
     const now = nowIso();
     const author = options.author?.trim() || (await userName(cwd));
@@ -614,25 +666,68 @@ export async function completeLocalPrReview(
     pr.updatedAt = now;
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;
-    return pr;
+    return { ...pr, headDrift, reviewedAgainstSha };
   });
 }
 
 export async function getLocalPrDiff(
   cwd: string,
   id: string,
-  options: { stat?: boolean; maxBytes?: number } = {},
+  options: { stat?: boolean; maxBytes?: number; paths?: string[] } = {},
 ): Promise<string> {
   const pr = await getLocalPr(cwd, id);
   const args = options.stat
     ? ["diff", "--stat", `${pr.baseSha}...${pr.headSha}`]
     : ["diff", `${pr.baseSha}...${pr.headSha}`];
+  if (options.paths?.length) {
+    args.push("--", ...options.paths);
+  }
   const { stdout } = await git(cwd, args);
   const max = options.maxBytes ?? 200_000;
   if (stdout.length > max) {
     return `${stdout.slice(0, max)}\n\n... truncated (${stdout.length} bytes) ...`;
   }
   return stdout;
+}
+
+/** Permanently remove a loop packet, its refs, and any sibling worktree. */
+export async function deleteLocalPr(
+  cwd: string,
+  id: string,
+): Promise<{ id: string; deleted: true }> {
+  const pr = await getLocalPr(cwd, id);
+  await releaseArchivedLoop(cwd, pr);
+  const dir = await prsDir(cwd);
+  const file = prFile(dir, pr.id);
+  await withFileLock(file, async () => {
+    await unlink(file).catch(() => undefined);
+  });
+  await git(cwd, ["update-ref", "-d", `refs/local-pr/${pr.id}/head`], { allowFail: true });
+  await git(cwd, ["update-ref", "-d", `refs/local-pr/${pr.id}/base`], { allowFail: true });
+  return { id: pr.id, deleted: true };
+}
+
+/** Bring an archived loop back as changes_requested and recreate its worktree. */
+export async function reopenLocalPr(cwd: string, id: string): Promise<LocalPr> {
+  const updated = await withPrLock(cwd, id, async (pr) => {
+    if (!isArchivedPr(pr)) {
+      throw new Error(`Loop ${pr.id} is not archived; only approved loops can be reopened.`);
+    }
+    pr.status = "changes_requested";
+    pr.reviewRequestedSha = null;
+    pr.reviewerNotifiedSha = null;
+    await applyHeadRefresh(cwd, pr);
+    pr.updatedAt = nowIso();
+  });
+  updated.worktreePath = await ensureWorktreeForLoop(cwd, updated, {
+    staleLoopIds: (await listLocalPrs(cwd))
+      .filter((other) => other.id !== updated.id && isArchivedPr(other))
+      .map((other) => other.id),
+    liveLoopIds: (await listLocalPrs(cwd))
+      .filter((other) => !isArchivedPr(other))
+      .map((other) => other.id),
+  });
+  return updated;
 }
 
 export async function getLocalPrNameStatus(
@@ -704,6 +799,8 @@ export async function captureAgentWork(
       await applyHeadRefresh(cwd, pr);
       if (pr.status === "reviewed" && pr.headSha !== prevSha) {
         pr.status = "ready";
+        pr.reviewRequestedSha = pr.headSha;
+        pr.reviewerNotifiedSha = null;
       }
     });
     updated.worktreePath = await ensureWorktreeForLoop(cwd, updated, {

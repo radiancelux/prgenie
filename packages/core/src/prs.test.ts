@@ -13,6 +13,7 @@ import {
   captureAgentWork,
   commentThreads,
   completeLocalPrReview,
+  deleteLocalPr,
   exportPushRefspec,
   findLocalPrForCurrentBranch,
   findLocalPrForCurrentWorktree,
@@ -20,10 +21,12 @@ import {
   getLocalPr,
   getLocalPrDiff,
   isArchivedPr,
+  listCorruptLocalPrFiles,
   listLocalPrs,
   listWorktrees,
   pruneArchivedLoopWorktree,
   releaseArchivedLoop,
+  reopenLocalPr,
   sameFsPath,
   ensureWorktreeForLoop,
   pendingReviewComments,
@@ -31,12 +34,14 @@ import {
   setLocalPrStatus,
   shouldSpawnReviewer,
   markReviewRequested,
+  markReviewerNotified,
   updateLocalPr,
   haltWatch,
   haltWatchRole,
   getRepoWatch,
   resumeWatch,
 } from "./index.js";
+import { prsDir } from "./store.js";
 
 let repo = "";
 
@@ -336,10 +341,13 @@ test("captureAgentWork creates then updates a loop for the same branch", async (
 test("reviewer Task is requested once per loop HEAD", async () => {
   const pr = await createLocalPr(repo, { title: "Spawn", base: "main" });
   const ready = await setLocalPrStatus(repo, pr.id, "ready");
+  // Drift baseline is armed; spawn notify is still pending for this HEAD.
+  assert.equal(ready.reviewRequestedSha, ready.headSha);
+  assert.equal(ready.reviewerNotifiedSha, null);
   assert.equal(shouldSpawnReviewer(ready), true);
-  const marked = await markReviewRequested(repo, pr.id);
-  assert.equal(shouldSpawnReviewer(marked), false);
-  assert.equal(marked.reviewRequestedSha, marked.headSha);
+  const notified = await markReviewerNotified(repo, pr.id);
+  assert.equal(shouldSpawnReviewer(notified), false);
+  assert.equal(notified.reviewerNotifiedSha, notified.headSha);
 });
 
 test("a loop whose branch is not checked out gets a sibling worktree", async () => {
@@ -625,5 +633,83 @@ test("a missing export id is treated as shipped when creating the next loop", as
   await haltWatch(repo, "export", "lp-gonegone");
   await createLocalPr(repo, { title: "After missing export id", base: "main" });
   assert.equal((await getRepoWatch(repo)).halted, false);
+});
+
+test("ready handoff arms reviewRequestedSha for the drift guard", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, { title: "Arm baseline", base: "main" });
+  const ready = await setLocalPrStatus(repo, pr.id, "ready");
+  assert.equal(ready.reviewRequestedSha, ready.headSha);
+  assert.ok(ready.reviewRequestedSha);
+
+  await setLocalPrStatus(repo, pr.id, "changes_requested");
+  const filed = await addLocalPrComment(repo, pr.id, "Fix me.", { role: "reviewer" });
+  await completeLocalPrReview(repo, pr.id);
+  const handed = await addressLocalPrComment(repo, pr.id, filed.comments[0].id, "Fixed.");
+  assert.equal(handed.status, "ready");
+  assert.equal(handed.reviewRequestedSha, handed.headSha);
+});
+
+test("complete_review refuses when HEAD moved after Review requested", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, { title: "Drift guard", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready");
+  const marked = await markReviewRequested(repo, pr.id);
+  await writeFile(path.join(repo, "drift.txt"), "moved\n");
+  git(["add", "drift.txt"]);
+  git(["commit", "-m", "move head after review requested"]);
+  await assert.rejects(
+    () => completeLocalPrReview(repo, marked.id),
+    /HEAD moved since Review requested/,
+  );
+  assert.equal((await getLocalPr(repo, marked.id)).status, "ready");
+  const forced = await completeLocalPrReview(repo, marked.id, { allowDrift: true });
+  assert.equal(forced.headDrift, true);
+  assert.equal(forced.status, "reviewed");
+});
+
+test("reviewer finding on reviewed flips to changes_requested", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, { title: "Late finding", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready");
+  await completeLocalPrReview(repo, pr.id);
+  assert.equal((await getLocalPr(repo, pr.id)).status, "reviewed");
+  const after = await addLocalPrComment(repo, pr.id, "Missed this.", { role: "reviewer" });
+  assert.equal(after.status, "changes_requested");
+  assert.equal(pendingReviewComments(after).length, 1);
+});
+
+test("getLocalPrDiff supports paths filter", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, { title: "Paths filter", base: "main" });
+  await writeFile(path.join(repo, "a.txt"), "a\n");
+  await writeFile(path.join(repo, "b.txt"), "b\n");
+  git(["add", "a.txt", "b.txt"]);
+  git(["commit", "-m", "two files"]);
+  await setLocalPrStatus(repo, pr.id, "ready");
+  const onlyA = await getLocalPrDiff(repo, pr.id, { paths: ["a.txt"] });
+  assert.match(onlyA, /a\.txt/);
+  assert.doesNotMatch(onlyA, /b\.txt/);
+});
+
+test("listCorruptLocalPrFiles names unparsable packets", async () => {
+  const dir = await prsDir(repo);
+  const bad = path.join(dir, "lp-badbadad.json");
+  await writeFile(bad, "{not-json");
+  const corrupt = await listCorruptLocalPrFiles(repo);
+  assert.ok(corrupt.some((f) => f.endsWith("lp-badbadad.json")));
+  await rm(bad, { force: true });
+});
+
+test("reopen and delete local PR", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, { title: "Reopen me", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "approved");
+  const reopened = await reopenLocalPr(repo, pr.id);
+  assert.equal(reopened.status, "changes_requested");
+  assert.equal(isArchivedPr(reopened), false);
+  const deleted = await deleteLocalPr(repo, pr.id);
+  assert.equal(deleted.deleted, true);
+  await assert.rejects(() => getLocalPr(repo, pr.id), /not found/i);
 });
 

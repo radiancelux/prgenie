@@ -339,6 +339,7 @@ async function readPrFile(file) {
   const pr = parseJsonObject(await (0, import_promises2.readFile)(file, "utf8"));
   pr.source = pr.source ?? null;
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
+  pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
   pr.comments = (pr.comments ?? []).map(normalizeComment);
   return pr;
 }
@@ -382,6 +383,7 @@ async function listLocalPrs(cwd) {
     }
     pr.source = pr.source ?? null;
     pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
+    pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
   }
@@ -441,19 +443,27 @@ function formatReviewInbox(pr) {
   return lines.join("\n").trimEnd();
 }
 function shouldSpawnReviewer(pr) {
-  return pr.status === "ready" && (pr.reviewRequestedSha ?? null) !== pr.headSha;
+  return pr.status === "ready" && (pr.reviewerNotifiedSha ?? null) !== pr.headSha;
 }
 function formatSpawnReviewer(pr) {
   return [
     `PR Genie: local PR ${pr.id} ("${pr.title}") on ${pr.headRef} is ready.`,
     'That is the review request. add_comment role=agent "Review requested." if you have not already. Do not git push.',
     "You are the implementor. Do not review this loop yourself. The reviewer chat should list_local_prs (status=ready) and Task a generalPurpose subagent per loop. Do not await those Tasks in the listen loop.",
-    "If you are covering review in this conversation because no reviewer chat exists, Task one generalPurpose reviewer for this id. If several loops are ready, Task one reviewer subagent each, in parallel. Do not sit waiting on them."
+    "If you are covering review in this conversation because no reviewer chat exists, Task one generalPurpose reviewer for this id \u2014 but only if you have not already Tasked a reviewer for this id and headSha this session. If several loops are ready, Task one reviewer subagent each, in parallel. Do not sit waiting on them."
   ].join("\n");
 }
 async function markReviewRequested(cwd, id) {
-  return withPrLock(cwd, id, (pr) => {
+  return withPrLock(cwd, id, async (pr) => {
+    await applyHeadRefresh(cwd, pr);
     pr.reviewRequestedSha = pr.headSha;
+    pr.updatedAt = nowIso();
+  });
+}
+async function markReviewerNotified(cwd, id) {
+  return withPrLock(cwd, id, async (pr) => {
+    await applyHeadRefresh(cwd, pr);
+    pr.reviewerNotifiedSha = pr.headSha;
     pr.updatedAt = nowIso();
   });
 }
@@ -544,8 +554,11 @@ async function main() {
     }
     if (pr.status === "ready") {
       const fresh = await refreshLocalPrHead(root, pr.id);
-      if (shouldSpawnReviewer(fresh)) {
+      if ((fresh.reviewRequestedSha ?? null) !== fresh.headSha) {
         await markReviewRequested(root, fresh.id);
+      }
+      if (shouldSpawnReviewer(fresh)) {
+        await markReviewerNotified(root, fresh.id);
         process.stdout.write(JSON.stringify({ followup_message: formatSpawnReviewer(fresh) }) + "\n");
         return;
       }
