@@ -943,6 +943,11 @@ init_github();
 init_github_ops();
 init_learnings();
 
+// packages/core/src/shepherd.ts
+init_prs();
+init_learnings();
+init_github_ops();
+
 // packages/cli/src/capture-hook.ts
 function inferCwd(input) {
   if (typeof input.cwd === "string" && input.cwd) return input.cwd;

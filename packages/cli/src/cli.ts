@@ -39,6 +39,7 @@ import {
   resumeWatchRole,
   runDoctor,
   setLocalPrStatus,
+  shepherdStatus,
   updateLocalPr,
   type CommentRole,
   type LocalPr,
@@ -69,6 +70,7 @@ Usage:
   prgenie sessions [--limit N] [--hook <name>] [--since <iso>] [--json]
   prgenie export <id> [--skip-validation]
   prgenie show <id>
+  prgenie shepherd <id>
   prgenie update <id> [--title <t>] [--body <summary>]
   prgenie diff <id> [--stat] [-- <path>...]
   prgenie delete <id> [--yes]
@@ -400,6 +402,17 @@ export async function run(argv: string[]): Promise<number> {
       for (const f of files) process.stdout.write(`  ${f.status}\t${f.path}\n`);
     }
     return 0;
+  }
+  if (sub === "shepherd") {
+    const result = await shepherdStatus(repo, id);
+    process.stdout.write(`Shepherd status: ${result.status}\n`);
+    if (result.reasons.length > 0) {
+      process.stdout.write("\nBlocking reasons:\n");
+      for (const reason of result.reasons) {
+        process.stdout.write(`  [${reason.check}] ${reason.message}\n`);
+      }
+    }
+    return result.status === "ready" ? 0 : 1;
   }
   if (sub === "update") {
     const title = arg(rest, "--title");

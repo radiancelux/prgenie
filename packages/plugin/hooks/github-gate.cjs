@@ -382,6 +382,11 @@ init_github();
 init_github_ops();
 init_learnings();
 
+// packages/core/src/shepherd.ts
+init_prs();
+init_learnings();
+init_github_ops();
+
 // packages/cli/src/github-hook.ts
 function isPublish(command) {
   return /\bgit(\.exe)?\s+push\b/i.test(command) || /\bgh(\.exe)?\s+pr\s+create\b/i.test(command) || /\bgh(\.exe)?\s+pr\s+merge\b/i.test(command) || /\bgh(\.exe)?\s+repo\s+create\b/i.test(command);
