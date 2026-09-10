@@ -924,6 +924,191 @@ export async function hasCommitsAheadOfBase(cwd: string, baseRef?: string): Prom
   return Number(ahead.stdout.trim()) > 0;
 }
 
+export interface AttachLocalPrInput {
+  /** GitHub PR number, URL, or remote branch name */
+  source: string;
+  /** Override base branch (default: detected from PR or repo default) */
+  base?: string;
+  /** Override title (default: from PR metadata) */
+  title?: string;
+  /** Override body (default: from PR metadata) */
+  body?: string;
+  /** Source metadata for tracking */
+  prSource?: LocalPrSource;
+}
+
+export async function attachLocalPr(cwd: string, input: AttachLocalPrInput): Promise<LocalPr> {
+  const root = await requireGitRoot(cwd);
+  const { runGh } = await import("./github-ops.js");
+
+  // Parse input to determine if it's a PR number/URL or branch
+  const source = input.source.trim();
+  let headRef: string;
+  let baseRef: string;
+  let title: string;
+  let body: string;
+  let headSha: string;
+  let baseSha: string;
+
+  // Try to parse as GitHub PR (number or URL)
+  const prNumberMatch = source.match(/^#?(\d+)$/) ?? source.match(/\/pull\/(\d+)/);
+
+  if (prNumberMatch) {
+    // Fetch PR metadata from GitHub
+    const prNumber = prNumberMatch[1];
+    const result = await runGh(
+      [
+        "pr",
+        "view",
+        prNumber,
+        "--json",
+        "title,body,headRefName,baseRefName,headRefOid,state",
+      ],
+      { cwd },
+    );
+
+    if (result.code !== 0) {
+      throw new Error(
+        `Failed to fetch GitHub PR #${prNumber}: ${result.stderr.trim() || result.stdout.trim()}`,
+      );
+    }
+
+    const prData = JSON.parse(result.stdout) as {
+      title: string;
+      body: string;
+      headRefName: string;
+      baseRefName: string;
+      headRefOid: string;
+      state: string;
+    };
+
+    if (prData.state.toUpperCase() === "MERGED") {
+      throw new Error(
+        `GitHub PR #${prNumber} is already merged. Cannot attach merged PRs to new lanes.`,
+      );
+    }
+
+    headRef = prData.headRefName;
+    baseRef = input.base ?? prData.baseRefName;
+    title = input.title ?? prData.title;
+    body = input.body ?? prData.body;
+
+    // Fetch the remote branch to get the latest commit
+    const fetchResult = await git(root, ["fetch", "origin", headRef], { allowFail: true });
+    if (fetchResult.code !== 0) {
+      throw new Error(
+        `Failed to fetch remote branch ${headRef}: ${fetchResult.stderr.trim() || "git fetch failed"}`,
+      );
+    }
+
+    const remoteRef = `origin/${headRef}`;
+    const shaResult = await git(root, ["rev-parse", "--verify", remoteRef], { allowFail: true });
+    if (shaResult.code !== 0) {
+      throw new Error(`Cannot resolve remote branch: ${remoteRef}`);
+    }
+    headSha = shaResult.stdout.trim();
+  } else {
+    // Treat as branch name
+    headRef = source.replace(/^origin\//, "");
+
+    // Fetch the branch
+    const fetchResult = await git(root, ["fetch", "origin", headRef], { allowFail: true });
+    if (fetchResult.code !== 0) {
+      throw new Error(
+        `Failed to fetch remote branch ${headRef}: ${fetchResult.stderr.trim() || "git fetch failed"}`,
+      );
+    }
+
+    const remoteRef = `origin/${headRef}`;
+    const shaResult = await git(root, ["rev-parse", "--verify", remoteRef], { allowFail: true });
+    if (shaResult.code !== 0) {
+      throw new Error(`Cannot resolve remote branch: ${remoteRef}`);
+    }
+    headSha = shaResult.stdout.trim();
+
+    // Use provided base or detect default
+    baseRef = input.base ?? (await detectDefaultBase(cwd));
+
+    // Try to get PR info if this branch has an open PR
+    const prCheckResult = await runGh(
+      ["pr", "view", headRef, "--json", "title,body"],
+      { cwd },
+    );
+
+    if (prCheckResult.code === 0) {
+      try {
+        const prData = JSON.parse(prCheckResult.stdout) as {
+          title: string;
+          body: string;
+        };
+        title = input.title ?? prData.title;
+        body = input.body ?? prData.body;
+      } catch {
+        // Fallback to branch-based title
+        title =
+          input.title ?? (await shortLogSubject(cwd, headSha).catch(() => `Attached ${headRef}`));
+        body = input.body ?? "";
+      }
+    } else {
+      // No PR found, use branch-based title
+      title =
+        input.title ?? (await shortLogSubject(cwd, headSha).catch(() => `Attached ${headRef}`));
+      body = input.body ?? "";
+    }
+  }
+
+  // Resolve base SHA
+  const baseResolved = await git(root, ["rev-parse", "--verify", baseRef], { allowFail: true });
+  if (baseResolved.code !== 0) {
+    throw new Error(`Cannot resolve base branch: ${baseRef}`);
+  }
+  baseSha = baseResolved.stdout.trim();
+
+  // Check if a lane for this headRef already exists
+  const existing = (await listLocalPrs(root)).find(
+    (pr) => pr.headRef === headRef && !isArchivedPr(pr),
+  );
+  if (existing) {
+    throw new Error(
+      `A lane for branch ${headRef} already exists (${existing.id}). Use update or refresh instead.`,
+    );
+  }
+
+  // Create the lane
+  const id = newId("lp");
+  const createdAt = nowIso();
+  const pr: LocalPr = {
+    id,
+    title,
+    body,
+    status: "draft",
+    headRef,
+    baseRef,
+    headSha,
+    baseSha,
+    worktreePath: null,
+    comments: [],
+    source: input.prSource ?? { kind: "cli" },
+    createdAt,
+    updatedAt: createdAt,
+    reviewRequestedSha: null,
+    reviewerNotifiedSha: null,
+  };
+
+  await writePr(root, pr);
+
+  const others = await listLocalPrs(root);
+  pr.worktreePath = await ensureWorktreeForLoop(root, pr, {
+    staleLoopIds: others
+      .filter((other) => other.id !== pr.id && isArchivedPr(other))
+      .map((other) => other.id),
+    liveLoopIds: others.filter((other) => !isArchivedPr(other)).map((other) => other.id),
+  });
+
+  await resumeWatchForNextLoop(root);
+  return pr;
+}
+
 export async function captureAgentWork(
   cwd: string,
   input: CreateLocalPrInput = {},

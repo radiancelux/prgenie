@@ -4,6 +4,9 @@ import * as vscode from "vscode";
 import {
   addLocalPrComment,
   addressLocalPrComment,
+  archiveLoopsMergedOnGithub,
+  attachLocalPr,
+  bindRepoGithub,
   commentThreads,
   completeLocalPrReview,
   consoleDir,
@@ -15,9 +18,11 @@ import {
   findGitRoot,
   formatWatchLane,
   getLocalPrNameStatus,
+  getRepoGithubBind,
   getRepoWatch,
   haltWatchRole,
   isArchivedPr,
+  listGhAccounts,
   listLocalPrs,
   loopWorktreeIdentity,
   pruneArchivedLoopWorktree,
@@ -27,11 +32,7 @@ import {
   sameFsPath,
   setLocalPrStatus,
   updateLocalPr,
-  archiveLoopsMergedOnGithub,
   exportLocalPr,
-  listGhAccounts,
-  getRepoGithubBind,
-  bindRepoGithub,
   type LocalPr,
   type WatchRole,
   type GhAccount,
@@ -45,6 +46,7 @@ type ClientMessage =
   | { type: "ready" }
   | { type: "refresh" }
   | { type: "create" }
+  | { type: "attach" }
   | { type: "select"; id: string }
   | { type: "status"; id: string; status: LocalPr["status"] }
   | { type: "comment"; id: string; body: string }
@@ -162,6 +164,30 @@ export class LaneHub implements vscode.Disposable {
       this.userPinned = true;
       await this.pushSnapshot();
       await vscode.commands.executeCommand("prgenie.panel.focus");
+    } catch (err) {
+      void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async attachPr(): Promise<void> {
+    const cwd = await this.repoCwd();
+    if (!cwd) return;
+    const source = await vscode.window.showInputBox({
+      title: "PR Genie - Attach",
+      prompt: "GitHub PR number (#123), PR URL, or branch name",
+      placeHolder: "e.g., 123, https://github.com/org/repo/pull/123, or feat/branch",
+    });
+    if (!source) return;
+    try {
+      const pr = await attachLocalPr(cwd, {
+        source,
+        prSource: { kind: "extension" },
+      });
+      this.selectedId = pr.id;
+      this.userPinned = true;
+      await this.pushSnapshot();
+      await vscode.commands.executeCommand("prgenie.panel.focus");
+      void vscode.window.showInformationMessage(`Attached ${pr.headRef} as ${pr.id}`);
     } catch (err) {
       void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
     }
@@ -289,6 +315,10 @@ export class LaneHub implements vscode.Disposable {
     }
     if (msg.type === "create") {
       await this.createPr();
+      return;
+    }
+    if (msg.type === "attach") {
+      await this.attachPr();
       return;
     }
     if (msg.type === "openGitLens") {
