@@ -56,6 +56,7 @@ type ClientMessage =
   | { type: "completeReview"; id: string; force?: boolean }
   | { type: "deletePr"; id: string }
   | { type: "reopenPr"; id: string }
+  | { type: "renamePr"; id: string }
   | { type: "watchStart"; role: WatchRole }
   | { type: "watchStop"; role: WatchRole }
   | { type: "openDiffs" }
@@ -82,6 +83,7 @@ type Snapshot = {
   hereId: string | null;
   archivedCount?: number;
   showArchived?: boolean;
+  titleSaveInFlightId?: string | null;
   watch?: { inbox: WatchLaneSnapshot; queue: WatchLaneSnapshot };
 };
 
@@ -98,6 +100,7 @@ export class LaneHub implements vscode.Disposable {
   private reopeningMain = false;
   private lastGithubArchive = 0;
   private showArchived = false;
+  private titleSaveInFlightId: string | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.showArchived = this.context.workspaceState.get("prgenie.showArchived", false);
@@ -395,6 +398,28 @@ export class LaneHub implements vscode.Disposable {
           }
         }
         await this.pushSnapshot();
+      } else if (msg.type === "renamePr") {
+        if (this.titleSaveInFlightId) return;
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
+        const prs = await listLocalPrs(cwd);
+        const pr = prs.find((p) => p.id === msg.id);
+        if (!pr) return;
+        const title = await vscode.window.showInputBox({
+          title: "Rename loop",
+          prompt: "Local PR title",
+          value: pr.title,
+          validateInput: (value) => (value.trim() ? undefined : "Title is empty"),
+        });
+        if (title === undefined) return;
+        if (title.trim() === pr.title.trim()) return;
+        this.titleSaveInFlightId = msg.id;
+        try {
+          await this.pushSnapshot(true);
+          await updateLocalPr(cwd, msg.id, { title });
+        } finally {
+          this.titleSaveInFlightId = undefined;
+          await this.pushSnapshot(true);
+        }
       } else if (msg.type === "deletePr") {
         const pick = await vscode.window.showWarningMessage(
           `Permanently delete loop ${msg.id}? This removes the packet and refs.`,
@@ -563,6 +588,7 @@ export class LaneHub implements vscode.Disposable {
           hereId,
           archivedCount,
           showArchived: this.showArchived,
+          titleSaveInFlightId: this.titleSaveInFlightId ?? null,
           watch: { inbox: laneSnap("inbox"), queue: laneSnap("queue") },
         },
         force,
@@ -588,6 +614,7 @@ function snapshotKey(payload: Snapshot | { type: "snapshot"; error: string; prs:
     hereId: "hereId" in payload ? payload.hereId : null,
     archivedCount: "archivedCount" in payload ? payload.archivedCount : 0,
     showArchived: "showArchived" in payload ? payload.showArchived : false,
+    titleSaveInFlightId: "titleSaveInFlightId" in payload ? payload.titleSaveInFlightId : null,
     repo: "repo" in payload ? payload.repo : "",
     files: "files" in payload ? payload.files : [],
     threads: "threads" in payload ? payload.threads : [],
@@ -688,7 +715,8 @@ function laneHtml(webview: vscode.Webview): string {
       border-left: 2px solid transparent;
     }
     .pr .info { flex: 1; min-width: 0; }
-    .pr .go { flex: none; font-size: 11px; padding: 2px 6px; margin-top: 2px; }
+    .pr .acts { display: flex; flex-direction: column; gap: 4px; flex: none; margin-top: 2px; }
+    .pr .go, .pr .rename { flex: none; font-size: 11px; padding: 2px 6px; }
     .pr:hover { background: var(--vscode-list-hoverBackground); }
     .pr.active {
       background: var(--vscode-list-activeSelectionBackground);
@@ -772,10 +800,15 @@ function laneHtml(webview: vscode.Webview): string {
     function prRow(id) {
       const el = document.createElement("div");
       el.dataset.id = id;
-      el.innerHTML = '<div class="info"><div class="status"></div><div class="title"></div><div class="muted"></div></div><button class="go secondary"></button>';
+      el.innerHTML = '<div class="info"><div class="status"></div><div class="title"></div><div class="muted"></div></div><div class="acts"><button type="button" class="rename secondary">Rename</button><button type="button" class="go secondary"></button></div>';
       el.querySelector(".go").onclick = (e) => {
         e.stopPropagation();
         vscode.postMessage({ type: "openFolder", id: el.dataset.id });
+      };
+      el.querySelector(".rename").onclick = (e) => {
+        e.stopPropagation();
+        if (el.querySelector(".rename").disabled) return;
+        vscode.postMessage({ type: "renamePr", id: el.dataset.id });
       };
       el.onclick = () => vscode.postMessage({ type: "select", id: el.dataset.id });
       return el;
@@ -851,6 +884,11 @@ function laneHtml(webview: vscode.Webview): string {
         const go = el.querySelector(".go");
         go.textContent = archivedPr ? "Archived" : here ? "Here" : "Switch";
         go.disabled = archivedPr || here;
+        const rename = el.querySelector(".rename");
+        const saving = msg.titleSaveInFlightId === pr.id;
+        rename.hidden = archivedPr;
+        rename.disabled = archivedPr || saving;
+        rename.textContent = saving ? "Saving…" : "Rename";
       }
       for (const [id, el] of nodes) if (!used.has(id)) el.remove();
       for (let i = 0; i < prs.length; i++) {
@@ -1019,6 +1057,11 @@ function panelHtml(webview: vscode.Webview): string {
       if (del) del.onclick = () => vscode.postMessage({ type: "deletePr", id: selected.id });
       const reopen = root.querySelector("#reopenPr");
       if (reopen) reopen.onclick = () => vscode.postMessage({ type: "reopenPr", id: selected.id });
+      const rename = root.querySelector("#renamePr");
+      if (rename) rename.onclick = () => {
+        if (rename.disabled) return;
+        vscode.postMessage({ type: "renamePr", id: selected.id });
+      };
       root.querySelector("#send").onclick = () => {
         const body = root.querySelector("#cmt").value;
         if (body.trim()) vscode.postMessage({ type: "comment", id: selected.id, body });
@@ -1142,6 +1185,13 @@ function panelHtml(webview: vscode.Webview): string {
         del.hidden = false;
         del.className = "danger";
       }
+      const rename = root.querySelector("#renamePr");
+      if (rename) {
+        const saving = msg.titleSaveInFlightId === selected.id;
+        rename.hidden = archived;
+        rename.disabled = archived || saving;
+        rename.textContent = saving ? "Saving…" : "Rename";
+      }
       const reopen = root.querySelector("#reopenPr");
       if (reopen) reopen.hidden = !archived;
       const openDiffs = root.querySelector("#openDiffs");
@@ -1248,6 +1298,7 @@ function panelHtml(webview: vscode.Webview): string {
           '<button class="secondary" id="archivePr" data-s="approved">Archive locally</button>',
           '<button class="secondary" id="copyReview">Copy review prompt</button>',
           '<button class="secondary" id="openWt"></button>',
+          '<button class="secondary" id="renamePr">Rename</button>',
           '<button class="secondary" id="reopenPr">Reopen</button>',
           '<span class="spacer"></span>',
           '<button class="danger" id="deletePr">Delete</button>',
