@@ -41,14 +41,20 @@ test("learning extraction from resolved comments", async () => {
       body: "Test body",
     });
 
-    await setLocalPrStatus(repo, pr.id, "ready");
-    await addLocalPrComment(repo, pr.id, "Pattern: Missing tests\nFix: Add test coverage", {
-      role: "reviewer",
-    });
+    await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true });
+    const commented = await addLocalPrComment(
+      repo,
+      pr.id,
+      "Pattern: Missing tests\nFix: Add test coverage",
+      {
+        role: "reviewer",
+      },
+    );
 
     const learningsBefore = await listLearnings(repo);
     assert.equal(learningsBefore.length, 0);
 
+    await addressLocalPrComment(repo, pr.id, commented.comments[0].id, "Fixed");
     await completeLocalPrReview(repo, pr.id);
 
     const learningsAfter = await listLearnings(repo);
