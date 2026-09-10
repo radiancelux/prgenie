@@ -2,7 +2,7 @@
 
 Grounded in a full survey of the code as of `main` (post PR #5): `packages/core`, `packages/cli`, `packages/plugin`, `packages/extension`, the skills/rules/hooks, and the flywheel workflow (implementor chat ↔ reviewer chat ↔ human). Each item names the gap, why it matters, and where the change lands. Ordered by priority within each horizon.
 
-**Status:** Now items 1–4 and Next items 5–10 are implemented on this branch (watch panel, delete/reopen UI, `complete_review` UI, comment edit/delete, plus prior CLI/MCP/CI work). Later #11–12 shipped on this branch line; Learn horizon 18–20 is documented only. Remaining Later items stay open.
+**Status:** Now items 1–4 and Next items 5–10 are implemented on this branch line. Later #11–12 and #14 (release discipline) shipped; #13 (test debt + lint) landed on main via PR #13. Learn horizon 18–20 is documented only. Remaining Later items stay open.
 
 ## Where the product stands
 
@@ -44,8 +44,8 @@ The gaps are not missing lifecycle pieces — they are **operability** (recoveri
 | --- | --- | --- |
 | P1 | ~~No CI~~ **Done:** `.github/workflows/ci.yml` runs build, typecheck, test. | Workflow on push/PR to `main`. |
 | P2 | Test holes remain for CLI command parsing, MCP tool layer, hooks, and the extension (core + listen/doctor coverage improved). | Mainly `mcp-stdio.test.ts` outside core. |
-| P3 | No lint/format config; style consistency depends on the agents. | No ESLint/Prettier. |
-| P4 | Version/release process is manual and already skewed; the checked-in VSIX lags the source. `doctor` flags extension version skew. | `0.1.0` vs `0.1.1` vs `prgenie-0.1.0.vsix`. |
+| P3 | ~~No lint/format config~~ **Done** (PR #13): ESLint + Prettier + CI `lint` / `format:check`. | `eslint.config.mjs`, Prettier, CI. |
+| P4 | ~~Version/release process manual / VSIX lag~~ **Done:** one version across root+packages; `pnpm check-versions` + doctor `package-versions`; `pnpm pack:extension`; docs/release.md. VSIX remains gitignored. | `versions.ts`, `scripts/check-versions.mjs`, `scripts/pack-extension.mjs`. |
 | P5 | ~~Legacy `push-gate.mjs`~~ **Done:** removed; `doctor` fails if it reappears. | Deleted; superseded by `github-gate.cjs`. |
 
 ---
@@ -72,8 +72,8 @@ The gaps are not missing lifecycle pieces — they are **operability** (recoveri
 
 11. **History surface (A6).** ✅ CLI+MCP only (no sidebar UI).
 12. **Search/filter (H5).** ✅ Core+CLI+MCP (sidebar UI deferred).
-13. **Test debt (P2) + lint (P3).**
-14. **Release discipline (P4).**
+13. **Test debt (P2) + lint (P3).** ✅ Lint/format + CLI/MCP/hooks tests (PR #13). Extension UI tests still open under P2 remainder.
+14. **Release discipline (P4).** ✅
 15. **`gh` bind in the UI (H7).**
 16. **Docs (H6).**
 17. **Sidebar rename for loops (H2 remainder).** Title edits stay on `prgenie update` / MCP until the panel gains a rename control.

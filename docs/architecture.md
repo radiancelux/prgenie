@@ -113,5 +113,6 @@ Hooks registered in `hooks.json`:
 
 ## See also
 
+- [Release](release.md) — version alignment and VSIX packing
 - [Troubleshooting](troubleshooting.md) — doctor checks and common failure modes
 - [ROADMAP.md](../ROADMAP.md) — gap analysis (H6 was this docs work)

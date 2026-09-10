@@ -13,6 +13,7 @@ import {
   primaryWorktreePath,
   sameFsPath,
 } from "./worktrees.js";
+import { checkReleaseVersions, findPackageRoot } from "./versions.js";
 
 export interface DoctorCheck {
   id: string;
@@ -36,19 +37,6 @@ async function hashFile(file: string): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-/** Walk up from cwd for a PR Genie monorepo checkout (packages/plugin present). */
-function findPackageRoot(cwd: string): string | null {
-  let dir = path.resolve(cwd);
-  for (let i = 0; i < 12; i++) {
-    if (existsSync(path.join(dir, "packages", "plugin", "mcp"))) return dir;
-    if (existsSync(path.join(dir, "packages", "plugin", "package.json"))) return dir;
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return null;
 }
 
 export async function runDoctor(cwd: string): Promise<DoctorReport> {
@@ -232,6 +220,22 @@ export async function runDoctor(cwd: string): Promise<DoctorReport> {
       id: "gh-bind",
       ok: true,
       summary: `Bound to ${bind.login} on ${bind.host}.`,
+    });
+  }
+
+  if (packageRoot) {
+    const release = await checkReleaseVersions(packageRoot);
+    checks.push({
+      id: "package-versions",
+      ok: release.ok,
+      summary: release.summary,
+      fix: release.fix,
+    });
+  } else {
+    checks.push({
+      id: "package-versions",
+      ok: true,
+      summary: "Monorepo package versions not checked (run doctor from the PR Genie checkout).",
     });
   }
 
