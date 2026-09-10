@@ -1618,13 +1618,7 @@ async function attachLocalPr(cwd, input) {
   if (prNumberMatch) {
     const prNumber = prNumberMatch[1];
     const result = await runGh2(
-      [
-        "pr",
-        "view",
-        prNumber,
-        "--json",
-        "title,body,headRefName,baseRefName,headRefOid,state"
-      ],
+      ["pr", "view", prNumber, "--json", "title,body,headRefName,baseRefName,headRefOid,state"],
       { cwd }
     );
     if (result.code !== 0) {
@@ -1668,11 +1662,9 @@ async function attachLocalPr(cwd, input) {
       throw new Error(`Cannot resolve remote branch: ${remoteRef}`);
     }
     headSha = shaResult.stdout.trim();
-    baseRef = input.base ?? await detectDefaultBase(cwd);
-    const prCheckResult = await runGh2(
-      ["pr", "view", headRef, "--json", "title,body"],
-      { cwd }
-    );
+    const detectedBase = input.base ?? await detectDefaultBase(cwd);
+    baseRef = detectedBase.replace(/^origin\//, "");
+    const prCheckResult = await runGh2(["pr", "view", headRef, "--json", "title,body"], { cwd });
     if (prCheckResult.code === 0) {
       try {
         const prData = JSON.parse(prCheckResult.stdout);
@@ -2221,6 +2213,71 @@ init_github();
 init_github_ops();
 init_learnings();
 
+// packages/core/src/shepherd.ts
+init_prs();
+init_learnings();
+init_github_ops();
+async function shepherdStatus(cwd, id) {
+  const reasons = [];
+  try {
+    const pr = await getLocalPr(cwd, id);
+    if (!isArchivedPr(pr) && pr.status !== "reviewed" && pr.status !== "approved") {
+      const pending = pendingReviewComments(pr);
+      if (pending.length > 0) {
+        reasons.push({
+          check: "review",
+          message: `Review incomplete: ${pending.length} open finding(s)`
+        });
+      } else if (pr.status === "draft") {
+        reasons.push({
+          check: "review",
+          message: "Status is draft (not ready for review)"
+        });
+      } else if (pr.status === "ready") {
+        reasons.push({
+          check: "review",
+          message: "Review not started (status is ready)"
+        });
+      } else if (pr.status === "changes_requested") {
+        reasons.push({
+          check: "review",
+          message: "Changes requested (review not complete)"
+        });
+      }
+    }
+    const preflight = await runPreflight(cwd, pr);
+    if (!preflight.passed) {
+      for (const issue of preflight.issues) {
+        reasons.push({
+          check: "preflight",
+          message: `Pattern blocked: ${issue.pattern} (matched in ${issue.matchedIn})`
+        });
+      }
+    }
+    const ghState = await ensureRepoGithub(cwd);
+    if (!ghState.login) {
+      reasons.push({
+        check: "github",
+        message: "No GitHub account logged in (run: gh auth login)"
+      });
+    } else if (!ghState.bound) {
+      reasons.push({
+        check: "github",
+        message: `Repo not bound to GitHub account (run: prgenie gh use ${ghState.login})`
+      });
+    }
+  } catch (err) {
+    reasons.push({
+      check: "review",
+      message: `Failed to check shepherd status: ${err instanceof Error ? err.message : String(err)}`
+    });
+  }
+  return {
+    status: reasons.length === 0 ? "ready" : "blocked",
+    reasons
+  };
+}
+
 // packages/cli/src/mcp-stdio.ts
 function encodeMcpFrame(msg) {
   const body = Buffer.from(JSON.stringify(msg), "utf8");
@@ -2498,6 +2555,8 @@ async function handleTool(name, args) {
       const pr = await getLocalPr(cwd, String(args.id ?? ""));
       return runPreflight(cwd, pr);
     }
+    case "shepherd_status":
+      return shepherdStatus(cwd, String(args.id ?? ""));
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -2929,6 +2988,15 @@ var tools = [
   {
     name: "run_preflight",
     description: "Run preflight check on a local PR to see if any learned patterns would be matched. This is automatically run when set_status ready unless skipPreflight is set. Returns passed boolean and issues array.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } }
+    }
+  },
+  {
+    name: "shepherd_status",
+    description: "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, and gh bind OK. Returns ready or blocked with explicit reasons. Fail-closed: any unknown/missing piece returns blocked.",
     inputSchema: {
       type: "object",
       required: ["id"],

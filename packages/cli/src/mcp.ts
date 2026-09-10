@@ -41,6 +41,7 @@ import {
   resumeWatchRole,
   runPreflight,
   setLocalPrStatus,
+  shepherdStatus,
   updateLocalPr,
   type CommentRole,
   type LocalPr,
@@ -287,6 +288,8 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
       const pr = await getLocalPr(cwd, String(args.id ?? ""));
       return runPreflight(cwd, pr);
     }
+    case "shepherd_status":
+      return shepherdStatus(cwd, String(args.id ?? ""));
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -751,6 +754,16 @@ export const tools = [
     name: "run_preflight",
     description:
       "Run preflight check on a local PR to see if any learned patterns would be matched. This is automatically run when set_status ready unless skipPreflight is set. Returns passed boolean and issues array.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } },
+    },
+  },
+  {
+    name: "shepherd_status",
+    description:
+      "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, and gh bind OK. Returns ready or blocked with explicit reasons. Fail-closed: any unknown/missing piece returns blocked.",
     inputSchema: {
       type: "object",
       required: ["id"],
