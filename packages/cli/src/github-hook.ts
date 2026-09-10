@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ensureRepoGithub, findGitRoot, getRepoGithubBind } from "@prgenie/core";
 
 type HookInput = Record<string, unknown>;
 
-function isPublish(command: string): boolean {
+export function isPublish(command: string): boolean {
   return (
     /\bgit(\.exe)?\s+push\b/i.test(command) ||
     /\bgh(\.exe)?\s+pr\s+create\b/i.test(command) ||
@@ -12,17 +14,30 @@ function isPublish(command: string): boolean {
   );
 }
 
-function isGithubCli(command: string): boolean {
+export function isGithubCli(command: string): boolean {
   return /\bgh(\.exe)?\b/i.test(command) || /\bgit(\.exe)?\s+push\b/i.test(command);
 }
 
-function switchUser(command: string): string | null {
+export function switchUser(command: string): string | null {
   const match = command.match(/\bgh(?:\.exe)?\s+auth\s+switch\b[\s\S]*?--user\s+(\S+)/i);
   return match?.[1] ?? null;
 }
 
+function ranAsCli(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return (
+      path.resolve(fileURLToPath(import.meta.url)).toLowerCase() ===
+      path.resolve(entry).toLowerCase()
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function main(): Promise<void> {
-  let input: HookInput = {};
+  let input: HookInput;
   try {
     const raw = readFileSync(0, "utf8");
     input = raw ? JSON.parse(raw) : {};
@@ -79,13 +94,15 @@ async function main(): Promise<void> {
   process.stdout.write(JSON.stringify({ permission: "allow" }));
 }
 
-main().catch(() => {
-  process.stdout.write(
-    JSON.stringify({
-      permission: "ask",
-      user_message: "PR Genie github gate failed unexpectedly. Allow only if you trust this command.",
-      agent_message:
-        "github-gate crashed. Do not git push or gh pr create/merge. Ask the user, or run prgenie doctor.",
-    }),
-  );
-});
+if (ranAsCli())
+  main().catch(() => {
+    process.stdout.write(
+      JSON.stringify({
+        permission: "ask",
+        user_message:
+          "PR Genie github gate failed unexpectedly. Allow only if you trust this command.",
+        agent_message:
+          "github-gate crashed. Do not git push or gh pr create/merge. Ask the user, or run prgenie doctor.",
+      }),
+    );
+  });

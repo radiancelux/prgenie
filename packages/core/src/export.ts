@@ -45,7 +45,7 @@ export async function archiveLoopsMergedOnGithub(
   const prs = await listLocalPrs(cwd);
   for (const pr of prs) {
     if (isArchivedPr(pr)) continue;
-    let state: GithubPrHeadState = null;
+    let state: GithubPrHeadState;
     try {
       state = await lookup(pr.headRef);
     } catch {
@@ -97,10 +97,9 @@ export async function exportLocalPr(
       throw new Error(push.stderr.trim() || `git push failed for ${pr.headRef}`);
     }
 
-    const existing = await runGh(
-      githubPrViewArgs(pr.headRef, { json: "url", jq: ".url" }),
-      { cwd },
-    );
+    const existing = await runGh(githubPrViewArgs(pr.headRef, { json: "url", jq: ".url" }), {
+      cwd,
+    });
     let url: string;
     let alreadyExisted = false;
     if (existing.code === 0 && existing.stdout.trim().startsWith("http")) {
@@ -126,8 +125,10 @@ export async function exportLocalPr(
         throw new Error(created.stderr.trim() || created.stdout.trim() || "gh pr create failed");
       }
       url =
-        created.stdout.trim().split("\n").find((line) => /^https?:\/\//.test(line)) ??
-        created.stdout.trim();
+        created.stdout
+          .trim()
+          .split("\n")
+          .find((line) => /^https?:\/\//.test(line)) ?? created.stdout.trim();
       if (!url) throw new Error("gh pr create succeeded but returned no URL");
     }
 

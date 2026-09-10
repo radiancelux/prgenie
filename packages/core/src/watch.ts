@@ -32,11 +32,7 @@ const idleLane = (): WatchLaneState => ({
   exportId: null,
 });
 
-function derive(
-  inbox: WatchLaneState,
-  queue: WatchLaneState,
-  updatedAt: string,
-): RepoWatchState {
+function derive(inbox: WatchLaneState, queue: WatchLaneState, updatedAt: string): RepoWatchState {
   const halted = inbox.halted && queue.halted;
   const reason = halted
     ? inbox.reason === queue.reason
@@ -47,8 +43,7 @@ function derive(
   return { halted, reason, exportId, inbox, queue, updatedAt };
 }
 
-const idle = (): RepoWatchState =>
-  derive(idleLane(), idleLane(), new Date(0).toISOString());
+const idle = (): RepoWatchState => derive(idleLane(), idleLane(), new Date(0).toISOString());
 
 function parseLane(raw: unknown): WatchLaneState | null {
   if (!raw || typeof raw !== "object") return null;
@@ -66,8 +61,7 @@ function parseReason(value: unknown): WatchHaltReason | null {
 
 function parseWatchRaw(raw: string): RepoWatchState {
   const parsed = parseJsonObject<Record<string, unknown>>(raw);
-  const updatedAt =
-    typeof parsed.updatedAt === "string" ? parsed.updatedAt : idle().updatedAt;
+  const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : idle().updatedAt;
   const inbox = parseLane(parsed.inbox);
   const queue = parseLane(parsed.queue);
   if (inbox && queue) return derive(inbox, queue, updatedAt);
@@ -192,8 +186,7 @@ export function parseDurationMs(raw: string, label = "duration"): number {
     throw new Error(`${label} must be a non-negative number`);
   }
   const unit = (match[2] ?? "m").toLowerCase();
-  const mult =
-    unit === "ms" ? 1 : unit === "s" ? 1000 : unit === "h" ? 3_600_000 : 60_000;
+  const mult = unit === "ms" ? 1 : unit === "s" ? 1000 : unit === "h" ? 3_600_000 : 60_000;
   return Math.round(n * mult);
 }
 

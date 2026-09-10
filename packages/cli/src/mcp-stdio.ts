@@ -29,7 +29,9 @@ export function takeMcpMessages(buffer: Buffer): { messages: unknown[]; rest: Bu
   let rest = buffer;
 
   while (rest.length > 0) {
-    const trimmedStart = rest.findIndex((b) => b !== 0x20 && b !== 0x09 && b !== 0x0d && b !== 0x0a);
+    const trimmedStart = rest.findIndex(
+      (b) => b !== 0x20 && b !== 0x09 && b !== 0x0d && b !== 0x0a,
+    );
     if (trimmedStart > 0) rest = rest.subarray(trimmedStart);
     if (rest.length === 0) break;
 

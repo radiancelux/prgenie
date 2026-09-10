@@ -13,7 +13,6 @@ import {
   userName,
   worktreeForLoop,
   ensureWorktreeForLoop,
-  loopWorktreeDir,
   releaseArchivedLoop,
   sameFsPath,
 } from "./worktrees.js";
@@ -41,11 +40,7 @@ function newId(prefix: string): string {
 async function writePr(cwd: string, pr: LocalPr): Promise<void> {
   const dir = await prsDir(cwd);
   await writeJsonFile(prFile(dir, pr.id), pr);
-  await git(cwd, [
-    "update-ref",
-    `refs/local-pr/${pr.id}/head`,
-    pr.headSha,
-  ]);
+  await git(cwd, ["update-ref", `refs/local-pr/${pr.id}/head`, pr.headSha]);
   await git(cwd, ["update-ref", `refs/local-pr/${pr.id}/base`, pr.baseSha]);
   const note = JSON.stringify({
     id: pr.id,
@@ -54,11 +49,9 @@ async function writePr(cwd: string, pr: LocalPr): Promise<void> {
     headRef: pr.headRef,
     baseRef: pr.baseRef,
   });
-  await git(
-    cwd,
-    ["notes", "--ref=local-pr", "add", "-f", "-m", note, pr.headSha],
-    { allowFail: true },
-  );
+  await git(cwd, ["notes", "--ref=local-pr", "add", "-f", "-m", note, pr.headSha], {
+    allowFail: true,
+  });
 }
 
 async function readPrFile(file: string): Promise<LocalPr> {
@@ -152,9 +145,7 @@ export function localPrMatchesSearch(
 ): boolean {
   const needle = query.trim().toLowerCase();
   if (!needle) return true;
-  const fields = normalizeLocalPrSearchFields(
-    options.fields ? [...options.fields] : undefined,
-  );
+  const fields = normalizeLocalPrSearchFields(options.fields ? [...options.fields] : undefined);
   if (fields.has("title") && pr.title.toLowerCase().includes(needle)) return true;
   if (fields.has("body") && pr.body.toLowerCase().includes(needle)) return true;
   if (fields.has("comment")) {
@@ -180,11 +171,9 @@ async function changedFilePathsForPr(cwd: string, pr: LocalPr): Promise<string[]
     primary.code === 0 && primary.stdout.trim()
       ? primary.stdout
       : (
-          await git(
-            cwd,
-            ["diff", "--name-only", `${pr.baseSha}...${pr.headSha}`],
-            { allowFail: true },
-          )
+          await git(cwd, ["diff", "--name-only", `${pr.baseSha}...${pr.headSha}`], {
+            allowFail: true,
+          })
         ).stdout;
   if (!stdout.trim()) return [];
   return stdout
@@ -271,10 +260,7 @@ export async function resumeWatchForNextLoop(cwd: string): Promise<void> {
   }
 }
 
-export async function createLocalPr(
-  cwd: string,
-  input: CreateLocalPrInput = {},
-): Promise<LocalPr> {
+export async function createLocalPr(cwd: string, input: CreateLocalPrInput = {}): Promise<LocalPr> {
   const root = await requireGitRoot(cwd);
   const id = newId("lp");
   const baseRef = input.base ?? (await detectDefaultBase(cwd));
@@ -286,7 +272,9 @@ export async function createLocalPr(
   }
   const baseSha = baseResolved.stdout.trim();
   const requestedHead =
-    input.head ?? (await currentBranch(cwd)) ?? (await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]));
+    input.head ??
+    (await currentBranch(cwd)) ??
+    (await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]));
   const { headRef, headSha } = await ensureLoopFeatureBranch(root, {
     id,
     requestedHead,
@@ -317,7 +305,9 @@ export async function createLocalPr(
   await writePr(root, pr);
   const others = await listLocalPrs(root);
   pr.worktreePath = await ensureWorktreeForLoop(root, pr, {
-    staleLoopIds: others.filter((other) => other.id !== pr.id && isArchivedPr(other)).map((other) => other.id),
+    staleLoopIds: others
+      .filter((other) => other.id !== pr.id && isArchivedPr(other))
+      .map((other) => other.id),
     liveLoopIds: others.filter((other) => !isArchivedPr(other)).map((other) => other.id),
   });
   await resumeWatchForNextLoop(root);
@@ -394,7 +384,9 @@ export function isFindingComment(comment: LocalPrComment): boolean {
 }
 
 export function pendingReviewComments(pr: LocalPr): LocalPrComment[] {
-  return (pr.comments ?? []).map(normalizeComment).filter((c) => isFindingComment(c) && c.status === "open");
+  return (pr.comments ?? [])
+    .map(normalizeComment)
+    .filter((c) => isFindingComment(c) && c.status === "open");
 }
 
 export function addressedReviewComments(pr: LocalPr): LocalPrComment[] {
@@ -487,9 +479,7 @@ export function formatReviewInbox(pr: LocalPr): string | null {
   for (const comment of pending) {
     const who =
       comment.role === "reviewer" ? `Reviewer (${comment.author})` : `Human (${comment.author})`;
-    const loc = comment.path
-      ? ` @ ${comment.path}${comment.line ? `:${comment.line}` : ""}`
-      : "";
+    const loc = comment.path ? ` @ ${comment.path}${comment.line ? `:${comment.line}` : ""}` : "";
     lines.push(`${who} [${comment.id}] open${loc} at ${comment.createdAt}:`);
     lines.push(comment.body);
     lines.push("");
@@ -504,7 +494,7 @@ export function shouldSpawnReviewer(pr: LocalPr): boolean {
 export function formatSpawnReviewer(pr: LocalPr): string {
   return [
     `PR Genie: local PR ${pr.id} ("${pr.title}") on ${pr.headRef} is ready.`,
-    "That is the review request. add_comment role=agent \"Review requested.\" if you have not already. Do not git push.",
+    'That is the review request. add_comment role=agent "Review requested." if you have not already. Do not git push.',
     "You are the implementor. Do not review this loop yourself. The reviewer chat should list_local_prs (status=ready) and Task a generalPurpose subagent per loop. Do not await those Tasks in the listen loop.",
     "If you are covering review in this conversation because no reviewer chat exists, Task one generalPurpose reviewer for this id — but only if you have not already Tasked a reviewer for this id and headSha this session. If several loops are ready, Task one reviewer subagent each, in parallel. Do not sit waiting on them.",
   ].join("\n");
@@ -888,11 +878,7 @@ export async function getLocalPrNameStatus(
   id: string,
 ): Promise<{ status: string; path: string }[]> {
   const pr = await getLocalPr(cwd, id);
-  const { stdout } = await git(cwd, [
-    "diff",
-    "--name-status",
-    `${pr.baseSha}...${pr.headSha}`,
-  ]);
+  const { stdout } = await git(cwd, ["diff", "--name-status", `${pr.baseSha}...${pr.headSha}`]);
   return stdout
     .split("\n")
     .map((line) => line.trim())
@@ -903,17 +889,11 @@ export async function getLocalPrNameStatus(
     });
 }
 
-export async function refreshLocalPrHead(
-  cwd: string,
-  id: string,
-): Promise<LocalPr> {
+export async function refreshLocalPrHead(cwd: string, id: string): Promise<LocalPr> {
   return withPrLock(cwd, id, (pr) => applyHeadRefresh(cwd, pr));
 }
 
-export async function hasCommitsAheadOfBase(
-  cwd: string,
-  baseRef?: string,
-): Promise<boolean> {
+export async function hasCommitsAheadOfBase(cwd: string, baseRef?: string): Promise<boolean> {
   const base = baseRef ?? (await detectDefaultBase(cwd));
   const ahead = await git(cwd, ["rev-list", "--count", `${base}..HEAD`], {
     allowFail: true,
@@ -940,9 +920,7 @@ export async function captureAgentWork(
     (await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]));
   const existing = isBaseBranch(headRef, baseRef)
     ? undefined
-    : (await listLocalPrs(cwd)).find(
-        (pr) => pr.headRef === headRef && !isArchivedPr(pr),
-      );
+    : (await listLocalPrs(cwd)).find((pr) => pr.headRef === headRef && !isArchivedPr(pr));
   if (existing) {
     const prevSha = existing.headSha;
     const updated = await withPrLock(cwd, existing.id, async (pr) => {

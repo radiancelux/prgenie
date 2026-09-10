@@ -8,7 +8,10 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["SCM Providers", "Other"],
+  "categories": [
+    "SCM Providers",
+    "Other"
+  ],
   "activationEvents": [
     "onStartupFinished",
     "onView:prgenie.lane",
@@ -72,10 +75,10 @@
         "command": "prgenie.openLane",
         "title": "PR Genie: Open Local PRs"
       },
-        {
-          "command": "prgenie.switchLoop",
-          "title": "PR Genie: Switch Window to Loop"
-        },
+      {
+        "command": "prgenie.switchLoop",
+        "title": "PR Genie: Switch Window to Loop"
+      },
       {
         "command": "prgenie.openGitLens",
         "title": "PR Genie: Open GitLens Graph",

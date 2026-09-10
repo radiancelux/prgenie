@@ -161,7 +161,10 @@ test("reviewer comments stay on ready until complete_review", async () => {
   const threads = commentThreads(followup.comments);
   const finding = threads.find((t) => t.root.body === "Missing tests.");
   assert.ok(finding);
-  assert.equal(finding.replies.some((r) => r.body === "Working on it."), true);
+  assert.equal(
+    finding.replies.some((r) => r.body === "Working on it."),
+    true,
+  );
 });
 
 test("address_comment marks a finding addressed; reviewer resolve can hand off to human", async () => {
@@ -241,7 +244,10 @@ test("addressing the last open finding sets ready for the next review", async ()
   assert.equal(first.status, "ready");
   assert.equal(pendingReviewComments(first).length, 0);
   assert.equal(addressedReviewComments(first).length, 1);
-  assert.equal(first.comments.some((c) => c.role === "agent" && /review requested/i.test(c.body)), true);
+  assert.equal(
+    first.comments.some((c) => c.role === "agent" && /review requested/i.test(c.body)),
+    true,
+  );
 });
 
 test("resolve_comment on ready does not finish the review", async () => {
@@ -541,10 +547,7 @@ test("comments do not un-archive an approved loop", async () => {
   const after = await addLocalPrComment(repo, pr.id, "Late finding.", { role: "reviewer" });
   assert.equal(after.status, "approved");
   assert.equal(isArchivedPr(after), true);
-  await assert.rejects(
-    () => setLocalPrStatus(repo, pr.id, "changes_requested"),
-    /archived/,
-  );
+  await assert.rejects(() => setLocalPrStatus(repo, pr.id, "changes_requested"), /archived/);
 });
 
 test("archiveLoopsMergedOnGithub archives a loop whose GitHub PR is merged", async () => {
@@ -572,7 +575,6 @@ test("a long comment body is stored in full", async () => {
   assert.equal(after.comments.at(-1)?.body, body);
   assert.equal((await getLocalPr(repo, pr.id)).comments.at(-1)?.body, body);
 });
-
 
 test("creating a loop resumes watch after an archived export halt", async () => {
   git(["checkout", "main"]);
@@ -729,8 +731,14 @@ test("edit and delete open findings", async () => {
     replyTo: finding.id,
   });
   const cleared = await deleteLocalPrComment(repo, pr.id, finding.id);
-  assert.equal(cleared.comments.some((c) => c.id === finding.id), false);
-  assert.equal(cleared.comments.some((c) => c.replyTo === finding.id), false);
+  assert.equal(
+    cleared.comments.some((c) => c.id === finding.id),
+    false,
+  );
+  assert.equal(
+    cleared.comments.some((c) => c.replyTo === finding.id),
+    false,
+  );
 });
 test("localPrMatchesSearch matches title body comment and file", async () => {
   git(["checkout", "main"]);
@@ -751,10 +759,7 @@ test("localPrMatchesSearch matches title body comment and file", async () => {
   assert.equal(localPrMatchesSearch(fresh, "Alpha search"), true);
   assert.equal(localPrMatchesSearch(fresh, "widget-xyz"), true);
   assert.equal(localPrMatchesSearch(fresh, "flubber"), true);
-  assert.equal(
-    localPrMatchesSearch(fresh, "flubber.ts", { files: [] }),
-    true,
-  );
+  assert.equal(localPrMatchesSearch(fresh, "flubber.ts", { files: [] }), true);
   assert.equal(localPrMatchesSearch(fresh, "nope-missing"), false);
   assert.equal(
     localPrMatchesSearch(fresh, "unique-file-token", {
@@ -762,10 +767,7 @@ test("localPrMatchesSearch matches title body comment and file", async () => {
     }),
     true,
   );
-  assert.equal(
-    localPrMatchesSearch(fresh, "Alpha search", { fields: ["body"] }),
-    false,
-  );
+  assert.equal(localPrMatchesSearch(fresh, "Alpha search", { fields: ["body"] }), false);
 
   const byTitle = await listLocalPrs(repo, { search: "Alpha search title" });
   assert.ok(byTitle.some((p) => p.id === pr.id));
@@ -774,10 +776,16 @@ test("localPrMatchesSearch matches title body comment and file", async () => {
   const byComment = await listLocalPrs(repo, { search: "Finding about flubber" });
   assert.ok(byComment.some((p) => p.id === pr.id));
   const none = await listLocalPrs(repo, { search: "zzznomatch999" });
-  assert.equal(none.some((p) => p.id === pr.id), false);
+  assert.equal(
+    none.some((p) => p.id === pr.id),
+    false,
+  );
   const titleOnly = await listLocalPrs(repo, {
     search: "widget-xyz",
     in: ["title"],
   });
-  assert.equal(titleOnly.some((p) => p.id === pr.id), false);
+  assert.equal(
+    titleOnly.some((p) => p.id === pr.id),
+    false,
+  );
 });

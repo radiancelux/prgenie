@@ -1,9 +1,4 @@
-export type LocalPrStatus =
-  | "draft"
-  | "ready"
-  | "changes_requested"
-  | "reviewed"
-  | "approved";
+export type LocalPrStatus = "draft" | "ready" | "changes_requested" | "reviewed" | "approved";
 
 export type CommentRole = "human" | "agent" | "reviewer";
 

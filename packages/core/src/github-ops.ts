@@ -3,11 +3,7 @@ import { readFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { findGitRoot } from "./git.js";
 import { consoleDir, parseJsonObject, writeJsonFile } from "./store.js";
-import {
-  parseGhAuthStatus,
-  type GhAccount,
-  type RepoGithubBind,
-} from "./github.js";
+import { parseGhAuthStatus, type GhAccount, type RepoGithubBind } from "./github.js";
 
 function gh(
   args: string[],
@@ -57,18 +53,13 @@ export async function activeGhLogin(host = "github.com"): Promise<string | null>
   return accounts.find((a) => a.host === host && a.active)?.login ?? null;
 }
 
-export async function switchGhUser(
-  login: string,
-  host = "github.com",
-): Promise<void> {
+export async function switchGhUser(login: string, host = "github.com"): Promise<void> {
   const accounts = await listGhAccounts();
   const match = accounts.find(
     (a) => a.host === host && a.login.toLowerCase() === login.toLowerCase(),
   );
   if (!match) {
-    throw new Error(
-      `GitHub account "${login}" is not logged in on ${host}. Run: gh auth login`,
-    );
+    throw new Error(`GitHub account "${login}" is not logged in on ${host}. Run: gh auth login`);
   }
   if (match.active) return;
   const result = await gh(["auth", "switch", "--hostname", host, "--user", match.login]);
@@ -81,9 +72,7 @@ function bindFile(dir: string): string {
   return path.join(dir, "github.json");
 }
 
-export async function getRepoGithubBind(
-  cwd: string,
-): Promise<RepoGithubBind | null> {
+export async function getRepoGithubBind(cwd: string): Promise<RepoGithubBind | null> {
   const root = await findGitRoot(cwd);
   if (!root) return null;
   try {

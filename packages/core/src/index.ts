@@ -64,7 +64,11 @@ export {
   shouldSpawnReviewer,
   updateLocalPr,
 } from "./prs.js";
-export type { CompleteLocalPrReviewResult, ListLocalPrsOptions, LocalPrSearchField } from "./prs.js";
+export type {
+  CompleteLocalPrReviewResult,
+  ListLocalPrsOptions,
+  LocalPrSearchField,
+} from "./prs.js";
 export {
   haltWatch,
   haltWatchRole,
@@ -89,7 +93,12 @@ export type {
 export { listenActivityFingerprint } from "./watchActivity.js";
 export { formatDoctorReport, runDoctor } from "./doctor.js";
 export type { DoctorReport, DoctorCheck } from "./doctor.js";
-export { exportLocalPr, exportPushRefspec, archiveLoopsMergedOnGithub, githubPrViewArgs } from "./export.js";
+export {
+  exportLocalPr,
+  exportPushRefspec,
+  archiveLoopsMergedOnGithub,
+  githubPrViewArgs,
+} from "./export.js";
 export type { GithubPrHeadState } from "./export.js";
 export { appendSession, formatSessionEvent, listSessions } from "./sessions.js";
 export type { ListSessionsOptions, SessionEvent } from "./sessions.js";

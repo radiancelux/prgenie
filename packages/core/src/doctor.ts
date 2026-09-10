@@ -7,7 +7,12 @@ import { findGitRoot, requireGitRoot } from "./git.js";
 import { getRepoGithubBind, listGhAccounts } from "./github-ops.js";
 import { isArchivedPr, listCorruptLocalPrFiles, listLocalPrs } from "./prs.js";
 import { formatWatchStatus, getRepoWatch } from "./watch.js";
-import { listWorktrees, loopWorktreeIdentity, primaryWorktreePath, sameFsPath } from "./worktrees.js";
+import {
+  listWorktrees,
+  loopWorktreeIdentity,
+  primaryWorktreePath,
+  sameFsPath,
+} from "./worktrees.js";
 
 export interface DoctorCheck {
   id: string;

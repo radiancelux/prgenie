@@ -86,10 +86,7 @@ test("start inbox does not resume the reviewer queue", async () => {
 
 test("parallel lane mutations do not lose a lane", async () => {
   await resumeWatch(repo);
-  await Promise.all([
-    haltWatchRole(repo, "inbox", "stop"),
-    haltWatchRole(repo, "queue", "stop"),
-  ]);
+  await Promise.all([haltWatchRole(repo, "inbox", "stop"), haltWatchRole(repo, "queue", "stop")]);
   const both = await getRepoWatch(repo);
   assert.equal(both.inbox.halted, true);
   assert.equal(both.queue.halted, true);

@@ -330,9 +330,7 @@ async function releaseArchivedLoop(cwd, loop) {
   const here = await findGitRoot(cwd);
   const dest = primary ? loopWorktreeDir(primary, loop.id) : null;
   const stillExtra = dest ? (await listWorktrees(cwd)).some((t) => sameFsPath(t.path, dest)) : false;
-  const reopen = Boolean(
-    stillExtra && here && dest && sameFsPath(here, dest)
-  );
+  const reopen = Boolean(stillExtra && here && dest && sameFsPath(here, dest));
   return { checkedOutBase, prunedWorktree, primaryPath: primary, reopen };
 }
 async function freeStaleLoopWorktree(cwd, treePath) {
@@ -358,11 +356,9 @@ async function addLoopWorktree(cwd, dest, loop) {
     if (added.code === 0) return dest;
   }
   if (!held && !await branchExists(cwd, loop.headRef)) {
-    const created = await git(
-      cwd,
-      ["worktree", "add", "-b", loop.headRef, dest, loop.headSha],
-      { allowFail: true }
-    );
+    const created = await git(cwd, ["worktree", "add", "-b", loop.headRef, dest, loop.headSha], {
+      allowFail: true
+    });
     if (created.code === 0) return dest;
     throw new Error(
       `Could not create a worktree for loop ${loop.id} on branch ${loop.headRef}: ${created.stderr.trim()}`
@@ -373,12 +369,8 @@ async function addLoopWorktree(cwd, dest, loop) {
   );
 }
 async function ensureWorktreeForLoop(cwd, loop, options = {}) {
-  const stale = new Set(
-    [...options.staleLoopIds ?? []].map((id) => id.toLowerCase())
-  );
-  const live = new Set(
-    [...options.liveLoopIds ?? []].map((id) => id.toLowerCase())
-  );
+  const stale = new Set([...options.staleLoopIds ?? []].map((id) => id.toLowerCase()));
+  const live = new Set([...options.liveLoopIds ?? []].map((id) => id.toLowerCase()));
   live.add(loop.id.toLowerCase());
   let trees = await listWorktrees(cwd);
   const primary = primaryWorktreePath(trees);
@@ -656,11 +648,7 @@ function newId(prefix) {
 async function writePr(cwd, pr) {
   const dir = await prsDir(cwd);
   await writeJsonFile(prFile(dir, pr.id), pr);
-  await git(cwd, [
-    "update-ref",
-    `refs/local-pr/${pr.id}/head`,
-    pr.headSha
-  ]);
+  await git(cwd, ["update-ref", `refs/local-pr/${pr.id}/head`, pr.headSha]);
   await git(cwd, ["update-ref", `refs/local-pr/${pr.id}/base`, pr.baseSha]);
   const note = JSON.stringify({
     id: pr.id,
@@ -669,11 +657,9 @@ async function writePr(cwd, pr) {
     headRef: pr.headRef,
     baseRef: pr.baseRef
   });
-  await git(
-    cwd,
-    ["notes", "--ref=local-pr", "add", "-f", "-m", note, pr.headSha],
-    { allowFail: true }
-  );
+  await git(cwd, ["notes", "--ref=local-pr", "add", "-f", "-m", note, pr.headSha], {
+    allowFail: true
+  });
 }
 async function readPrFile(file) {
   const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
@@ -718,9 +704,7 @@ function normalizeLocalPrSearchFields(fields) {
 function localPrMatchesSearch(pr, query, options = {}) {
   const needle = query.trim().toLowerCase();
   if (!needle) return true;
-  const fields = normalizeLocalPrSearchFields(
-    options.fields ? [...options.fields] : void 0
-  );
+  const fields = normalizeLocalPrSearchFields(options.fields ? [...options.fields] : void 0);
   if (fields.has("title") && pr.title.toLowerCase().includes(needle)) return true;
   if (fields.has("body") && pr.body.toLowerCase().includes(needle)) return true;
   if (fields.has("comment")) {
@@ -741,11 +725,9 @@ function localPrMatchesSearch(pr, query, options = {}) {
 async function changedFilePathsForPr(cwd, pr) {
   const range = `${pr.baseSha}...${pr.headRef}`;
   const primary = await git(cwd, ["diff", "--name-only", range], { allowFail: true });
-  const stdout = primary.code === 0 && primary.stdout.trim() ? primary.stdout : (await git(
-    cwd,
-    ["diff", "--name-only", `${pr.baseSha}...${pr.headSha}`],
-    { allowFail: true }
-  )).stdout;
+  const stdout = primary.code === 0 && primary.stdout.trim() ? primary.stdout : (await git(cwd, ["diff", "--name-only", `${pr.baseSha}...${pr.headSha}`], {
+    allowFail: true
+  })).stdout;
   if (!stdout.trim()) return [];
   return stdout.split("\n").map((line) => line.trim()).filter(Boolean);
 }
@@ -1259,11 +1241,7 @@ async function reopenLocalPr(cwd, id) {
 }
 async function getLocalPrNameStatus(cwd, id) {
   const pr = await getLocalPr(cwd, id);
-  const { stdout } = await git(cwd, [
-    "diff",
-    "--name-status",
-    `${pr.baseSha}...${pr.headSha}`
-  ]);
+  const { stdout } = await git(cwd, ["diff", "--name-status", `${pr.baseSha}...${pr.headSha}`]);
   return stdout.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
     const [status, ...rest] = line.split("	");
     return { status, path: rest.join("	") };
@@ -1383,9 +1361,7 @@ async function switchGhUser(login, host = "github.com") {
     (a) => a.host === host && a.login.toLowerCase() === login.toLowerCase()
   );
   if (!match) {
-    throw new Error(
-      `GitHub account "${login}" is not logged in on ${host}. Run: gh auth login`
-    );
+    throw new Error(`GitHub account "${login}" is not logged in on ${host}. Run: gh auth login`);
   }
   if (match.active) return;
   const result = await gh(["auth", "switch", "--hostname", host, "--user", match.login]);
@@ -1465,7 +1441,7 @@ async function archiveLoopsMergedOnGithub(cwd, lookup = (head) => githubPrStateF
   const prs = await listLocalPrs(cwd);
   for (const pr of prs) {
     if (isArchivedPr(pr)) continue;
-    let state = null;
+    let state;
     try {
       state = await lookup(pr.headRef);
     } catch {
@@ -1501,10 +1477,9 @@ async function exportLocalPr(cwd, id) {
     if (push.code !== 0) {
       throw new Error(push.stderr.trim() || `git push failed for ${pr.headRef}`);
     }
-    const existing = await runGh(
-      githubPrViewArgs(pr.headRef, { json: "url", jq: ".url" }),
-      { cwd }
-    );
+    const existing = await runGh(githubPrViewArgs(pr.headRef, { json: "url", jq: ".url" }), {
+      cwd
+    });
     let url;
     let alreadyExisted = false;
     if (existing.code === 0 && existing.stdout.trim().startsWith("http")) {
@@ -1552,7 +1527,7 @@ async function listSessions(cwd, options = {}) {
   const root = await findGitRoot(cwd);
   if (!root) return [];
   const file = await sessionsFile(root);
-  let raw = "";
+  let raw;
   try {
     raw = await (0, import_promises6.readFile)(file, "utf8");
   } catch (err) {
@@ -1561,10 +1536,7 @@ async function listSessions(cwd, options = {}) {
     throw err;
   }
   const limitRaw = options.limit ?? 50;
-  const limit = Math.min(
-    1e3,
-    Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 50)
-  );
+  const limit = Math.min(1e3, Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 50));
   const hook = typeof options.hook === "string" && options.hook ? options.hook : void 0;
   const sinceMs = typeof options.since === "string" && options.since ? Date.parse(options.since) : Number.NaN;
   const events = [];
@@ -1621,7 +1593,9 @@ function takeMcpMessages(buffer) {
   const messages = [];
   let rest = buffer;
   while (rest.length > 0) {
-    const trimmedStart = rest.findIndex((b) => b !== 32 && b !== 9 && b !== 13 && b !== 10);
+    const trimmedStart = rest.findIndex(
+      (b) => b !== 32 && b !== 9 && b !== 13 && b !== 10
+    );
     if (trimmedStart > 0) rest = rest.subarray(trimmedStart);
     if (rest.length === 0) break;
     const asStart = rest.toString("ascii", 0, Math.min(rest.length, 64));
@@ -1716,11 +1690,7 @@ async function handleTool(name, args) {
       await archiveLoopsMergedOnGithub(cwd).catch(() => []);
       const search = typeof args.search === "string" ? args.search : typeof args.query === "string" ? args.query : void 0;
       const inArg = args.in;
-      const inFields = Array.isArray(inArg) ? inArg.filter(
-        (f) => f === "title" || f === "body" || f === "comment" || f === "file"
-      ) : typeof inArg === "string" ? inArg.split(",").map((s) => s.trim()).filter(
-        (f) => f === "title" || f === "body" || f === "comment" || f === "file"
-      ) : void 0;
+      const inFields = Array.isArray(inArg) ? inArg.filter((f) => f === "title" || f === "body" || f === "comment" || f === "file") : typeof inArg === "string" ? inArg.split(",").map((s) => s.trim()).filter((f) => f === "title" || f === "body" || f === "comment" || f === "file") : void 0;
       const prs = (await listLocalPrs(cwd, { search, in: inFields })).map(withCommentViews);
       const status = typeof args.status === "string" ? args.status : "";
       const inbox = args.inbox === true;
@@ -1951,7 +1921,10 @@ var tools = [
       required: ["id", "status"],
       properties: {
         id: { type: "string" },
-        status: { type: "string", enum: ["draft", "ready", "changes_requested", "reviewed", "approved"] },
+        status: {
+          type: "string",
+          enum: ["draft", "ready", "changes_requested", "reviewed", "approved"]
+        },
         cwd: { type: "string" }
       }
     }

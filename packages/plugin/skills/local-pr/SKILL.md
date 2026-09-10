@@ -46,21 +46,21 @@ If the loop already exists, `update_local_pr` with `body` (or `prgenie update <i
 
 Findings (`role=human` or `role=reviewer`) have their own status:
 
-| status | Who sets it | Meaning |
-| --- | --- | --- |
-| `open` | Human or reviewer filing a finding | Implementor inbox **after** `complete_review` (`pendingComments`) |
-| `addressed` | Implementor via `address_comment` (reply nested under the finding) | Waiting for the reviewer to verify |
-| `resolved` | Reviewer via `resolve_comment`, or `complete_review` | Closed |
+| status      | Who sets it                                                        | Meaning                                                           |
+| ----------- | ------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| `open`      | Human or reviewer filing a finding                                 | Implementor inbox **after** `complete_review` (`pendingComments`) |
+| `addressed` | Implementor via `address_comment` (reply nested under the finding) | Waiting for the reviewer to verify                                |
+| `resolved`  | Reviewer via `resolve_comment`, or `complete_review`               | Closed                                                            |
 
 `complete_review` is always the end of a reviewer Task. Open findings set the loop to `changes_requested`. No open findings set `reviewed`. Resolving addressed comments does not finish the review.
 
 Comments are the review protocol for the agent on that loop:
 
-| role | Who | Effect |
-| --- | --- | --- |
-| `human` | You (GUI, CLI, chat) | Open finding. Loop → `changes_requested` immediately (including from **draft** — that is intended). |
-| `reviewer` | Automated review agent | Open finding. **Does not** change loop status. Call `complete_review` when finished. |
-| `agent` | The implementer on this PR | Reply, nested under the finding. Use `address_comment`. The last open finding sets `ready` and posts Review requested. |
+| role       | Who                        | Effect                                                                                                                 |
+| ---------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `human`    | You (GUI, CLI, chat)       | Open finding. Loop → `changes_requested` immediately (including from **draft** — that is intended).                    |
+| `reviewer` | Automated review agent     | Open finding. **Does not** change loop status. Call `complete_review` when finished.                                   |
+| `agent`    | The implementer on this PR | Reply, nested under the finding. Use `address_comment`. The last open finding sets `ready` and posts Review requested. |
 
 `pendingComments` are **open** findings. The implementor inbox (`prgenie inbox`, `inbox=true`) is **this worktree's loop only**, and only when status is `changes_requested`. Never grab another loop. Comments on a `ready` loop mean the reviewer is still writing. `addressedComments` are waiting for the reviewer. Agent replies render **under** the parent finding, not as a stack of sibling comments.
 

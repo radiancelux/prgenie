@@ -18,10 +18,7 @@ export type ListSessionsOptions = {
   since?: string;
 };
 
-export async function appendSession(
-  cwd: string,
-  event: Record<string, unknown>,
-): Promise<void> {
+export async function appendSession(cwd: string, event: Record<string, unknown>): Promise<void> {
   const root = await findGitRoot(cwd);
   if (!root) return;
   const file = await sessionsFile(root);
@@ -45,7 +42,7 @@ export async function listSessions(
   const root = await findGitRoot(cwd);
   if (!root) return [];
   const file = await sessionsFile(root);
-  let raw = "";
+  let raw: string;
   try {
     raw = await readFile(file, "utf8");
   } catch (err) {
@@ -58,16 +55,10 @@ export async function listSessions(
   }
 
   const limitRaw = options.limit ?? 50;
-  const limit = Math.min(
-    1000,
-    Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 50),
-  );
-  const hook =
-    typeof options.hook === "string" && options.hook ? options.hook : undefined;
+  const limit = Math.min(1000, Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 50));
+  const hook = typeof options.hook === "string" && options.hook ? options.hook : undefined;
   const sinceMs =
-    typeof options.since === "string" && options.since
-      ? Date.parse(options.since)
-      : Number.NaN;
+    typeof options.since === "string" && options.since ? Date.parse(options.since) : Number.NaN;
 
   const events: SessionEvent[] = [];
   for (const line of raw.split(/\r?\n/)) {

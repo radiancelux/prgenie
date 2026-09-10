@@ -8,6 +8,10 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -24,6 +28,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // packages/core/src/types.ts
 var COMMENT_STATUSES;
@@ -301,11 +306,9 @@ async function addLoopWorktree(cwd, dest, loop) {
     if (added.code === 0) return dest;
   }
   if (!held && !await branchExists(cwd, loop.headRef)) {
-    const created = await git(
-      cwd,
-      ["worktree", "add", "-b", loop.headRef, dest, loop.headSha],
-      { allowFail: true }
-    );
+    const created = await git(cwd, ["worktree", "add", "-b", loop.headRef, dest, loop.headSha], {
+      allowFail: true
+    });
     if (created.code === 0) return dest;
     throw new Error(
       `Could not create a worktree for loop ${loop.id} on branch ${loop.headRef}: ${created.stderr.trim()}`
@@ -316,12 +319,8 @@ async function addLoopWorktree(cwd, dest, loop) {
   );
 }
 async function ensureWorktreeForLoop(cwd, loop, options = {}) {
-  const stale = new Set(
-    [...options.staleLoopIds ?? []].map((id) => id.toLowerCase())
-  );
-  const live = new Set(
-    [...options.liveLoopIds ?? []].map((id) => id.toLowerCase())
-  );
+  const stale = new Set([...options.staleLoopIds ?? []].map((id) => id.toLowerCase()));
+  const live = new Set([...options.liveLoopIds ?? []].map((id) => id.toLowerCase()));
   live.add(loop.id.toLowerCase());
   let trees = await listWorktrees(cwd);
   const primary = primaryWorktreePath(trees);
@@ -580,11 +579,7 @@ function newId(prefix) {
 async function writePr(cwd, pr) {
   const dir = await prsDir(cwd);
   await writeJsonFile(prFile(dir, pr.id), pr);
-  await git(cwd, [
-    "update-ref",
-    `refs/local-pr/${pr.id}/head`,
-    pr.headSha
-  ]);
+  await git(cwd, ["update-ref", `refs/local-pr/${pr.id}/head`, pr.headSha]);
   await git(cwd, ["update-ref", `refs/local-pr/${pr.id}/base`, pr.baseSha]);
   const note = JSON.stringify({
     id: pr.id,
@@ -593,11 +588,9 @@ async function writePr(cwd, pr) {
     headRef: pr.headRef,
     baseRef: pr.baseRef
   });
-  await git(
-    cwd,
-    ["notes", "--ref=local-pr", "add", "-f", "-m", note, pr.headSha],
-    { allowFail: true }
-  );
+  await git(cwd, ["notes", "--ref=local-pr", "add", "-f", "-m", note, pr.headSha], {
+    allowFail: true
+  });
 }
 async function readPrFile(file) {
   const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
@@ -642,9 +635,7 @@ function normalizeLocalPrSearchFields(fields) {
 function localPrMatchesSearch(pr, query, options = {}) {
   const needle = query.trim().toLowerCase();
   if (!needle) return true;
-  const fields = normalizeLocalPrSearchFields(
-    options.fields ? [...options.fields] : void 0
-  );
+  const fields = normalizeLocalPrSearchFields(options.fields ? [...options.fields] : void 0);
   if (fields.has("title") && pr.title.toLowerCase().includes(needle)) return true;
   if (fields.has("body") && pr.body.toLowerCase().includes(needle)) return true;
   if (fields.has("comment")) {
@@ -665,11 +656,9 @@ function localPrMatchesSearch(pr, query, options = {}) {
 async function changedFilePathsForPr(cwd, pr) {
   const range = `${pr.baseSha}...${pr.headRef}`;
   const primary = await git(cwd, ["diff", "--name-only", range], { allowFail: true });
-  const stdout = primary.code === 0 && primary.stdout.trim() ? primary.stdout : (await git(
-    cwd,
-    ["diff", "--name-only", `${pr.baseSha}...${pr.headSha}`],
-    { allowFail: true }
-  )).stdout;
+  const stdout = primary.code === 0 && primary.stdout.trim() ? primary.stdout : (await git(cwd, ["diff", "--name-only", `${pr.baseSha}...${pr.headSha}`], {
+    allowFail: true
+  })).stdout;
   if (!stdout.trim()) return [];
   return stdout.split("\n").map((line) => line.trim()).filter(Boolean);
 }
@@ -819,9 +808,7 @@ async function captureAgentWork(cwd, input = {}) {
   }
   const baseRef = input.base ?? await detectDefaultBase(cwd);
   const headRef = input.head ?? await currentBranch(cwd) ?? await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  const existing = isBaseBranch(headRef, baseRef) ? void 0 : (await listLocalPrs(cwd)).find(
-    (pr2) => pr2.headRef === headRef && !isArchivedPr(pr2)
-  );
+  const existing = isBaseBranch(headRef, baseRef) ? void 0 : (await listLocalPrs(cwd)).find((pr2) => pr2.headRef === headRef && !isArchivedPr(pr2));
   if (existing) {
     const prevSha = existing.headSha;
     const updated = await withPrLock(cwd, existing.id, async (pr2) => {
@@ -869,7 +856,14 @@ var init_watchActivity = __esm({
 });
 
 // packages/cli/src/capture-hook.ts
+var capture_hook_exports = {};
+__export(capture_hook_exports, {
+  inferCwd: () => inferCwd
+});
+module.exports = __toCommonJS(capture_hook_exports);
 var import_node_fs2 = require("node:fs");
+var import_node_path6 = __toESM(require("node:path"), 1);
+var import_node_url = require("node:url");
 
 // packages/core/src/index.ts
 init_types();
@@ -919,6 +913,7 @@ async function appendSession(cwd, event) {
 init_store();
 
 // packages/cli/src/capture-hook.ts
+var import_meta = {};
 function inferCwd(input) {
   if (typeof input.cwd === "string" && input.cwd) return input.cwd;
   const roots = input.workspace_roots;
@@ -928,8 +923,17 @@ function inferCwd(input) {
 function silent() {
   process.stdout.write("{}\n");
 }
+function ranAsCli() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import_node_path6.default.resolve((0, import_node_url.fileURLToPath)(import_meta.url)).toLowerCase() === import_node_path6.default.resolve(entry).toLowerCase();
+  } catch {
+    return false;
+  }
+}
 async function main() {
-  let input = {};
+  let input;
   try {
     const raw = (0, import_node_fs2.readFileSync)(0, "utf8");
     input = raw ? JSON.parse(raw) : {};
@@ -998,6 +1002,11 @@ async function main() {
     }) + "\n"
   );
 }
-main().catch(() => {
-  silent();
+if (ranAsCli())
+  main().catch(() => {
+    silent();
+  });
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  inferCwd
 });

@@ -8,6 +8,10 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -24,6 +28,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // packages/core/src/types.ts
 var init_types = __esm({
@@ -199,7 +204,16 @@ var init_watchActivity = __esm({
 });
 
 // packages/cli/src/github-hook.ts
+var github_hook_exports = {};
+__export(github_hook_exports, {
+  isGithubCli: () => isGithubCli,
+  isPublish: () => isPublish,
+  switchUser: () => switchUser
+});
+module.exports = __toCommonJS(github_hook_exports);
 var import_node_fs = require("node:fs");
+var import_node_path4 = __toESM(require("node:path"), 1);
+var import_node_url = require("node:url");
 
 // packages/core/src/index.ts
 init_types();
@@ -288,9 +302,7 @@ async function switchGhUser(login, host = "github.com") {
     (a) => a.host === host && a.login.toLowerCase() === login.toLowerCase()
   );
   if (!match) {
-    throw new Error(
-      `GitHub account "${login}" is not logged in on ${host}. Run: gh auth login`
-    );
+    throw new Error(`GitHub account "${login}" is not logged in on ${host}. Run: gh auth login`);
   }
   if (match.active) return;
   const result = await gh(["auth", "switch", "--hostname", host, "--user", match.login]);
@@ -345,6 +357,7 @@ init_store();
 init_store();
 
 // packages/cli/src/github-hook.ts
+var import_meta = {};
 function isPublish(command) {
   return /\bgit(\.exe)?\s+push\b/i.test(command) || /\bgh(\.exe)?\s+pr\s+create\b/i.test(command) || /\bgh(\.exe)?\s+pr\s+merge\b/i.test(command) || /\bgh(\.exe)?\s+repo\s+create\b/i.test(command);
 }
@@ -355,8 +368,17 @@ function switchUser(command) {
   const match = command.match(/\bgh(?:\.exe)?\s+auth\s+switch\b[\s\S]*?--user\s+(\S+)/i);
   return match?.[1] ?? null;
 }
+function ranAsCli() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import_node_path4.default.resolve((0, import_node_url.fileURLToPath)(import_meta.url)).toLowerCase() === import_node_path4.default.resolve(entry).toLowerCase();
+  } catch {
+    return false;
+  }
+}
 async function main() {
-  let input = {};
+  let input;
   try {
     const raw = (0, import_node_fs.readFileSync)(0, "utf8");
     input = raw ? JSON.parse(raw) : {};
@@ -406,12 +428,19 @@ async function main() {
   }
   process.stdout.write(JSON.stringify({ permission: "allow" }));
 }
-main().catch(() => {
-  process.stdout.write(
-    JSON.stringify({
-      permission: "ask",
-      user_message: "PR Genie github gate failed unexpectedly. Allow only if you trust this command.",
-      agent_message: "github-gate crashed. Do not git push or gh pr create/merge. Ask the user, or run prgenie doctor."
-    })
-  );
+if (ranAsCli())
+  main().catch(() => {
+    process.stdout.write(
+      JSON.stringify({
+        permission: "ask",
+        user_message: "PR Genie github gate failed unexpectedly. Allow only if you trust this command.",
+        agent_message: "github-gate crashed. Do not git push or gh pr create/merge. Ask the user, or run prgenie doctor."
+      })
+    );
+  });
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  isGithubCli,
+  isPublish,
+  switchUser
 });

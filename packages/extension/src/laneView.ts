@@ -146,19 +146,13 @@ export class LaneHub implements vscode.Disposable {
       await this.pushSnapshot();
       await vscode.commands.executeCommand("prgenie.panel.focus");
     } catch (err) {
-      void vscode.window.showErrorMessage(
-        err instanceof Error ? err.message : String(err),
-      );
+      void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
     }
   }
 
   async openGitLens(): Promise<void> {
     const commands = await vscode.commands.getCommands(true);
-    const candidates = [
-      "gitlens.showGraph",
-      "gitlens.showCommitGraph",
-      "gitlens.showGraphPage",
-    ];
+    const candidates = ["gitlens.showGraph", "gitlens.showCommitGraph", "gitlens.showGraphPage"];
     const found = candidates.find((c) => commands.includes(c));
     if (found) {
       await vscode.commands.executeCommand(found);
@@ -228,9 +222,7 @@ export class LaneHub implements vscode.Disposable {
     const prs = await listLocalPrs(cwd);
     const pr = prs.find((p) => p.id === id);
     if (pr && isArchivedPr(pr)) {
-      void vscode.window.showInformationMessage(
-        "This loop is archived. The record is read-only.",
-      );
+      void vscode.window.showInformationMessage("This loop is archived. The record is read-only.");
       return true;
     }
     return false;
@@ -255,9 +247,7 @@ export class LaneHub implements vscode.Disposable {
         else await haltWatchRole(cwd, msg.role, "stop");
         await this.pushSnapshot(true);
       } catch (err) {
-        void vscode.window.showErrorMessage(
-          err instanceof Error ? err.message : String(err),
-        );
+        void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
       }
       return;
     }
@@ -297,9 +287,7 @@ export class LaneHub implements vscode.Disposable {
           selection: new vscode.Range(line, 0, line, 0),
         });
       } catch (err) {
-        void vscode.window.showErrorMessage(
-          err instanceof Error ? err.message : String(err),
-        );
+        void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
       }
       return;
     }
@@ -329,7 +317,9 @@ export class LaneHub implements vscode.Disposable {
         const result = await exportLocalPr(cwd, msg.id);
         await this.pushSnapshot(true);
         const open = await vscode.window.showInformationMessage(
-          result.alreadyExisted ? `GitHub PR already exists: ${result.url}` : `Opened ${result.url}`,
+          result.alreadyExisted
+            ? `GitHub PR already exists: ${result.url}`
+            : `Opened ${result.url}`,
           "Open",
         );
         if (open === "Open") await vscode.env.openExternal(vscode.Uri.parse(result.url));
@@ -359,7 +349,9 @@ export class LaneHub implements vscode.Disposable {
         if (await this.rejectIfArchived(cwd, msg.id)) return;
         const prs = await listLocalPrs(cwd);
         const pr = prs.find((p) => p.id === msg.id);
-        const existing = pr?.comments.find((c) => c.id === msg.commentId || c.id.startsWith(msg.commentId));
+        const existing = pr?.comments.find(
+          (c) => c.id === msg.commentId || c.id.startsWith(msg.commentId),
+        );
         const body = await vscode.window.showInputBox({
           title: "Edit finding",
           value: existing?.body ?? msg.body ?? "",
@@ -458,9 +450,7 @@ export class LaneHub implements vscode.Disposable {
         });
       }
     } catch (err) {
-      void vscode.window.showErrorMessage(
-        err instanceof Error ? err.message : String(err),
-      );
+      void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -497,8 +487,7 @@ export class LaneHub implements vscode.Disposable {
           const liveHere = parkedPrs.some(
             (p) =>
               !isArchivedPr(p) &&
-              (p.id === parked.id ||
-                (p.worktreePath && sameFsPath(p.worktreePath, root))),
+              (p.id === parked.id || (p.worktreePath && sameFsPath(p.worktreePath, root))),
           );
           if (!liveHere && !this.reopeningMain) {
             this.reopeningMain = true;
@@ -542,7 +531,8 @@ export class LaneHub implements vscode.Disposable {
       if (this.selectedId && !prs.some((p) => p.id === this.selectedId)) {
         this.selectedId = live[0]?.id ?? (this.showArchived ? archived[0]?.id : undefined);
       }
-      if (!this.selectedId) this.selectedId = live[0]?.id ?? (this.showArchived ? archived[0]?.id : undefined);
+      if (!this.selectedId)
+        this.selectedId = live[0]?.id ?? (this.showArchived ? archived[0]?.id : undefined);
       const selected = prs.find((p) => p.id === this.selectedId);
       let files: { status: string; path: string }[] = [];
       try {
@@ -560,34 +550,38 @@ export class LaneHub implements vscode.Disposable {
         exportId: watchState[role].exportId,
         label: formatWatchLane(watchState, role),
       });
-      this.post({
-        type: "snapshot",
-        prs,
-        selectedId: this.selectedId ?? null,
-        files,
-        threads: selected ? commentThreads(selected.comments) : [],
-        repo: path.basename(root),
-        freshIds,
-        watching: true,
-        hereId,
-        archivedCount,
-        showArchived: this.showArchived,
-        watch: { inbox: laneSnap("inbox"), queue: laneSnap("queue") },
-      }, force);
+      this.post(
+        {
+          type: "snapshot",
+          prs,
+          selectedId: this.selectedId ?? null,
+          files,
+          threads: selected ? commentThreads(selected.comments) : [],
+          repo: path.basename(root),
+          freshIds,
+          watching: true,
+          hereId,
+          archivedCount,
+          showArchived: this.showArchived,
+          watch: { inbox: laneSnap("inbox"), queue: laneSnap("queue") },
+        },
+        force,
+      );
       await this.watchStore();
     } catch (err) {
-      this.post({
-        type: "snapshot",
-        error: err instanceof Error ? err.message : String(err),
-        prs: [],
-      }, force);
+      this.post(
+        {
+          type: "snapshot",
+          error: err instanceof Error ? err.message : String(err),
+          prs: [],
+        },
+        force,
+      );
     }
   }
 }
 
-function snapshotKey(
-  payload: Snapshot | { type: "snapshot"; error: string; prs: [] },
-): string {
+function snapshotKey(payload: Snapshot | { type: "snapshot"; error: string; prs: [] }): string {
   return JSON.stringify({
     error: payload.error ?? null,
     selectedId: "selectedId" in payload ? payload.selectedId : null,

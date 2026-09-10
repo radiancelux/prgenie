@@ -92,14 +92,14 @@ Run from any worktree. Loops are stored in the repo's .git/agent-console/.
 `;
 }
 
-function arg(args: string[], name: string): string | undefined {
+export function arg(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
   if (i === -1) return undefined;
   return args[i + 1];
 }
 
 /** Comment text from -m, --message, --body-file, or stdin when -m is -. */
-function messageArg(args: string[]): string | undefined {
+export function messageArg(args: string[]): string | undefined {
   const file = arg(args, "--body-file");
   if (file) return readFileSync(file, "utf8");
   const message = arg(args, "-m") ?? arg(args, "--message");
@@ -107,12 +107,14 @@ function messageArg(args: string[]): string | undefined {
   return message;
 }
 
-function flag(args: string[], name: string): boolean {
+export function flag(args: string[], name: string): boolean {
   return args.includes(name);
 }
 
 function printPr(pr: LocalPr): void {
-  const filesNote = pr.worktreePath ? `\n  worktree: ${pr.worktreePath}` : "\n  worktree: (gone — loop still exists)";
+  const filesNote = pr.worktreePath
+    ? `\n  worktree: ${pr.worktreePath}`
+    : "\n  worktree: (gone — loop still exists)";
   const summary = pr.body.trim()
     ? `\n  summary: ${pr.body.trim().split("\n")[0].slice(0, 100)}`
     : "\n  summary: (none)";
@@ -170,7 +172,10 @@ export async function run(argv: string[]): Promise<number> {
     const search = arg(rest, "--search") ?? arg(rest, "--query");
     const inRaw = arg(rest, "--in");
     const inFields = inRaw
-      ? inRaw.split(",").map((s) => s.trim()).filter(Boolean)
+      ? inRaw
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
       : undefined;
     const invalid = (inFields ?? []).filter(
       (f) => !["title", "body", "comment", "file"].includes(f),
@@ -189,7 +194,9 @@ export async function run(argv: string[]): Promise<number> {
     const prs = flag(rest, "--all") ? all : all.filter((pr) => !isArchivedPr(pr));
     if (prs.length === 0) {
       if (archived.length && !flag(rest, "--all")) {
-        process.stdout.write("No active local PRs. " + archived.length + " archived (prgenie list --all).\n");
+        process.stdout.write(
+          "No active local PRs. " + archived.length + " archived (prgenie list --all).\n",
+        );
       } else if (search) {
         process.stdout.write("No local PRs matching search.\n");
       } else {
@@ -409,9 +416,7 @@ export async function run(argv: string[]): Promise<number> {
       staleLoopIds: (await listLocalPrs(repo))
         .filter((p) => p.id !== pr.id && isArchivedPr(p))
         .map((p) => p.id),
-      liveLoopIds: (await listLocalPrs(repo))
-        .filter((p) => !isArchivedPr(p))
-        .map((p) => p.id),
+      liveLoopIds: (await listLocalPrs(repo)).filter((p) => !isArchivedPr(p)).map((p) => p.id),
     });
     process.stdout.write(`${dest}\n`);
     return 0;
@@ -539,17 +544,13 @@ async function runGithub(args: string[]): Promise<number> {
     for (const account of accounts) {
       const flags = [
         account.active ? "active" : "",
-        bind && bind.login === account.login && bind.host === account.host
-          ? "this-repo"
-          : "",
+        bind && bind.login === account.login && bind.host === account.host ? "this-repo" : "",
       ]
         .filter(Boolean)
         .join(", ");
-      process.stdout.write(
-        `${account.host}  ${account.login}${flags ? `  (${flags})` : ""}\n`,
-      );
+      process.stdout.write(`${account.host}  ${account.login}${flags ? `  (${flags})` : ""}\n`);
     }
-    if (await findGitRoot(cwd) && !bind) {
+    if ((await findGitRoot(cwd)) && !bind) {
       process.stdout.write("This repo is unbound. prgenie gh use <login>\n");
     }
     return 0;
@@ -567,4 +568,3 @@ async function runGithub(args: string[]): Promise<number> {
   process.stderr.write(usage());
   return 1;
 }
-
