@@ -39,7 +39,11 @@ test("switchUser extracts --user from gh auth switch", () => {
 test("built github-gate.cjs runs main and fail-closes push", () => {
   const bundled = readFileSync(gateCjs, "utf8");
   assert.equal(bundled.includes("ranAsCli"), false, "entry must not use ranAsCli");
-  assert.equal(bundled.includes("import_meta"), false, "entry must not rely on blanked import_meta");
+  assert.equal(
+    bundled.includes("import_meta"),
+    false,
+    "entry must not rely on blanked import_meta",
+  );
 
   const input = JSON.stringify({
     command: "git push origin HEAD",
