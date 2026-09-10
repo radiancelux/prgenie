@@ -24,12 +24,12 @@ before(async () => {
   git(["init", "-b", "main"]);
   git(["config", "user.email", "test@prgenie.ai"]);
   git(["config", "user.name", "PR Genie Test"]);
-  
+
   // Create a bare repo to act as a remote
   const bare = await mkdtemp(path.join(tmpdir(), "prgenie-bare-"));
   git(["init", "--bare"], bare);
   git(["remote", "add", "origin", bare]);
-  
+
   await writeFile(path.join(repo, "README.md"), "hello\n");
   git(["add", "."]);
   git(["commit", "-m", "initial"]);
