@@ -4,12 +4,12 @@ PR Genie is a local review lane that sits in front of GitHub. The product flywhe
 
 ## Packages
 
-| Package | Path | Role |
-| --- | --- | --- |
-| `@prgenie/core` | `packages/core` | Local PR CRUD, status transitions, watch state, worktrees, export helpers, `doctor`, `gh` bind |
-| `prgenie` CLI | `packages/cli` | Thin CLI + MCP stdio server over core (`prgenie`, `prgenie doctor`, `watch listen`, hooks) |
-| Cursor plugin | `packages/plugin` | Rules, skills (`/start-loop`, `/export-local-pr`, …), MCP entry, hooks (`github-gate.cjs`, `review-inbox.cjs`, `capture-subagent.cjs`, `session-log.mjs`) |
-| VS Code / Cursor extension | `packages/extension` | **Local PRs** sidebar: watch list, Switch to worktree, Complete review, Open on GitHub |
+| Package                    | Path                 | Role                                                                                                                                                      |
+| -------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@prgenie/core`            | `packages/core`      | Local PR CRUD, status transitions, watch state, worktrees, export helpers, `doctor`, `gh` bind                                                            |
+| `prgenie` CLI              | `packages/cli`       | Thin CLI + MCP stdio server over core (`prgenie`, `prgenie doctor`, `watch listen`, hooks)                                                                |
+| Cursor plugin              | `packages/plugin`    | Rules, skills (`/start-loop`, `/export-local-pr`, …), MCP entry, hooks (`github-gate.cjs`, `review-inbox.cjs`, `capture-subagent.cjs`, `session-log.mjs`) |
+| VS Code / Cursor extension | `packages/extension` | **Local PRs** sidebar: watch list, Switch to worktree, Complete review, Open on GitHub                                                                    |
 
 Build at the monorepo root (`pnpm build`). Dev install copies the plugin and extension into Cursor via `pnpm link-plugin` and `pnpm link-extension`.
 
@@ -39,7 +39,7 @@ Statuses (from `@prgenie/core` types):
 
 Typical path:
 
-1. **Create** (`create_local_pr` / `prgenie create` / `/start-loop`) — feature branch `lp-<id>`, draft packet. `createLocalPr` always calls `ensureWorktreeForLoop` and records a `worktreePath`. That path is `../<repo>.loops/<id>` (`loopWorktreeDir`) unless the loop branch is already checked out in the primary tree, in which case the primary path is reused. The worktree attachment is required; only the *location* (sibling `.loops/<id>` vs primary) varies.
+1. **Create** (`create_local_pr` / `prgenie create` / `/start-loop`) — feature branch `lp-<id>`, draft packet. `createLocalPr` always calls `ensureWorktreeForLoop` and records a `worktreePath`. That path is `../<repo>.loops/<id>` (`loopWorktreeDir`) unless the loop branch is already checked out in the primary tree, in which case the primary path is reused. The worktree attachment is required; only the _location_ (sibling `.loops/<id>` vs primary) varies.
 2. **Ready** — implementor refreshes `body` (why / what / how to test), then `set_status ready` / `prgenie ready`. That only arms the review request (`armReviewRequest`: sets `reviewRequestedSha`, clears `reviewerNotifiedSha`). It does **not** post a comment. On the first draft→ready handoff, agents `add_comment` **Review requested.** themselves (skills / `formatSpawnReviewer`). After later review rounds, addressing the last open finding runs `maybeHandoffToReviewer`, which returns `ready` and posts that comment automatically.
 3. **Review** — reviewer files findings while status stays `ready`, then **`complete_review`**. That flip wakes the implementor (`changes_requested`) or marks `reviewed` for export.
 4. **Address** — implementor `address_comment`s each open finding; addressing the last open finding returns `ready` and posts Review requested again.
@@ -54,10 +54,10 @@ Human comments can request changes immediately; agent/reviewer findings go throu
 
 Two independent lanes under `.git/agent-console/watch.json`:
 
-| Lane | Skill | Who |
-| --- | --- | --- |
+| Lane    | Skill                 | Who                                        |
+| ------- | --------------------- | ------------------------------------------ |
 | `inbox` | `/watch-review-inbox` | Implementor — wakes on `changes_requested` |
-| `queue` | `/watch-ready-prs` | Reviewer — wakes on `ready` |
+| `queue` | `/watch-ready-prs`    | Reviewer — wakes on `ready`                |
 
 - `prgenie watch listen inbox|queue` is the capped wake process (default **30m** idle quiet, **8h** wall max). Skills should use it instead of hand-rolled sleep loops.
 - Halt reasons: `stop` (explicit `/stop-loop`, `/stop-review`, `/stop-watch`) vs `export` (after `/export-local-pr`).
@@ -68,14 +68,14 @@ Two independent lanes under `.git/agent-console/watch.json`:
 
 All local-PR state is git-native / machine-local — not committed:
 
-| Location | Contents |
-| --- | --- |
-| `refs/local-pr/<id>/head`, `refs/local-pr/<id>/base` | Branch tips for the loop |
-| `refs/notes/local-pr` | Notes |
-| `.git/agent-console/prs/<id>.json` | Packet metadata (title, body, status, comments, SHAs) |
-| `.git/agent-console/watch.json` | Inbox/queue halt + export id |
-| `.git/agent-console/sessions.jsonl` | Session log events |
-| `.git/agent-console/github.json` | Per-repo `gh` login bind (`bindFile` in `github-ops.ts`) |
+| Location                                             | Contents                                                 |
+| ---------------------------------------------------- | -------------------------------------------------------- |
+| `refs/local-pr/<id>/head`, `refs/local-pr/<id>/base` | Branch tips for the loop                                 |
+| `refs/notes/local-pr`                                | Notes                                                    |
+| `.git/agent-console/prs/<id>.json`                   | Packet metadata (title, body, status, comments, SHAs)    |
+| `.git/agent-console/watch.json`                      | Inbox/queue halt + export id                             |
+| `.git/agent-console/sessions.jsonl`                  | Session log events                                       |
+| `.git/agent-console/github.json`                     | Per-repo `gh` login bind (`bindFile` in `github-ops.ts`) |
 
 `prgenie list` / MCP `list_local_prs` hide archived (`approved`) loops unless `--all` / `all=true`. Packets remain on disk for `prgenie show` and Local PRs **Show archived**.
 
