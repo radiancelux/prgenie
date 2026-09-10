@@ -209,6 +209,15 @@ var init_watchActivity = __esm({
   }
 });
 
+// packages/core/src/export-validation.ts
+var init_export_validation = __esm({
+  "packages/core/src/export-validation.ts"() {
+    "use strict";
+    init_prs();
+    init_learnings();
+  }
+});
+
 // packages/cli/src/github-hook.ts
 var import_node_fs = require("node:fs");
 
@@ -345,6 +354,9 @@ init_git();
 init_prs();
 init_worktrees();
 init_watch();
+
+// packages/core/src/index.ts
+init_export_validation();
 
 // packages/core/src/sessions.ts
 init_git();

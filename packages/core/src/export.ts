@@ -68,6 +68,7 @@ export function exportPushRefspec(pr: { headSha: string; headRef: string }): str
 export async function exportLocalPr(
   cwd: string,
   id: string,
+  options: { skipValidation?: boolean } = {},
 ): Promise<{
   url: string;
   id: string;
@@ -77,6 +78,14 @@ export async function exportLocalPr(
   primaryPath: string | null;
   reopen: boolean;
 }> {
+  const { validateExport } = await import("./export-validation.js");
+  const validation = await validateExport(cwd, id, options);
+  if (!validation.ok) {
+    throw new Error(
+      `Export blocked. ${validation.issues.join(" ")}${options.skipValidation ? "" : " Use --skip-validation to override (not recommended)."}`,
+    );
+  }
+
   const pr = await getLocalPr(cwd, id);
   const ghState = await ensureRepoGithub(cwd);
   if (!ghState.bound && !ghState.login) {

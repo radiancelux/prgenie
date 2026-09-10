@@ -8,6 +8,10 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -1480,6 +1484,47 @@ var init_watchActivity = __esm({
   }
 });
 
+// packages/core/src/export-validation.ts
+var export_validation_exports = {};
+__export(export_validation_exports, {
+  validateExport: () => validateExport
+});
+async function validateExport(cwd, id, options = {}) {
+  if (options.skipValidation) {
+    return { ok: true, issues: [] };
+  }
+  const issues = [];
+  const pr = await getLocalPr(cwd, id);
+  if (!isArchivedPr(pr) && pr.status !== "reviewed" && pr.status !== "approved") {
+    const pending = pendingReviewComments(pr);
+    if (pending.length > 0) {
+      issues.push(
+        `Review incomplete: ${pending.length} open finding(s). Address each comment, then complete_review.`
+      );
+    } else {
+      issues.push(
+        `Review incomplete: status is ${pr.status}. Set status to ready, complete review, or approve.`
+      );
+    }
+  }
+  const preflight = await runPreflight(cwd, pr);
+  if (!preflight.passed) {
+    for (const issue of preflight.issues) {
+      issues.push(
+        `Preflight pattern: ${issue.pattern} \u2014 ${issue.guidance} (matched in ${issue.matchedIn})`
+      );
+    }
+  }
+  return { ok: issues.length === 0, issues };
+}
+var init_export_validation = __esm({
+  "packages/core/src/export-validation.ts"() {
+    "use strict";
+    init_prs();
+    init_learnings();
+  }
+});
+
 // packages/core/src/index.ts
 init_types();
 init_git();
@@ -1667,7 +1712,14 @@ async function archiveLoopsMergedOnGithub(cwd, lookup = (head) => githubPrStateF
 function exportPushRefspec(pr) {
   return `${pr.headSha}:refs/heads/${pr.headRef}`;
 }
-async function exportLocalPr(cwd, id) {
+async function exportLocalPr(cwd, id, options = {}) {
+  const { validateExport: validateExport2 } = await Promise.resolve().then(() => (init_export_validation(), export_validation_exports));
+  const validation = await validateExport2(cwd, id, options);
+  if (!validation.ok) {
+    throw new Error(
+      `Export blocked. ${validation.issues.join(" ")}${options.skipValidation ? "" : " Use --skip-validation to override (not recommended)."}`
+    );
+  }
   const pr = await getLocalPr(cwd, id);
   const ghState = await ensureRepoGithub(cwd);
   if (!ghState.bound && !ghState.login) {
@@ -1727,6 +1779,9 @@ async function exportLocalPr(cwd, id) {
     throw err;
   }
 }
+
+// packages/core/src/index.ts
+init_export_validation();
 
 // packages/core/src/sessions.ts
 var import_promises7 = require("node:fs/promises");
@@ -1947,7 +2002,7 @@ async function generateLearningDigest(cwd, options = {}) {
     }
   }
   const topKeywords = Array.from(keywordCounts.entries()).filter(([, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([keyword, count]) => ({ keyword, count }));
-  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path7, count]) => ({ path: path7, count }));
+  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path8, count]) => ({ path: path8, count }));
   const patterns = Array.from(patternCounts.entries()).filter(([, data]) => data.count >= 2).sort((a, b) => b[1].count - a[1].count).slice(0, 10).map(([pattern, data]) => ({
     pattern,
     examples: data.examples,
@@ -1987,8 +2042,8 @@ function formatLearningDigest(summary) {
   if (summary.topFiles.length > 0) {
     lines.push("## Most Commented Files");
     lines.push("");
-    for (const { path: path7, count } of summary.topFiles) {
-      lines.push(`- \`${path7}\` \u2014 ${count} comment(s)`);
+    for (const { path: path8, count } of summary.topFiles) {
+      lines.push(`- \`${path8}\` \u2014 ${count} comment(s)`);
     }
     lines.push("");
   }
@@ -2270,7 +2325,9 @@ async function handleTool(name, args) {
       return { ...pr, worktreePath: dest };
     }
     case "export_local_pr":
-      return exportLocalPr(cwd, String(args.id ?? ""));
+      return exportLocalPr(cwd, String(args.id ?? ""), {
+        skipValidation: args.skipValidation === true
+      });
     case "list_learnings":
       return listLearnings(cwd, {
         disabled: typeof args.disabled === "boolean" ? args.disabled : void 0,
@@ -2602,11 +2659,18 @@ var tools = [
   },
   {
     name: "export_local_pr",
-    description: "Developer command: halt listen loops, git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export.",
+    description: "Developer command: validate review status and preflight, then halt listen loops, git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export. Export is blocked unless local review is complete (status reviewed/approved, no pending comments) and preflight pattern checks pass. Use skipValidation only for emergency export.",
     inputSchema: {
       type: "object",
       required: ["id"],
-      properties: { id: { type: "string" }, cwd: { type: "string" } }
+      properties: {
+        id: { type: "string" },
+        cwd: { type: "string" },
+        skipValidation: {
+          type: "boolean",
+          description: "Skip export validation (review status + preflight). Emergency override only."
+        }
+      }
     }
   },
   {

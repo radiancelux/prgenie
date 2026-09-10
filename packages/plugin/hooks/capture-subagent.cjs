@@ -861,6 +861,15 @@ var init_watchActivity = __esm({
   }
 });
 
+// packages/core/src/export-validation.ts
+var init_export_validation = __esm({
+  "packages/core/src/export-validation.ts"() {
+    "use strict";
+    init_prs();
+    init_learnings();
+  }
+});
+
 // packages/cli/src/capture-hook.ts
 var import_node_fs2 = require("node:fs");
 
@@ -889,6 +898,9 @@ init_git();
 init_prs();
 init_worktrees();
 init_watch();
+
+// packages/core/src/index.ts
+init_export_validation();
 
 // packages/core/src/sessions.ts
 var import_promises5 = require("node:fs/promises");

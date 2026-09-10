@@ -65,7 +65,7 @@ Usage:
   prgenie watch listen inbox|queue [--idle 30m] [--max 8h] [--interval 60] [--ticks N]
   prgenie doctor
   prgenie sessions [--limit N] [--hook <name>] [--since <iso>] [--json]
-  prgenie export <id>
+  prgenie export <id> [--skip-validation]
   prgenie show <id>
   prgenie update <id> [--title <t>] [--body <summary>]
   prgenie diff <id> [--stat] [-- <path>...]
@@ -346,10 +346,12 @@ export async function run(argv: string[]): Promise<number> {
   if (sub === "export") {
     const exportId = rest[0];
     if (!exportId) {
-      process.stderr.write("prgenie export <id>\n");
+      process.stderr.write("prgenie export <id> [--skip-validation]\n");
       return 1;
     }
-    const result = await exportLocalPr(repo, exportId);
+    const result = await exportLocalPr(repo, exportId, {
+      skipValidation: flag(rest, "--skip-validation"),
+    });
     const lines = [`${result.alreadyExisted ? "Existing" : "Opened"} GitHub PR ${result.url}`];
     if (result.checkedOutBase) {
       lines.push("Main workspace is back on the loop base branch.");
