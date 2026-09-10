@@ -1,5 +1,4 @@
-import { getLocalPr, isArchivedPr, pendingReviewComments } from "./prs.js";
-import { runPreflight } from "./learnings.js";
+import { shepherdStatus, type ShepherdOptions } from "./shepherd.js";
 
 export interface ExportValidationResult {
   ok: boolean;
@@ -7,16 +6,15 @@ export interface ExportValidationResult {
   issues: string[];
 }
 
-export interface ExportValidationOptions {
+export interface ExportValidationOptions extends ShepherdOptions {
   /** When true, skip all export validation (emergency override). Default false. */
   skipValidation?: boolean;
 }
 
 /**
  * Validate that a local PR is ready for export to GitHub.
- * Blocks export until:
- * 1. Local review is complete (status reviewed or approved, no pending comments)
- * 2. Preflight pattern checks pass (Learn #18)
+ * Uses shepherdStatus aggregator to check: review + preflight + gh bind + CI.
+ * Blocks export unless all checks pass.
  */
 export async function validateExport(
   cwd: string,
@@ -27,32 +25,27 @@ export async function validateExport(
     return { ok: true, issues: [] };
   }
 
-  const issues: string[] = [];
-  const pr = await getLocalPr(cwd, id);
+  // Use shepherd aggregator for all checks
+  const shepherd = await shepherdStatus(cwd, id, options);
 
-  // Check review status: must be reviewed or approved (no pending comments)
-  if (!isArchivedPr(pr) && pr.status !== "reviewed" && pr.status !== "approved") {
-    const pending = pendingReviewComments(pr);
-    if (pending.length > 0) {
-      issues.push(
-        `Review incomplete: ${pending.length} open finding(s). Address each comment, then complete_review.`,
-      );
-    } else {
-      issues.push(
-        `Review incomplete: status is ${pr.status}. Set status to ready, complete review, or approve.`,
-      );
-    }
+  if (shepherd.status === "ready") {
+    return { ok: true, issues: [] };
   }
 
-  // Run preflight pattern checks (Learn #18 integration)
-  const preflight = await runPreflight(cwd, pr);
-  if (!preflight.passed) {
-    for (const issue of preflight.issues) {
-      issues.push(
-        `Preflight pattern: ${issue.pattern} — ${issue.guidance} (matched in ${issue.matchedIn})`,
-      );
-    }
-  }
+  // Convert shepherd reasons to export validation issues
+  const issues = shepherd.reasons.map((reason) => {
+    const prefix =
+      reason.check === "review"
+        ? "Review"
+        : reason.check === "preflight"
+          ? "Preflight"
+          : reason.check === "github"
+            ? "GitHub"
+            : reason.check === "ci"
+              ? "CI"
+              : "Check";
+    return `${prefix}: ${reason.message}`;
+  });
 
-  return { ok: issues.length === 0, issues };
+  return { ok: false, issues };
 }

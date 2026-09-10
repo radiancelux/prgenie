@@ -1745,6 +1745,131 @@ var init_watchActivity = __esm({
   }
 });
 
+// packages/core/src/ci-runner.ts
+async function runCiChecks(cwd, options = {}) {
+  const checks = options.checks ?? [
+    "format:check",
+    "lint",
+    "typecheck",
+    "test",
+    "build"
+  ];
+  const timeout = options.timeout ?? 6e4;
+  const results = [];
+  for (const check of checks) {
+    try {
+      await execAsync(`pnpm ${check}`, { cwd, timeout });
+      results.push({ name: check, passed: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      results.push({
+        name: check,
+        passed: false,
+        error: message.split("\n")[0] || `Check '${check}' failed`
+      });
+    }
+  }
+  return {
+    allPassed: results.every((r) => r.passed),
+    checks: results
+  };
+}
+var import_node_child_process3, import_node_util, execAsync;
+var init_ci_runner = __esm({
+  "packages/core/src/ci-runner.ts"() {
+    "use strict";
+    import_node_child_process3 = require("node:child_process");
+    import_node_util = require("node:util");
+    execAsync = (0, import_node_util.promisify)(import_node_child_process3.exec);
+  }
+});
+
+// packages/core/src/shepherd.ts
+async function shepherdStatus(cwd, id, options = {}) {
+  const reasons = [];
+  try {
+    const pr = await getLocalPr(cwd, id);
+    if (!isArchivedPr(pr) && pr.status !== "reviewed" && pr.status !== "approved") {
+      const pending = pendingReviewComments(pr);
+      if (pending.length > 0) {
+        reasons.push({
+          check: "review",
+          message: `Review incomplete: ${pending.length} open finding(s)`
+        });
+      } else if (pr.status === "draft") {
+        reasons.push({
+          check: "review",
+          message: "Status is draft (not ready for review)"
+        });
+      } else if (pr.status === "ready") {
+        reasons.push({
+          check: "review",
+          message: "Review not started (status is ready)"
+        });
+      } else if (pr.status === "changes_requested") {
+        reasons.push({
+          check: "review",
+          message: "Changes requested (review not complete)"
+        });
+      }
+    }
+    const preflight = await runPreflight(cwd, pr);
+    if (!preflight.passed) {
+      for (const issue of preflight.issues) {
+        reasons.push({
+          check: "preflight",
+          message: `Pattern blocked: ${issue.pattern} (matched in ${issue.matchedIn})`
+        });
+      }
+    }
+    if (!options.skipGithubCheck) {
+      const ghState = await ensureRepoGithub(cwd);
+      if (!ghState.login) {
+        reasons.push({
+          check: "github",
+          message: "No GitHub account logged in (run: gh auth login)"
+        });
+      } else if (!ghState.bound) {
+        reasons.push({
+          check: "github",
+          message: `Repo not bound to GitHub account (run: prgenie gh use ${ghState.login})`
+        });
+      }
+    }
+    if (!options.skipCiCheck) {
+      const ciResult = await runCiChecks(cwd);
+      if (!ciResult.allPassed) {
+        for (const check of ciResult.checks) {
+          if (!check.passed) {
+            reasons.push({
+              check: "ci",
+              message: `CI check failed: ${check.name}${check.error ? ` \u2014 ${check.error}` : ""}`
+            });
+          }
+        }
+      }
+    }
+  } catch (err) {
+    reasons.push({
+      check: "review",
+      message: `Failed to check shepherd status: ${err instanceof Error ? err.message : String(err)}`
+    });
+  }
+  return {
+    status: reasons.length === 0 ? "ready" : "blocked",
+    reasons
+  };
+}
+var init_shepherd = __esm({
+  "packages/core/src/shepherd.ts"() {
+    "use strict";
+    init_prs();
+    init_learnings();
+    init_github_ops();
+    init_ci_runner();
+  }
+});
+
 // packages/core/src/export-validation.ts
 var export_validation_exports = {};
 __export(export_validation_exports, {
@@ -1754,35 +1879,20 @@ async function validateExport(cwd, id, options = {}) {
   if (options.skipValidation) {
     return { ok: true, issues: [] };
   }
-  const issues = [];
-  const pr = await getLocalPr(cwd, id);
-  if (!isArchivedPr(pr) && pr.status !== "reviewed" && pr.status !== "approved") {
-    const pending = pendingReviewComments(pr);
-    if (pending.length > 0) {
-      issues.push(
-        `Review incomplete: ${pending.length} open finding(s). Address each comment, then complete_review.`
-      );
-    } else {
-      issues.push(
-        `Review incomplete: status is ${pr.status}. Set status to ready, complete review, or approve.`
-      );
-    }
+  const shepherd = await shepherdStatus(cwd, id, options);
+  if (shepherd.status === "ready") {
+    return { ok: true, issues: [] };
   }
-  const preflight = await runPreflight(cwd, pr);
-  if (!preflight.passed) {
-    for (const issue of preflight.issues) {
-      issues.push(
-        `Preflight pattern: ${issue.pattern} \u2014 ${issue.guidance} (matched in ${issue.matchedIn})`
-      );
-    }
-  }
-  return { ok: issues.length === 0, issues };
+  const issues = shepherd.reasons.map((reason) => {
+    const prefix = reason.check === "review" ? "Review" : reason.check === "preflight" ? "Preflight" : reason.check === "github" ? "GitHub" : reason.check === "ci" ? "CI" : "Check";
+    return `${prefix}: ${reason.message}`;
+  });
+  return { ok: false, issues };
 }
 var init_export_validation = __esm({
   "packages/core/src/export-validation.ts"() {
     "use strict";
-    init_prs();
-    init_learnings();
+    init_shepherd();
   }
 });
 
@@ -2212,73 +2322,8 @@ init_store();
 init_github();
 init_github_ops();
 init_learnings();
-
-// packages/core/src/shepherd.ts
-init_prs();
-init_learnings();
-init_github_ops();
-async function shepherdStatus(cwd, id, options = {}) {
-  const reasons = [];
-  try {
-    const pr = await getLocalPr(cwd, id);
-    if (!isArchivedPr(pr) && pr.status !== "reviewed" && pr.status !== "approved") {
-      const pending = pendingReviewComments(pr);
-      if (pending.length > 0) {
-        reasons.push({
-          check: "review",
-          message: `Review incomplete: ${pending.length} open finding(s)`
-        });
-      } else if (pr.status === "draft") {
-        reasons.push({
-          check: "review",
-          message: "Status is draft (not ready for review)"
-        });
-      } else if (pr.status === "ready") {
-        reasons.push({
-          check: "review",
-          message: "Review not started (status is ready)"
-        });
-      } else if (pr.status === "changes_requested") {
-        reasons.push({
-          check: "review",
-          message: "Changes requested (review not complete)"
-        });
-      }
-    }
-    const preflight = await runPreflight(cwd, pr);
-    if (!preflight.passed) {
-      for (const issue of preflight.issues) {
-        reasons.push({
-          check: "preflight",
-          message: `Pattern blocked: ${issue.pattern} (matched in ${issue.matchedIn})`
-        });
-      }
-    }
-    if (!options.skipGithubCheck) {
-      const ghState = await ensureRepoGithub(cwd);
-      if (!ghState.login) {
-        reasons.push({
-          check: "github",
-          message: "No GitHub account logged in (run: gh auth login)"
-        });
-      } else if (!ghState.bound) {
-        reasons.push({
-          check: "github",
-          message: `Repo not bound to GitHub account (run: prgenie gh use ${ghState.login})`
-        });
-      }
-    }
-  } catch (err) {
-    reasons.push({
-      check: "review",
-      message: `Failed to check shepherd status: ${err instanceof Error ? err.message : String(err)}`
-    });
-  }
-  return {
-    status: reasons.length === 0 ? "ready" : "blocked",
-    reasons
-  };
-}
+init_shepherd();
+init_ci_runner();
 
 // packages/cli/src/mcp-stdio.ts
 function encodeMcpFrame(msg) {

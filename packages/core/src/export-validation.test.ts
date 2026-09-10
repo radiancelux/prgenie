@@ -45,10 +45,13 @@ test("export validation blocks draft status", async () => {
     base: "main",
   });
 
-  const result = await validateExport(repo, pr.id);
+  const result = await validateExport(repo, pr.id, {
+    skipGithubCheck: true,
+    skipCiCheck: true,
+  });
   assert.equal(result.ok, false);
   assert.equal(result.issues.length, 1);
-  assert.match(result.issues[0], /Review incomplete.*status is draft/);
+  assert.match(result.issues[0], /Review.*draft/);
 });
 
 test("export validation blocks ready status with no review", async () => {
@@ -59,9 +62,12 @@ test("export validation blocks ready status with no review", async () => {
   });
   await setLocalPrStatus(repo, pr.id, "ready");
 
-  const result = await validateExport(repo, pr.id);
+  const result = await validateExport(repo, pr.id, {
+    skipGithubCheck: true,
+    skipCiCheck: true,
+  });
   assert.equal(result.ok, false);
-  assert.match(result.issues[0], /Review incomplete.*status is ready/);
+  assert.match(result.issues[0], /Review.*ready/);
 });
 
 test("export validation blocks changes_requested with pending comments", async () => {
@@ -75,10 +81,13 @@ test("export validation blocks changes_requested with pending comments", async (
     role: "reviewer",
   });
 
-  const result = await validateExport(repo, pr.id);
+  const result = await validateExport(repo, pr.id, {
+    skipGithubCheck: true,
+    skipCiCheck: true,
+  });
   assert.equal(result.ok, false);
   assert.equal(result.issues.length, 1);
-  assert.match(result.issues[0], /Review incomplete.*1 open finding/);
+  assert.match(result.issues[0], /Review.*1 open finding/);
 });
 
 test("export validation allows reviewed status", async () => {
@@ -92,7 +101,10 @@ test("export validation allows reviewed status", async () => {
     body: "Looks good",
   });
 
-  const result = await validateExport(repo, pr.id);
+  const result = await validateExport(repo, pr.id, {
+    skipGithubCheck: true,
+    skipCiCheck: true,
+  });
   assert.equal(result.ok, true);
   assert.equal(result.issues.length, 0);
 });
@@ -105,7 +117,10 @@ test("export validation allows approved status", async () => {
   });
   await setLocalPrStatus(repo, pr.id, "approved");
 
-  const result = await validateExport(repo, pr.id);
+  const result = await validateExport(repo, pr.id, {
+    skipGithubCheck: true,
+    skipCiCheck: true,
+  });
   assert.equal(result.ok, true);
   assert.equal(result.issues.length, 0);
 });
@@ -151,9 +166,11 @@ test("export validation blocks when Learn #18 preflight pattern matches", async 
   git(["add", "."]);
   git(["commit", "-m", "add debug"]);
 
-  const result = await validateExport(repo, pr.id);
+  const result = await validateExport(repo, pr.id, {
+    skipGithubCheck: true,
+    skipCiCheck: true,
+  });
   assert.equal(result.ok, false);
   assert.ok(result.issues.length > 0);
-  assert.match(result.issues[0], /Preflight pattern.*console\.log/);
-  assert.match(result.issues[0], /Remove debug console statements/);
+  assert.match(result.issues[0], /Preflight.*console\.log/);
 });

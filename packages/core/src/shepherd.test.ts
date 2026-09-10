@@ -40,8 +40,11 @@ describe("shepherdStatus", () => {
       // Mark as reviewed (simulating complete review)
       await setLocalPrStatus(repo, pr.id, "reviewed");
 
-      // Skip GitHub check for testing (no gh CLI in test env)
-      const result = await shepherdStatus(repo, pr.id, { skipGithubCheck: true });
+      // Skip GitHub check and CI check for testing (no gh CLI / CI env in test)
+      const result = await shepherdStatus(repo, pr.id, {
+        skipGithubCheck: true,
+        skipCiCheck: true,
+      });
 
       // Assert proper ready path
       assert.equal(result.status, "ready");
@@ -235,6 +238,142 @@ describe("shepherdStatus", () => {
       const checks = new Set(result.reasons.map((r) => r.check));
       assert.ok(checks.has("review"));
       assert.ok(checks.has("preflight"));
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("returns blocked when CI checks fail", async () => {
+    const repo = await initRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(join(repo, "test.txt"), "test\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "Add test"]);
+
+      // Create a package.json with a failing lint check
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            "format:check": "exit 0",
+            lint: "exit 1",
+            typecheck: "exit 0",
+            test: "exit 0",
+            build: "exit 0",
+          },
+        }),
+      );
+
+      const pr = await createLocalPr(repo, {
+        title: "PR with CI failure",
+        body: "Body",
+        base: "main",
+        head: "feature",
+      });
+
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+
+      // Skip github check but allow CI check to run
+      const result = await shepherdStatus(repo, pr.id, { skipGithubCheck: true });
+
+      assert.equal(result.status, "blocked");
+      const ciReasons = result.reasons.filter((r) => r.check === "ci");
+      assert.ok(ciReasons.length > 0, "Should have CI blocking reason");
+      assert.ok(
+        ciReasons.some((r) => r.message.includes("lint")),
+        "Should mention lint check failure",
+      );
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("returns blocked with multiple CI failures", async () => {
+    const repo = await initRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(join(repo, "test.txt"), "test\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "Add test"]);
+
+      // Create a package.json with multiple failing checks
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            "format:check": "exit 1",
+            lint: "exit 1",
+            typecheck: "exit 0",
+            test: "exit 1",
+            build: "exit 0",
+          },
+        }),
+      );
+
+      const pr = await createLocalPr(repo, {
+        title: "PR with multiple CI failures",
+        body: "Body",
+        base: "main",
+        head: "feature",
+      });
+
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+
+      const result = await shepherdStatus(repo, pr.id, { skipGithubCheck: true });
+
+      assert.equal(result.status, "blocked");
+      const ciReasons = result.reasons.filter((r) => r.check === "ci");
+      assert.equal(ciReasons.length, 3, "Should have 3 CI blocking reasons");
+
+      const ciMessages = ciReasons.map((r) => r.message).join(" ");
+      assert.ok(ciMessages.includes("format:check"), "Should mention format:check failure");
+      assert.ok(ciMessages.includes("lint"), "Should mention lint failure");
+      assert.ok(ciMessages.includes("test"), "Should mention test failure");
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("returns ready when CI checks pass", async () => {
+    const repo = await initRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(join(repo, "test.txt"), "test\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "Add test"]);
+
+      // Create a package.json with all passing checks
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            "format:check": "exit 0",
+            lint: "exit 0",
+            typecheck: "exit 0",
+            test: "exit 0",
+            build: "exit 0",
+          },
+        }),
+      );
+
+      const pr = await createLocalPr(repo, {
+        title: "PR with passing CI",
+        body: "Body",
+        base: "main",
+        head: "feature",
+      });
+
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+
+      const result = await shepherdStatus(repo, pr.id, { skipGithubCheck: true });
+
+      assert.equal(result.status, "ready");
+      const ciReasons = result.reasons.filter((r) => r.check === "ci");
+      assert.equal(ciReasons.length, 0, "Should have no CI blocking reasons");
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
