@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { shepherdStatus } from "./shepherd.js";
 import { git } from "./git.js";
 import { createLocalPr, setLocalPrStatus, addLocalPrComment } from "./prs.js";
-import { bindRepoGithub } from "./github-ops.js";
 import { addLearnings } from "./learnings.js";
 import type { Learning } from "./types.js";
 
