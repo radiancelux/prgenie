@@ -25,6 +25,7 @@ import {
   isArchivedPr,
   listCorruptLocalPrFiles,
   listLocalPrs,
+  localPrMatchesSearch,
   listWorktrees,
   pruneArchivedLoopWorktree,
   releaseArchivedLoop,
@@ -731,4 +732,52 @@ test("edit and delete open findings", async () => {
   assert.equal(cleared.comments.some((c) => c.id === finding.id), false);
   assert.equal(cleared.comments.some((c) => c.replyTo === finding.id), false);
 });
+test("localPrMatchesSearch matches title body comment and file", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, {
+    title: "Alpha search title",
+    body: "Body mentions widget-xyz uniquely",
+    base: "main",
+  });
+  await addLocalPrComment(repo, pr.id, "Finding about flubber", {
+    role: "reviewer",
+    path: "src/flubber.ts",
+  });
+  await writeFile(path.join(repo, "unique-file-token.txt"), "x\n");
+  git(["add", "unique-file-token.txt"]);
+  git(["commit", "-m", "add unique file"]);
+  const fresh = await getLocalPr(repo, pr.id);
 
+  assert.equal(localPrMatchesSearch(fresh, "Alpha search"), true);
+  assert.equal(localPrMatchesSearch(fresh, "widget-xyz"), true);
+  assert.equal(localPrMatchesSearch(fresh, "flubber"), true);
+  assert.equal(
+    localPrMatchesSearch(fresh, "flubber.ts", { files: [] }),
+    true,
+  );
+  assert.equal(localPrMatchesSearch(fresh, "nope-missing"), false);
+  assert.equal(
+    localPrMatchesSearch(fresh, "unique-file-token", {
+      files: ["unique-file-token.txt"],
+    }),
+    true,
+  );
+  assert.equal(
+    localPrMatchesSearch(fresh, "Alpha search", { fields: ["body"] }),
+    false,
+  );
+
+  const byTitle = await listLocalPrs(repo, { search: "Alpha search title" });
+  assert.ok(byTitle.some((p) => p.id === pr.id));
+  const byFile = await listLocalPrs(repo, { search: "unique-file-token" });
+  assert.ok(byFile.some((p) => p.id === pr.id));
+  const byComment = await listLocalPrs(repo, { search: "Finding about flubber" });
+  assert.ok(byComment.some((p) => p.id === pr.id));
+  const none = await listLocalPrs(repo, { search: "zzznomatch999" });
+  assert.equal(none.some((p) => p.id === pr.id), false);
+  const titleOnly = await listLocalPrs(repo, {
+    search: "widget-xyz",
+    in: ["title"],
+  });
+  assert.equal(titleOnly.some((p) => p.id === pr.id), false);
+});

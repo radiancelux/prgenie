@@ -50,7 +50,7 @@ function usage(): string {
 
 Usage:
   prgenie create [--title <t>] [--body <b>] [--base <ref>] [--head <ref>]
-  prgenie list [--all]
+  prgenie list [--all] [--search <q>] [--query <q>] [--in title,body,comment,file]
   prgenie queue
   prgenie inbox
   prgenie watch
@@ -167,12 +167,31 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "list") {
     await archiveLoopsMergedOnGithub(repo).catch(() => []);
-    const all = await listLocalPrs(repo);
+    const search = arg(rest, "--search") ?? arg(rest, "--query");
+    const inRaw = arg(rest, "--in");
+    const inFields = inRaw
+      ? inRaw.split(",").map((s) => s.trim()).filter(Boolean)
+      : undefined;
+    const invalid = (inFields ?? []).filter(
+      (f) => !["title", "body", "comment", "file"].includes(f),
+    );
+    if (invalid.length) {
+      process.stderr.write(
+        "--in fields must be title,body,comment,file (got: " + invalid.join(",") + ")\n",
+      );
+      return 1;
+    }
+    const all = await listLocalPrs(repo, {
+      search,
+      in: inFields as ("title" | "body" | "comment" | "file")[] | undefined,
+    });
     const archived = all.filter(isArchivedPr);
     const prs = flag(rest, "--all") ? all : all.filter((pr) => !isArchivedPr(pr));
     if (prs.length === 0) {
       if (archived.length && !flag(rest, "--all")) {
-        process.stdout.write(`No active local PRs. ${archived.length} archived (prgenie list --all).\n`);
+        process.stdout.write("No active local PRs. " + archived.length + " archived (prgenie list --all).\n");
+      } else if (search) {
+        process.stdout.write("No local PRs matching search.\n");
       } else {
         process.stdout.write("No local PRs.\n");
       }
@@ -180,10 +199,11 @@ export async function run(argv: string[]): Promise<number> {
     }
     for (const pr of prs) printPr(pr);
     if (!flag(rest, "--all") && archived.length) {
-      process.stdout.write(`  (${archived.length} archived — prgenie list --all)\n`);
+      process.stdout.write("  (" + archived.length + " archived — prgenie list --all)\n");
     }
     return 0;
   }
+
   if (sub === "queue") {
     const ready = (await listLocalPrs(repo)).filter((pr) => pr.status === "ready");
     if (ready.length === 0) {

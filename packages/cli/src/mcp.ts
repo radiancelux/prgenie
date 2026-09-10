@@ -99,7 +99,30 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
       return listWorktrees(cwd);
     case "list_local_prs": {
       await archiveLoopsMergedOnGithub(cwd).catch(() => []);
-      const prs = (await listLocalPrs(cwd)).map(withCommentViews);
+      const search =
+        typeof args.search === "string"
+          ? args.search
+          : typeof args.query === "string"
+            ? args.query
+            : undefined;
+      const inArg = args.in;
+      const inFields = Array.isArray(inArg)
+        ? inArg.filter((f) =>
+            f === "title" || f === "body" || f === "comment" || f === "file",
+          )
+        : typeof inArg === "string"
+          ? inArg
+              .split(",")
+              .map((s) => s.trim())
+              .filter(
+                (f) =>
+                  f === "title" ||
+                  f === "body" ||
+                  f === "comment" ||
+                  f === "file",
+              )
+          : undefined;
+      const prs = (await listLocalPrs(cwd, { search, in: inFields })).map(withCommentViews);
       const status = typeof args.status === "string" ? args.status : "";
       const inbox = args.inbox === true;
       const all = args.all === true;
@@ -265,7 +288,7 @@ const tools = [
   {
     name: "list_local_prs",
     description:
-      "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue (comments may still be accumulating). status=reviewed is waiting on the human. inbox=true is only this worktree's loop when it is changes_requested with open pendingComments.",
+      "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue (comments may still be accumulating). status=reviewed is waiting on the human. inbox=true is only this worktree's loop when it is changes_requested with open pendingComments. search/query matches title, body, comments, and changed file paths (case-insensitive substring). Optional in limits fields to title,body,comment,file.",
     inputSchema: {
       type: "object",
       properties: {
@@ -281,6 +304,17 @@ const tools = [
         all: {
           type: "boolean",
           description: "Include archived (approved/exported) loops. Hidden by default.",
+        },
+        search: {
+          type: "string",
+          description: "Case-insensitive substring across title, body, comments, and changed files.",
+        },
+        query: {
+          type: "string",
+          description: "Alias for search.",
+        },
+        in: {
+          description: "Limit search fields: title, body, comment, file (array or comma-separated string).",
         },
       },
     },
