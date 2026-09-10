@@ -68,19 +68,6 @@ export interface CreateLocalPrInput {
   source?: LocalPrSource;
 }
 
-export interface AttachLocalPrInput {
-  /** GitHub PR number, URL, or remote branch name */
-  source: string;
-  /** Override base branch (default: detected from PR or repo default) */
-  base?: string;
-  /** Override title (default: from PR metadata) */
-  title?: string;
-  /** Override body (default: from PR metadata) */
-  body?: string;
-  /** Source metadata for tracking */
-  prSource?: LocalPrSource;
-}
-
 export interface CaptureResult {
   action: "created" | "updated" | "skipped";
   reason?: string;

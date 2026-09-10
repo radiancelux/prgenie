@@ -4,7 +4,6 @@ export type {
   CommentStatus,
   CommentThread,
   CreateLocalPrInput,
-  AttachLocalPrInput,
   Learning,
   LocalPr,
   LocalPrComment,
@@ -73,6 +72,7 @@ export type {
   CompleteLocalPrReviewResult,
   ListLocalPrsOptions,
   LocalPrSearchField,
+  AttachLocalPrInput,
 } from "./prs.js";
 export {
   haltWatch,

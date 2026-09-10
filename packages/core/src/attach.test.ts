@@ -6,7 +6,6 @@ import path from "node:path";
 import { after, before, test } from "node:test";
 import {
   attachLocalPr,
-  createLocalPr,
   setLocalPrStatus,
   validateExport,
   completeLocalPrReview,
@@ -25,16 +24,16 @@ before(async () => {
   git(["init", "-b", "main"]);
   git(["config", "user.email", "test@prgenie.ai"]);
   git(["config", "user.name", "PR Genie Test"]);
+  
+  // Create a bare repo to act as a remote
+  const bare = await mkdtemp(path.join(tmpdir(), "prgenie-bare-"));
+  git(["init", "--bare"], bare);
+  git(["remote", "add", "origin", bare]);
+  
   await writeFile(path.join(repo, "README.md"), "hello\n");
   git(["add", "."]);
   git(["commit", "-m", "initial"]);
-
-  // Create a remote-like branch
-  git(["checkout", "-b", "feat/attach-test"]);
-  await writeFile(path.join(repo, "feature.txt"), "attached feature\n");
-  git(["add", "."]);
-  git(["commit", "-m", "add feature"]);
-  git(["checkout", "main"]);
+  git(["push", "-u", "origin", "main"]);
 });
 
 after(async () => {
@@ -42,13 +41,21 @@ after(async () => {
 });
 
 test("attachLocalPr creates a lane from branch name", async () => {
+  // Create a branch for this test
+  git(["checkout", "-b", "feat/test-1"]);
+  await writeFile(path.join(repo, "feature.txt"), "attached feature\n");
+  git(["add", "."]);
+  git(["commit", "-m", "add feature"]);
+  git(["push", "-u", "origin", "feat/test-1"]);
+  git(["checkout", "main"]);
+
   const pr = await attachLocalPr(repo, {
-    source: "feat/attach-test",
+    source: "feat/test-1",
     title: "Attached Feature",
     body: "Testing attach",
   });
 
-  assert.equal(pr.headRef, "feat/attach-test");
+  assert.equal(pr.headRef, "feat/test-1");
   assert.equal(pr.baseRef, "main");
   assert.equal(pr.title, "Attached Feature");
   assert.equal(pr.body, "Testing attach");
@@ -59,15 +66,23 @@ test("attachLocalPr creates a lane from branch name", async () => {
 });
 
 test("attachLocalPr rejects duplicate attach for same branch", async () => {
+  // Create a branch for this test
+  git(["checkout", "-b", "feat/test-2"]);
+  await writeFile(path.join(repo, "dup.txt"), "test\n");
+  git(["add", "."]);
+  git(["commit", "-m", "test"]);
+  git(["push", "-u", "origin", "feat/test-2"]);
+  git(["checkout", "main"]);
+
   await attachLocalPr(repo, {
-    source: "feat/attach-test",
+    source: "feat/test-2",
     title: "First attach",
   });
 
   await assert.rejects(
     async () =>
       attachLocalPr(repo, {
-        source: "feat/attach-test",
+        source: "feat/test-2",
         title: "Second attach",
       }),
     /already exists/,
@@ -80,6 +95,7 @@ test("attached PR goes through full export validation workflow", async () => {
   await writeFile(path.join(repo, "validated.txt"), "validated content\n");
   git(["add", "."]);
   git(["commit", "-m", "validation test"]);
+  git(["push", "-u", "origin", "feat/validation-test"]);
   git(["checkout", "main"]);
 
   // Attach the branch
@@ -131,14 +147,15 @@ test("attached PR is blocked by Learn #18 preflight patterns", async () => {
   await writeFile(path.join(repo, "work.js"), "// TODO: finish this\n");
   git(["add", "."]);
   git(["commit", "-m", "work in progress"]);
+  git(["push", "-u", "origin", "feat/with-todo"]);
   git(["checkout", "main"]);
 
-  // Attach and review
+  // Attach and review (skip preflight on ready to test export validation)
   const pr = await attachLocalPr(repo, {
     source: "feat/with-todo",
     title: "Work in progress",
   });
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true });
   await completeLocalPrReview(repo, pr.id);
 
   // Export validation should catch the pattern
@@ -155,6 +172,7 @@ test("attached PR records correct SHAs for export", async () => {
   git(["add", "."]);
   git(["commit", "-m", "sha commit"]);
   const commitSha = git(["rev-parse", "HEAD"]);
+  git(["push", "-u", "origin", "feat/sha-test"]);
   git(["checkout", "main"]);
 
   // Attach
@@ -174,12 +192,14 @@ test("attached PR respects base override", async () => {
   await writeFile(path.join(repo, "develop.txt"), "develop branch\n");
   git(["add", "."]);
   git(["commit", "-m", "develop"]);
+  git(["push", "-u", "origin", "develop"]);
 
   // Create feature from develop
   git(["checkout", "-b", "feat/from-develop"]);
   await writeFile(path.join(repo, "feature-dev.txt"), "from develop\n");
   git(["add", "."]);
   git(["commit", "-m", "feature from develop"]);
+  git(["push", "-u", "origin", "feat/from-develop"]);
   git(["checkout", "main"]);
 
   // Attach with base override

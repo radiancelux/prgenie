@@ -177,7 +177,9 @@ export async function run(argv: string[]): Promise<number> {
   if (sub === "attach") {
     const source = rest[0];
     if (!source) {
-      process.stderr.write("prgenie attach <pr-url|pr-number|branch> [--title <t>] [--body <b>] [--base <ref>]\n");
+      process.stderr.write(
+        "prgenie attach <pr-url|pr-number|branch> [--title <t>] [--body <b>] [--base <ref>]\n",
+      );
       return 1;
     }
     const pr = await attachLocalPr(repo, {

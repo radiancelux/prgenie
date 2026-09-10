@@ -25,6 +25,7 @@ import type {
   LocalPr,
   LocalPrComment,
   LocalPrStatus,
+  LocalPrSource,
 } from "./types.js";
 import { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
 import { getRepoWatch, resumeWatchRole } from "./watch.js";
@@ -957,13 +958,7 @@ export async function attachLocalPr(cwd: string, input: AttachLocalPrInput): Pro
     // Fetch PR metadata from GitHub
     const prNumber = prNumberMatch[1];
     const result = await runGh(
-      [
-        "pr",
-        "view",
-        prNumber,
-        "--json",
-        "title,body,headRefName,baseRefName,headRefOid,state",
-      ],
+      ["pr", "view", prNumber, "--json", "title,body,headRefName,baseRefName,headRefOid,state"],
       { cwd },
     );
 
@@ -1027,13 +1022,12 @@ export async function attachLocalPr(cwd: string, input: AttachLocalPrInput): Pro
     headSha = shaResult.stdout.trim();
 
     // Use provided base or detect default
-    baseRef = input.base ?? (await detectDefaultBase(cwd));
+    const detectedBase = input.base ?? (await detectDefaultBase(cwd));
+    // Normalize base to remove origin/ prefix if present
+    baseRef = detectedBase.replace(/^origin\//, "");
 
     // Try to get PR info if this branch has an open PR
-    const prCheckResult = await runGh(
-      ["pr", "view", headRef, "--json", "title,body"],
-      { cwd },
-    );
+    const prCheckResult = await runGh(["pr", "view", headRef, "--json", "title,body"], { cwd });
 
     if (prCheckResult.code === 0) {
       try {
@@ -1062,6 +1056,7 @@ export async function attachLocalPr(cwd: string, input: AttachLocalPrInput): Pro
   if (baseResolved.code !== 0) {
     throw new Error(`Cannot resolve base branch: ${baseRef}`);
   }
+  // eslint-disable-next-line prefer-const
   baseSha = baseResolved.stdout.trim();
 
   // Check if a lane for this headRef already exists
