@@ -8,7 +8,7 @@ PR Genie is a local review lane that sits in front of GitHub. The product flywhe
 | --- | --- | --- |
 | `@prgenie/core` | `packages/core` | Local PR CRUD, status transitions, watch state, worktrees, export helpers, `doctor`, `gh` bind |
 | `prgenie` CLI | `packages/cli` | Thin CLI + MCP stdio server over core (`prgenie`, `prgenie doctor`, `watch listen`, hooks) |
-| Cursor plugin | `packages/plugin` | Rules, skills (`/start-loop`, `/export-local-pr`, …), MCP entry, hooks (github-gate, review loop, subagent capture) |
+| Cursor plugin | `packages/plugin` | Rules, skills (`/start-loop`, `/export-local-pr`, …), MCP entry, hooks (`github-gate.cjs`, `review-inbox.cjs`, `capture-subagent.cjs`, `session-log.mjs`) |
 | VS Code / Cursor extension | `packages/extension` | **Local PRs** sidebar: watch list, Switch to worktree, Complete review, Open on GitHub |
 
 Build at the monorepo root (`pnpm build`). Dev install copies the plugin and extension into Cursor via `pnpm link-plugin` and `pnpm link-extension`.
@@ -39,8 +39,8 @@ Statuses (from `@prgenie/core` types):
 
 Typical path:
 
-1. **Create** (`create_local_pr` / `prgenie create` / `/start-loop`) — feature branch `lp-<id>`, draft packet, optional sibling worktree.
-2. **Ready** — implementor refreshes `body` (why / what / how to test), `set_status ready`, comments **Review requested.**
+1. **Create** (`create_local_pr` / `prgenie create` / `/start-loop`) — feature branch `lp-<id>`, draft packet. `createLocalPr` always calls `ensureWorktreeForLoop` and records a `worktreePath`. That path is `../<repo>.loops/<id>` (`loopWorktreeDir`) unless the loop branch is already checked out in the primary tree, in which case the primary path is reused. The worktree attachment is required; only the *location* (sibling `.loops/<id>` vs primary) varies.
+2. **Ready** — implementor refreshes `body` (why / what / how to test), then `set_status ready` / `prgenie ready`. That only arms the review request (`armReviewRequest`: sets `reviewRequestedSha`, clears `reviewerNotifiedSha`). It does **not** post a comment. On the first draft→ready handoff, agents `add_comment` **Review requested.** themselves (skills / `formatSpawnReviewer`). After later review rounds, addressing the last open finding runs `maybeHandoffToReviewer`, which returns `ready` and posts that comment automatically.
 3. **Review** — reviewer files findings while status stays `ready`, then **`complete_review`**. That flip wakes the implementor (`changes_requested`) or marks `reviewed` for export.
 4. **Address** — implementor `address_comment`s each open finding; addressing the last open finding returns `ready` and posts Review requested again.
 5. **Resolve + complete** — reviewer resolves addressed comments, then always `complete_review`.
@@ -48,7 +48,7 @@ Typical path:
 
 Human comments can request changes immediately; agent/reviewer findings go through address/resolve.
 
-**Head drift:** when Review requested is set, core records `reviewRequestedSha`. If HEAD moves before `complete_review`, complete fails unless `--force` / `allowDrift` — re-diff first.
+**Head drift:** when Review requested is armed (`reviewRequestedSha`), if HEAD moves before `complete_review`, complete fails unless `--force` / `allowDrift` — re-diff first.
 
 ## Watch lanes
 
@@ -75,7 +75,7 @@ All local-PR state is git-native / machine-local — not committed:
 | `.git/agent-console/prs/<id>.json` | Packet metadata (title, body, status, comments, SHAs) |
 | `.git/agent-console/watch.json` | Inbox/queue halt + export id |
 | `.git/agent-console/sessions.jsonl` | Session log events |
-| `.git/agent-console/` (gh bind file via github-ops) | Per-repo `gh` login bind |
+| `.git/agent-console/github.json` | Per-repo `gh` login bind (`bindFile` in `github-ops.ts`) |
 
 `prgenie list` / MCP `list_local_prs` hide archived (`approved`) loops unless `--all` / `all=true`. Packets remain on disk for `prgenie show` and Local PRs **Show archived**.
 
@@ -92,7 +92,7 @@ All local-PR state is git-native / machine-local — not committed:
 
 `gh auth` is global — only one account is active at a time. Per repo:
 
-- `prgenie gh use <login>` / MCP `gh_use` binds this project.
+- `prgenie gh use <login>` / MCP `gh_use` binds this project (writes `.git/agent-console/github.json`).
 - Before push / `gh`, the github-gate hook switches to the bound account.
 - Export refuses to guess an unbound login.
 
@@ -104,7 +104,12 @@ Skills (one slash name each — do not also add duplicate `commands/*.md`):
 
 MCP server name: `prgenie` (tools such as `list_local_prs`, `create_local_pr`, `set_status`, `complete_review`, `export_local_pr`, `watch_status`, `gh_use`, …).
 
-Hooks include `github-gate.cjs` (push/PR gate + bind), review-loop helpers, session log, and subagentStop capture.
+Hooks registered in `hooks.json`:
+
+- `github-gate.cjs` — push / `gh pr create` gate + bound-account switch
+- `review-inbox.cjs` — review-loop nudges for the implementor inbox
+- `capture-subagent.cjs` — subagentStop capture into local PRs
+- `session-log.mjs` — session log helper used by hooks
 
 ## See also
 
