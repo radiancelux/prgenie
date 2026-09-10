@@ -119,7 +119,84 @@ export async function listCorruptLocalPrFiles(cwd: string): Promise<string[]> {
   return corrupt;
 }
 
-export async function listLocalPrs(cwd: string): Promise<LocalPr[]> {
+export type LocalPrSearchField = "title" | "body" | "comment" | "file";
+
+export type ListLocalPrsOptions = {
+  /**
+   * Case-insensitive substring match across title, body, comment bodies,
+   * comment paths, and changed file paths (base...head). Empty = no filter.
+   */
+  search?: string;
+  /** Restrict which fields search matches. Default: all four. */
+  in?: LocalPrSearchField[];
+};
+
+const ALL_SEARCH_FIELDS: LocalPrSearchField[] = ["title", "body", "comment", "file"];
+
+export function normalizeLocalPrSearchFields(
+  fields?: LocalPrSearchField[],
+): Set<LocalPrSearchField> {
+  if (!fields?.length) return new Set(ALL_SEARCH_FIELDS);
+  const out = new Set<LocalPrSearchField>();
+  for (const f of fields) {
+    if (ALL_SEARCH_FIELDS.includes(f)) out.add(f);
+  }
+  return out.size ? out : new Set(ALL_SEARCH_FIELDS);
+}
+
+/** Pure match helper (pass changed file paths when testing file without git). */
+export function localPrMatchesSearch(
+  pr: LocalPr,
+  query: string,
+  options: { fields?: Iterable<LocalPrSearchField>; files?: string[] } = {},
+): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  const fields = normalizeLocalPrSearchFields(
+    options.fields ? [...options.fields] : undefined,
+  );
+  if (fields.has("title") && pr.title.toLowerCase().includes(needle)) return true;
+  if (fields.has("body") && pr.body.toLowerCase().includes(needle)) return true;
+  if (fields.has("comment")) {
+    for (const c of pr.comments ?? []) {
+      if (c.body.toLowerCase().includes(needle)) return true;
+    }
+  }
+  if (fields.has("file")) {
+    for (const c of pr.comments ?? []) {
+      if (c.path?.toLowerCase().includes(needle)) return true;
+    }
+    for (const file of options.files ?? []) {
+      if (file.toLowerCase().includes(needle)) return true;
+    }
+  }
+  return false;
+}
+
+async function changedFilePathsForPr(cwd: string, pr: LocalPr): Promise<string[]> {
+  const range = `${pr.baseSha}...${pr.headRef}`;
+  const primary = await git(cwd, ["diff", "--name-only", range], { allowFail: true });
+  const stdout =
+    primary.code === 0 && primary.stdout.trim()
+      ? primary.stdout
+      : (
+          await git(
+            cwd,
+            ["diff", "--name-only", `${pr.baseSha}...${pr.headSha}`],
+            { allowFail: true },
+          )
+        ).stdout;
+  if (!stdout.trim()) return [];
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+export async function listLocalPrs(
+  cwd: string,
+  options: ListLocalPrsOptions = {},
+): Promise<LocalPr[]> {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
   const names = await readdir(dir);
@@ -144,9 +221,31 @@ export async function listLocalPrs(cwd: string): Promise<LocalPr[]> {
   for (const pr of prs) {
     pr.worktreePath = worktreeForLoop(trees, pr);
   }
-  return prs;
-}
 
+  const search = options.search?.trim() ?? "";
+  if (!search) return prs;
+
+  const fields = normalizeLocalPrSearchFields(options.in);
+  const needFiles = fields.has("file");
+  const matched: LocalPr[] = [];
+  for (const pr of prs) {
+    if (
+      localPrMatchesSearch(pr, search, {
+        fields,
+        files: needFiles ? [] : undefined,
+      })
+    ) {
+      matched.push(pr);
+      continue;
+    }
+    if (!needFiles) continue;
+    const files = await changedFilePathsForPr(cwd, pr);
+    if (localPrMatchesSearch(pr, search, { fields, files })) {
+      matched.push(pr);
+    }
+  }
+  return matched;
+}
 export async function getLocalPr(cwd: string, id: string): Promise<LocalPr> {
   const prs = await listLocalPrs(cwd);
   const pr = prs.find((p) => p.id === id || p.id.startsWith(id));

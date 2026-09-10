@@ -707,7 +707,49 @@ async function applyHeadRefresh(cwd, pr) {
 function isArchivedPr(pr) {
   return pr.status === "approved";
 }
-async function listLocalPrs(cwd) {
+function normalizeLocalPrSearchFields(fields) {
+  if (!fields?.length) return new Set(ALL_SEARCH_FIELDS);
+  const out = /* @__PURE__ */ new Set();
+  for (const f of fields) {
+    if (ALL_SEARCH_FIELDS.includes(f)) out.add(f);
+  }
+  return out.size ? out : new Set(ALL_SEARCH_FIELDS);
+}
+function localPrMatchesSearch(pr, query, options = {}) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  const fields = normalizeLocalPrSearchFields(
+    options.fields ? [...options.fields] : void 0
+  );
+  if (fields.has("title") && pr.title.toLowerCase().includes(needle)) return true;
+  if (fields.has("body") && pr.body.toLowerCase().includes(needle)) return true;
+  if (fields.has("comment")) {
+    for (const c of pr.comments ?? []) {
+      if (c.body.toLowerCase().includes(needle)) return true;
+    }
+  }
+  if (fields.has("file")) {
+    for (const c of pr.comments ?? []) {
+      if (c.path?.toLowerCase().includes(needle)) return true;
+    }
+    for (const file of options.files ?? []) {
+      if (file.toLowerCase().includes(needle)) return true;
+    }
+  }
+  return false;
+}
+async function changedFilePathsForPr(cwd, pr) {
+  const range = `${pr.baseSha}...${pr.headRef}`;
+  const primary = await git(cwd, ["diff", "--name-only", range], { allowFail: true });
+  const stdout = primary.code === 0 && primary.stdout.trim() ? primary.stdout : (await git(
+    cwd,
+    ["diff", "--name-only", `${pr.baseSha}...${pr.headSha}`],
+    { allowFail: true }
+  )).stdout;
+  if (!stdout.trim()) return [];
+  return stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+}
+async function listLocalPrs(cwd, options = {}) {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
   const names = await (0, import_promises4.readdir)(dir);
@@ -732,7 +774,26 @@ async function listLocalPrs(cwd) {
   for (const pr of prs) {
     pr.worktreePath = worktreeForLoop(trees, pr);
   }
-  return prs;
+  const search = options.search?.trim() ?? "";
+  if (!search) return prs;
+  const fields = normalizeLocalPrSearchFields(options.in);
+  const needFiles = fields.has("file");
+  const matched = [];
+  for (const pr of prs) {
+    if (localPrMatchesSearch(pr, search, {
+      fields,
+      files: needFiles ? [] : void 0
+    })) {
+      matched.push(pr);
+      continue;
+    }
+    if (!needFiles) continue;
+    const files = await changedFilePathsForPr(cwd, pr);
+    if (localPrMatchesSearch(pr, search, { fields, files })) {
+      matched.push(pr);
+    }
+  }
+  return matched;
 }
 async function getLocalPr(cwd, id) {
   const prs = await listLocalPrs(cwd);
@@ -1208,7 +1269,7 @@ async function getLocalPrNameStatus(cwd, id) {
     return { status, path: rest.join("	") };
   });
 }
-var import_node_crypto, import_promises4, import_node_path5;
+var import_node_crypto, import_promises4, import_node_path5, ALL_SEARCH_FIELDS;
 var init_prs = __esm({
   "packages/core/src/prs.ts"() {
     "use strict";
@@ -1220,6 +1281,7 @@ var init_prs = __esm({
     init_worktrees();
     init_types();
     init_watch();
+    ALL_SEARCH_FIELDS = ["title", "body", "comment", "file"];
   }
 });
 
@@ -1652,7 +1714,14 @@ async function handleTool(name, args) {
       return listWorktrees(cwd);
     case "list_local_prs": {
       await archiveLoopsMergedOnGithub(cwd).catch(() => []);
-      const prs = (await listLocalPrs(cwd)).map(withCommentViews);
+      const search = typeof args.search === "string" ? args.search : typeof args.query === "string" ? args.query : void 0;
+      const inArg = args.in;
+      const inFields = Array.isArray(inArg) ? inArg.filter(
+        (f) => f === "title" || f === "body" || f === "comment" || f === "file"
+      ) : typeof inArg === "string" ? inArg.split(",").map((s) => s.trim()).filter(
+        (f) => f === "title" || f === "body" || f === "comment" || f === "file"
+      ) : void 0;
+      const prs = (await listLocalPrs(cwd, { search, in: inFields })).map(withCommentViews);
       const status = typeof args.status === "string" ? args.status : "";
       const inbox = args.inbox === true;
       const all = args.all === true;
@@ -1803,7 +1872,7 @@ var tools = [
   },
   {
     name: "list_local_prs",
-    description: "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue (comments may still be accumulating). status=reviewed is waiting on the human. inbox=true is only this worktree's loop when it is changes_requested with open pendingComments.",
+    description: "List unpublished local pull requests. Approved (exported) loops are archived and hidden unless all=true or status=approved. status=ready is the reviewer queue (comments may still be accumulating). status=reviewed is waiting on the human. inbox=true is only this worktree's loop when it is changes_requested with open pendingComments. search/query matches title, body, comments, and changed file paths (case-insensitive substring). Optional in limits fields to title,body,comment,file.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1819,6 +1888,17 @@ var tools = [
         all: {
           type: "boolean",
           description: "Include archived (approved/exported) loops. Hidden by default."
+        },
+        search: {
+          type: "string",
+          description: "Case-insensitive substring across title, body, comments, and changed files."
+        },
+        query: {
+          type: "string",
+          description: "Alias for search."
+        },
+        in: {
+          description: "Limit search fields: title, body, comment, file (array or comma-separated string)."
         }
       }
     }

@@ -50,6 +50,8 @@ export {
   isReviewRequestBody,
   listCorruptLocalPrFiles,
   listLocalPrs,
+  localPrMatchesSearch,
+  normalizeLocalPrSearchFields,
   markReviewRequested,
   markReviewerNotified,
   normalizeComment,
@@ -62,7 +64,7 @@ export {
   shouldSpawnReviewer,
   updateLocalPr,
 } from "./prs.js";
-export type { CompleteLocalPrReviewResult } from "./prs.js";
+export type { CompleteLocalPrReviewResult, ListLocalPrsOptions, LocalPrSearchField } from "./prs.js";
 export {
   haltWatch,
   haltWatchRole,

@@ -2,7 +2,7 @@
 
 Grounded in a full survey of the code as of `main` (post PR #5): `packages/core`, `packages/cli`, `packages/plugin`, `packages/extension`, the skills/rules/hooks, and the flywheel workflow (implementor chat ↔ reviewer chat ↔ human). Each item names the gap, why it matters, and where the change lands. Ordered by priority within each horizon.
 
-**Status:** Now items 1–4 and Next items 5–10 are implemented on this branch (watch panel, delete/reopen UI, `complete_review` UI, comment edit/delete, plus prior CLI/MCP/CI work). Remaining Later items stay open.
+**Status:** Now items 1–4 and Next items 5–10 are implemented on this branch (watch panel, delete/reopen UI, `complete_review` UI, comment edit/delete, plus prior CLI/MCP/CI work). Later #11–12 shipped on this branch line; Learn horizon 18–20 is documented only. Remaining Later items stay open.
 
 ## Where the product stands
 
@@ -22,7 +22,7 @@ The gaps are not missing lifecycle pieces — they are **operability** (recoveri
 | H2 | ~~Sidebar delete/reopen missing.~~ **Done:** CLI/MCP and Local PRs Delete / Reopen. Loop **rename** is still CLI/MCP-only (`prgenie update --title`); no sidebar rename. | `laneView.ts`, `prgenie delete` / `reopen` / `update`. |
 | H3 | Stale-install pain: plugin skills, MCP catalog, and the extension all go stale independently. | Mitigated by `prgenie doctor` (hash/version checks + fix text). Humans still must run link-plugin / quit Cursor. |
 | H4 | ~~No `complete_review` from the UI.~~ **Done:** Complete review on ready loops (with force on head drift). | `laneView.ts`. |
-| H5 | No search or filtering by title/body/comment/file. Status / inbox / `--all` filtering lives in the CLI (`prgenie list`/`queue`/`inbox`) and MCP `list_local_prs` — not in `listLocalPrs` itself (which returns every packet). | CLI/MCP list surfaces; `listLocalPrs` is unfiltered. |
+| H5 | ~~No search or filtering by title/body/comment/file.~~ **Done:** `listLocalPrs({ search, in })` filters title/body/comment/file; CLI `prgenie list --search/--query/--in`; MCP `list_local_prs` `search`/`query`/`in`. Sidebar search UI still open. | Core `prs.ts`; CLI/MCP. |
 | H6 | Docs lack an architecture page and a troubleshooting page. README explains the flywheel well but failure modes live in tribal knowledge (partially mirrored by `prgenie doctor` output). | Root `README.md`, `packages/plugin/README.md`. |
 | H7 | No `gh` bind management in the UI; export can fail late on the wrong account. | `gh use` is CLI/MCP-only; `github-gate.cjs` enforces at push time. |
 
@@ -71,7 +71,7 @@ The gaps are not missing lifecycle pieces — they are **operability** (recoveri
 ### Later — scale and polish
 
 11. **History surface (A6).** ✅ CLI+MCP only (no sidebar UI).
-12. **Search/filter (H5).**
+12. **Search/filter (H5).** ✅ Core+CLI+MCP (sidebar UI deferred).
 13. **Test debt (P2) + lint (P3).**
 14. **Release discipline (P4).**
 15. **`gh` bind in the UI (H7).**
@@ -83,3 +83,9 @@ The gaps are not missing lifecycle pieces — they are **operability** (recoveri
 ## Sequencing rationale
 
 The Now items remove the failure modes daily use actually hits: hand-rolled listen shells, stale installs, watch races under per-lane stop/start, and missing CI. Next closes review-quality holes agents feel and finishes human parity in the sidebar. Later items hurt mainly at higher loop volume.
+
+### Learn — memory and shepherd
+
+18. **Repo pattern memory + ready preflight.** Remember repo-specific conventions and run a preflight before `ready` so loops match house style.
+19. **Sessions → learning digest.** Turn `sessions.jsonl` history into a concise digest agents can reuse across loops.
+20. **Export shepherd gate.** Gate `/export-local-pr` with shepherd checks (bind, drift, open findings) before push/GitHub.
