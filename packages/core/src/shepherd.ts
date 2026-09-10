@@ -14,11 +14,20 @@ export interface ShepherdResult {
   reasons: ShepherdBlockReason[];
 }
 
+export interface ShepherdOptions {
+  /** For testing: skip GitHub check */
+  skipGithubCheck?: boolean;
+}
+
 /**
  * Aggregate shepherd gate: review + Learn #18 preflight + gh bind.
  * Fail-closed: any unknown/missing piece → blocked with explicit reason.
  */
-export async function shepherdStatus(cwd: string, id: string): Promise<ShepherdResult> {
+export async function shepherdStatus(
+  cwd: string,
+  id: string,
+  options: ShepherdOptions = {},
+): Promise<ShepherdResult> {
   const reasons: ShepherdBlockReason[] = [];
 
   try {
@@ -62,17 +71,19 @@ export async function shepherdStatus(cwd: string, id: string): Promise<ShepherdR
     }
 
     // 3. Check gh bind OK for this repo (bound; surface unbound / active≠bound)
-    const ghState = await ensureRepoGithub(cwd);
-    if (!ghState.login) {
-      reasons.push({
-        check: "github",
-        message: "No GitHub account logged in (run: gh auth login)",
-      });
-    } else if (!ghState.bound) {
-      reasons.push({
-        check: "github",
-        message: `Repo not bound to GitHub account (run: prgenie gh use ${ghState.login})`,
-      });
+    if (!options.skipGithubCheck) {
+      const ghState = await ensureRepoGithub(cwd);
+      if (!ghState.login) {
+        reasons.push({
+          check: "github",
+          message: "No GitHub account logged in (run: gh auth login)",
+        });
+      } else if (!ghState.bound) {
+        reasons.push({
+          check: "github",
+          message: `Repo not bound to GitHub account (run: prgenie gh use ${ghState.login})`,
+        });
+      }
     }
   } catch (err) {
     // Fail-closed: any unknown error becomes blocked

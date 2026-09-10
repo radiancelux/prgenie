@@ -40,21 +40,12 @@ describe("shepherdStatus", () => {
       // Mark as reviewed (simulating complete review)
       await setLocalPrStatus(repo, pr.id, "reviewed");
 
-      // Bind GitHub account (mock - this will fail in test but we check the structure)
-      // In a real test env with gh CLI configured, this would work
+      // Skip GitHub check for testing (no gh CLI in test env)
+      const result = await shepherdStatus(repo, pr.id, { skipGithubCheck: true });
 
-      const result = await shepherdStatus(repo, pr.id);
-
-      // We expect github check to fail in test environment (no gh auth)
-      // but review and preflight should pass
-      assert.equal(typeof result.status, "string");
-      assert.ok(Array.isArray(result.reasons));
-
-      // Check that if blocked, it's only due to github
-      if (result.status === "blocked") {
-        const nonGithubReasons = result.reasons.filter((r) => r.check !== "github");
-        assert.equal(nonGithubReasons.length, 0, "Should only be blocked by github in test env");
-      }
+      // Assert proper ready path
+      assert.equal(result.status, "ready");
+      assert.equal(result.reasons.length, 0);
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

@@ -146,4 +146,9 @@ export {
   runPreflight,
 } from "./learnings.js";
 export { shepherdStatus } from "./shepherd.js";
-export type { ShepherdBlockReason, ShepherdResult, ShepherdStatus } from "./shepherd.js";
+export type {
+  ShepherdBlockReason,
+  ShepherdOptions,
+  ShepherdResult,
+  ShepherdStatus,
+} from "./shepherd.js";

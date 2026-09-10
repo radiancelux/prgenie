@@ -2217,7 +2217,7 @@ init_learnings();
 init_prs();
 init_learnings();
 init_github_ops();
-async function shepherdStatus(cwd, id) {
+async function shepherdStatus(cwd, id, options = {}) {
   const reasons = [];
   try {
     const pr = await getLocalPr(cwd, id);
@@ -2254,17 +2254,19 @@ async function shepherdStatus(cwd, id) {
         });
       }
     }
-    const ghState = await ensureRepoGithub(cwd);
-    if (!ghState.login) {
-      reasons.push({
-        check: "github",
-        message: "No GitHub account logged in (run: gh auth login)"
-      });
-    } else if (!ghState.bound) {
-      reasons.push({
-        check: "github",
-        message: `Repo not bound to GitHub account (run: prgenie gh use ${ghState.login})`
-      });
+    if (!options.skipGithubCheck) {
+      const ghState = await ensureRepoGithub(cwd);
+      if (!ghState.login) {
+        reasons.push({
+          check: "github",
+          message: "No GitHub account logged in (run: gh auth login)"
+        });
+      } else if (!ghState.bound) {
+        reasons.push({
+          check: "github",
+          message: `Repo not bound to GitHub account (run: prgenie gh use ${ghState.login})`
+        });
+      }
     }
   } catch (err) {
     reasons.push({
