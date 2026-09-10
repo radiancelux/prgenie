@@ -264,9 +264,10 @@ export class LaneHub implements vscode.Disposable {
         void vscode.window.showInformationMessage(
           `Bound this repo to ${msg.login} and switched gh.`,
         );
-        await this.pushSnapshot(true);
       } catch (err) {
         void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
+      } finally {
+        await this.pushSnapshot(true);
       }
       return;
     }
@@ -612,6 +613,7 @@ export class LaneHub implements vscode.Disposable {
         const [accounts, bound] = await Promise.all([listGhAccounts(), getRepoGithubBind(root)]);
         ghBind = { accounts, bound };
       } catch (err) {
+        console.error("[prgenie] Failed to fetch gh bind state:", err);
         ghBind = {
           accounts: [],
           bound: null,
@@ -854,13 +856,20 @@ function laneHtml(webview: vscode.Webview): string {
     const ghRefreshBtn = document.getElementById("ghRefreshBtn");
     const ghBindBtn = document.getElementById("ghBindBtn");
     const ghAccountSelect = document.getElementById("ghAccountSelect");
+    let bindInProgress = false;
     if (ghRefreshBtn) {
       ghRefreshBtn.onclick = () => vscode.postMessage({ type: "ghRefresh" });
     }
     if (ghBindBtn && ghAccountSelect) {
       ghBindBtn.onclick = () => {
+        if (bindInProgress) return;
         const login = ghAccountSelect.value;
-        if (login) vscode.postMessage({ type: "ghBind", login });
+        if (login) {
+          bindInProgress = true;
+          ghBindBtn.disabled = true;
+          ghBindBtn.textContent = "Binding…";
+          vscode.postMessage({ type: "ghBind", login });
+        }
       };
     }
     function paintLane(role, lane) {
@@ -903,7 +912,7 @@ function laneHtml(webview: vscode.Webview): string {
       const ghAccountSelect = document.getElementById("ghAccountSelect");
       const ghBindBtn = document.getElementById("ghBindBtn");
       
-      const hasGhBind = !!(msg.ghBind) && !msg.error;
+      const hasGhBind = !!(msg.ghBind);
       if (ghBindBox) ghBindBox.hidden = !hasGhBind;
       if (!hasGhBind) return;
 
@@ -930,17 +939,21 @@ function laneHtml(webview: vscode.Webview): string {
       }
 
       if (ghBindControls && ghAccountSelect && ghBindBtn) {
-        if (accounts.length > 0) {
+        if (bind.error || accounts.length === 0) {
+          ghBindControls.hidden = true;
+        } else {
           ghBindControls.hidden = false;
-          ghAccountSelect.innerHTML = accounts.map(a => 
-            '<option value="' + a.login + '">' + a.login + (a.active ? ' (active)' : '') + '</option>'
-          ).join('');
+          ghAccountSelect.textContent = '';
+          for (const account of accounts) {
+            const option = document.createElement('option');
+            option.value = account.login;
+            option.textContent = account.login + (account.active ? ' (active)' : '');
+            ghAccountSelect.appendChild(option);
+          }
           if (bound) {
             ghAccountSelect.value = bound.login;
           }
           ghBindBtn.disabled = false;
-        } else {
-          ghBindControls.hidden = true;
         }
       }
 
@@ -978,6 +991,14 @@ function laneHtml(webview: vscode.Webview): string {
       const meta = document.getElementById("meta");
       paintWatch(msg);
       paintGhBind(msg);
+      if (bindInProgress) {
+        bindInProgress = false;
+        const ghBindBtn = document.getElementById("ghBindBtn");
+        if (ghBindBtn) {
+          ghBindBtn.disabled = false;
+          ghBindBtn.textContent = "Bind";
+        }
+      }
       if (msg.error) {
         meta.textContent = "Watching";
         toggle.hidden = true;
