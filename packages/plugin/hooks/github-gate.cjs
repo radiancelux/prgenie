@@ -350,6 +350,10 @@ init_watch();
 init_git();
 init_store();
 
+// packages/core/src/learning.ts
+init_git();
+init_prs();
+
 // packages/core/src/index.ts
 init_store();
 init_learnings();

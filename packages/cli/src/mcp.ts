@@ -17,6 +17,8 @@ import {
   ensureWorktreeForLoop,
   findGitRoot,
   findLocalPrForCurrentWorktree,
+  formatLearningDigest,
+  generateLearningDigest,
   getLearning,
   getLocalPr,
   getLocalPrDiff,
@@ -101,6 +103,16 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
         hook: typeof args.hook === "string" ? args.hook : undefined,
         since: typeof args.since === "string" ? args.since : undefined,
       });
+    case "learning_digest": {
+      const summary = await generateLearningDigest(cwd, {
+        sessionLimit: typeof args.sessionLimit === "number" ? args.sessionLimit : undefined,
+        since: typeof args.since === "string" ? args.since : undefined,
+      });
+      return {
+        summary,
+        formatted: formatLearningDigest(summary),
+      };
+    }
     case "list_worktrees":
       return listWorktrees(cwd);
     case "list_local_prs": {
@@ -282,6 +294,25 @@ export const tools = [
         limit: { type: "number", description: "Max events to return (newest first). Default 50." },
         hook: { type: "string", description: "Exact hook name filter, e.g. subagentStop." },
         since: { type: "string", description: "Inclusive ISO lower bound on event.at." },
+      },
+    },
+  },
+  {
+    name: "learning_digest",
+    description:
+      "Generate a learning digest from session history and PR comment patterns. Shows what keeps getting flagged in reviews: common issues, frequently commented files, recurring patterns, and session activity. Useful for understanding review trends and common mistakes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: { type: "string" },
+        sessionLimit: {
+          type: "number",
+          description: "Max sessions to analyze (default 100).",
+        },
+        since: {
+          type: "string",
+          description: "Only analyze comments and sessions since this ISO timestamp.",
+        },
       },
     },
   },

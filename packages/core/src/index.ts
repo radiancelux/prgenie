@@ -105,6 +105,8 @@ export {
 export type { GithubPrHeadState } from "./export.js";
 export { appendSession, formatSessionEvent, listSessions } from "./sessions.js";
 export type { ListSessionsOptions, SessionEvent } from "./sessions.js";
+export { generateLearningDigest, formatLearningDigest } from "./learning.js";
+export type { LearningSummary } from "./learning.js";
 export { consoleDir, parseJsonObject, writeJsonFile } from "./store.js";
 export { parseGhAuthStatus } from "./github.js";
 export type { GhAccount, RepoGithubBind } from "./github.js";

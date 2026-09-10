@@ -908,6 +908,10 @@ async function appendSession(cwd, event) {
 `, "utf8");
 }
 
+// packages/core/src/learning.ts
+init_git();
+init_prs();
+
 // packages/core/src/index.ts
 init_store();
 init_learnings();
