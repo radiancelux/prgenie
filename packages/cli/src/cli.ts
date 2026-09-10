@@ -25,6 +25,8 @@ import {
   formatWatchStatus,
   listGhAccounts,
   listLocalPrs,
+  listSessions,
+  formatSessionEvent,
   isArchivedPr,
   listWorktrees,
   listenWatchLane,
@@ -62,6 +64,7 @@ Usage:
   prgenie watch start queue
   prgenie watch listen inbox|queue [--idle 30m] [--max 8h] [--interval 60] [--ticks N]
   prgenie doctor
+  prgenie sessions [--limit N] [--hook <name>] [--since <iso>] [--json]
   prgenie export <id>
   prgenie show <id>
   prgenie update <id> [--title <t>] [--body <summary>]
@@ -280,6 +283,32 @@ export async function run(argv: string[]): Promise<number> {
       return 0;
     }
     process.stdout.write(formatWatchStatus(state));
+    return 0;
+  }
+
+  if (sub === "sessions") {
+    const limitRaw = arg(rest, "--limit");
+    const limit = limitRaw === undefined ? undefined : Number(limitRaw);
+    if (limit !== undefined && (!Number.isFinite(limit) || limit < 1)) {
+      process.stderr.write("--limit must be a positive number.\n");
+      return 1;
+    }
+    const events = await listSessions(repo, {
+      limit,
+      hook: arg(rest, "--hook"),
+      since: arg(rest, "--since"),
+    });
+    if (flag(rest, "--json")) {
+      process.stdout.write(JSON.stringify(events, null, 2) + "\n");
+      return 0;
+    }
+    if (events.length === 0) {
+      process.stdout.write("No session events.\n");
+      return 0;
+    }
+    for (const event of events) {
+      process.stdout.write(formatSessionEvent(event) + "\n");
+    }
     return 0;
   }
   if (sub === "export") {

@@ -5,6 +5,9 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -22,24 +25,16 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// packages/cli/src/capture-hook.ts
-var import_node_fs2 = require("node:fs");
-
 // packages/core/src/types.ts
-var COMMENT_STATUSES = ["open", "addressed", "resolved"];
+var COMMENT_STATUSES;
+var init_types = __esm({
+  "packages/core/src/types.ts"() {
+    "use strict";
+    COMMENT_STATUSES = ["open", "addressed", "resolved"];
+  }
+});
 
 // packages/core/src/git.ts
-var import_node_child_process = require("node:child_process");
-var import_node_path = __toESM(require("node:path"), 1);
-var GitError = class extends Error {
-  constructor(args, stderr, exitCode) {
-    super(`git ${args.join(" ")} failed (${exitCode}): ${stderr.trim()}`);
-    this.args = args;
-    this.stderr = stderr;
-    this.exitCode = exitCode;
-    this.name = "GitError";
-  }
-};
 async function git(cwd, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = (0, import_node_child_process.spawn)("git", args, {
@@ -99,11 +94,25 @@ async function requireGitRoot(cwd) {
   }
   return root;
 }
+var import_node_child_process, import_node_path, GitError;
+var init_git = __esm({
+  "packages/core/src/git.ts"() {
+    "use strict";
+    import_node_child_process = require("node:child_process");
+    import_node_path = __toESM(require("node:path"), 1);
+    GitError = class extends Error {
+      constructor(args, stderr, exitCode) {
+        super(`git ${args.join(" ")} failed (${exitCode}): ${stderr.trim()}`);
+        this.args = args;
+        this.stderr = stderr;
+        this.exitCode = exitCode;
+        this.name = "GitError";
+      }
+    };
+  }
+});
 
 // packages/core/src/worktrees.ts
-var import_node_fs = require("node:fs");
-var import_promises = require("node:fs/promises");
-var import_node_path2 = __toESM(require("node:path"), 1);
 async function listWorktrees(cwd) {
   const { stdout } = await git(cwd, ["worktree", "list", "--porcelain"]);
   const blocks = stdout.split(/\n\n+/).map((b) => b.trim()).filter(Boolean);
@@ -348,15 +357,18 @@ async function ensureWorktreeForLoop(cwd, loop, options = {}) {
 async function shortLogSubject(cwd, rev = "HEAD") {
   return gitText(cwd, ["log", "-1", "--format=%s", rev]);
 }
-
-// packages/core/src/prs.ts
-var import_node_crypto = require("node:crypto");
-var import_promises4 = require("node:fs/promises");
-var import_node_path5 = __toESM(require("node:path"), 1);
+var import_node_fs, import_promises, import_node_path2;
+var init_worktrees = __esm({
+  "packages/core/src/worktrees.ts"() {
+    "use strict";
+    import_node_fs = require("node:fs");
+    import_promises = require("node:fs/promises");
+    import_node_path2 = __toESM(require("node:path"), 1);
+    init_git();
+  }
+});
 
 // packages/core/src/store.ts
-var import_promises2 = require("node:fs/promises");
-var import_node_path3 = __toESM(require("node:path"), 1);
 async function consoleDir(cwd) {
   const common = await gitCommonDir(cwd);
   const dir = import_node_path3.default.join(common, "agent-console");
@@ -466,25 +478,26 @@ async function withFileLock(file, fn) {
   }
   throw lastErr instanceof Error ? lastErr : new Error(`Timed out locking ${file}`);
 }
+var import_promises2, import_node_path3;
+var init_store = __esm({
+  "packages/core/src/store.ts"() {
+    "use strict";
+    import_promises2 = require("node:fs/promises");
+    import_node_path3 = __toESM(require("node:path"), 1);
+    init_git();
+  }
+});
 
 // packages/core/src/watch.ts
-var import_promises3 = require("node:fs/promises");
-var import_node_path4 = __toESM(require("node:path"), 1);
 function watchFile(dir) {
   return import_node_path4.default.join(dir, "watch.json");
 }
-var idleLane = () => ({
-  halted: false,
-  reason: null,
-  exportId: null
-});
 function derive(inbox, queue, updatedAt) {
   const halted = inbox.halted && queue.halted;
   const reason = halted ? inbox.reason === queue.reason ? inbox.reason : inbox.reason ?? queue.reason : null;
   const exportId = inbox.exportId ?? queue.exportId;
   return { halted, reason, exportId, inbox, queue, updatedAt };
 }
-var idle = () => derive(idleLane(), idleLane(), (/* @__PURE__ */ new Date(0)).toISOString());
 function parseLane(raw) {
   if (!raw || typeof raw !== "object") return null;
   const parsed = raw;
@@ -540,6 +553,22 @@ async function resumeWatchRole(cwd, role) {
     return derive(inbox, queue, (/* @__PURE__ */ new Date()).toISOString());
   });
 }
+var import_promises3, import_node_path4, idleLane, idle;
+var init_watch = __esm({
+  "packages/core/src/watch.ts"() {
+    "use strict";
+    import_promises3 = require("node:fs/promises");
+    import_node_path4 = __toESM(require("node:path"), 1);
+    init_git();
+    init_store();
+    idleLane = () => ({
+      halted: false,
+      reason: null,
+      exportId: null
+    });
+    idle = () => derive(idleLane(), idleLane(), (/* @__PURE__ */ new Date(0)).toISOString());
+  }
+});
 
 // packages/core/src/prs.ts
 function nowIso() {
@@ -754,9 +783,62 @@ async function captureAgentWork(cwd, input = {}) {
   const pr = await createLocalPr(cwd, input);
   return { action: "created", pr };
 }
+var import_node_crypto, import_promises4, import_node_path5;
+var init_prs = __esm({
+  "packages/core/src/prs.ts"() {
+    "use strict";
+    import_node_crypto = require("node:crypto");
+    import_promises4 = require("node:fs/promises");
+    import_node_path5 = __toESM(require("node:path"), 1);
+    init_git();
+    init_store();
+    init_worktrees();
+    init_types();
+    init_watch();
+  }
+});
+
+// packages/core/src/watchActivity.ts
+var init_watchActivity = __esm({
+  "packages/core/src/watchActivity.ts"() {
+    "use strict";
+    init_prs();
+  }
+});
+
+// packages/cli/src/capture-hook.ts
+var import_node_fs2 = require("node:fs");
+
+// packages/core/src/index.ts
+init_types();
+init_git();
+init_worktrees();
+init_prs();
+init_watch();
+init_watchActivity();
+
+// packages/core/src/doctor.ts
+init_git();
+
+// packages/core/src/github-ops.ts
+init_git();
+init_store();
+
+// packages/core/src/doctor.ts
+init_prs();
+init_watch();
+init_worktrees();
+
+// packages/core/src/export.ts
+init_git();
+init_prs();
+init_worktrees();
+init_watch();
 
 // packages/core/src/sessions.ts
 var import_promises5 = require("node:fs/promises");
+init_git();
+init_store();
 async function appendSession(cwd, event) {
   const root = await findGitRoot(cwd);
   if (!root) return;
@@ -770,6 +852,9 @@ async function appendSession(cwd, event) {
   await (0, import_promises5.appendFile)(file, `${line}
 `, "utf8");
 }
+
+// packages/core/src/index.ts
+init_store();
 
 // packages/cli/src/capture-hook.ts
 function inferCwd(input) {

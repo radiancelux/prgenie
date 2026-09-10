@@ -35,7 +35,7 @@ The gaps are not missing lifecycle pieces — they are **operability** (recoveri
 | A3 | Corrupt PR JSON is still skipped by `listLocalPrs`, but `listCorruptLocalPrFiles` + `prgenie doctor` name them. `github-gate` outer catch is fail-closed (`ask`) instead of allow. | `prs.ts`, `doctor.ts`, `github-hook.ts`. |
 | A4 | ~~No `complete_review` drift signal~~ **Done:** `completeLocalPrReview` refreshes HEAD and returns `headDrift` / `reviewedAgainstSha`. Spawn-once-per-HEAD already existed via `shouldSpawnReviewer` / `markReviewRequested` (core + `review-hook.ts`); hooks are not the sole readers. | `prs.ts`; CLI warns; MCP returns the flags. |
 | A5 | ~~MCP ignored core/CLI `--stat`~~ **Done:** MCP `get_diff` accepts `stat` and `paths`. Core `getLocalPrDiff` already had `{ stat }`; CLI had `prgenie diff --stat`. | `mcp.ts`, `review-local-pr` skill. |
-| A6 | `sessions.jsonl` is write-only. There is no `prgenie sessions`/history surface. | `packages/core/src/sessions.ts`. |
+| A6 | ~~`sessions.jsonl` write-only~~ **Done:** `listSessions` + `prgenie sessions` + MCP `list_sessions`. | `sessions.ts`; CLI/MCP. |
 | A7 | ~~No comment edit/delete.~~ **Done:** Core + CLI + MCP + sidebar Edit/Delete for open findings. | `editLocalPrComment` / `deleteLocalPrComment`. |
 
 ### Platform / quality gaps
@@ -70,7 +70,7 @@ The gaps are not missing lifecycle pieces — they are **operability** (recoveri
 
 ### Later — scale and polish
 
-11. **History surface (A6).**
+11. **History surface (A6).** ✅ CLI+MCP only (no sidebar UI).
 12. **Search/filter (H5).**
 13. **Test debt (P2) + lint (P3).**
 14. **Release discipline (P4).**

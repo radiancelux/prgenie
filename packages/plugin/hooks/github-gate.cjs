@@ -5,6 +5,9 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -22,21 +25,14 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// packages/cli/src/github-hook.ts
-var import_node_fs = require("node:fs");
+// packages/core/src/types.ts
+var init_types = __esm({
+  "packages/core/src/types.ts"() {
+    "use strict";
+  }
+});
 
 // packages/core/src/git.ts
-var import_node_child_process = require("node:child_process");
-var import_node_path = __toESM(require("node:path"), 1);
-var GitError = class extends Error {
-  constructor(args, stderr, exitCode) {
-    super(`git ${args.join(" ")} failed (${exitCode}): ${stderr.trim()}`);
-    this.args = args;
-    this.stderr = stderr;
-    this.exitCode = exitCode;
-    this.name = "GitError";
-  }
-};
 async function git(cwd, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = (0, import_node_child_process.spawn)("git", args, {
@@ -89,10 +85,33 @@ async function gitCommonDir(cwd) {
   const dir = await gitText(cwd, ["rev-parse", "--git-common-dir"]);
   return import_node_path.default.isAbsolute(dir) ? import_node_path.default.normalize(dir) : import_node_path.default.resolve(cwd, dir);
 }
+var import_node_child_process, import_node_path, GitError;
+var init_git = __esm({
+  "packages/core/src/git.ts"() {
+    "use strict";
+    import_node_child_process = require("node:child_process");
+    import_node_path = __toESM(require("node:path"), 1);
+    GitError = class extends Error {
+      constructor(args, stderr, exitCode) {
+        super(`git ${args.join(" ")} failed (${exitCode}): ${stderr.trim()}`);
+        this.args = args;
+        this.stderr = stderr;
+        this.exitCode = exitCode;
+        this.name = "GitError";
+      }
+    };
+  }
+});
+
+// packages/core/src/worktrees.ts
+var init_worktrees = __esm({
+  "packages/core/src/worktrees.ts"() {
+    "use strict";
+    init_git();
+  }
+});
 
 // packages/core/src/store.ts
-var import_promises = require("node:fs/promises");
-var import_node_path2 = __toESM(require("node:path"), 1);
 async function consoleDir(cwd) {
   const common = await gitCommonDir(cwd);
   const dir = import_node_path2.default.join(common, "agent-console");
@@ -140,11 +159,65 @@ function parseJsonObject(raw) {
     return JSON.parse(slice);
   }
 }
+var import_promises, import_node_path2;
+var init_store = __esm({
+  "packages/core/src/store.ts"() {
+    "use strict";
+    import_promises = require("node:fs/promises");
+    import_node_path2 = __toESM(require("node:path"), 1);
+    init_git();
+  }
+});
+
+// packages/core/src/watch.ts
+var init_watch = __esm({
+  "packages/core/src/watch.ts"() {
+    "use strict";
+    init_git();
+    init_store();
+  }
+});
+
+// packages/core/src/prs.ts
+var init_prs = __esm({
+  "packages/core/src/prs.ts"() {
+    "use strict";
+    init_git();
+    init_store();
+    init_worktrees();
+    init_types();
+    init_watch();
+  }
+});
+
+// packages/core/src/watchActivity.ts
+var init_watchActivity = __esm({
+  "packages/core/src/watchActivity.ts"() {
+    "use strict";
+    init_prs();
+  }
+});
+
+// packages/cli/src/github-hook.ts
+var import_node_fs = require("node:fs");
+
+// packages/core/src/index.ts
+init_types();
+init_git();
+init_worktrees();
+init_prs();
+init_watch();
+init_watchActivity();
+
+// packages/core/src/doctor.ts
+init_git();
 
 // packages/core/src/github-ops.ts
 var import_node_child_process2 = require("node:child_process");
 var import_promises2 = require("node:fs/promises");
 var import_node_path3 = __toESM(require("node:path"), 1);
+init_git();
+init_store();
 
 // packages/core/src/github.ts
 function parseGhAuthStatus(text) {
@@ -252,6 +325,24 @@ async function ensureRepoGithub(cwd) {
   await switchGhUser(bind.login, bind.host);
   return { login: bind.login, switched: true, bound: true };
 }
+
+// packages/core/src/doctor.ts
+init_prs();
+init_watch();
+init_worktrees();
+
+// packages/core/src/export.ts
+init_git();
+init_prs();
+init_worktrees();
+init_watch();
+
+// packages/core/src/sessions.ts
+init_git();
+init_store();
+
+// packages/core/src/index.ts
+init_store();
 
 // packages/cli/src/github-hook.ts
 function isPublish(command) {

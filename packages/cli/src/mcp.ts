@@ -23,6 +23,7 @@ import {
   haltWatchRole,
   listGhAccounts,
   listLocalPrs,
+  listSessions,
   listWorktrees,
   pendingReviewComments,
   isArchivedPr,
@@ -88,6 +89,12 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
     case "gh_use":
     case "github_use":
       return bindRepoGithub(cwd, String(args.login ?? ""));
+    case "list_sessions":
+      return listSessions(cwd, {
+        limit: typeof args.limit === "number" ? args.limit : undefined,
+        hook: typeof args.hook === "string" ? args.hook : undefined,
+        since: typeof args.since === "string" ? args.since : undefined,
+      });
     case "list_worktrees":
       return listWorktrees(cwd);
     case "list_local_prs": {
@@ -226,6 +233,20 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
 }
 
 const tools = [
+  {
+    name: "list_sessions",
+    description:
+      "Read PR Genie session history from sessions.jsonl (newest first). Skips corrupt lines. Optional limit (default 50), hook filter, and since ISO timestamp.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: { type: "string" },
+        limit: { type: "number", description: "Max events to return (newest first). Default 50." },
+        hook: { type: "string", description: "Exact hook name filter, e.g. subagentStop." },
+        since: { type: "string", description: "Inclusive ISO lower bound on event.at." },
+      },
+    },
+  },
   {
     name: "list_worktrees",
     description: "List git worktrees. PR Genie also ensures one worktree per loop.",

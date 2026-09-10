@@ -5,6 +5,9 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -22,24 +25,16 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// packages/cli/src/review-hook.ts
-var import_node_fs2 = require("node:fs");
-
 // packages/core/src/types.ts
-var COMMENT_STATUSES = ["open", "addressed", "resolved"];
+var COMMENT_STATUSES;
+var init_types = __esm({
+  "packages/core/src/types.ts"() {
+    "use strict";
+    COMMENT_STATUSES = ["open", "addressed", "resolved"];
+  }
+});
 
 // packages/core/src/git.ts
-var import_node_child_process = require("node:child_process");
-var import_node_path = __toESM(require("node:path"), 1);
-var GitError = class extends Error {
-  constructor(args, stderr, exitCode) {
-    super(`git ${args.join(" ")} failed (${exitCode}): ${stderr.trim()}`);
-    this.args = args;
-    this.stderr = stderr;
-    this.exitCode = exitCode;
-    this.name = "GitError";
-  }
-};
 async function git(cwd, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = (0, import_node_child_process.spawn)("git", args, {
@@ -99,10 +94,25 @@ async function requireGitRoot(cwd) {
   }
   return root;
 }
+var import_node_child_process, import_node_path, GitError;
+var init_git = __esm({
+  "packages/core/src/git.ts"() {
+    "use strict";
+    import_node_child_process = require("node:child_process");
+    import_node_path = __toESM(require("node:path"), 1);
+    GitError = class extends Error {
+      constructor(args, stderr, exitCode) {
+        super(`git ${args.join(" ")} failed (${exitCode}): ${stderr.trim()}`);
+        this.args = args;
+        this.stderr = stderr;
+        this.exitCode = exitCode;
+        this.name = "GitError";
+      }
+    };
+  }
+});
 
 // packages/core/src/worktrees.ts
-var import_node_fs = require("node:fs");
-var import_node_path2 = __toESM(require("node:path"), 1);
 async function listWorktrees(cwd) {
   const { stdout } = await git(cwd, ["worktree", "list", "--porcelain"]);
   const blocks = stdout.split(/\n\n+/).map((b) => b.trim()).filter(Boolean);
@@ -196,14 +206,17 @@ function primaryWorktreePath(trees) {
   const mains = trees.filter((t) => !t.bare && !loopWorktreeIdentity(t.path));
   return mains[0]?.path ?? trees.find((t) => !t.bare)?.path ?? null;
 }
-
-// packages/core/src/prs.ts
-var import_promises2 = require("node:fs/promises");
-var import_node_path4 = __toESM(require("node:path"), 1);
+var import_node_fs, import_node_path2;
+var init_worktrees = __esm({
+  "packages/core/src/worktrees.ts"() {
+    "use strict";
+    import_node_fs = require("node:fs");
+    import_node_path2 = __toESM(require("node:path"), 1);
+    init_git();
+  }
+});
 
 // packages/core/src/store.ts
-var import_promises = require("node:fs/promises");
-var import_node_path3 = __toESM(require("node:path"), 1);
 async function consoleDir(cwd) {
   const common = await gitCommonDir(cwd);
   const dir = import_node_path3.default.join(common, "agent-console");
@@ -308,6 +321,24 @@ async function withFileLock(file, fn) {
   }
   throw lastErr instanceof Error ? lastErr : new Error(`Timed out locking ${file}`);
 }
+var import_promises, import_node_path3;
+var init_store = __esm({
+  "packages/core/src/store.ts"() {
+    "use strict";
+    import_promises = require("node:fs/promises");
+    import_node_path3 = __toESM(require("node:path"), 1);
+    init_git();
+  }
+});
+
+// packages/core/src/watch.ts
+var init_watch = __esm({
+  "packages/core/src/watch.ts"() {
+    "use strict";
+    init_git();
+    init_store();
+  }
+});
 
 // packages/core/src/prs.ts
 function nowIso() {
@@ -489,6 +520,63 @@ async function findLocalPrForCurrentWorktree(cwd) {
 async function refreshLocalPrHead(cwd, id) {
   return withPrLock(cwd, id, (pr) => applyHeadRefresh(cwd, pr));
 }
+var import_promises2, import_node_path4;
+var init_prs = __esm({
+  "packages/core/src/prs.ts"() {
+    "use strict";
+    import_promises2 = require("node:fs/promises");
+    import_node_path4 = __toESM(require("node:path"), 1);
+    init_git();
+    init_store();
+    init_worktrees();
+    init_types();
+    init_watch();
+  }
+});
+
+// packages/core/src/watchActivity.ts
+var init_watchActivity = __esm({
+  "packages/core/src/watchActivity.ts"() {
+    "use strict";
+    init_prs();
+  }
+});
+
+// packages/cli/src/review-hook.ts
+var import_node_fs2 = require("node:fs");
+
+// packages/core/src/index.ts
+init_types();
+init_git();
+init_worktrees();
+init_prs();
+init_watch();
+init_watchActivity();
+
+// packages/core/src/doctor.ts
+init_git();
+
+// packages/core/src/github-ops.ts
+init_git();
+init_store();
+
+// packages/core/src/doctor.ts
+init_prs();
+init_watch();
+init_worktrees();
+
+// packages/core/src/export.ts
+init_git();
+init_prs();
+init_worktrees();
+init_watch();
+
+// packages/core/src/sessions.ts
+init_git();
+init_store();
+
+// packages/core/src/index.ts
+init_store();
 
 // packages/cli/src/review-hook.ts
 function inferCwd(input) {
