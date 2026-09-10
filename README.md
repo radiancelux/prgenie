@@ -10,12 +10,11 @@ When a **subagent** finishes with commits, PR Genie drafts a loop and puts it on
 
 ## What it is
 
-| Piece | Role |
-| --- | --- |
-| `@prgenie/core` + `prgenie` CLI | Create/list/approve local PRs from any worktree |
-| Cursor Plugin | No-push rule, `/local-pr`, `/review-local-pr`, MCP, subagent capture, **per-repo `gh` account** |
-| VS Code / Cursor extension | Live watch list as loops land — Switch puts this window on that loop's worktree |
-
+| Piece                           | Role                                                                                            |
+| ------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `@prgenie/core` + `prgenie` CLI | Create/list/approve local PRs from any worktree                                                 |
+| Cursor Plugin                   | No-push rule, `/local-pr`, `/review-local-pr`, MCP, subagent capture, **per-repo `gh` account** |
+| VS Code / Cursor extension      | Live watch list as loops land — Switch puts this window on that loop's worktree                 |
 
 ## Docs
 

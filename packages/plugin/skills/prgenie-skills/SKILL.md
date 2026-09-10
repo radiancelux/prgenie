@@ -11,15 +11,15 @@ Follow [agentskills.io](https://agentskills.io/specification) and Cursor's skill
 
 ## One job per skill
 
-| Skill | Who | Auto-invoke? |
-| --- | --- | --- |
-| `start-loop` | Implementor entry | Yes (ticket paste) |
-| `local-pr` | Create/update packets | Yes |
-| `review-local-pr` | Leaf + orchestrator review | Yes |
-| `watch-review-inbox` / `watch-ready-prs` | Listen | No (`disable-model-invocation: true`) |
-| `review-inbox` / `review-queue` | One tick | No |
-| `stop-loop` / `stop-review` / `stop-watch` | Halt listen | No |
-| `export-local-pr` | Publish | No |
+| Skill                                      | Who                        | Auto-invoke?                          |
+| ------------------------------------------ | -------------------------- | ------------------------------------- |
+| `start-loop`                               | Implementor entry          | Yes (ticket paste)                    |
+| `local-pr`                                 | Create/update packets      | Yes                                   |
+| `review-local-pr`                          | Leaf + orchestrator review | Yes                                   |
+| `watch-review-inbox` / `watch-ready-prs`   | Listen                     | No (`disable-model-invocation: true`) |
+| `review-inbox` / `review-queue`            | One tick                   | No                                    |
+| `stop-loop` / `stop-review` / `stop-watch` | Halt listen                | No                                    |
+| `export-local-pr`                          | Publish                    | No                                    |
 
 User-only skills set `disable-model-invocation: true` so the agent does not start a listen loop or export from ambient context.
 

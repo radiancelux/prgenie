@@ -288,9 +288,7 @@ async function switchGhUser(login, host = "github.com") {
     (a) => a.host === host && a.login.toLowerCase() === login.toLowerCase()
   );
   if (!match) {
-    throw new Error(
-      `GitHub account "${login}" is not logged in on ${host}. Run: gh auth login`
-    );
+    throw new Error(`GitHub account "${login}" is not logged in on ${host}. Run: gh auth login`);
   }
   if (match.active) return;
   const result = await gh(["auth", "switch", "--hostname", host, "--user", match.login]);
@@ -356,7 +354,7 @@ function switchUser(command) {
   return match?.[1] ?? null;
 }
 async function main() {
-  let input = {};
+  let input;
   try {
     const raw = (0, import_node_fs.readFileSync)(0, "utf8");
     input = raw ? JSON.parse(raw) : {};
@@ -406,6 +404,8 @@ async function main() {
   }
   process.stdout.write(JSON.stringify({ permission: "allow" }));
 }
+
+// packages/cli/src/github-hook-bin.ts
 main().catch(() => {
   process.stdout.write(
     JSON.stringify({

@@ -13,14 +13,14 @@ import {
 
 type HookInput = Record<string, unknown>;
 
-function inferCwd(input: HookInput): string {
+export function inferCwd(input: HookInput): string {
   if (typeof input.cwd === "string" && input.cwd) return input.cwd;
   const roots = input.workspace_roots;
   if (Array.isArray(roots) && typeof roots[0] === "string" && roots[0]) return roots[0];
   return process.cwd();
 }
 
-function eventName(input: HookInput): string {
+export function eventName(input: HookInput): string {
   return String(input.hook_event_name ?? input.event ?? "");
 }
 
@@ -28,8 +28,8 @@ function silent(): void {
   process.stdout.write("{}\n");
 }
 
-async function main(): Promise<void> {
-  let input: HookInput = {};
+export async function main(): Promise<void> {
+  let input: HookInput;
   try {
     const raw = readFileSync(0, "utf8");
     input = raw ? JSON.parse(raw) : {};
@@ -92,7 +92,9 @@ async function main(): Promise<void> {
       // Spawn reminder once per HEAD (separate from the drift baseline).
       if (shouldSpawnReviewer(fresh)) {
         await markReviewerNotified(root, fresh.id);
-        process.stdout.write(JSON.stringify({ followup_message: formatSpawnReviewer(fresh) }) + "\n");
+        process.stdout.write(
+          JSON.stringify({ followup_message: formatSpawnReviewer(fresh) }) + "\n",
+        );
         return;
       }
     }
@@ -102,7 +104,3 @@ async function main(): Promise<void> {
 
   silent();
 }
-
-main().catch(() => {
-  silent();
-});

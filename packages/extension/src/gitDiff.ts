@@ -27,9 +27,7 @@ function revUri(root: string, sha: string, filePath: string, empty = false): vsc
   return vscode.Uri.from({
     scheme: REV_SCHEME,
     path: `/${posix}`,
-    query: empty
-      ? "empty=1"
-      : `root=${encodeURIComponent(root)}&sha=${encodeURIComponent(sha)}`,
+    query: empty ? "empty=1" : `root=${encodeURIComponent(root)}&sha=${encodeURIComponent(sha)}`,
   });
 }
 

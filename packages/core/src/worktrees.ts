@@ -6,7 +6,10 @@ import type { WorktreeInfo } from "./types.js";
 
 export async function listWorktrees(cwd: string): Promise<WorktreeInfo[]> {
   const { stdout } = await git(cwd, ["worktree", "list", "--porcelain"]);
-  const blocks = stdout.split(/\n\n+/).map((b) => b.trim()).filter(Boolean);
+  const blocks = stdout
+    .split(/\n\n+/)
+    .map((b) => b.trim())
+    .filter(Boolean);
   const trees: WorktreeInfo[] = [];
   for (const block of blocks) {
     const lines = block.split("\n");
@@ -55,10 +58,7 @@ export async function detectDefaultBase(cwd: string): Promise<string> {
   return "HEAD";
 }
 
-export function worktreeForBranch(
-  trees: WorktreeInfo[],
-  branch: string,
-): string | null {
+export function worktreeForBranch(trees: WorktreeInfo[], branch: string): string | null {
   const match = trees.find((t) => t.branch === branch);
   return match?.path ?? null;
 }
@@ -108,9 +108,7 @@ export function sameFsPath(a: string, b: string): boolean {
   };
   const left = canon(a);
   const right = canon(b);
-  return process.platform === "win32"
-    ? left.toLowerCase() === right.toLowerCase()
-    : left === right;
+  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
 export function loopWorktreeDir(mainPath: string, id: string): string {
@@ -280,9 +278,7 @@ export async function releaseArchivedLoop(
   const stillExtra = dest
     ? (await listWorktrees(cwd)).some((t) => sameFsPath(t.path, dest))
     : false;
-  const reopen = Boolean(
-    stillExtra && here && dest && sameFsPath(here, dest),
-  );
+  const reopen = Boolean(stillExtra && here && dest && sameFsPath(here, dest));
   return { checkedOutBase, prunedWorktree, primaryPath: primary, reopen };
 }
 
@@ -314,11 +310,9 @@ async function addLoopWorktree(
     if (added.code === 0) return dest;
   }
   if (!held && !(await branchExists(cwd, loop.headRef))) {
-    const created = await git(
-      cwd,
-      ["worktree", "add", "-b", loop.headRef, dest, loop.headSha],
-      { allowFail: true },
-    );
+    const created = await git(cwd, ["worktree", "add", "-b", loop.headRef, dest, loop.headSha], {
+      allowFail: true,
+    });
     if (created.code === 0) return dest;
     throw new Error(
       `Could not create a worktree for loop ${loop.id} on branch ${loop.headRef}: ${created.stderr.trim()}`,
@@ -335,12 +329,8 @@ export async function ensureWorktreeForLoop(
   loop: { id: string; headRef: string; headSha: string },
   options: { staleLoopIds?: Iterable<string>; liveLoopIds?: Iterable<string> } = {},
 ): Promise<string> {
-  const stale = new Set(
-    [...(options.staleLoopIds ?? [])].map((id) => id.toLowerCase()),
-  );
-  const live = new Set(
-    [...(options.liveLoopIds ?? [])].map((id) => id.toLowerCase()),
-  );
+  const stale = new Set([...(options.staleLoopIds ?? [])].map((id) => id.toLowerCase()));
+  const live = new Set([...(options.liveLoopIds ?? [])].map((id) => id.toLowerCase()));
   live.add(loop.id.toLowerCase());
   let trees = await listWorktrees(cwd);
   const primary = primaryWorktreePath(trees);

@@ -1,8 +1,4 @@
-import {
-  findLocalPrForCurrentWorktree,
-  isArchivedPr,
-  listLocalPrs,
-} from "./prs.js";
+import { findLocalPrForCurrentWorktree, isArchivedPr, listLocalPrs } from "./prs.js";
 import type { LocalPr } from "./types.js";
 import type { WatchRole } from "./watch.js";
 
@@ -17,16 +13,16 @@ function liveSig(pr: LocalPr): string {
 }
 
 /** Fingerprint of flywheel state that should reset listen idle for this role. */
-export async function listenActivityFingerprint(
-  cwd: string,
-  role: WatchRole,
-): Promise<string> {
+export async function listenActivityFingerprint(cwd: string, role: WatchRole): Promise<string> {
   const all = await listLocalPrs(cwd);
   const live = all.filter((p) => !isArchivedPr(p));
   if (role === "inbox") {
     const here = await findLocalPrForCurrentWorktree(cwd);
     if (!here || isArchivedPr(here)) {
-      return `inbox:none:${live.map((p) => p.id).sort().join(",")}`;
+      return `inbox:none:${live
+        .map((p) => p.id)
+        .sort()
+        .join(",")}`;
     }
     return `inbox:${liveSig(here)}`;
   }

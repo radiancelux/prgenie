@@ -3,7 +3,7 @@ import { appendSession, captureAgentWork, findGitRoot } from "@prgenie/core";
 
 type HookInput = Record<string, unknown>;
 
-function inferCwd(input: HookInput): string {
+export function inferCwd(input: HookInput): string {
   if (typeof input.cwd === "string" && input.cwd) return input.cwd;
   const roots = input.workspace_roots;
   if (Array.isArray(roots) && typeof roots[0] === "string" && roots[0]) return roots[0];
@@ -14,8 +14,8 @@ function silent(): void {
   process.stdout.write("{}\n");
 }
 
-async function main(): Promise<void> {
-  let input: HookInput = {};
+export async function main(): Promise<void> {
+  let input: HookInput;
   try {
     const raw = readFileSync(0, "utf8");
     input = raw ? JSON.parse(raw) : {};
@@ -26,9 +26,7 @@ async function main(): Promise<void> {
   const status = String(input.status ?? "completed");
   const subagentType = String(input.subagent_type ?? "");
   const task = String(input.task ?? input.description ?? "Subagent work");
-  const modified = Array.isArray(input.modified_files)
-    ? (input.modified_files as string[])
-    : [];
+  const modified = Array.isArray(input.modified_files) ? (input.modified_files as string[]) : [];
   const loopCount = Number(input.loop_count ?? 0);
   const cwd = inferCwd(input);
   const root = await findGitRoot(cwd);
@@ -65,8 +63,7 @@ async function main(): Promise<void> {
     source: {
       kind: "subagent",
       subagentType,
-      subagentId:
-        typeof input.subagent_id === "string" ? input.subagent_id : undefined,
+      subagentId: typeof input.subagent_id === "string" ? input.subagent_id : undefined,
       task,
     },
   });
@@ -97,7 +94,3 @@ async function main(): Promise<void> {
     }) + "\n",
   );
 }
-
-main().catch(() => {
-  silent();
-});

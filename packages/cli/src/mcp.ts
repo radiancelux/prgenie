@@ -74,7 +74,7 @@ async function repoCwd(): Promise<string> {
   return cwd;
 }
 
-async function handleTool(name: string, args: Json): Promise<unknown> {
+export async function handleTool(name: string, args: Json): Promise<unknown> {
   if (name === "gh_list" || name === "github_list") {
     return listGhAccounts();
   }
@@ -107,20 +107,12 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
             : undefined;
       const inArg = args.in;
       const inFields = Array.isArray(inArg)
-        ? inArg.filter((f) =>
-            f === "title" || f === "body" || f === "comment" || f === "file",
-          )
+        ? inArg.filter((f) => f === "title" || f === "body" || f === "comment" || f === "file")
         : typeof inArg === "string"
           ? inArg
               .split(",")
               .map((s) => s.trim())
-              .filter(
-                (f) =>
-                  f === "title" ||
-                  f === "body" ||
-                  f === "comment" ||
-                  f === "file",
-              )
+              .filter((f) => f === "title" || f === "body" || f === "comment" || f === "file")
           : undefined;
       const prs = (await listLocalPrs(cwd, { search, in: inFields })).map(withCommentViews);
       const status = typeof args.status === "string" ? args.status : "";
@@ -238,14 +230,12 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
     }
     case "ensure_worktree": {
       const pr = await getLocalPr(cwd, String(args.id ?? ""));
-    const dest = await ensureWorktreeForLoop(cwd, pr, {
-      staleLoopIds: (await listLocalPrs(cwd))
-        .filter((p) => p.id !== pr.id && isArchivedPr(p))
-        .map((p) => p.id),
-      liveLoopIds: (await listLocalPrs(cwd))
-        .filter((p) => !isArchivedPr(p))
-        .map((p) => p.id),
-    });
+      const dest = await ensureWorktreeForLoop(cwd, pr, {
+        staleLoopIds: (await listLocalPrs(cwd))
+          .filter((p) => p.id !== pr.id && isArchivedPr(p))
+          .map((p) => p.id),
+        liveLoopIds: (await listLocalPrs(cwd)).filter((p) => !isArchivedPr(p)).map((p) => p.id),
+      });
       return { ...pr, worktreePath: dest };
     }
     case "export_local_pr":
@@ -255,7 +245,7 @@ async function handleTool(name: string, args: Json): Promise<unknown> {
   }
 }
 
-const tools = [
+export const tools = [
   {
     name: "list_sessions",
     description:
@@ -299,7 +289,8 @@ const tools = [
         },
         inbox: {
           type: "boolean",
-          description: "Only this worktree's loop, and only if it is changes_requested with open pendingComments.",
+          description:
+            "Only this worktree's loop, and only if it is changes_requested with open pendingComments.",
         },
         all: {
           type: "boolean",
@@ -307,14 +298,16 @@ const tools = [
         },
         search: {
           type: "string",
-          description: "Case-insensitive substring across title, body, comments, and changed files.",
+          description:
+            "Case-insensitive substring across title, body, comments, and changed files.",
         },
         query: {
           type: "string",
           description: "Alias for search.",
         },
         in: {
-          description: "Limit search fields: title, body, comment, file (array or comma-separated string).",
+          description:
+            "Limit search fields: title, body, comment, file (array or comma-separated string).",
         },
       },
     },
@@ -364,13 +357,17 @@ const tools = [
   },
   {
     name: "set_status",
-    description: "Set local PR status: draft, ready, changes_requested, reviewed, approved. reviewed means the automated reviewer signed off and the human should look.",
+    description:
+      "Set local PR status: draft, ready, changes_requested, reviewed, approved. reviewed means the automated reviewer signed off and the human should look.",
     inputSchema: {
       type: "object",
       required: ["id", "status"],
       properties: {
         id: { type: "string" },
-        status: { type: "string", enum: ["draft", "ready", "changes_requested", "reviewed", "approved"] },
+        status: {
+          type: "string",
+          enum: ["draft", "ready", "changes_requested", "reviewed", "approved"],
+        },
         cwd: { type: "string" },
       },
     },

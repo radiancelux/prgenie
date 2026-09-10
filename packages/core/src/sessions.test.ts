@@ -65,7 +65,12 @@ test("listSessions skips corrupt and non-object lines", async () => {
       "[1,2,3]",
       '"string"',
       "{",
-      JSON.stringify({ hook: "subagentStop", status: "ok", task: "good", at: "2099-01-01T00:00:00.000Z" }),
+      JSON.stringify({
+        hook: "subagentStop",
+        status: "ok",
+        task: "good",
+        at: "2099-01-01T00:00:00.000Z",
+      }),
       "",
     ].join("\n") + "\n",
     "utf8",
@@ -74,8 +79,5 @@ test("listSessions skips corrupt and non-object lines", async () => {
   const events = await listSessions(repo, { limit: 100 });
   assert.ok(events.every((e) => e && typeof e === "object" && !Array.isArray(e)));
   assert.ok(events.some((e) => e.task === "good"));
-  assert.equal(
-    events.filter((e) => e.task === "good").length,
-    1,
-  );
+  assert.equal(events.filter((e) => e.task === "good").length, 1);
 });

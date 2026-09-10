@@ -4,17 +4,17 @@ Start with `prgenie doctor` from any worktree of the repo. It reports the checks
 
 ## `prgenie doctor` checks
 
-| id | Meaning | Typical fix |
-| --- | --- | --- |
-| `git` | Not inside a git repo | `cd` into a PR Genie checkout |
-| `plugin-install` | No Cursor plugin at `~/.cursor/plugins/local/prgenie` | `pnpm build && pnpm link-plugin`, then disable/enable the plugin |
-| `plugin-stale` | Installed `mcp/server.cjs` hash ≠ repo build | Same as above — **reload alone often keeps a stale MCP tool list** |
-| `extension` | Local PRs extension missing or wrong version | `pnpm build && pnpm link-extension`, then **quit Cursor fully and reopen** |
-| `watch` | Inbox/queue listening or halted | Informational — see [Watch listen DONE / idle](#watch-listen-done--idle) |
-| `corrupt-prs` | Unparsable JSON under `.git/agent-console/prs/` | Inspect or delete listed files; `listLocalPrs` skips them silently |
-| `orphan-worktrees` | `.loops/<id>` worktree with no live local PR | `git worktree remove <path>` (or reopen/delete the matching loop) |
-| `gh-bind` | Repo unbound (or no `gh` accounts) | `gh auth login`, then `prgenie gh use <login>` |
-| `legacy-push-gate` | Old `push-gate.mjs` still on disk | Delete it (superseded by `github-gate.cjs`) and re-run `pnpm link-plugin` |
+| id                 | Meaning                                               | Typical fix                                                                |
+| ------------------ | ----------------------------------------------------- | -------------------------------------------------------------------------- |
+| `git`              | Not inside a git repo                                 | `cd` into a PR Genie checkout                                              |
+| `plugin-install`   | No Cursor plugin at `~/.cursor/plugins/local/prgenie` | `pnpm build && pnpm link-plugin`, then disable/enable the plugin           |
+| `plugin-stale`     | Installed `mcp/server.cjs` hash ≠ repo build          | Same as above — **reload alone often keeps a stale MCP tool list**         |
+| `extension`        | Local PRs extension missing or wrong version          | `pnpm build && pnpm link-extension`, then **quit Cursor fully and reopen** |
+| `watch`            | Inbox/queue listening or halted                       | Informational — see [Watch listen DONE / idle](#watch-listen-done--idle)   |
+| `corrupt-prs`      | Unparsable JSON under `.git/agent-console/prs/`       | Inspect or delete listed files; `listLocalPrs` skips them silently         |
+| `orphan-worktrees` | `.loops/<id>` worktree with no live local PR          | `git worktree remove <path>` (or reopen/delete the matching loop)          |
+| `gh-bind`          | Repo unbound (or no `gh` accounts)                    | `gh auth login`, then `prgenie gh use <login>`                             |
+| `legacy-push-gate` | Old `push-gate.mjs` still on disk                     | Delete it (superseded by `github-gate.cjs`) and re-run `pnpm link-plugin`  |
 
 Example FAIL line:
 
@@ -47,13 +47,13 @@ Doctor `extension` fails when the installed version ≠ `packages/extension/pack
 
 `prgenie watch listen` (used by `/watch-review-inbox` and `/watch-ready-prs`) eventually prints `AGENT_LOOP_DONE_*` with a reason:
 
-| reason | Meaning | What to do |
-| --- | --- | --- |
-| `idle` | No activity for ~30m (default) | Re-run the watch skill for that lane |
-| `max` | Hit ~8h wall clock | Re-run the watch skill |
-| `ticks` | Hit `--ticks` ceiling | Re-run or raise ticks |
-| `stop` | Lane halted via `/stop-loop`, `/stop-review`, or `/stop-watch` | `prgenie watch start inbox\|queue` or re-run the skill (skills call start) |
-| `export` | Halted because a loop was exported | Resume only after that export id is **archived or missing** (creating a new loop does this for export halts). A `stop` halt is never cleared by create. |
+| reason   | Meaning                                                        | What to do                                                                                                                                              |
+| -------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `idle`   | No activity for ~30m (default)                                 | Re-run the watch skill for that lane                                                                                                                    |
+| `max`    | Hit ~8h wall clock                                             | Re-run the watch skill                                                                                                                                  |
+| `ticks`  | Hit `--ticks` ceiling                                          | Re-run or raise ticks                                                                                                                                   |
+| `stop`   | Lane halted via `/stop-loop`, `/stop-review`, or `/stop-watch` | `prgenie watch start inbox\|queue` or re-run the skill (skills call start)                                                                              |
+| `export` | Halted because a loop was exported                             | Resume only after that export id is **archived or missing** (creating a new loop does this for export halts). A `stop` halt is never cleared by create. |
 
 Lane cheat sheet:
 

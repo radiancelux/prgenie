@@ -301,11 +301,9 @@ async function addLoopWorktree(cwd, dest, loop) {
     if (added.code === 0) return dest;
   }
   if (!held && !await branchExists(cwd, loop.headRef)) {
-    const created = await git(
-      cwd,
-      ["worktree", "add", "-b", loop.headRef, dest, loop.headSha],
-      { allowFail: true }
-    );
+    const created = await git(cwd, ["worktree", "add", "-b", loop.headRef, dest, loop.headSha], {
+      allowFail: true
+    });
     if (created.code === 0) return dest;
     throw new Error(
       `Could not create a worktree for loop ${loop.id} on branch ${loop.headRef}: ${created.stderr.trim()}`
@@ -316,12 +314,8 @@ async function addLoopWorktree(cwd, dest, loop) {
   );
 }
 async function ensureWorktreeForLoop(cwd, loop, options = {}) {
-  const stale = new Set(
-    [...options.staleLoopIds ?? []].map((id) => id.toLowerCase())
-  );
-  const live = new Set(
-    [...options.liveLoopIds ?? []].map((id) => id.toLowerCase())
-  );
+  const stale = new Set([...options.staleLoopIds ?? []].map((id) => id.toLowerCase()));
+  const live = new Set([...options.liveLoopIds ?? []].map((id) => id.toLowerCase()));
   live.add(loop.id.toLowerCase());
   let trees = await listWorktrees(cwd);
   const primary = primaryWorktreePath(trees);
@@ -580,11 +574,7 @@ function newId(prefix) {
 async function writePr(cwd, pr) {
   const dir = await prsDir(cwd);
   await writeJsonFile(prFile(dir, pr.id), pr);
-  await git(cwd, [
-    "update-ref",
-    `refs/local-pr/${pr.id}/head`,
-    pr.headSha
-  ]);
+  await git(cwd, ["update-ref", `refs/local-pr/${pr.id}/head`, pr.headSha]);
   await git(cwd, ["update-ref", `refs/local-pr/${pr.id}/base`, pr.baseSha]);
   const note = JSON.stringify({
     id: pr.id,
@@ -593,11 +583,9 @@ async function writePr(cwd, pr) {
     headRef: pr.headRef,
     baseRef: pr.baseRef
   });
-  await git(
-    cwd,
-    ["notes", "--ref=local-pr", "add", "-f", "-m", note, pr.headSha],
-    { allowFail: true }
-  );
+  await git(cwd, ["notes", "--ref=local-pr", "add", "-f", "-m", note, pr.headSha], {
+    allowFail: true
+  });
 }
 async function readPrFile(file) {
   const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
@@ -642,9 +630,7 @@ function normalizeLocalPrSearchFields(fields) {
 function localPrMatchesSearch(pr, query, options = {}) {
   const needle = query.trim().toLowerCase();
   if (!needle) return true;
-  const fields = normalizeLocalPrSearchFields(
-    options.fields ? [...options.fields] : void 0
-  );
+  const fields = normalizeLocalPrSearchFields(options.fields ? [...options.fields] : void 0);
   if (fields.has("title") && pr.title.toLowerCase().includes(needle)) return true;
   if (fields.has("body") && pr.body.toLowerCase().includes(needle)) return true;
   if (fields.has("comment")) {
@@ -665,11 +651,9 @@ function localPrMatchesSearch(pr, query, options = {}) {
 async function changedFilePathsForPr(cwd, pr) {
   const range = `${pr.baseSha}...${pr.headRef}`;
   const primary = await git(cwd, ["diff", "--name-only", range], { allowFail: true });
-  const stdout = primary.code === 0 && primary.stdout.trim() ? primary.stdout : (await git(
-    cwd,
-    ["diff", "--name-only", `${pr.baseSha}...${pr.headSha}`],
-    { allowFail: true }
-  )).stdout;
+  const stdout = primary.code === 0 && primary.stdout.trim() ? primary.stdout : (await git(cwd, ["diff", "--name-only", `${pr.baseSha}...${pr.headSha}`], {
+    allowFail: true
+  })).stdout;
   if (!stdout.trim()) return [];
   return stdout.split("\n").map((line) => line.trim()).filter(Boolean);
 }
@@ -819,9 +803,7 @@ async function captureAgentWork(cwd, input = {}) {
   }
   const baseRef = input.base ?? await detectDefaultBase(cwd);
   const headRef = input.head ?? await currentBranch(cwd) ?? await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  const existing = isBaseBranch(headRef, baseRef) ? void 0 : (await listLocalPrs(cwd)).find(
-    (pr2) => pr2.headRef === headRef && !isArchivedPr(pr2)
-  );
+  const existing = isBaseBranch(headRef, baseRef) ? void 0 : (await listLocalPrs(cwd)).find((pr2) => pr2.headRef === headRef && !isArchivedPr(pr2));
   if (existing) {
     const prevSha = existing.headSha;
     const updated = await withPrLock(cwd, existing.id, async (pr2) => {
@@ -929,7 +911,7 @@ function silent() {
   process.stdout.write("{}\n");
 }
 async function main() {
-  let input = {};
+  let input;
   try {
     const raw = (0, import_node_fs2.readFileSync)(0, "utf8");
     input = raw ? JSON.parse(raw) : {};
@@ -998,6 +980,8 @@ async function main() {
     }) + "\n"
   );
 }
+
+// packages/cli/src/capture-hook-bin.ts
 main().catch(() => {
-  silent();
+  process.stdout.write("{}\n");
 });

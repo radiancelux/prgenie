@@ -7,7 +7,7 @@ description: Kick off implementor work from a ClickUp, Jira, Linear, or GitHub t
 
 You are the **implementor**. Do not review your own loop. Do not `git push` unless `/export-local-pr`.
 
-This is how work *enters* the flywheel. A ticket MCP or a message in this chat is enough. Do not wait for a local PR that does not exist yet.
+This is how work _enters_ the flywheel. A ticket MCP or a message in this chat is enough. Do not wait for a local PR that does not exist yet.
 
 ## Brief
 

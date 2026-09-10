@@ -347,11 +347,7 @@ function nowIso() {
 async function writePr(cwd, pr) {
   const dir = await prsDir(cwd);
   await writeJsonFile(prFile(dir, pr.id), pr);
-  await git(cwd, [
-    "update-ref",
-    `refs/local-pr/${pr.id}/head`,
-    pr.headSha
-  ]);
+  await git(cwd, ["update-ref", `refs/local-pr/${pr.id}/head`, pr.headSha]);
   await git(cwd, ["update-ref", `refs/local-pr/${pr.id}/base`, pr.baseSha]);
   const note = JSON.stringify({
     id: pr.id,
@@ -360,11 +356,9 @@ async function writePr(cwd, pr) {
     headRef: pr.headRef,
     baseRef: pr.baseRef
   });
-  await git(
-    cwd,
-    ["notes", "--ref=local-pr", "add", "-f", "-m", note, pr.headSha],
-    { allowFail: true }
-  );
+  await git(cwd, ["notes", "--ref=local-pr", "add", "-f", "-m", note, pr.headSha], {
+    allowFail: true
+  });
 }
 async function readPrFile(file) {
   const pr = parseJsonObject(await (0, import_promises2.readFile)(file, "utf8"));
@@ -409,9 +403,7 @@ function normalizeLocalPrSearchFields(fields) {
 function localPrMatchesSearch(pr, query, options = {}) {
   const needle = query.trim().toLowerCase();
   if (!needle) return true;
-  const fields = normalizeLocalPrSearchFields(
-    options.fields ? [...options.fields] : void 0
-  );
+  const fields = normalizeLocalPrSearchFields(options.fields ? [...options.fields] : void 0);
   if (fields.has("title") && pr.title.toLowerCase().includes(needle)) return true;
   if (fields.has("body") && pr.body.toLowerCase().includes(needle)) return true;
   if (fields.has("comment")) {
@@ -432,11 +424,9 @@ function localPrMatchesSearch(pr, query, options = {}) {
 async function changedFilePathsForPr(cwd, pr) {
   const range = `${pr.baseSha}...${pr.headRef}`;
   const primary = await git(cwd, ["diff", "--name-only", range], { allowFail: true });
-  const stdout = primary.code === 0 && primary.stdout.trim() ? primary.stdout : (await git(
-    cwd,
-    ["diff", "--name-only", `${pr.baseSha}...${pr.headSha}`],
-    { allowFail: true }
-  )).stdout;
+  const stdout = primary.code === 0 && primary.stdout.trim() ? primary.stdout : (await git(cwd, ["diff", "--name-only", `${pr.baseSha}...${pr.headSha}`], {
+    allowFail: true
+  })).stdout;
   if (!stdout.trim()) return [];
   return stdout.split("\n").map((line) => line.trim()).filter(Boolean);
 }
@@ -654,7 +644,7 @@ function silent() {
   process.stdout.write("{}\n");
 }
 async function main() {
-  let input = {};
+  let input;
   try {
     const raw = (0, import_node_fs2.readFileSync)(0, "utf8");
     input = raw ? JSON.parse(raw) : {};
@@ -709,7 +699,9 @@ async function main() {
       }
       if (shouldSpawnReviewer(fresh)) {
         await markReviewerNotified(root, fresh.id);
-        process.stdout.write(JSON.stringify({ followup_message: formatSpawnReviewer(fresh) }) + "\n");
+        process.stdout.write(
+          JSON.stringify({ followup_message: formatSpawnReviewer(fresh) }) + "\n"
+        );
         return;
       }
     }
@@ -718,6 +710,8 @@ async function main() {
   }
   silent();
 }
+
+// packages/cli/src/review-hook-bin.ts
 main().catch(() => {
-  silent();
+  process.stdout.write("{}\n");
 });

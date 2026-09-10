@@ -1,0 +1,11 @@
+node_modules
+dist
+coverage
+*.vsix
+pnpm-lock.yaml
+packages/plugin/hooks/*.cjs
+packages/plugin/mcp/*.cjs
+packages/extension/dist
+_security-scan
+.cursor
+ROADMAP.md
