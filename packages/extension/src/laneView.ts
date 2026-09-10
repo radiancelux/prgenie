@@ -29,8 +29,13 @@ import {
   updateLocalPr,
   archiveLoopsMergedOnGithub,
   exportLocalPr,
+  listGhAccounts,
+  getRepoGithubBind,
+  bindRepoGithub,
   type LocalPr,
   type WatchRole,
+  type GhAccount,
+  type RepoGithubBind,
 } from "@prgenie/core";
 import { openAllChanges, openFileChange } from "./gitDiff.js";
 
@@ -61,13 +66,21 @@ type ClientMessage =
   | { type: "watchStop"; role: WatchRole }
   | { type: "openDiffs" }
   | { type: "export"; id: string }
-  | { type: "showArchived"; value: boolean };
+  | { type: "showArchived"; value: boolean }
+  | { type: "ghBind"; login: string }
+  | { type: "ghRefresh" };
 
 type WatchLaneSnapshot = {
   halted: boolean;
   reason: string | null;
   exportId: string | null;
   label: string;
+};
+
+type GhBindSnapshot = {
+  accounts: GhAccount[];
+  bound: RepoGithubBind | null;
+  error?: string;
 };
 
 type Snapshot = {
@@ -85,6 +98,7 @@ type Snapshot = {
   showArchived?: boolean;
   titleSaveInFlightId?: string | null;
   watch?: { inbox: WatchLaneSnapshot; queue: WatchLaneSnapshot };
+  ghBind?: GhBindSnapshot;
 };
 
 export class LaneHub implements vscode.Disposable {
@@ -239,6 +253,24 @@ export class LaneHub implements vscode.Disposable {
     if (msg.type === "showArchived") {
       this.showArchived = msg.value;
       await this.context.workspaceState.update("prgenie.showArchived", msg.value);
+      await this.pushSnapshot(true);
+      return;
+    }
+    if (msg.type === "ghBind") {
+      const cwd = await this.repoCwd();
+      if (!cwd) return;
+      try {
+        await bindRepoGithub(cwd, msg.login);
+        void vscode.window.showInformationMessage(
+          `Bound this repo to ${msg.login} and switched gh.`,
+        );
+        await this.pushSnapshot(true);
+      } catch (err) {
+        void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
+    if (msg.type === "ghRefresh") {
       await this.pushSnapshot(true);
       return;
     }
@@ -575,6 +607,17 @@ export class LaneHub implements vscode.Disposable {
         exportId: watchState[role].exportId,
         label: formatWatchLane(watchState, role),
       });
+      let ghBind: GhBindSnapshot | undefined;
+      try {
+        const [accounts, bound] = await Promise.all([listGhAccounts(), getRepoGithubBind(root)]);
+        ghBind = { accounts, bound };
+      } catch (err) {
+        ghBind = {
+          accounts: [],
+          bound: null,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
       this.post(
         {
           type: "snapshot",
@@ -590,6 +633,7 @@ export class LaneHub implements vscode.Disposable {
           showArchived: this.showArchived,
           titleSaveInFlightId: this.titleSaveInFlightId ?? null,
           watch: { inbox: laneSnap("inbox"), queue: laneSnap("queue") },
+          ghBind,
         },
         force,
       );
@@ -619,6 +663,7 @@ function snapshotKey(payload: Snapshot | { type: "snapshot"; error: string; prs:
     files: "files" in payload ? payload.files : [],
     threads: "threads" in payload ? payload.threads : [],
     watch: "watch" in payload ? payload.watch : null,
+    ghBind: "ghBind" in payload ? payload.ghBind : null,
     prs: payload.prs,
   });
 }
@@ -708,6 +753,34 @@ function laneHtml(webview: vscode.Webview): string {
     .watch-row button { flex: none; font-size: 11px; }
     .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--vscode-charts-green, #3fb950); flex: none; }
     .dot.off { background: var(--vscode-descriptionForeground); }
+    .gh-bind {
+      display: flex; flex-direction: column; gap: 4px;
+      padding: 6px 8px; margin-top: 4px;
+      border: 1px solid var(--vscode-widget-border, rgba(127,127,127,0.35));
+    }
+    .gh-bind-row {
+      display: flex; align-items: center; gap: 8px; font-size: 11px;
+    }
+    .gh-bind-row .label {
+      width: 42px; flex: none; text-transform: uppercase; letter-spacing: 0.04em;
+      font-size: 10px; color: var(--vscode-descriptionForeground);
+    }
+    .gh-bind-row .value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .gh-bind-row button { flex: none; font-size: 11px; padding: 2px 6px; }
+    .gh-bind-row select {
+      flex: 1; min-width: 0;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, transparent);
+      padding: 2px 4px;
+      font-size: 11px;
+    }
+    .gh-bind-warning {
+      background: color-mix(in srgb, var(--vscode-inputValidation-warningBackground, #f59f004d) 50%, transparent);
+      padding: 4px 6px;
+      font-size: 10px;
+      border-left: 2px solid var(--vscode-inputValidation-warningBorder, var(--vscode-charts-yellow, #f59f00));
+    }
     .pr {
       display: flex; align-items: flex-start; gap: 8px;
       padding: 6px 12px;
@@ -747,6 +820,19 @@ function laneHtml(webview: vscode.Webview): string {
         <button type="button" class="secondary" id="queueBtn" disabled>Start</button>
       </div>
     </div>
+    <div class="gh-bind" id="ghBind" hidden>
+      <div class="gh-bind-row">
+        <span class="label">gh bind</span>
+        <span class="value muted" id="ghBindStatus">—</span>
+        <button type="button" class="secondary" id="ghRefreshBtn">Refresh</button>
+      </div>
+      <div class="gh-bind-row" id="ghBindControls" hidden>
+        <span class="label"></span>
+        <select id="ghAccountSelect"></select>
+        <button type="button" class="secondary" id="ghBindBtn">Bind</button>
+      </div>
+      <div class="gh-bind-warning" id="ghBindWarning" hidden></div>
+    </div>
     <div class="meta-top"><span class="dot off" id="dot"></span><span class="muted" id="meta">Watching</span><button type="button" class="secondary" id="archivedToggle">Show archived</button></div>
   </div>
   <div id="list"></div>
@@ -765,6 +851,18 @@ function laneHtml(webview: vscode.Webview): string {
     }
     bindWatchBtn("inbox", document.getElementById("inboxBtn"));
     bindWatchBtn("queue", document.getElementById("queueBtn"));
+    const ghRefreshBtn = document.getElementById("ghRefreshBtn");
+    const ghBindBtn = document.getElementById("ghBindBtn");
+    const ghAccountSelect = document.getElementById("ghAccountSelect");
+    if (ghRefreshBtn) {
+      ghRefreshBtn.onclick = () => vscode.postMessage({ type: "ghRefresh" });
+    }
+    if (ghBindBtn && ghAccountSelect) {
+      ghBindBtn.onclick = () => {
+        const login = ghAccountSelect.value;
+        if (login) vscode.postMessage({ type: "ghBind", login });
+      };
+    }
     function paintLane(role, lane) {
       const state = document.getElementById(role + "State");
       const btn = document.getElementById(role + "Btn");
@@ -797,6 +895,67 @@ function laneHtml(webview: vscode.Webview): string {
       const anyListening = !msg.watch.inbox.halted || !msg.watch.queue.halted;
       if (dot) dot.classList.toggle("off", !anyListening);
     }
+    function paintGhBind(msg) {
+      const ghBindBox = document.getElementById("ghBind");
+      const ghBindStatus = document.getElementById("ghBindStatus");
+      const ghBindControls = document.getElementById("ghBindControls");
+      const ghBindWarning = document.getElementById("ghBindWarning");
+      const ghAccountSelect = document.getElementById("ghAccountSelect");
+      const ghBindBtn = document.getElementById("ghBindBtn");
+      
+      const hasGhBind = !!(msg.ghBind) && !msg.error;
+      if (ghBindBox) ghBindBox.hidden = !hasGhBind;
+      if (!hasGhBind) return;
+
+      const bind = msg.ghBind;
+      const accounts = bind.accounts || [];
+      const bound = bind.bound;
+      const activeAccount = accounts.find(a => a.active);
+
+      if (ghBindStatus) {
+        if (bind.error) {
+          ghBindStatus.textContent = "error: " + bind.error;
+          ghBindStatus.className = "value";
+        } else if (!accounts.length) {
+          ghBindStatus.textContent = "no gh accounts (run: gh auth login)";
+          ghBindStatus.className = "value";
+        } else if (bound) {
+          const isBoundActive = activeAccount && activeAccount.login === bound.login;
+          ghBindStatus.textContent = bound.login + (isBoundActive ? " (active)" : " (not active)");
+          ghBindStatus.className = "value";
+        } else {
+          ghBindStatus.textContent = "unbound (export will fail)";
+          ghBindStatus.className = "value";
+        }
+      }
+
+      if (ghBindControls && ghAccountSelect && ghBindBtn) {
+        if (accounts.length > 0) {
+          ghBindControls.hidden = false;
+          ghAccountSelect.innerHTML = accounts.map(a => 
+            '<option value="' + a.login + '">' + a.login + (a.active ? ' (active)' : '') + '</option>'
+          ).join('');
+          if (bound) {
+            ghAccountSelect.value = bound.login;
+          }
+          ghBindBtn.disabled = false;
+        } else {
+          ghBindControls.hidden = true;
+        }
+      }
+
+      if (ghBindWarning) {
+        if (!bind.error && accounts.length > 0 && !bound) {
+          ghBindWarning.textContent = "⚠ This repo is unbound. Export can fail on the wrong GitHub account. Select an account and click Bind.";
+          ghBindWarning.hidden = false;
+        } else if (!bind.error && bound && activeAccount && activeAccount.login !== bound.login) {
+          ghBindWarning.textContent = "⚠ Active gh account (" + activeAccount.login + ") does not match bound account (" + bound.login + "). Export will switch accounts.";
+          ghBindWarning.hidden = false;
+        } else {
+          ghBindWarning.hidden = true;
+        }
+      }
+    }
     function prRow(id) {
       const el = document.createElement("div");
       el.dataset.id = id;
@@ -818,6 +977,7 @@ function laneHtml(webview: vscode.Webview): string {
       if (msg.type !== "snapshot") return;
       const meta = document.getElementById("meta");
       paintWatch(msg);
+      paintGhBind(msg);
       if (msg.error) {
         meta.textContent = "Watching";
         toggle.hidden = true;
