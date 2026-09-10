@@ -20,6 +20,7 @@ When a **subagent** finishes with commits, PR Genie drafts a loop and puts it on
 
 - [Architecture](docs/architecture.md) — packages, lifecycle, watch lanes, storage, worktrees, `gh` bind
 - [Troubleshooting](docs/troubleshooting.md) — `prgenie doctor` checks and common failure modes
+- [Release](docs/release.md) — version alignment, `check-versions`, `pack:extension`
 
 ## What it is not
 
@@ -73,7 +74,7 @@ prgenie gh list
 prgenie gh use <login>
 ```
 
-`prgenie doctor` checks plugin/extension freshness, watch lanes, corrupt PR files, orphaned `.loops` worktrees, `gh` bind, and legacy hooks. `prgenie watch listen` is the capped implementor/reviewer wake process (skills should use it instead of hand-rolled sleep loops).
+`prgenie doctor` checks plugin/extension freshness, monorepo/VSIX version alignment, watch lanes, corrupt PR files, orphaned `.loops` worktrees, `gh` bind, and legacy hooks. `prgenie watch listen` is the capped implementor/reviewer wake process (skills should use it instead of hand-rolled sleep loops).
 
 Bind a GitHub login per repo (`prgenie gh use <login>`). Before `git push` / `gh`, PR Genie switches `gh` to that account. `gh auth` is global — only one account is active at a time — so the bind is how this project stays on `radiancelux` instead of `ccc-radiancelux`.
 

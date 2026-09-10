@@ -113,3 +113,11 @@ export {
   listGhAccounts,
   switchGhUser,
 } from "./github-ops.js";
+export {
+  checkReleaseVersions,
+  collectPackageVersions,
+  collectVsixArtifacts,
+  findPackageRoot,
+  versionFromVsixFileName,
+} from "./versions.js";
+export type { PackageVersionEntry, ReleaseVersionReport, VsixArtifactInfo } from "./versions.js";

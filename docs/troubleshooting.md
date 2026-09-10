@@ -4,17 +4,18 @@ Start with `prgenie doctor` from any worktree of the repo. It reports the checks
 
 ## `prgenie doctor` checks
 
-| id                 | Meaning                                               | Typical fix                                                                |
-| ------------------ | ----------------------------------------------------- | -------------------------------------------------------------------------- |
-| `git`              | Not inside a git repo                                 | `cd` into a PR Genie checkout                                              |
-| `plugin-install`   | No Cursor plugin at `~/.cursor/plugins/local/prgenie` | `pnpm build && pnpm link-plugin`, then disable/enable the plugin           |
-| `plugin-stale`     | Installed `mcp/server.cjs` hash ≠ repo build          | Same as above — **reload alone often keeps a stale MCP tool list**         |
-| `extension`        | Local PRs extension missing or wrong version          | `pnpm build && pnpm link-extension`, then **quit Cursor fully and reopen** |
-| `watch`            | Inbox/queue listening or halted                       | Informational — see [Watch listen DONE / idle](#watch-listen-done--idle)   |
-| `corrupt-prs`      | Unparsable JSON under `.git/agent-console/prs/`       | Inspect or delete listed files; `listLocalPrs` skips them silently         |
-| `orphan-worktrees` | `.loops/<id>` worktree with no live local PR          | `git worktree remove <path>` (or reopen/delete the matching loop)          |
-| `gh-bind`          | Repo unbound (or no `gh` accounts)                    | `gh auth login`, then `prgenie gh use <login>`                             |
-| `legacy-push-gate` | Old `push-gate.mjs` still on disk                     | Delete it (superseded by `github-gate.cjs`) and re-run `pnpm link-plugin`  |
+| id                 | Meaning                                               | Typical fix                                                                     |
+| ------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `git`              | Not inside a git repo                                 | `cd` into a PR Genie checkout                                                   |
+| `plugin-install`   | No Cursor plugin at `~/.cursor/plugins/local/prgenie` | `pnpm build && pnpm link-plugin`, then disable/enable the plugin                |
+| `plugin-stale`     | Installed `mcp/server.cjs` hash ≠ repo build          | Same as above — **reload alone often keeps a stale MCP tool list**              |
+| `extension`        | Local PRs extension missing or wrong version          | `pnpm build && pnpm link-extension`, then **quit Cursor fully and reopen**      |
+| `watch`            | Inbox/queue listening or halted                       | Informational — see [Watch listen DONE / idle](#watch-listen-done--idle)        |
+| `corrupt-prs`      | Unparsable JSON under `.git/agent-console/prs/`       | Inspect or delete listed files; `listLocalPrs` skips them silently              |
+| `orphan-worktrees` | `.loops/<id>` worktree with no live local PR          | `git worktree remove <path>` (or reopen/delete the matching loop)               |
+| `gh-bind`          | Repo unbound (or no `gh` accounts)                    | `gh auth login`, then `prgenie gh use <login>`                                  |
+| `package-versions` | Monorepo package.json / local VSIX version skew       | Align versions; `pnpm build && pnpm pack:extension` (see [Release](release.md)) |
+| `legacy-push-gate` | Old `push-gate.mjs` still on disk                     | Delete it (superseded by `github-gate.cjs`) and re-run `pnpm link-plugin`       |
 
 Example FAIL line:
 
@@ -87,6 +88,12 @@ Doctor `corrupt-prs` lists unparsable files under `.git/agent-console/prs/`. Cor
 - Never treat the primary checkout as a disposable loop worktree; never implement Later work in the primary when a loop worktree exists.
 - Orphans: `.loops` path still registered in `git worktree list` but no live (non-archived) local PR with that id → `git worktree remove <path>`.
 - Worktree collisions: two windows on the same branch, or a leftover `.loops/<other-id>` while coding a different loop — Switch to the correct loop id or remove the stale tree.
+
+## Version / VSIX skew
+
+Doctor `package-versions` fails when root / `packages/*/package.json` disagree, or when a local `packages/extension/prgenie-*.vsix` name or embedded manifest lags the extension version.
+
+**Fix:** set every listed `package.json` to the same version, then `pnpm build && pnpm check-versions && pnpm pack:extension`. VSIX files are gitignored — pack on demand (see [Release](release.md)). For the installed sidebar, still run `pnpm link-extension` and quit Cursor fully.
 
 ## Legacy push-gate
 

@@ -1,7 +1,7 @@
 {
   "name": "prgenie",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local pull requests for agent work. GitHub when you say so.",
   "license": "MIT",
   "packageManager": "pnpm@10.33.0",
@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "tsx --test packages/core/src/prs.test.ts packages/core/src/sessions.test.ts packages/core/src/github.test.ts packages/core/src/store.test.ts packages/core/src/watch.test.ts packages/cli/src/mcp-stdio.test.ts packages/cli/src/cli-parse.test.ts packages/cli/src/cli-run.test.ts packages/cli/src/mcp-tools.test.ts packages/cli/src/github-hook.test.ts packages/cli/src/review-hook.test.ts",
+    "test": "tsx --test packages/core/src/prs.test.ts packages/core/src/sessions.test.ts packages/core/src/github.test.ts packages/core/src/store.test.ts packages/core/src/versions.test.ts packages/core/src/watch.test.ts packages/cli/src/mcp-stdio.test.ts packages/cli/src/cli-parse.test.ts packages/cli/src/cli-run.test.ts packages/cli/src/mcp-tools.test.ts packages/cli/src/github-hook.test.ts packages/cli/src/review-hook.test.ts",
     "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/cli --noEmit && tsc -p packages/extension --noEmit",
     "lint": "eslint packages/core/src packages/cli/src packages/extension/src scripts",
     "lint:fix": "eslint packages/core/src packages/cli/src packages/extension/src scripts --fix",
@@ -18,7 +18,9 @@
     "format:check": "prettier --check .",
     "cli": "node packages/cli/dist/prgenie.cjs",
     "link-plugin": "powershell -ExecutionPolicy Bypass -File scripts/link-plugin.ps1",
-    "link-extension": "powershell -ExecutionPolicy Bypass -File scripts/link-extension.ps1"
+    "link-extension": "powershell -ExecutionPolicy Bypass -File scripts/link-extension.ps1",
+    "check-versions": "node scripts/check-versions.mjs",
+    "pack:extension": "node scripts/pack-extension.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
