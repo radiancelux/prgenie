@@ -35,19 +35,19 @@ await esbuild.build({
 
 await esbuild.build({
   ...shared,
-  entryPoints: ["packages/cli/src/capture-hook.ts"],
+  entryPoints: ["packages/cli/src/capture-hook-bin.ts"],
   outfile: "packages/plugin/hooks/capture-subagent.cjs",
 });
 
 await esbuild.build({
   ...shared,
-  entryPoints: ["packages/cli/src/github-hook.ts"],
+  entryPoints: ["packages/cli/src/github-hook-bin.ts"],
   outfile: "packages/plugin/hooks/github-gate.cjs",
 });
 
 await esbuild.build({
   ...shared,
-  entryPoints: ["packages/cli/src/review-hook.ts"],
+  entryPoints: ["packages/cli/src/review-hook-bin.ts"],
   outfile: "packages/plugin/hooks/review-inbox.cjs",
 });
 

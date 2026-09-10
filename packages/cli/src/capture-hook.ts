@@ -1,6 +1,4 @@
 import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { appendSession, captureAgentWork, findGitRoot } from "@prgenie/core";
 
 type HookInput = Record<string, unknown>;
@@ -16,20 +14,7 @@ function silent(): void {
   process.stdout.write("{}\n");
 }
 
-function ranAsCli(): boolean {
-  const entry = process.argv[1];
-  if (!entry) return false;
-  try {
-    return (
-      path.resolve(fileURLToPath(import.meta.url)).toLowerCase() ===
-      path.resolve(entry).toLowerCase()
-    );
-  } catch {
-    return false;
-  }
-}
-
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   let input: HookInput;
   try {
     const raw = readFileSync(0, "utf8");
@@ -109,8 +94,3 @@ async function main(): Promise<void> {
     }) + "\n",
   );
 }
-
-if (ranAsCli())
-  main().catch(() => {
-    silent();
-  });
