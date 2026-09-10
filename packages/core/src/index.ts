@@ -4,10 +4,13 @@ export type {
   CommentStatus,
   CommentThread,
   CreateLocalPrInput,
+  Learning,
   LocalPr,
   LocalPrComment,
   LocalPrSource,
   LocalPrStatus,
+  PreflightIssue,
+  PreflightResult,
   WorktreeInfo,
 } from "./types.js";
 export { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
@@ -126,3 +129,13 @@ export type {
   ReleaseVersionReport,
   VsixArtifactInfo,
 } from "./versions.js";
+export {
+  addLearnings,
+  deleteLearning,
+  disableLearning,
+  enableLearning,
+  extractLearningsFromResolvedComments,
+  getLearning,
+  listLearnings,
+  runPreflight,
+} from "./learnings.js";

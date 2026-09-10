@@ -564,6 +564,16 @@ var init_watch = __esm({
   }
 });
 
+// packages/core/src/learnings.ts
+var init_learnings = __esm({
+  "packages/core/src/learnings.ts"() {
+    "use strict";
+    init_store();
+    init_prs();
+    init_prs();
+  }
+});
+
 // packages/core/src/prs.ts
 function nowIso() {
   return (/* @__PURE__ */ new Date()).toISOString();
@@ -838,6 +848,7 @@ var init_prs = __esm({
     init_worktrees();
     init_types();
     init_watch();
+    init_learnings();
     ALL_SEARCH_FIELDS = ["title", "body", "comment", "file"];
   }
 });
@@ -899,6 +910,7 @@ async function appendSession(cwd, event) {
 
 // packages/core/src/index.ts
 init_store();
+init_learnings();
 
 // packages/cli/src/capture-hook.ts
 function inferCwd(input) {
