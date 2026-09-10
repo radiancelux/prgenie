@@ -178,6 +178,16 @@ var init_watch = __esm({
   }
 });
 
+// packages/core/src/learnings.ts
+var init_learnings = __esm({
+  "packages/core/src/learnings.ts"() {
+    "use strict";
+    init_store();
+    init_prs();
+    init_prs();
+  }
+});
+
 // packages/core/src/prs.ts
 var init_prs = __esm({
   "packages/core/src/prs.ts"() {
@@ -187,6 +197,7 @@ var init_prs = __esm({
     init_worktrees();
     init_types();
     init_watch();
+    init_learnings();
   }
 });
 
@@ -341,6 +352,7 @@ init_store();
 
 // packages/core/src/index.ts
 init_store();
+init_learnings();
 
 // packages/cli/src/github-hook.ts
 function isPublish(command) {

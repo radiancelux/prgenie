@@ -28,6 +28,7 @@ import type {
 } from "./types.js";
 import { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
 import { getRepoWatch, resumeWatchRole } from "./watch.js";
+import { addLearnings, extractLearningsFromResolvedComments, runPreflight } from "./learnings.js";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -336,6 +337,7 @@ export async function setLocalPrStatus(
   cwd: string,
   id: string,
   status: LocalPrStatus,
+  options: { skipPreflight?: boolean } = {},
 ): Promise<LocalPr> {
   if (!STATUSES.includes(status)) {
     throw new Error(`Invalid status: ${status}`);
@@ -345,6 +347,20 @@ export async function setLocalPrStatus(
       throw new Error(
         `Loop ${pr.id} is archived. Start a new loop on a feature branch instead of reopening it.`,
       );
+    }
+    if (status === "ready" && !options.skipPreflight) {
+      const preflight = await runPreflight(cwd, pr);
+      if (!preflight.passed) {
+        const summary = preflight.issues
+          .map(
+            (issue) =>
+              `- [${issue.learningId}] Pattern: "${issue.pattern}" (matched in ${issue.matchedIn})\n  Guidance: ${issue.guidance}`,
+          )
+          .join("\n");
+        throw new Error(
+          `Preflight failed — ${preflight.issues.length} learned pattern(s) detected:\n\n${summary}\n\nAddress these patterns or disable the learnings, then try ready again. Use skipPreflight=true to bypass.`,
+        );
+      }
     }
     pr.status = status;
     if (status === "ready") await armReviewRequest(cwd, pr);
@@ -782,12 +798,18 @@ export async function completeLocalPrReview(
     const open = pendingReviewComments(pr);
     const now = nowIso();
     const author = options.author?.trim() || (await userName(cwd));
+    const resolvedComments: LocalPrComment[] = [];
     for (const comment of pr.comments) {
       if (isFindingComment(comment) && comment.status === "addressed") {
         comment.status = "resolved";
         comment.resolvedAt = now;
         comment.resolvedBy = author;
+        resolvedComments.push(comment);
       }
+    }
+    const learnings = await extractLearningsFromResolvedComments(pr, resolvedComments);
+    if (learnings.length > 0) {
+      await addLearnings(cwd, learnings);
     }
     const handedToImplementor = open.length > 0;
     pr.comments.push({

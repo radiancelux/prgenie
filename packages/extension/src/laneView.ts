@@ -337,7 +337,9 @@ export class LaneHub implements vscode.Disposable {
         await vscode.commands.executeCommand("prgenie.panel.focus");
       } else if (msg.type === "status") {
         if (await this.rejectIfArchived(cwd, msg.id)) return;
-        await setLocalPrStatus(cwd, msg.id, msg.status);
+        await setLocalPrStatus(cwd, msg.id, msg.status, {
+          skipPreflight: msg.status === "ready" ? false : undefined,
+        });
         await this.pushSnapshot();
       } else if (msg.type === "export") {
         if (await this.rejectIfArchived(cwd, msg.id)) return;

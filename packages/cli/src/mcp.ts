@@ -7,13 +7,17 @@ import {
   commentThreads,
   completeLocalPrReview,
   createLocalPr,
+  deleteLearning,
   deleteLocalPr,
   deleteLocalPrComment,
+  disableLearning,
   editLocalPrComment,
+  enableLearning,
   exportLocalPr,
   ensureWorktreeForLoop,
   findGitRoot,
   findLocalPrForCurrentWorktree,
+  getLearning,
   getLocalPr,
   getLocalPrDiff,
   getLocalPrNameStatus,
@@ -22,6 +26,7 @@ import {
   haltWatch,
   haltWatchRole,
   listGhAccounts,
+  listLearnings,
   listLocalPrs,
   listSessions,
   listWorktrees,
@@ -31,6 +36,7 @@ import {
   resolveLocalPrComment,
   resumeWatch,
   resumeWatchRole,
+  runPreflight,
   setLocalPrStatus,
   updateLocalPr,
   type CommentRole,
@@ -152,7 +158,9 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
       return withCommentViews(pr);
     }
     case "set_status":
-      return setLocalPrStatus(cwd, String(args.id ?? ""), args.status as LocalPrStatus);
+      return setLocalPrStatus(cwd, String(args.id ?? ""), args.status as LocalPrStatus, {
+        skipPreflight: typeof args.skipPreflight === "boolean" ? args.skipPreflight : undefined,
+      });
     case "add_comment": {
       const role = typeof args.role === "string" ? (args.role as CommentRole) : undefined;
       const author = typeof args.author === "string" ? args.author : undefined;
@@ -240,6 +248,23 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
     }
     case "export_local_pr":
       return exportLocalPr(cwd, String(args.id ?? ""));
+    case "list_learnings":
+      return listLearnings(cwd, {
+        disabled: typeof args.disabled === "boolean" ? args.disabled : undefined,
+        category: typeof args.category === "string" ? args.category : undefined,
+      });
+    case "get_learning":
+      return getLearning(cwd, String(args.id ?? ""));
+    case "disable_learning":
+      return disableLearning(cwd, String(args.id ?? ""));
+    case "enable_learning":
+      return enableLearning(cwd, String(args.id ?? ""));
+    case "delete_learning":
+      return deleteLearning(cwd, String(args.id ?? ""));
+    case "run_preflight": {
+      const pr = await getLocalPr(cwd, String(args.id ?? ""));
+      return runPreflight(cwd, pr);
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -358,7 +383,7 @@ export const tools = [
   {
     name: "set_status",
     description:
-      "Set local PR status: draft, ready, changes_requested, reviewed, approved. reviewed means the automated reviewer signed off and the human should look.",
+      "Set local PR status: draft, ready, changes_requested, reviewed, approved. reviewed means the automated reviewer signed off and the human should look. When setting to ready, a preflight check runs automatically to match learned patterns; pass skipPreflight=true to bypass.",
     inputSchema: {
       type: "object",
       required: ["id", "status"],
@@ -367,6 +392,11 @@ export const tools = [
         status: {
           type: "string",
           enum: ["draft", "ready", "changes_requested", "reviewed", "approved"],
+        },
+        skipPreflight: {
+          type: "boolean",
+          description:
+            "Skip preflight check when setting to ready. Use only when preflight issues are false positives or you want to override.",
         },
         cwd: { type: "string" },
       },
@@ -581,6 +611,72 @@ export const tools = [
       type: "object",
       required: ["login"],
       properties: { login: { type: "string" }, cwd: { type: "string" } },
+    },
+  },
+  {
+    name: "list_learnings",
+    description:
+      "List learned patterns from resolved reviewer findings. Patterns are extracted during complete_review and matched during preflight before ready. Optional disabled filter (true shows only disabled, false shows only enabled, omit for all). Optional category filter.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: { type: "string" },
+        disabled: {
+          type: "boolean",
+          description: "Filter by disabled state. Omit to see all.",
+        },
+        category: {
+          type: "string",
+          description: "Filter by category (testing, types, style, security, performance, etc.).",
+        },
+      },
+    },
+  },
+  {
+    name: "get_learning",
+    description: "Get a single learning by id (prefix match allowed).",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } },
+    },
+  },
+  {
+    name: "disable_learning",
+    description:
+      "Disable a learning so it no longer blocks preflight. Use when a pattern is no longer relevant or was incorrectly extracted.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } },
+    },
+  },
+  {
+    name: "enable_learning",
+    description: "Re-enable a disabled learning.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } },
+    },
+  },
+  {
+    name: "delete_learning",
+    description: "Permanently delete a learning. Cannot be undone.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } },
+    },
+  },
+  {
+    name: "run_preflight",
+    description:
+      "Run preflight check on a local PR to see if any learned patterns would be matched. This is automatically run when set_status ready unless skipPreflight is set. Returns passed boolean and issues array.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } },
     },
   },
 ];

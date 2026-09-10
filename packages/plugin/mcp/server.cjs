@@ -638,12 +638,198 @@ var init_watch = __esm({
   }
 });
 
-// packages/core/src/prs.ts
+// packages/core/src/learnings.ts
 function nowIso() {
   return (/* @__PURE__ */ new Date()).toISOString();
 }
 function newId(prefix) {
   return `${prefix}-${(0, import_node_crypto.randomBytes)(4).toString("hex")}`;
+}
+async function learningsFile(cwd) {
+  const dir = await consoleDir(cwd);
+  return import_node_path5.default.join(dir, "learnings.json");
+}
+async function readLearnings(cwd) {
+  const file = await learningsFile(cwd);
+  try {
+    const raw = await (0, import_promises4.readFile)(file, "utf8");
+    const store = parseJsonObject(raw);
+    return {
+      learnings: store.learnings ?? [],
+      version: store.version ?? 1
+    };
+  } catch (err) {
+    const code = err && typeof err === "object" && "code" in err ? err.code : void 0;
+    if (code === "ENOENT") {
+      return { learnings: [], version: 1 };
+    }
+    throw err;
+  }
+}
+async function writeLearnings(cwd, store) {
+  const file = await learningsFile(cwd);
+  await writeJsonFile(file, store);
+}
+async function extractLearningsFromResolvedComments(pr, comments) {
+  const learnings = [];
+  const now = nowIso();
+  for (const comment of comments) {
+    if (!isFindingComment(comment)) continue;
+    if (comment.status !== "resolved") continue;
+    if (comment.role !== "reviewer" && comment.role !== "human") continue;
+    const pattern = extractPattern(comment.body);
+    const guidance = extractGuidance(comment.body);
+    if (!pattern || !guidance) continue;
+    learnings.push({
+      id: newId("learn"),
+      pattern,
+      guidance,
+      sourceCommentId: comment.id,
+      sourcePrId: pr.id,
+      createdAt: comment.createdAt,
+      learnedAt: now,
+      disabled: false,
+      path: comment.path,
+      category: inferCategory(comment)
+    });
+  }
+  return learnings;
+}
+function extractPattern(body) {
+  const patternMatch = body.match(/pattern[:\s]+(.+?)(?:\n|$)/i) || body.match(/issue[:\s]+(.+?)(?:\n|$)/i) || body.match(/problem[:\s]+(.+?)(?:\n|$)/i);
+  if (patternMatch) return patternMatch[1].trim();
+  const lines = body.split("\n").filter((l) => l.trim());
+  if (lines.length > 0) {
+    return lines[0].trim().slice(0, 200);
+  }
+  return null;
+}
+function extractGuidance(body) {
+  const guidanceMatch = body.match(/(?:fix|solution|should|must|instead)[:\s]+(.+?)(?:\n\n|$)/is) || body.match(/guidance[:\s]+(.+?)(?:\n\n|$)/is);
+  if (guidanceMatch) return guidanceMatch[1].trim();
+  return body.trim().slice(0, 500);
+}
+function inferCategory(comment) {
+  const body = comment.body.toLowerCase();
+  if (body.includes("test")) return "testing";
+  if (body.includes("type") || body.includes("interface")) return "types";
+  if (body.includes("style") || body.includes("format")) return "style";
+  if (body.includes("security")) return "security";
+  if (body.includes("performance")) return "performance";
+  if (body.includes("error") || body.includes("exception")) return "error-handling";
+  if (comment.path) {
+    if (comment.path.endsWith(".test.ts") || comment.path.endsWith(".spec.ts")) return "testing";
+    if (comment.path.endsWith(".md")) return "documentation";
+  }
+  return void 0;
+}
+async function addLearnings(cwd, learnings) {
+  if (learnings.length === 0) return;
+  const store = await readLearnings(cwd);
+  store.learnings.push(...learnings);
+  await writeLearnings(cwd, store);
+}
+async function listLearnings(cwd, options = {}) {
+  const store = await readLearnings(cwd);
+  let learnings = store.learnings;
+  if (options.disabled !== void 0) {
+    learnings = learnings.filter((l) => l.disabled === options.disabled);
+  }
+  if (options.category) {
+    learnings = learnings.filter((l) => l.category === options.category);
+  }
+  return learnings.sort((a, b) => b.learnedAt.localeCompare(a.learnedAt));
+}
+async function getLearning(cwd, id) {
+  const store = await readLearnings(cwd);
+  return store.learnings.find((l) => l.id === id || l.id.startsWith(id)) ?? null;
+}
+async function disableLearning(cwd, id) {
+  const store = await readLearnings(cwd);
+  const learning = store.learnings.find((l) => l.id === id || l.id.startsWith(id));
+  if (!learning) throw new Error(`Learning not found: ${id}`);
+  learning.disabled = true;
+  await writeLearnings(cwd, store);
+  return learning;
+}
+async function enableLearning(cwd, id) {
+  const store = await readLearnings(cwd);
+  const learning = store.learnings.find((l) => l.id === id || l.id.startsWith(id));
+  if (!learning) throw new Error(`Learning not found: ${id}`);
+  learning.disabled = false;
+  await writeLearnings(cwd, store);
+  return learning;
+}
+async function deleteLearning(cwd, id) {
+  const store = await readLearnings(cwd);
+  const index = store.learnings.findIndex((l) => l.id === id || l.id.startsWith(id));
+  if (index === -1) throw new Error(`Learning not found: ${id}`);
+  const learning = store.learnings[index];
+  store.learnings.splice(index, 1);
+  await writeLearnings(cwd, store);
+  return { id: learning.id, deleted: true };
+}
+async function runPreflight(cwd, pr) {
+  const learnings = await listLearnings(cwd, { disabled: false });
+  const issues = [];
+  const diff = await getLocalPrDiff(cwd, pr.id, { maxBytes: 5e5 });
+  for (const learning of learnings) {
+    const patternLower = learning.pattern.toLowerCase();
+    const titleLower = pr.title.toLowerCase();
+    const bodyLower = pr.body.toLowerCase();
+    const diffLower = diff.toLowerCase();
+    if (titleLower.includes(patternLower)) {
+      issues.push({
+        learningId: learning.id,
+        pattern: learning.pattern,
+        guidance: learning.guidance,
+        matchedIn: "title"
+      });
+      continue;
+    }
+    if (bodyLower.includes(patternLower)) {
+      issues.push({
+        learningId: learning.id,
+        pattern: learning.pattern,
+        guidance: learning.guidance,
+        matchedIn: "body"
+      });
+      continue;
+    }
+    if (diffLower.includes(patternLower)) {
+      issues.push({
+        learningId: learning.id,
+        pattern: learning.pattern,
+        guidance: learning.guidance,
+        matchedIn: "diff",
+        path: learning.path
+      });
+    }
+  }
+  return {
+    passed: issues.length === 0,
+    issues
+  };
+}
+var import_node_crypto, import_promises4, import_node_path5;
+var init_learnings = __esm({
+  "packages/core/src/learnings.ts"() {
+    "use strict";
+    import_node_crypto = require("node:crypto");
+    import_promises4 = require("node:fs/promises");
+    import_node_path5 = __toESM(require("node:path"), 1);
+    init_store();
+    init_prs();
+    init_prs();
+  }
+});
+
+// packages/core/src/prs.ts
+function nowIso2() {
+  return (/* @__PURE__ */ new Date()).toISOString();
+}
+function newId2(prefix) {
+  return `${prefix}-${(0, import_node_crypto2.randomBytes)(4).toString("hex")}`;
 }
 async function writePr(cwd, pr) {
   const dir = await prsDir(cwd);
@@ -662,7 +848,7 @@ async function writePr(cwd, pr) {
   });
 }
 async function readPrFile(file) {
-  const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
+  const pr = parseJsonObject(await (0, import_promises5.readFile)(file, "utf8"));
   pr.source = pr.source ?? null;
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
   pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
@@ -688,7 +874,7 @@ async function applyHeadRefresh(cwd, pr) {
     if (branch) pr.headRef = branch;
   }
   pr.headSha = await gitText(cwd, ["rev-parse", named.code === 0 ? pr.headRef : "HEAD"]);
-  pr.updatedAt = nowIso();
+  pr.updatedAt = nowIso2();
 }
 function isArchivedPr(pr) {
   return pr.status === "approved";
@@ -734,11 +920,11 @@ async function changedFilePathsForPr(cwd, pr) {
 async function listLocalPrs(cwd, options = {}) {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
-  const names = await (0, import_promises4.readdir)(dir);
+  const names = await (0, import_promises5.readdir)(dir);
   const prs = [];
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
-    const raw = await (0, import_promises4.readFile)(import_node_path5.default.join(dir, name), "utf8");
+    const raw = await (0, import_promises5.readFile)(import_node_path6.default.join(dir, name), "utf8");
     let pr;
     try {
       pr = parseJsonObject(raw);
@@ -801,7 +987,7 @@ async function resumeWatchForNextLoop(cwd) {
 }
 async function createLocalPr(cwd, input = {}) {
   const root = await requireGitRoot(cwd);
-  const id = newId("lp");
+  const id = newId2("lp");
   const baseRef = input.base ?? await detectDefaultBase(cwd);
   const baseResolved = await git(cwd, ["rev-parse", "--verify", baseRef], {
     allowFail: true
@@ -817,7 +1003,7 @@ async function createLocalPr(cwd, input = {}) {
     baseRef
   });
   const title = input.title?.trim() || await shortLogSubject(cwd, headSha).catch(() => "") || `Local PR from ${headRef}`;
-  const createdAt = nowIso();
+  const createdAt = nowIso2();
   const pr = {
     id,
     title,
@@ -854,10 +1040,10 @@ async function updateLocalPr(cwd, id, patch) {
     if (patch.body !== void 0) {
       pr.body = patch.body.trim();
     }
-    pr.updatedAt = nowIso();
+    pr.updatedAt = nowIso2();
   });
 }
-async function setLocalPrStatus(cwd, id, status) {
+async function setLocalPrStatus(cwd, id, status, options = {}) {
   if (!STATUSES.includes(status)) {
     throw new Error(`Invalid status: ${status}`);
   }
@@ -867,9 +1053,25 @@ async function setLocalPrStatus(cwd, id, status) {
         `Loop ${pr.id} is archived. Start a new loop on a feature branch instead of reopening it.`
       );
     }
+    if (status === "ready" && !options.skipPreflight) {
+      const preflight = await runPreflight(cwd, pr);
+      if (!preflight.passed) {
+        const summary = preflight.issues.map(
+          (issue) => `- [${issue.learningId}] Pattern: "${issue.pattern}" (matched in ${issue.matchedIn})
+  Guidance: ${issue.guidance}`
+        ).join("\n");
+        throw new Error(
+          `Preflight failed \u2014 ${preflight.issues.length} learned pattern(s) detected:
+
+${summary}
+
+Address these patterns or disable the learnings, then try ready again. Use skipPreflight=true to bypass.`
+        );
+      }
+    }
     pr.status = status;
     if (status === "ready") await armReviewRequest(cwd, pr);
-    pr.updatedAt = nowIso();
+    pr.updatedAt = nowIso2();
   });
 }
 function isReviewRequestBody(body) {
@@ -948,7 +1150,7 @@ async function maybeHandoffToReviewer(cwd, pr, now, author) {
   await armReviewRequest(cwd, pr);
   pr.status = "ready";
   pr.comments.push({
-    id: newId("c"),
+    id: newId2("c"),
     body: "Review requested.",
     createdAt: now,
     author,
@@ -991,12 +1193,12 @@ async function addLocalPrComment(cwd, id, body, options = {}) {
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
+    const pr = parseJsonObject(await (0, import_promises5.readFile)(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const comment = {
-      id: newId("c"),
+      id: newId2("c"),
       body: text,
-      createdAt: nowIso(),
+      createdAt: nowIso2(),
       author: options.author?.trim() || await userName(cwd),
       role,
       status: role === "agent" ? "resolved" : "open"
@@ -1040,7 +1242,7 @@ async function editLocalPrComment(cwd, id, commentId, body) {
       throw new Error("Only open findings can be edited");
     }
     target.body = text;
-    pr.updatedAt = nowIso();
+    pr.updatedAt = nowIso2();
   });
 }
 async function deleteLocalPrComment(cwd, id, commentId) {
@@ -1065,7 +1267,7 @@ async function deleteLocalPrComment(cwd, id, commentId) {
       }
     }
     pr.comments = pr.comments.filter((c) => !drop.has(c.id));
-    pr.updatedAt = nowIso();
+    pr.updatedAt = nowIso2();
   });
 }
 async function addressLocalPrComment(cwd, id, commentId, body, options = {}) {
@@ -1077,7 +1279,7 @@ async function addressLocalPrComment(cwd, id, commentId, body, options = {}) {
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
+    const pr = parseJsonObject(await (0, import_promises5.readFile)(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
     if (!target) throw new Error(`Comment not found: ${commentId}`);
@@ -1087,11 +1289,11 @@ async function addressLocalPrComment(cwd, id, commentId, body, options = {}) {
     if (target.status !== "open") {
       throw new Error(`Comment ${target.id} is ${target.status}, not open`);
     }
-    const now = nowIso();
+    const now = nowIso2();
     const author = options.author?.trim() || await userName(cwd);
     target.status = "addressed";
     pr.comments.push({
-      id: newId("c"),
+      id: newId2("c"),
       body: text,
       createdAt: now,
       author,
@@ -1116,7 +1318,7 @@ async function resolveLocalPrComment(cwd, id, commentId, body, options = {}) {
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
+    const pr = parseJsonObject(await (0, import_promises5.readFile)(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
     if (!target) throw new Error(`Comment not found: ${commentId}`);
@@ -1131,13 +1333,13 @@ async function resolveLocalPrComment(cwd, id, commentId, body, options = {}) {
         `Comment ${target.id} is still open. The implementor must address_comment it before the reviewer resolves it.`
       );
     }
-    const now = nowIso();
+    const now = nowIso2();
     const author = options.author?.trim() || await userName(cwd);
     target.status = "resolved";
     target.resolvedAt = now;
     target.resolvedBy = author;
     pr.comments.push({
-      id: newId("c"),
+      id: newId2("c"),
       body: text,
       createdAt: now,
       author,
@@ -1157,7 +1359,7 @@ async function completeLocalPrReview(cwd, id, options = {}) {
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject(await (0, import_promises4.readFile)(file, "utf8"));
+    const pr = parseJsonObject(await (0, import_promises5.readFile)(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const reviewedAgainstSha = pr.reviewRequestedSha ?? null;
     await applyHeadRefresh(cwd, pr);
@@ -1168,18 +1370,24 @@ async function completeLocalPrReview(cwd, id, options = {}) {
       );
     }
     const open2 = pendingReviewComments(pr);
-    const now = nowIso();
+    const now = nowIso2();
     const author = options.author?.trim() || await userName(cwd);
+    const resolvedComments = [];
     for (const comment of pr.comments) {
       if (isFindingComment(comment) && comment.status === "addressed") {
         comment.status = "resolved";
         comment.resolvedAt = now;
         comment.resolvedBy = author;
+        resolvedComments.push(comment);
       }
+    }
+    const learnings = await extractLearningsFromResolvedComments(pr, resolvedComments);
+    if (learnings.length > 0) {
+      await addLearnings(cwd, learnings);
     }
     const handedToImplementor = open2.length > 0;
     pr.comments.push({
-      id: newId("c"),
+      id: newId2("c"),
       body: (options.body?.trim() || (handedToImplementor ? "Review complete. Findings are ready for the implementor." : "Review complete. Ready for human review.")).trim(),
       createdAt: now,
       author,
@@ -1216,7 +1424,7 @@ async function deleteLocalPr(cwd, id) {
   const dir = await prsDir(cwd);
   const file = prFile(dir, pr.id);
   await withFileLock(file, async () => {
-    await (0, import_promises4.unlink)(file).catch(() => void 0);
+    await (0, import_promises5.unlink)(file).catch(() => void 0);
   });
   await git(cwd, ["update-ref", "-d", `refs/local-pr/${pr.id}/head`], { allowFail: true });
   await git(cwd, ["update-ref", "-d", `refs/local-pr/${pr.id}/base`], { allowFail: true });
@@ -1231,7 +1439,7 @@ async function reopenLocalPr(cwd, id) {
     pr.reviewRequestedSha = null;
     pr.reviewerNotifiedSha = null;
     await applyHeadRefresh(cwd, pr);
-    pr.updatedAt = nowIso();
+    pr.updatedAt = nowIso2();
   });
   updated.worktreePath = await ensureWorktreeForLoop(cwd, updated, {
     staleLoopIds: (await listLocalPrs(cwd)).filter((other) => other.id !== updated.id && isArchivedPr(other)).map((other) => other.id),
@@ -1247,18 +1455,19 @@ async function getLocalPrNameStatus(cwd, id) {
     return { status, path: rest.join("	") };
   });
 }
-var import_node_crypto, import_promises4, import_node_path5, ALL_SEARCH_FIELDS;
+var import_node_crypto2, import_promises5, import_node_path6, ALL_SEARCH_FIELDS;
 var init_prs = __esm({
   "packages/core/src/prs.ts"() {
     "use strict";
-    import_node_crypto = require("node:crypto");
-    import_promises4 = require("node:fs/promises");
-    import_node_path5 = __toESM(require("node:path"), 1);
+    import_node_crypto2 = require("node:crypto");
+    import_promises5 = require("node:fs/promises");
+    import_node_path6 = __toESM(require("node:path"), 1);
     init_git();
     init_store();
     init_worktrees();
     init_types();
     init_watch();
+    init_learnings();
     ALL_SEARCH_FIELDS = ["title", "body", "comment", "file"];
   }
 });
@@ -1284,8 +1493,8 @@ init_git();
 
 // packages/core/src/github-ops.ts
 var import_node_child_process2 = require("node:child_process");
-var import_promises5 = require("node:fs/promises");
-var import_node_path6 = __toESM(require("node:path"), 1);
+var import_promises6 = require("node:fs/promises");
+var import_node_path7 = __toESM(require("node:path"), 1);
 init_git();
 init_store();
 
@@ -1370,13 +1579,13 @@ async function switchGhUser(login, host = "github.com") {
   }
 }
 function bindFile(dir) {
-  return import_node_path6.default.join(dir, "github.json");
+  return import_node_path7.default.join(dir, "github.json");
 }
 async function getRepoGithubBind(cwd) {
   const root = await findGitRoot(cwd);
   if (!root) return null;
   try {
-    const raw = await (0, import_promises5.readFile)(bindFile(await consoleDir(root)), "utf8");
+    const raw = await (0, import_promises6.readFile)(bindFile(await consoleDir(root)), "utf8");
     const parsed = parseJsonObject(raw);
     if (!parsed.login) return null;
     return { host: parsed.host || "github.com", login: parsed.login };
@@ -1390,7 +1599,7 @@ async function bindRepoGithub(cwd, login, host = "github.com") {
   await switchGhUser(login, host);
   const bind = { host, login };
   const dir = await consoleDir(root);
-  await (0, import_promises5.mkdir)(dir, { recursive: true });
+  await (0, import_promises6.mkdir)(dir, { recursive: true });
   await writeJsonFile(bindFile(dir), bind);
   return bind;
 }
@@ -1520,7 +1729,7 @@ async function exportLocalPr(cwd, id) {
 }
 
 // packages/core/src/sessions.ts
-var import_promises6 = require("node:fs/promises");
+var import_promises7 = require("node:fs/promises");
 init_git();
 init_store();
 async function listSessions(cwd, options = {}) {
@@ -1529,7 +1738,7 @@ async function listSessions(cwd, options = {}) {
   const file = await sessionsFile(root);
   let raw;
   try {
-    raw = await (0, import_promises6.readFile)(file, "utf8");
+    raw = await (0, import_promises7.readFile)(file, "utf8");
   } catch (err) {
     const code = err && typeof err === "object" && "code" in err ? err.code : void 0;
     if (code === "ENOENT") return [];
@@ -1568,6 +1777,7 @@ async function listSessions(cwd, options = {}) {
 
 // packages/core/src/index.ts
 init_store();
+init_learnings();
 
 // packages/cli/src/mcp-stdio.ts
 function encodeMcpFrame(msg) {
@@ -1725,7 +1935,9 @@ async function handleTool(name, args) {
       return withCommentViews(pr);
     }
     case "set_status":
-      return setLocalPrStatus(cwd, String(args.id ?? ""), args.status);
+      return setLocalPrStatus(cwd, String(args.id ?? ""), args.status, {
+        skipPreflight: typeof args.skipPreflight === "boolean" ? args.skipPreflight : void 0
+      });
     case "add_comment": {
       const role = typeof args.role === "string" ? args.role : void 0;
       const author = typeof args.author === "string" ? args.author : void 0;
@@ -1808,6 +2020,23 @@ async function handleTool(name, args) {
     }
     case "export_local_pr":
       return exportLocalPr(cwd, String(args.id ?? ""));
+    case "list_learnings":
+      return listLearnings(cwd, {
+        disabled: typeof args.disabled === "boolean" ? args.disabled : void 0,
+        category: typeof args.category === "string" ? args.category : void 0
+      });
+    case "get_learning":
+      return getLearning(cwd, String(args.id ?? ""));
+    case "disable_learning":
+      return disableLearning(cwd, String(args.id ?? ""));
+    case "enable_learning":
+      return enableLearning(cwd, String(args.id ?? ""));
+    case "delete_learning":
+      return deleteLearning(cwd, String(args.id ?? ""));
+    case "run_preflight": {
+      const pr = await getLocalPr(cwd, String(args.id ?? ""));
+      return runPreflight(cwd, pr);
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -1915,7 +2144,7 @@ var tools = [
   },
   {
     name: "set_status",
-    description: "Set local PR status: draft, ready, changes_requested, reviewed, approved. reviewed means the automated reviewer signed off and the human should look.",
+    description: "Set local PR status: draft, ready, changes_requested, reviewed, approved. reviewed means the automated reviewer signed off and the human should look. When setting to ready, a preflight check runs automatically to match learned patterns; pass skipPreflight=true to bypass.",
     inputSchema: {
       type: "object",
       required: ["id", "status"],
@@ -1924,6 +2153,10 @@ var tools = [
         status: {
           type: "string",
           enum: ["draft", "ready", "changes_requested", "reviewed", "approved"]
+        },
+        skipPreflight: {
+          type: "boolean",
+          description: "Skip preflight check when setting to ready. Use only when preflight issues are false positives or you want to override."
         },
         cwd: { type: "string" }
       }
@@ -2124,6 +2357,69 @@ var tools = [
       type: "object",
       required: ["login"],
       properties: { login: { type: "string" }, cwd: { type: "string" } }
+    }
+  },
+  {
+    name: "list_learnings",
+    description: "List learned patterns from resolved reviewer findings. Patterns are extracted during complete_review and matched during preflight before ready. Optional disabled filter (true shows only disabled, false shows only enabled, omit for all). Optional category filter.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: { type: "string" },
+        disabled: {
+          type: "boolean",
+          description: "Filter by disabled state. Omit to see all."
+        },
+        category: {
+          type: "string",
+          description: "Filter by category (testing, types, style, security, performance, etc.)."
+        }
+      }
+    }
+  },
+  {
+    name: "get_learning",
+    description: "Get a single learning by id (prefix match allowed).",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } }
+    }
+  },
+  {
+    name: "disable_learning",
+    description: "Disable a learning so it no longer blocks preflight. Use when a pattern is no longer relevant or was incorrectly extracted.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } }
+    }
+  },
+  {
+    name: "enable_learning",
+    description: "Re-enable a disabled learning.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } }
+    }
+  },
+  {
+    name: "delete_learning",
+    description: "Permanently delete a learning. Cannot be undone.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } }
+    }
+  },
+  {
+    name: "run_preflight",
+    description: "Run preflight check on a local PR to see if any learned patterns would be matched. This is automatically run when set_status ready unless skipPreflight is set. Returns passed boolean and issues array.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } }
     }
   }
 ];

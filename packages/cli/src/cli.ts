@@ -83,6 +83,11 @@ Usage:
   prgenie status <id> <draft|ready|changes_requested|reviewed|approved>
   prgenie worktrees
   prgenie worktree <id>
+  prgenie learnings [--disabled] [--category <name>]
+  prgenie disable-learning <id>
+  prgenie enable-learning <id>
+  prgenie delete-learning <id> [--yes]
+  prgenie preflight <id>
   prgenie gh list
   prgenie gh status
   prgenie gh use <login>
@@ -526,6 +531,69 @@ export async function run(argv: string[]): Promise<number> {
     const status = rest[1] as LocalPrStatus;
     printPr(await setLocalPrStatus(repo, id, status));
     return 0;
+  }
+  if (sub === "learnings" || sub === "learn") {
+    const { listLearnings } = await import("@prgenie/core");
+    const learnings = await listLearnings(repo, {
+      disabled: flag(rest, "--disabled") ? true : undefined,
+      category: arg(rest, "--category"),
+    });
+    if (learnings.length === 0) {
+      process.stdout.write("No learnings.\n");
+      return 0;
+    }
+    for (const learning of learnings) {
+      const disabledFlag = learning.disabled ? " [disabled]" : "";
+      const categoryFlag = learning.category ? ` [${learning.category}]` : "";
+      process.stdout.write(
+        `${learning.id}${disabledFlag}${categoryFlag} (from ${learning.sourcePrId} ${learning.sourceCommentId})\n`,
+      );
+      process.stdout.write(`  Pattern: ${learning.pattern}\n`);
+      process.stdout.write(`  Guidance: ${learning.guidance}\n`);
+      if (learning.path) process.stdout.write(`  Path: ${learning.path}\n`);
+      process.stdout.write(`  Learned: ${learning.learnedAt}\n\n`);
+    }
+    return 0;
+  }
+  if (sub === "disable-learning") {
+    const { disableLearning } = await import("@prgenie/core");
+    const learning = await disableLearning(repo, id);
+    process.stdout.write(`Disabled learning ${learning.id}\n`);
+    return 0;
+  }
+  if (sub === "enable-learning") {
+    const { enableLearning } = await import("@prgenie/core");
+    const learning = await enableLearning(repo, id);
+    process.stdout.write(`Enabled learning ${learning.id}\n`);
+    return 0;
+  }
+  if (sub === "delete-learning") {
+    const { deleteLearning } = await import("@prgenie/core");
+    if (!flag(rest, "--yes")) {
+      process.stderr.write("Pass --yes to permanently delete a learning.\n");
+      return 1;
+    }
+    const result = await deleteLearning(repo, id);
+    process.stdout.write(`Deleted learning ${result.id}\n`);
+    return 0;
+  }
+  if (sub === "preflight") {
+    const { runPreflight } = await import("@prgenie/core");
+    const pr = await getLocalPr(repo, id);
+    const result = await runPreflight(repo, pr);
+    if (result.passed) {
+      process.stdout.write("✓ Preflight passed — no learned patterns detected.\n");
+      return 0;
+    }
+    process.stdout.write(`✗ Preflight failed — ${result.issues.length} issue(s):\n\n`);
+    for (const issue of result.issues) {
+      process.stdout.write(`[${issue.learningId}] matched in ${issue.matchedIn}\n`);
+      process.stdout.write(`  Pattern: ${issue.pattern}\n`);
+      process.stdout.write(`  Guidance: ${issue.guidance}\n`);
+      if (issue.path) process.stdout.write(`  Path: ${issue.path}\n`);
+      process.stdout.write("\n");
+    }
+    return 1;
   }
   process.stderr.write(usage());
   return 1;

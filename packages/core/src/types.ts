@@ -85,3 +85,29 @@ export const STATUSES: LocalPrStatus[] = [
 export const COMMENT_ROLES: CommentRole[] = ["human", "agent", "reviewer"];
 
 export const COMMENT_STATUSES: CommentStatus[] = ["open", "addressed", "resolved"];
+
+export interface Learning {
+  id: string;
+  pattern: string;
+  guidance: string;
+  sourceCommentId: string;
+  sourcePrId: string;
+  createdAt: string;
+  learnedAt: string;
+  disabled: boolean;
+  path?: string;
+  category?: string;
+}
+
+export interface PreflightIssue {
+  learningId: string;
+  pattern: string;
+  guidance: string;
+  matchedIn: "diff" | "title" | "body";
+  path?: string;
+}
+
+export interface PreflightResult {
+  passed: boolean;
+  issues: PreflightIssue[];
+}
