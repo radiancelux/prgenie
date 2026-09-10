@@ -419,8 +419,8 @@ export class LaneHub implements vscode.Disposable {
           await updateLocalPr(cwd, msg.id, { title });
         } finally {
           this.titleSaveInFlightId = undefined;
+          await this.pushSnapshot(true);
         }
-        await this.pushSnapshot(true);
       } else if (msg.type === "deletePr") {
         const pick = await vscode.window.showWarningMessage(
           `Permanently delete loop ${msg.id}? This removes the packet and refs.`,
