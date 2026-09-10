@@ -16,6 +16,12 @@ When a **subagent** finishes with commits, PR Genie drafts a loop and puts it on
 | Cursor Plugin | No-push rule, `/local-pr`, `/review-local-pr`, MCP, subagent capture, **per-repo `gh` account** |
 | VS Code / Cursor extension | Live watch list as loops land — Switch puts this window on that loop's worktree |
 
+
+## Docs
+
+- [Architecture](docs/architecture.md) — packages, lifecycle, watch lanes, storage, worktrees, `gh` bind
+- [Troubleshooting](docs/troubleshooting.md) — `prgenie doctor` checks and common failure modes
+
 ## What it is not
 
 - Not a subagent orchestrator (Cursor's Task tool owns spawn/stop)
