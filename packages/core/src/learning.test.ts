@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { appendSession } from "./sessions.js";
-import { createLocalPr, addLocalPrComment } from "./prs.js";
+import { createLocalPr, addLocalPrComment, getLocalPr } from "./prs.js";
 import { generateLearningDigest, formatLearningDigest } from "./learning.js";
 
 let repo = "";
@@ -225,4 +225,44 @@ test("generateLearningDigest handles empty sessions file gracefully", async () =
   } finally {
     await rm(tempRepo, { recursive: true, force: true });
   }
+});
+
+test("generateLearningDigest skips comments with invalid timestamps when filtering by since", async () => {
+  git(["checkout", "-b", "feature5"]);
+  await writeFile(path.join(repo, "timestamp.ts"), "// timestamp\n");
+  git(["add", "."]);
+  git(["commit", "-m", "timestamp"]);
+
+  const pr = await createLocalPr(repo, {
+    title: "Timestamp PR",
+    body: "Timestamp",
+    base: "main",
+    head: "feature5",
+  });
+
+  await addLocalPrComment(repo, pr.id, "Valid comment", {
+    role: "reviewer",
+    author: "reviewer",
+  });
+
+  const prData = await getLocalPr(repo, pr.id);
+  const commentId = prData.comments[0].id;
+
+  const dir = path.join(repo, ".git", "agent-console", "prs");
+  const prFile = path.join(dir, `${pr.id}.json`);
+  const prContent = JSON.parse(await readFile(prFile, "utf8"));
+  const comment = prContent.comments.find((c: { id: string }) => c.id === commentId);
+  comment.createdAt = "invalid-date";
+  await writeFile(prFile, JSON.stringify(prContent, null, 2));
+
+  const now = new Date();
+  const summary = await generateLearningDigest(repo, {
+    since: now.toISOString(),
+  });
+
+  assert.equal(
+    summary.totalComments,
+    0,
+    "Should skip comment with invalid timestamp when filtering by since",
+  );
 });

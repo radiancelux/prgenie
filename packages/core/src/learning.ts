@@ -195,6 +195,7 @@ export async function generateLearningDigest(
       if (options.since) {
         const commentDate = new Date(comment.createdAt).getTime();
         const sinceDate = new Date(options.since).getTime();
+        if (!Number.isFinite(commentDate)) continue;
         if (commentDate < sinceDate) continue;
       }
 
