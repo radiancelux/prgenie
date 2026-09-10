@@ -31,9 +31,11 @@ import {
   resumeWatchRole,
   sameFsPath,
   setLocalPrStatus,
+  shepherdStatus,
   updateLocalPr,
   exportLocalPr,
   type LocalPr,
+  type ShepherdResult,
   type WatchRole,
   type GhAccount,
   type RepoGithubBind,
@@ -101,6 +103,7 @@ type Snapshot = {
   titleSaveInFlightId?: string | null;
   watch?: { inbox: WatchLaneSnapshot; queue: WatchLaneSnapshot };
   ghBind?: GhBindSnapshot;
+  shepherdStatus?: ShepherdResult | null;
 };
 
 export class LaneHub implements vscode.Disposable {
@@ -652,6 +655,14 @@ export class LaneHub implements vscode.Disposable {
           error: err instanceof Error ? err.message : String(err),
         };
       }
+      let shepherd: ShepherdResult | null = null;
+      if (selected) {
+        try {
+          shepherd = await shepherdStatus(root, selected.id);
+        } catch (err) {
+          console.error("[prgenie] Failed to fetch shepherd status:", err);
+        }
+      }
       this.post(
         {
           type: "snapshot",
@@ -668,6 +679,7 @@ export class LaneHub implements vscode.Disposable {
           titleSaveInFlightId: this.titleSaveInFlightId ?? null,
           watch: { inbox: laneSnap("inbox"), queue: laneSnap("queue") },
           ghBind,
+          shepherdStatus: shepherd,
         },
         force,
       );
@@ -815,6 +827,32 @@ function laneHtml(webview: vscode.Webview): string {
       font-size: 10px;
       border-left: 2px solid var(--vscode-inputValidation-warningBorder, var(--vscode-charts-yellow, #f59f00));
     }
+    .shepherd {
+      display: flex; flex-direction: column; gap: 4px;
+      padding: 6px 8px; margin-top: 4px;
+      border: 1px solid var(--vscode-widget-border, rgba(127,127,127,0.35));
+    }
+    .shepherd-header {
+      display: flex; align-items: center; gap: 8px; font-size: 11px;
+    }
+    .shepherd-header .label {
+      width: 42px; flex: none; text-transform: uppercase; letter-spacing: 0.04em;
+      font-size: 10px; color: var(--vscode-descriptionForeground);
+    }
+    .shepherd-header .status { flex: 1; font-weight: 600; }
+    .shepherd-header .status.ready { color: var(--vscode-charts-green, #3fb950); }
+    .shepherd-header .status.blocked { color: var(--vscode-charts-orange, #f59f00); }
+    .shepherd-reasons {
+      display: flex; flex-direction: column; gap: 2px;
+      padding-left: 50px; font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .shepherd-reason { display: flex; gap: 6px; }
+    .shepherd-reason .check {
+      flex: none; text-transform: uppercase; letter-spacing: 0.04em;
+      font-weight: 600; min-width: 60px;
+    }
+    .shepherd-reason .message { flex: 1; }
     .pr {
       display: flex; align-items: flex-start; gap: 8px;
       padding: 6px 12px;
@@ -866,6 +904,13 @@ function laneHtml(webview: vscode.Webview): string {
         <button type="button" class="secondary" id="ghBindBtn">Bind</button>
       </div>
       <div class="gh-bind-warning" id="ghBindWarning" hidden></div>
+    </div>
+    <div class="shepherd" id="shepherd" hidden>
+      <div class="shepherd-header">
+        <span class="label">export</span>
+        <span class="status" id="shepherdStatus">—</span>
+      </div>
+      <div class="shepherd-reasons" id="shepherdReasons"></div>
     </div>
     <div class="meta-top"><span class="dot off" id="dot"></span><span class="muted" id="meta">Watching</span><button type="button" class="secondary" id="archivedToggle">Show archived</button></div>
   </div>
@@ -1001,6 +1046,33 @@ function laneHtml(webview: vscode.Webview): string {
         }
       }
     }
+    function paintShepherd(msg) {
+      const shepherdBox = document.getElementById("shepherd");
+      const shepherdStatus = document.getElementById("shepherdStatus");
+      const shepherdReasons = document.getElementById("shepherdReasons");
+      
+      if (!shepherdBox || !shepherdStatus || !shepherdReasons) return;
+      
+      const shepherd = msg.shepherdStatus;
+      if (!shepherd) {
+        shepherdBox.hidden = true;
+        return;
+      }
+      
+      shepherdBox.hidden = false;
+      shepherdStatus.textContent = shepherd.status;
+      shepherdStatus.className = "status " + shepherd.status;
+      
+      shepherdReasons.innerHTML = '';
+      if (shepherd.reasons && shepherd.reasons.length > 0) {
+        for (const reason of shepherd.reasons) {
+          const reasonEl = document.createElement('div');
+          reasonEl.className = 'shepherd-reason';
+          reasonEl.innerHTML = '<span class="check">' + reason.check + '</span><span class="message">' + reason.message + '</span>';
+          shepherdReasons.appendChild(reasonEl);
+        }
+      }
+    }
     function prRow(id) {
       const el = document.createElement("div");
       el.dataset.id = id;
@@ -1023,6 +1095,7 @@ function laneHtml(webview: vscode.Webview): string {
       const meta = document.getElementById("meta");
       paintWatch(msg);
       paintGhBind(msg);
+      paintShepherd(msg);
       if (bindInProgress) {
         bindInProgress = false;
         const ghBindBtn = document.getElementById("ghBindBtn");
