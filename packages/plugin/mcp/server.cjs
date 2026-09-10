@@ -828,6 +828,151 @@ var init_learnings = __esm({
   }
 });
 
+// packages/core/src/github.ts
+function parseGhAuthStatus(text) {
+  const accounts = [];
+  let pending = null;
+  for (const line of text.split(/\r?\n/)) {
+    const loginMatch = line.match(/Logged in to (\S+) account (\S+)/i);
+    if (loginMatch) {
+      pending = { host: loginMatch[1], login: loginMatch[2] };
+      continue;
+    }
+    const activeMatch = line.match(/Active account:\s*(true|false)/i);
+    if (activeMatch && pending) {
+      accounts.push({
+        host: pending.host,
+        login: pending.login,
+        active: activeMatch[1].toLowerCase() === "true"
+      });
+      pending = null;
+    }
+  }
+  if (pending) {
+    accounts.push({ ...pending, active: false });
+  }
+  return accounts;
+}
+var init_github = __esm({
+  "packages/core/src/github.ts"() {
+    "use strict";
+  }
+});
+
+// packages/core/src/github-ops.ts
+var github_ops_exports = {};
+__export(github_ops_exports, {
+  activeGhLogin: () => activeGhLogin,
+  bindRepoGithub: () => bindRepoGithub,
+  ensureRepoGithub: () => ensureRepoGithub,
+  getRepoGithubBind: () => getRepoGithubBind,
+  listGhAccounts: () => listGhAccounts,
+  runGh: () => runGh,
+  switchGhUser: () => switchGhUser
+});
+function gh(args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = (0, import_node_child_process2.spawn)("gh", args, {
+      cwd: options.cwd,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      resolve({
+        stdout,
+        stderr,
+        code: code ?? 1
+      });
+    });
+  });
+}
+function runGh(args, options = {}) {
+  return gh(args, options);
+}
+async function listGhAccounts() {
+  const result = await gh(["auth", "status"]);
+  return parseGhAuthStatus(`${result.stdout}
+${result.stderr}`);
+}
+async function activeGhLogin(host = "github.com") {
+  const accounts = await listGhAccounts();
+  return accounts.find((a) => a.host === host && a.active)?.login ?? null;
+}
+async function switchGhUser(login, host = "github.com") {
+  const accounts = await listGhAccounts();
+  const match = accounts.find(
+    (a) => a.host === host && a.login.toLowerCase() === login.toLowerCase()
+  );
+  if (!match) {
+    throw new Error(`GitHub account "${login}" is not logged in on ${host}. Run: gh auth login`);
+  }
+  if (match.active) return;
+  const result = await gh(["auth", "switch", "--hostname", host, "--user", match.login]);
+  if (result.code !== 0) {
+    throw new Error(result.stderr.trim() || `gh auth switch failed for ${login}`);
+  }
+}
+function bindFile(dir) {
+  return import_node_path6.default.join(dir, "github.json");
+}
+async function getRepoGithubBind(cwd) {
+  const root = await findGitRoot(cwd);
+  if (!root) return null;
+  try {
+    const raw = await (0, import_promises5.readFile)(bindFile(await consoleDir(root)), "utf8");
+    const parsed = parseJsonObject(raw);
+    if (!parsed.login) return null;
+    return { host: parsed.host || "github.com", login: parsed.login };
+  } catch {
+    return null;
+  }
+}
+async function bindRepoGithub(cwd, login, host = "github.com") {
+  const root = await findGitRoot(cwd);
+  if (!root) throw new Error("Not inside a git repository.");
+  await switchGhUser(login, host);
+  const bind = { host, login };
+  const dir = await consoleDir(root);
+  await (0, import_promises5.mkdir)(dir, { recursive: true });
+  await writeJsonFile(bindFile(dir), bind);
+  return bind;
+}
+async function ensureRepoGithub(cwd) {
+  const bind = await getRepoGithubBind(cwd);
+  if (!bind) {
+    return { login: await activeGhLogin(), switched: false, bound: false };
+  }
+  const before = await activeGhLogin(bind.host);
+  if (before === bind.login) {
+    return { login: bind.login, switched: false, bound: true };
+  }
+  await switchGhUser(bind.login, bind.host);
+  return { login: bind.login, switched: true, bound: true };
+}
+var import_node_child_process2, import_promises5, import_node_path6;
+var init_github_ops = __esm({
+  "packages/core/src/github-ops.ts"() {
+    "use strict";
+    import_node_child_process2 = require("node:child_process");
+    import_promises5 = require("node:fs/promises");
+    import_node_path6 = __toESM(require("node:path"), 1);
+    init_git();
+    init_store();
+    init_github();
+  }
+});
+
 // packages/core/src/prs.ts
 function nowIso2() {
   return (/* @__PURE__ */ new Date()).toISOString();
@@ -852,7 +997,7 @@ async function writePr(cwd, pr) {
   });
 }
 async function readPrFile(file) {
-  const pr = parseJsonObject(await (0, import_promises5.readFile)(file, "utf8"));
+  const pr = parseJsonObject(await (0, import_promises6.readFile)(file, "utf8"));
   pr.source = pr.source ?? null;
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
   pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
@@ -924,11 +1069,11 @@ async function changedFilePathsForPr(cwd, pr) {
 async function listLocalPrs(cwd, options = {}) {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
-  const names = await (0, import_promises5.readdir)(dir);
+  const names = await (0, import_promises6.readdir)(dir);
   const prs = [];
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
-    const raw = await (0, import_promises5.readFile)(import_node_path6.default.join(dir, name), "utf8");
+    const raw = await (0, import_promises6.readFile)(import_node_path7.default.join(dir, name), "utf8");
     let pr;
     try {
       pr = parseJsonObject(raw);
@@ -1197,7 +1342,7 @@ async function addLocalPrComment(cwd, id, body, options = {}) {
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject(await (0, import_promises5.readFile)(file, "utf8"));
+    const pr = parseJsonObject(await (0, import_promises6.readFile)(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const comment = {
       id: newId2("c"),
@@ -1283,7 +1428,7 @@ async function addressLocalPrComment(cwd, id, commentId, body, options = {}) {
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject(await (0, import_promises5.readFile)(file, "utf8"));
+    const pr = parseJsonObject(await (0, import_promises6.readFile)(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
     if (!target) throw new Error(`Comment not found: ${commentId}`);
@@ -1322,7 +1467,7 @@ async function resolveLocalPrComment(cwd, id, commentId, body, options = {}) {
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject(await (0, import_promises5.readFile)(file, "utf8"));
+    const pr = parseJsonObject(await (0, import_promises6.readFile)(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
     if (!target) throw new Error(`Comment not found: ${commentId}`);
@@ -1363,7 +1508,7 @@ async function completeLocalPrReview(cwd, id, options = {}) {
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject(await (0, import_promises5.readFile)(file, "utf8"));
+    const pr = parseJsonObject(await (0, import_promises6.readFile)(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const reviewedAgainstSha = pr.reviewRequestedSha ?? null;
     await applyHeadRefresh(cwd, pr);
@@ -1428,7 +1573,7 @@ async function deleteLocalPr(cwd, id) {
   const dir = await prsDir(cwd);
   const file = prFile(dir, pr.id);
   await withFileLock(file, async () => {
-    await (0, import_promises5.unlink)(file).catch(() => void 0);
+    await (0, import_promises6.unlink)(file).catch(() => void 0);
   });
   await git(cwd, ["update-ref", "-d", `refs/local-pr/${pr.id}/head`], { allowFail: true });
   await git(cwd, ["update-ref", "-d", `refs/local-pr/${pr.id}/base`], { allowFail: true });
@@ -1459,13 +1604,137 @@ async function getLocalPrNameStatus(cwd, id) {
     return { status, path: rest.join("	") };
   });
 }
-var import_node_crypto2, import_promises5, import_node_path6, ALL_SEARCH_FIELDS;
+async function attachLocalPr(cwd, input) {
+  const root = await requireGitRoot(cwd);
+  const { runGh: runGh2 } = await Promise.resolve().then(() => (init_github_ops(), github_ops_exports));
+  const source = input.source.trim();
+  let headRef;
+  let baseRef;
+  let title;
+  let body;
+  let headSha;
+  let baseSha;
+  const prNumberMatch = source.match(/^#?(\d+)$/) ?? source.match(/\/pull\/(\d+)/);
+  if (prNumberMatch) {
+    const prNumber = prNumberMatch[1];
+    const result = await runGh2(
+      [
+        "pr",
+        "view",
+        prNumber,
+        "--json",
+        "title,body,headRefName,baseRefName,headRefOid,state"
+      ],
+      { cwd }
+    );
+    if (result.code !== 0) {
+      throw new Error(
+        `Failed to fetch GitHub PR #${prNumber}: ${result.stderr.trim() || result.stdout.trim()}`
+      );
+    }
+    const prData = JSON.parse(result.stdout);
+    if (prData.state.toUpperCase() === "MERGED") {
+      throw new Error(
+        `GitHub PR #${prNumber} is already merged. Cannot attach merged PRs to new lanes.`
+      );
+    }
+    headRef = prData.headRefName;
+    baseRef = input.base ?? prData.baseRefName;
+    title = input.title ?? prData.title;
+    body = input.body ?? prData.body;
+    const fetchResult = await git(root, ["fetch", "origin", headRef], { allowFail: true });
+    if (fetchResult.code !== 0) {
+      throw new Error(
+        `Failed to fetch remote branch ${headRef}: ${fetchResult.stderr.trim() || "git fetch failed"}`
+      );
+    }
+    const remoteRef = `origin/${headRef}`;
+    const shaResult = await git(root, ["rev-parse", "--verify", remoteRef], { allowFail: true });
+    if (shaResult.code !== 0) {
+      throw new Error(`Cannot resolve remote branch: ${remoteRef}`);
+    }
+    headSha = shaResult.stdout.trim();
+  } else {
+    headRef = source.replace(/^origin\//, "");
+    const fetchResult = await git(root, ["fetch", "origin", headRef], { allowFail: true });
+    if (fetchResult.code !== 0) {
+      throw new Error(
+        `Failed to fetch remote branch ${headRef}: ${fetchResult.stderr.trim() || "git fetch failed"}`
+      );
+    }
+    const remoteRef = `origin/${headRef}`;
+    const shaResult = await git(root, ["rev-parse", "--verify", remoteRef], { allowFail: true });
+    if (shaResult.code !== 0) {
+      throw new Error(`Cannot resolve remote branch: ${remoteRef}`);
+    }
+    headSha = shaResult.stdout.trim();
+    baseRef = input.base ?? await detectDefaultBase(cwd);
+    const prCheckResult = await runGh2(
+      ["pr", "view", headRef, "--json", "title,body"],
+      { cwd }
+    );
+    if (prCheckResult.code === 0) {
+      try {
+        const prData = JSON.parse(prCheckResult.stdout);
+        title = input.title ?? prData.title;
+        body = input.body ?? prData.body;
+      } catch {
+        title = input.title ?? await shortLogSubject(cwd, headSha).catch(() => `Attached ${headRef}`);
+        body = input.body ?? "";
+      }
+    } else {
+      title = input.title ?? await shortLogSubject(cwd, headSha).catch(() => `Attached ${headRef}`);
+      body = input.body ?? "";
+    }
+  }
+  const baseResolved = await git(root, ["rev-parse", "--verify", baseRef], { allowFail: true });
+  if (baseResolved.code !== 0) {
+    throw new Error(`Cannot resolve base branch: ${baseRef}`);
+  }
+  baseSha = baseResolved.stdout.trim();
+  const existing = (await listLocalPrs(root)).find(
+    (pr2) => pr2.headRef === headRef && !isArchivedPr(pr2)
+  );
+  if (existing) {
+    throw new Error(
+      `A lane for branch ${headRef} already exists (${existing.id}). Use update or refresh instead.`
+    );
+  }
+  const id = newId2("lp");
+  const createdAt = nowIso2();
+  const pr = {
+    id,
+    title,
+    body,
+    status: "draft",
+    headRef,
+    baseRef,
+    headSha,
+    baseSha,
+    worktreePath: null,
+    comments: [],
+    source: input.prSource ?? { kind: "cli" },
+    createdAt,
+    updatedAt: createdAt,
+    reviewRequestedSha: null,
+    reviewerNotifiedSha: null
+  };
+  await writePr(root, pr);
+  const others = await listLocalPrs(root);
+  pr.worktreePath = await ensureWorktreeForLoop(root, pr, {
+    staleLoopIds: others.filter((other) => other.id !== pr.id && isArchivedPr(other)).map((other) => other.id),
+    liveLoopIds: others.filter((other) => !isArchivedPr(other)).map((other) => other.id)
+  });
+  await resumeWatchForNextLoop(root);
+  return pr;
+}
+var import_node_crypto2, import_promises6, import_node_path7, ALL_SEARCH_FIELDS;
 var init_prs = __esm({
   "packages/core/src/prs.ts"() {
     "use strict";
     import_node_crypto2 = require("node:crypto");
-    import_promises5 = require("node:fs/promises");
-    import_node_path6 = __toESM(require("node:path"), 1);
+    import_promises6 = require("node:fs/promises");
+    import_node_path7 = __toESM(require("node:path"), 1);
     init_git();
     init_store();
     init_worktrees();
@@ -1535,139 +1804,14 @@ init_watchActivity();
 
 // packages/core/src/doctor.ts
 init_git();
-
-// packages/core/src/github-ops.ts
-var import_node_child_process2 = require("node:child_process");
-var import_promises6 = require("node:fs/promises");
-var import_node_path7 = __toESM(require("node:path"), 1);
-init_git();
-init_store();
-
-// packages/core/src/github.ts
-function parseGhAuthStatus(text) {
-  const accounts = [];
-  let pending = null;
-  for (const line of text.split(/\r?\n/)) {
-    const loginMatch = line.match(/Logged in to (\S+) account (\S+)/i);
-    if (loginMatch) {
-      pending = { host: loginMatch[1], login: loginMatch[2] };
-      continue;
-    }
-    const activeMatch = line.match(/Active account:\s*(true|false)/i);
-    if (activeMatch && pending) {
-      accounts.push({
-        host: pending.host,
-        login: pending.login,
-        active: activeMatch[1].toLowerCase() === "true"
-      });
-      pending = null;
-    }
-  }
-  if (pending) {
-    accounts.push({ ...pending, active: false });
-  }
-  return accounts;
-}
-
-// packages/core/src/github-ops.ts
-function gh(args, options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = (0, import_node_child_process2.spawn)("gh", args, {
-      cwd: options.cwd,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      resolve({
-        stdout,
-        stderr,
-        code: code ?? 1
-      });
-    });
-  });
-}
-function runGh(args, options = {}) {
-  return gh(args, options);
-}
-async function listGhAccounts() {
-  const result = await gh(["auth", "status"]);
-  return parseGhAuthStatus(`${result.stdout}
-${result.stderr}`);
-}
-async function activeGhLogin(host = "github.com") {
-  const accounts = await listGhAccounts();
-  return accounts.find((a) => a.host === host && a.active)?.login ?? null;
-}
-async function switchGhUser(login, host = "github.com") {
-  const accounts = await listGhAccounts();
-  const match = accounts.find(
-    (a) => a.host === host && a.login.toLowerCase() === login.toLowerCase()
-  );
-  if (!match) {
-    throw new Error(`GitHub account "${login}" is not logged in on ${host}. Run: gh auth login`);
-  }
-  if (match.active) return;
-  const result = await gh(["auth", "switch", "--hostname", host, "--user", match.login]);
-  if (result.code !== 0) {
-    throw new Error(result.stderr.trim() || `gh auth switch failed for ${login}`);
-  }
-}
-function bindFile(dir) {
-  return import_node_path7.default.join(dir, "github.json");
-}
-async function getRepoGithubBind(cwd) {
-  const root = await findGitRoot(cwd);
-  if (!root) return null;
-  try {
-    const raw = await (0, import_promises6.readFile)(bindFile(await consoleDir(root)), "utf8");
-    const parsed = parseJsonObject(raw);
-    if (!parsed.login) return null;
-    return { host: parsed.host || "github.com", login: parsed.login };
-  } catch {
-    return null;
-  }
-}
-async function bindRepoGithub(cwd, login, host = "github.com") {
-  const root = await findGitRoot(cwd);
-  if (!root) throw new Error("Not inside a git repository.");
-  await switchGhUser(login, host);
-  const bind = { host, login };
-  const dir = await consoleDir(root);
-  await (0, import_promises6.mkdir)(dir, { recursive: true });
-  await writeJsonFile(bindFile(dir), bind);
-  return bind;
-}
-async function ensureRepoGithub(cwd) {
-  const bind = await getRepoGithubBind(cwd);
-  if (!bind) {
-    return { login: await activeGhLogin(), switched: false, bound: false };
-  }
-  const before = await activeGhLogin(bind.host);
-  if (before === bind.login) {
-    return { login: bind.login, switched: false, bound: true };
-  }
-  await switchGhUser(bind.login, bind.host);
-  return { login: bind.login, switched: true, bound: true };
-}
-
-// packages/core/src/doctor.ts
+init_github_ops();
 init_prs();
 init_watch();
 init_worktrees();
 
 // packages/core/src/export.ts
 init_git();
+init_github_ops();
 init_prs();
 init_worktrees();
 init_watch();
@@ -2073,6 +2217,8 @@ function formatLearningDigest(summary) {
 
 // packages/core/src/index.ts
 init_store();
+init_github();
+init_github_ops();
 init_learnings();
 
 // packages/cli/src/mcp-stdio.ts
@@ -2230,6 +2376,13 @@ async function handleTool(name, args) {
         body: typeof args.body === "string" ? args.body : void 0,
         base: typeof args.base === "string" ? args.base : void 0,
         head: typeof args.head === "string" ? args.head : void 0
+      });
+    case "attach_local_pr":
+      return attachLocalPr(cwd, {
+        source: String(args.source ?? ""),
+        title: typeof args.title === "string" ? args.title : void 0,
+        body: typeof args.body === "string" ? args.body : void 0,
+        base: typeof args.base === "string" ? args.base : void 0
       });
     case "update_local_pr":
       return updateLocalPr(cwd, String(args.id ?? ""), {
@@ -2441,6 +2594,33 @@ var tools = [
         },
         base: { type: "string" },
         head: { type: "string" },
+        cwd: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "attach_local_pr",
+    description: "Attach an existing GitHub PR or remote branch into a new PR Genie lane. Fetches PR/branch metadata from GitHub and creates a local lane with the same gating (review + preflight + export shepherd). Accepts GitHub PR number (#123), PR URL, or branch name. The branch is fetched but not checked out until worktree creation. The lane starts as draft and follows the same review/export workflow as locally-created lanes. Do not use for merged PRs.",
+    inputSchema: {
+      type: "object",
+      required: ["source"],
+      properties: {
+        source: {
+          type: "string",
+          description: "GitHub PR number (e.g., '123' or '#123'), PR URL, or remote branch name to attach."
+        },
+        title: {
+          type: "string",
+          description: "Override title (default: from PR metadata or branch commit)."
+        },
+        body: {
+          type: "string",
+          description: "Override body/summary (default: from PR body or empty)."
+        },
+        base: {
+          type: "string",
+          description: "Override base branch (default: from PR or repo default)."
+        },
         cwd: { type: "string" }
       }
     }

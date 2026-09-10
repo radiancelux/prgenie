@@ -209,36 +209,6 @@ var init_watchActivity = __esm({
   }
 });
 
-// packages/core/src/export-validation.ts
-var init_export_validation = __esm({
-  "packages/core/src/export-validation.ts"() {
-    "use strict";
-    init_prs();
-    init_learnings();
-  }
-});
-
-// packages/cli/src/github-hook.ts
-var import_node_fs = require("node:fs");
-
-// packages/core/src/index.ts
-init_types();
-init_git();
-init_worktrees();
-init_prs();
-init_watch();
-init_watchActivity();
-
-// packages/core/src/doctor.ts
-init_git();
-
-// packages/core/src/github-ops.ts
-var import_node_child_process2 = require("node:child_process");
-var import_promises2 = require("node:fs/promises");
-var import_node_path3 = __toESM(require("node:path"), 1);
-init_git();
-init_store();
-
 // packages/core/src/github.ts
 function parseGhAuthStatus(text) {
   const accounts = [];
@@ -264,6 +234,11 @@ function parseGhAuthStatus(text) {
   }
   return accounts;
 }
+var init_github = __esm({
+  "packages/core/src/github.ts"() {
+    "use strict";
+  }
+});
 
 // packages/core/src/github-ops.ts
 function gh(args, options = {}) {
@@ -343,14 +318,49 @@ async function ensureRepoGithub(cwd) {
   await switchGhUser(bind.login, bind.host);
   return { login: bind.login, switched: true, bound: true };
 }
+var import_node_child_process2, import_promises2, import_node_path3;
+var init_github_ops = __esm({
+  "packages/core/src/github-ops.ts"() {
+    "use strict";
+    import_node_child_process2 = require("node:child_process");
+    import_promises2 = require("node:fs/promises");
+    import_node_path3 = __toESM(require("node:path"), 1);
+    init_git();
+    init_store();
+    init_github();
+  }
+});
+
+// packages/core/src/export-validation.ts
+var init_export_validation = __esm({
+  "packages/core/src/export-validation.ts"() {
+    "use strict";
+    init_prs();
+    init_learnings();
+  }
+});
+
+// packages/cli/src/github-hook.ts
+var import_node_fs = require("node:fs");
+
+// packages/core/src/index.ts
+init_types();
+init_git();
+init_worktrees();
+init_prs();
+init_watch();
+init_watchActivity();
 
 // packages/core/src/doctor.ts
+init_git();
+init_github_ops();
 init_prs();
 init_watch();
 init_worktrees();
 
 // packages/core/src/export.ts
 init_git();
+init_github_ops();
 init_prs();
 init_worktrees();
 init_watch();
@@ -368,6 +378,8 @@ init_prs();
 
 // packages/core/src/index.ts
 init_store();
+init_github();
+init_github_ops();
 init_learnings();
 
 // packages/cli/src/github-hook.ts

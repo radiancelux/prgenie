@@ -33,6 +33,7 @@ export {
   addLocalPrComment,
   addressLocalPrComment,
   addressedReviewComments,
+  attachLocalPr,
   captureAgentWork,
   commentThreads,
   completeLocalPrReview,
@@ -71,6 +72,7 @@ export type {
   CompleteLocalPrReviewResult,
   ListLocalPrsOptions,
   LocalPrSearchField,
+  AttachLocalPrInput,
 } from "./prs.js";
 export {
   haltWatch,

@@ -861,6 +861,23 @@ var init_watchActivity = __esm({
   }
 });
 
+// packages/core/src/github.ts
+var init_github = __esm({
+  "packages/core/src/github.ts"() {
+    "use strict";
+  }
+});
+
+// packages/core/src/github-ops.ts
+var init_github_ops = __esm({
+  "packages/core/src/github-ops.ts"() {
+    "use strict";
+    init_git();
+    init_store();
+    init_github();
+  }
+});
+
 // packages/core/src/export-validation.ts
 var init_export_validation = __esm({
   "packages/core/src/export-validation.ts"() {
@@ -883,18 +900,14 @@ init_watchActivity();
 
 // packages/core/src/doctor.ts
 init_git();
-
-// packages/core/src/github-ops.ts
-init_git();
-init_store();
-
-// packages/core/src/doctor.ts
+init_github_ops();
 init_prs();
 init_watch();
 init_worktrees();
 
 // packages/core/src/export.ts
 init_git();
+init_github_ops();
 init_prs();
 init_worktrees();
 init_watch();
@@ -926,6 +939,8 @@ init_prs();
 
 // packages/core/src/index.ts
 init_store();
+init_github();
+init_github_ops();
 init_learnings();
 
 // packages/cli/src/capture-hook.ts

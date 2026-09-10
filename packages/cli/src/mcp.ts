@@ -3,6 +3,7 @@ import {
   addressLocalPrComment,
   addressedReviewComments,
   archiveLoopsMergedOnGithub,
+  attachLocalPr,
   bindRepoGithub,
   commentThreads,
   completeLocalPrReview,
@@ -159,6 +160,13 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
         body: typeof args.body === "string" ? args.body : undefined,
         base: typeof args.base === "string" ? args.base : undefined,
         head: typeof args.head === "string" ? args.head : undefined,
+      });
+    case "attach_local_pr":
+      return attachLocalPr(cwd, {
+        source: String(args.source ?? ""),
+        title: typeof args.title === "string" ? args.title : undefined,
+        body: typeof args.body === "string" ? args.body : undefined,
+        base: typeof args.base === "string" ? args.base : undefined,
       });
     case "update_local_pr":
       return updateLocalPr(cwd, String(args.id ?? ""), {
@@ -384,6 +392,35 @@ export const tools = [
         },
         base: { type: "string" },
         head: { type: "string" },
+        cwd: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "attach_local_pr",
+    description:
+      "Attach an existing GitHub PR or remote branch into a new PR Genie lane. Fetches PR/branch metadata from GitHub and creates a local lane with the same gating (review + preflight + export shepherd). Accepts GitHub PR number (#123), PR URL, or branch name. The branch is fetched but not checked out until worktree creation. The lane starts as draft and follows the same review/export workflow as locally-created lanes. Do not use for merged PRs.",
+    inputSchema: {
+      type: "object",
+      required: ["source"],
+      properties: {
+        source: {
+          type: "string",
+          description:
+            "GitHub PR number (e.g., '123' or '#123'), PR URL, or remote branch name to attach.",
+        },
+        title: {
+          type: "string",
+          description: "Override title (default: from PR metadata or branch commit).",
+        },
+        body: {
+          type: "string",
+          description: "Override body/summary (default: from PR body or empty).",
+        },
+        base: {
+          type: "string",
+          description: "Override base branch (default: from PR or repo default).",
+        },
         cwd: { type: "string" },
       },
     },

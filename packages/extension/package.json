@@ -72,6 +72,11 @@
         "icon": "$(add)"
       },
       {
+        "command": "prgenie.attachPr",
+        "title": "PR Genie: Attach GitHub PR or Branch",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "prgenie.openLane",
         "title": "PR Genie: Open Local PRs"
       },
@@ -89,6 +94,11 @@
       "view/title": [
         {
           "command": "prgenie.createPr",
+          "when": "view == prgenie.lane",
+          "group": "navigation"
+        },
+        {
+          "command": "prgenie.attachPr",
           "when": "view == prgenie.lane",
           "group": "navigation"
         },

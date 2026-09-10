@@ -12,6 +12,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerWebviewViewProvider("prgenie.panel", hub.provider("panel"), retain),
     vscode.commands.registerCommand("prgenie.refresh", () => hub.refresh()),
     vscode.commands.registerCommand("prgenie.createPr", () => hub.createPr()),
+    vscode.commands.registerCommand("prgenie.attachPr", () => hub.attachPr()),
     vscode.commands.registerCommand("prgenie.openGitLens", () => hub.openGitLens()),
     vscode.commands.registerCommand("prgenie.openLane", () =>
       vscode.commands.executeCommand("prgenie.lane.focus"),

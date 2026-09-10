@@ -3,6 +3,7 @@ import {
   addLocalPrComment,
   addressLocalPrComment,
   archiveLoopsMergedOnGithub,
+  attachLocalPr,
   bindRepoGithub,
   completeLocalPrReview,
   createLocalPr,
@@ -50,6 +51,7 @@ function usage(): string {
 
 Usage:
   prgenie create [--title <t>] [--body <b>] [--base <ref>] [--head <ref>]
+  prgenie attach <pr-url|pr-number|branch> [--title <t>] [--body <b>] [--base <ref>]
   prgenie list [--all] [--search <q>] [--query <q>] [--in title,body,comment,file]
   prgenie queue
   prgenie inbox
@@ -168,6 +170,23 @@ export async function run(argv: string[]): Promise<number> {
       body: arg(rest, "--body"),
       base: arg(rest, "--base"),
       head: arg(rest, "--head"),
+    });
+    printPr(pr);
+    return 0;
+  }
+  if (sub === "attach") {
+    const source = rest[0];
+    if (!source) {
+      process.stderr.write(
+        "prgenie attach <pr-url|pr-number|branch> [--title <t>] [--body <b>] [--base <ref>]\n",
+      );
+      return 1;
+    }
+    const pr = await attachLocalPr(repo, {
+      source,
+      title: arg(rest, "--title"),
+      body: arg(rest, "--body"),
+      base: arg(rest, "--base"),
     });
     printPr(pr);
     return 0;
