@@ -408,8 +408,7 @@ export class LaneHub implements vscode.Disposable {
           title: "Rename loop",
           prompt: "Local PR title",
           value: pr.title,
-          validateInput: (value) =>
-            value.trim() ? undefined : "Title is empty",
+          validateInput: (value) => (value.trim() ? undefined : "Title is empty"),
         });
         if (title === undefined) return;
         if (title.trim() === pr.title.trim()) return;
@@ -615,8 +614,7 @@ function snapshotKey(payload: Snapshot | { type: "snapshot"; error: string; prs:
     hereId: "hereId" in payload ? payload.hereId : null,
     archivedCount: "archivedCount" in payload ? payload.archivedCount : 0,
     showArchived: "showArchived" in payload ? payload.showArchived : false,
-    titleSaveInFlightId:
-      "titleSaveInFlightId" in payload ? payload.titleSaveInFlightId : null,
+    titleSaveInFlightId: "titleSaveInFlightId" in payload ? payload.titleSaveInFlightId : null,
     repo: "repo" in payload ? payload.repo : "",
     files: "files" in payload ? payload.files : [],
     threads: "threads" in payload ? payload.threads : [],
