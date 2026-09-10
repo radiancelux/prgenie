@@ -444,6 +444,11 @@ async function prsDir(cwd) {
 function prFile(dir, id) {
   return import_node_path3.default.join(dir, `${id}.json`);
 }
+async function sessionsFile(cwd) {
+  const dir = await consoleDir(cwd);
+  await (0, import_promises2.mkdir)(dir, { recursive: true });
+  return import_node_path3.default.join(dir, "sessions.jsonl");
+}
 function firstJsonObject(raw) {
   const start = raw.indexOf("{");
   if (start < 0) return null;
@@ -1478,8 +1483,54 @@ async function exportLocalPr(cwd, id) {
 }
 
 // packages/core/src/sessions.ts
+var import_promises6 = require("node:fs/promises");
 init_git();
 init_store();
+async function listSessions(cwd, options = {}) {
+  const root = await findGitRoot(cwd);
+  if (!root) return [];
+  const file = await sessionsFile(root);
+  let raw = "";
+  try {
+    raw = await (0, import_promises6.readFile)(file, "utf8");
+  } catch (err) {
+    const code = err && typeof err === "object" && "code" in err ? err.code : void 0;
+    if (code === "ENOENT") return [];
+    throw err;
+  }
+  const limitRaw = options.limit ?? 50;
+  const limit = Math.min(
+    1e3,
+    Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 50)
+  );
+  const hook = typeof options.hook === "string" && options.hook ? options.hook : void 0;
+  const sinceMs = typeof options.since === "string" && options.since ? Date.parse(options.since) : Number.NaN;
+  const events = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+    const event = parsed;
+    if (hook && event.hook !== hook) continue;
+    if (Number.isFinite(sinceMs)) {
+      const atMs = typeof event.at === "string" ? Date.parse(event.at) : Number.NaN;
+      if (!Number.isFinite(atMs) || atMs < sinceMs) continue;
+    }
+    events.push(event);
+  }
+  events.sort((a, b) => {
+    const aMs = typeof a.at === "string" ? Date.parse(a.at) : 0;
+    const bMs = typeof b.at === "string" ? Date.parse(b.at) : 0;
+    return bMs - aMs;
+  });
+  return events.slice(0, limit);
+}
 
 // packages/core/src/index.ts
 init_store();
@@ -1591,6 +1642,12 @@ async function handleTool(name, args) {
     case "gh_use":
     case "github_use":
       return bindRepoGithub(cwd, String(args.login ?? ""));
+    case "list_sessions":
+      return listSessions(cwd, {
+        limit: typeof args.limit === "number" ? args.limit : void 0,
+        hook: typeof args.hook === "string" ? args.hook : void 0,
+        since: typeof args.since === "string" ? args.since : void 0
+      });
     case "list_worktrees":
       return listWorktrees(cwd);
     case "list_local_prs": {
@@ -1717,6 +1774,19 @@ async function handleTool(name, args) {
   }
 }
 var tools = [
+  {
+    name: "list_sessions",
+    description: "Read PR Genie session history from sessions.jsonl (newest first). Skips corrupt lines. Optional limit (default 50), hook filter, and since ISO timestamp.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: { type: "string" },
+        limit: { type: "number", description: "Max events to return (newest first). Default 50." },
+        hook: { type: "string", description: "Exact hook name filter, e.g. subagentStop." },
+        since: { type: "string", description: "Inclusive ISO lower bound on event.at." }
+      }
+    }
+  },
   {
     name: "list_worktrees",
     description: "List git worktrees. PR Genie also ensures one worktree per loop.",
