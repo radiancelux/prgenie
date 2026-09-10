@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { deflateRawSync } from "node:zlib";
-import { checkReleaseVersions, versionFromVsixFileName } from "./versions.js";
+import {
+  checkReleaseVersions,
+  collectPackageVersions,
+  versionFromVsixFileName,
+} from "./versions.js";
 
 function crc32(buf: Buffer): number {
   let c = ~0;
@@ -121,4 +125,42 @@ test("checkReleaseVersions fails on package skew and lagging VSIX", async () => 
   assert.equal(report.expectedVersion, "0.1.1");
   assert.ok(report.skew.some((s) => s.includes("package.json is 0.1.0")));
   assert.ok(report.skew.some((s) => /prgenie-0\.1\.0\.vsix/.test(s)));
+});
+
+test("collectPackageVersions / checkReleaseVersions fail-closed on missing or version-less package.json", async () => {
+  const root = path.join(dir, "incomplete");
+  await mkdir(path.join(root, "packages", "core"), { recursive: true });
+  await mkdir(path.join(root, "packages", "cli"), { recursive: true });
+  await mkdir(path.join(root, "packages", "extension"), { recursive: true });
+  // Intentionally omit packages/plugin/package.json (matches check-versions.mjs missing path).
+  await writeFile(path.join(root, "package.json"), JSON.stringify({ version: "0.1.1" }), "utf8");
+  await writeFile(
+    path.join(root, "packages/core/package.json"),
+    JSON.stringify({ version: "0.1.1" }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(root, "packages/cli/package.json"),
+    JSON.stringify({ name: "cli" }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(root, "packages/extension/package.json"),
+    JSON.stringify({ version: "" }),
+    "utf8",
+  );
+
+  const collected = await collectPackageVersions(root);
+  assert.ok(collected.issues.some((s) => s === "missing packages/plugin/package.json"));
+  assert.ok(collected.issues.some((s) => s.includes("packages/cli/package.json")));
+  assert.ok(collected.issues.some((s) => s.includes("packages/extension/package.json")));
+  assert.equal(collected.packages.length, 2);
+
+  const report = await checkReleaseVersions(root);
+  assert.equal(report.ok, false);
+  assert.ok(report.skew.some((s) => s === "missing packages/plugin/package.json"));
+  assert.ok(report.skew.some((s) => /packages\/cli\/package\.json has no string version/.test(s)));
+  assert.ok(
+    report.skew.some((s) => /packages\/extension\/package\.json has no string version/.test(s)),
+  );
 });

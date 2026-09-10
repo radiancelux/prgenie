@@ -120,4 +120,9 @@ export {
   findPackageRoot,
   versionFromVsixFileName,
 } from "./versions.js";
-export type { PackageVersionEntry, ReleaseVersionReport, VsixArtifactInfo } from "./versions.js";
+export type {
+  CollectPackageVersionsResult,
+  PackageVersionEntry,
+  ReleaseVersionReport,
+  VsixArtifactInfo,
+} from "./versions.js";

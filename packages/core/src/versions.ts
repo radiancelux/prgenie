@@ -26,6 +26,12 @@ export interface ReleaseVersionReport {
   fix?: string;
 }
 
+export interface CollectPackageVersionsResult {
+  packages: PackageVersionEntry[];
+  /** Fail-closed issues (missing path or non-string/empty version), matching check-versions.mjs. */
+  issues: string[];
+}
+
 /** Package.json paths relative to the monorepo root that must share one version. */
 export const RELEASE_PACKAGE_PATHS = [
   "package.json",
@@ -101,16 +107,29 @@ export async function readVersionFromVsix(vsixPath: string): Promise<string | nu
   }
 }
 
-export async function collectPackageVersions(packageRoot: string): Promise<PackageVersionEntry[]> {
-  const out: PackageVersionEntry[] = [];
+/**
+ * Collect release package versions. Fail-closed: missing paths and non-string/empty
+ * versions are reported in `issues` (same invariant as scripts/check-versions.mjs).
+ */
+export async function collectPackageVersions(
+  packageRoot: string,
+): Promise<CollectPackageVersionsResult> {
+  const packages: PackageVersionEntry[] = [];
+  const issues: string[] = [];
   for (const rel of RELEASE_PACKAGE_PATHS) {
     const file = path.join(packageRoot, rel);
-    if (!existsSync(file)) continue;
+    if (!existsSync(file)) {
+      issues.push(`missing ${rel}`);
+      continue;
+    }
     const version = await readPackageVersion(file);
-    if (!version) continue;
-    out.push({ id: rel, file, version });
+    if (!version) {
+      issues.push(`${rel} has no string version`);
+      continue;
+    }
+    packages.push({ id: rel, file, version });
   }
-  return out;
+  return { packages, issues };
 }
 
 export async function collectVsixArtifacts(packageRoot: string): Promise<VsixArtifactInfo[]> {
@@ -132,9 +151,9 @@ export async function collectVsixArtifacts(packageRoot: string): Promise<VsixArt
 }
 
 export async function checkReleaseVersions(packageRoot: string): Promise<ReleaseVersionReport> {
-  const packages = await collectPackageVersions(packageRoot);
+  const { packages, issues } = await collectPackageVersions(packageRoot);
   const vsix = await collectVsixArtifacts(packageRoot);
-  const skew: string[] = [];
+  const skew: string[] = [...issues];
   const expectedVersion =
     packages.find((p) => p.id === "packages/extension/package.json")?.version ??
     packages[0]?.version ??
@@ -145,10 +164,12 @@ export async function checkReleaseVersions(packageRoot: string): Promise<Release
       ok: false,
       expectedVersion: null,
       packages,
-      skew: ["No package.json versions found under the monorepo."],
+      skew: skew.length ? skew : ["No package.json versions found under the monorepo."],
       vsix,
-      summary: "Could not read monorepo package versions.",
-      fix: "Ensure package.json files exist under the repo root and packages/*.",
+      summary: skew.length
+        ? `Release version skew: ${skew.join("; ")}`
+        : "Could not read monorepo package versions.",
+      fix: "Ensure package.json files exist under the repo root and packages/* with string versions.",
     };
   }
 
