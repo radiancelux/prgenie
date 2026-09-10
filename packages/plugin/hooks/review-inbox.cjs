@@ -8,10 +8,6 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -28,7 +24,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // packages/core/src/types.ts
 var COMMENT_STATUSES;
@@ -600,15 +595,7 @@ var init_watchActivity = __esm({
 });
 
 // packages/cli/src/review-hook.ts
-var review_hook_exports = {};
-__export(review_hook_exports, {
-  eventName: () => eventName,
-  inferCwd: () => inferCwd
-});
-module.exports = __toCommonJS(review_hook_exports);
 var import_node_fs2 = require("node:fs");
-var import_node_path5 = __toESM(require("node:path"), 1);
-var import_node_url = require("node:url");
 
 // packages/core/src/index.ts
 init_types();
@@ -644,7 +631,6 @@ init_store();
 init_store();
 
 // packages/cli/src/review-hook.ts
-var import_meta = {};
 function inferCwd(input) {
   if (typeof input.cwd === "string" && input.cwd) return input.cwd;
   const roots = input.workspace_roots;
@@ -656,15 +642,6 @@ function eventName(input) {
 }
 function silent() {
   process.stdout.write("{}\n");
-}
-function ranAsCli() {
-  const entry = process.argv[1];
-  if (!entry) return false;
-  try {
-    return import_node_path5.default.resolve((0, import_node_url.fileURLToPath)(import_meta.url)).toLowerCase() === import_node_path5.default.resolve(entry).toLowerCase();
-  } catch {
-    return false;
-  }
 }
 async function main() {
   let input;
@@ -733,12 +710,8 @@ async function main() {
   }
   silent();
 }
-if (ranAsCli())
-  main().catch(() => {
-    silent();
-  });
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
-  eventName,
-  inferCwd
+
+// packages/cli/src/review-hook-bin.ts
+main().catch(() => {
+  process.stdout.write("{}\n");
 });
