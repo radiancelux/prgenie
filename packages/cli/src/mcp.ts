@@ -259,7 +259,9 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
       return { ...pr, worktreePath: dest };
     }
     case "export_local_pr":
-      return exportLocalPr(cwd, String(args.id ?? ""));
+      return exportLocalPr(cwd, String(args.id ?? ""), {
+        skipValidation: args.skipValidation === true,
+      });
     case "list_learnings":
       return listLearnings(cwd, {
         disabled: typeof args.disabled === "boolean" ? args.disabled : undefined,
@@ -617,11 +619,19 @@ export const tools = [
   {
     name: "export_local_pr",
     description:
-      "Developer command: halt listen loops, git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export.",
+      "Developer command: validate review status and preflight, then halt listen loops, git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export. Export is blocked unless local review is complete (status reviewed/approved, no pending comments) and preflight pattern checks pass. Use skipValidation only for emergency export.",
     inputSchema: {
       type: "object",
       required: ["id"],
-      properties: { id: { type: "string" }, cwd: { type: "string" } },
+      properties: {
+        id: { type: "string" },
+        cwd: { type: "string" },
+        skipValidation: {
+          type: "boolean",
+          description:
+            "Skip export validation (review status + preflight). Emergency override only.",
+        },
+      },
     },
   },
   {

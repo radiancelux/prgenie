@@ -103,6 +103,8 @@ export {
   githubPrViewArgs,
 } from "./export.js";
 export type { GithubPrHeadState } from "./export.js";
+export { validateExport } from "./export-validation.js";
+export type { ExportValidationOptions, ExportValidationResult } from "./export-validation.js";
 export { appendSession, formatSessionEvent, listSessions } from "./sessions.js";
 export type { ListSessionsOptions, SessionEvent } from "./sessions.js";
 export { generateLearningDigest, formatLearningDigest } from "./learning.js";
