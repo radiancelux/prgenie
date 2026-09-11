@@ -51,6 +51,7 @@ function usage(): string {
   return `PR Genie — local pull requests for agent work. GitHub when you say so.
 
 Usage:
+  prgenie version
   prgenie create [--title <t>] [--body <b>] [--base <ref>] [--head <ref>]
   prgenie attach <pr-url|pr-number|branch> [--title <t>] [--body <b>] [--base <ref>]
   prgenie list [--all] [--search <q>] [--query <q>] [--in title,body,comment,file]
@@ -101,6 +102,22 @@ Run from any worktree. Loops are stored in the repo's .git/agent-console/.
 `;
 }
 
+function attachUsage(): string {
+  return `prgenie attach <pr-url|pr-number|branch> [--title <t>] [--body <b>] [--base <ref>]
+
+Attach an existing GitHub PR or branch as a local loop.
+
+Arguments:
+  <pr-url|pr-number|branch>  GitHub PR URL, PR number, or branch name to attach
+
+Options:
+  --title <t>    Override the PR title
+  --body <b>     Override the PR body
+  --base <ref>   Override the base branch
+  -h, --help     Show this help message
+`;
+}
+
 export function arg(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
   if (i === -1) return undefined;
@@ -147,6 +164,11 @@ export async function run(argv: string[]): Promise<number> {
     process.stdout.write(usage());
     return 0;
   }
+  if (args[0] === "version") {
+    const { version } = await import("./version.js");
+    process.stdout.write(`${version}\n`);
+    return 0;
+  }
   if (args[0] === "mcp") {
     const { startMcp } = await import("./mcp.js");
     await startMcp();
@@ -167,6 +189,12 @@ export async function run(argv: string[]): Promise<number> {
   const repo = await cwdRepo();
 
   if (sub === "create") {
+    if (flag(rest, "-h") || flag(rest, "--help")) {
+      process.stdout.write(
+        "prgenie create [--title <t>] [--body <b>] [--base <ref>] [--head <ref>]\n\nCreate a new local PR.\n",
+      );
+      return 0;
+    }
     const pr = await createLocalPr(repo, {
       title: arg(rest, "--title"),
       body: arg(rest, "--body"),
@@ -177,6 +205,10 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (sub === "attach") {
+    if (flag(rest, "-h") || flag(rest, "--help")) {
+      process.stdout.write(attachUsage());
+      return 0;
+    }
     const source = rest[0];
     if (!source) {
       process.stderr.write(
@@ -194,6 +226,12 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (sub === "list") {
+    if (flag(rest, "-h") || flag(rest, "--help")) {
+      process.stdout.write(
+        "prgenie list [--all] [--search <q>] [--query <q>] [--in title,body,comment,file]\n\nList local PRs.\n",
+      );
+      return 0;
+    }
     await archiveLoopsMergedOnGithub(repo).catch(() => []);
     const search = arg(rest, "--search") ?? arg(rest, "--query");
     const inRaw = arg(rest, "--in");
@@ -392,6 +430,10 @@ export async function run(argv: string[]): Promise<number> {
     return 1;
   }
   if (sub === "show") {
+    if (flag(rest, "-h") || flag(rest, "--help")) {
+      process.stdout.write("prgenie show <id>\n\nShow detailed information about a local PR.\n");
+      return 0;
+    }
     const pr = await getLocalPr(repo, id);
     process.stdout.write(
       JSON.stringify({ ...pr, pendingComments: pendingReviewComments(pr) }, null, 2) + "\n",
