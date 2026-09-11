@@ -72,7 +72,8 @@ type ClientMessage =
   | { type: "export"; id: string }
   | { type: "showArchived"; value: boolean }
   | { type: "ghBind"; login: string }
-  | { type: "ghRefresh" };
+  | { type: "ghRefresh" }
+  | { type: "search"; query: string };
 
 type WatchLaneSnapshot = {
   halted: boolean;
@@ -104,6 +105,7 @@ type Snapshot = {
   watch?: { inbox: WatchLaneSnapshot; queue: WatchLaneSnapshot };
   ghBind?: GhBindSnapshot;
   shepherdStatus?: ShepherdResult | null;
+  searchQuery?: string;
 };
 
 export class LaneHub implements vscode.Disposable {
@@ -120,9 +122,11 @@ export class LaneHub implements vscode.Disposable {
   private lastGithubArchive = 0;
   private showArchived = false;
   private titleSaveInFlightId: string | undefined;
+  private searchQuery = "";
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.showArchived = this.context.workspaceState.get("prgenie.showArchived", false);
+    this.searchQuery = this.context.workspaceState.get("prgenie.searchQuery", "");
     this.poller = setInterval(() => void this.pushSnapshot(), 2000);
   }
 
@@ -276,6 +280,12 @@ export class LaneHub implements vscode.Disposable {
 
   private async onMessage(msg: ClientMessage): Promise<void> {
     if (msg.type === "ready" || msg.type === "refresh") {
+      await this.pushSnapshot(true);
+      return;
+    }
+    if (msg.type === "search") {
+      this.searchQuery = msg.query;
+      await this.context.workspaceState.update("prgenie.searchQuery", msg.query);
       await this.pushSnapshot(true);
       return;
     }
@@ -602,7 +612,9 @@ export class LaneHub implements vscode.Disposable {
         this.lastGithubArchive = Date.now();
         await archiveLoopsMergedOnGithub(root).catch(() => []);
       }
-      const all = await listLocalPrs(root);
+      const all = await listLocalPrs(root, {
+        search: this.searchQuery || undefined,
+      });
       const livePaths = all
         .filter((p) => !isArchivedPr(p) && p.worktreePath)
         .map((p) => p.worktreePath as string);
@@ -680,6 +692,7 @@ export class LaneHub implements vscode.Disposable {
           watch: { inbox: laneSnap("inbox"), queue: laneSnap("queue") },
           ghBind,
           shepherdStatus: shepherd,
+          searchQuery: this.searchQuery,
         },
         force,
       );
@@ -710,6 +723,7 @@ function snapshotKey(payload: Snapshot | { type: "snapshot"; error: string; prs:
     threads: "threads" in payload ? payload.threads : [],
     watch: "watch" in payload ? payload.watch : null,
     ghBind: "ghBind" in payload ? payload.ghBind : null,
+    searchQuery: "searchQuery" in payload ? payload.searchQuery : "",
     prs: payload.prs,
   });
 }
@@ -780,6 +794,29 @@ function laneHtml(webview: vscode.Webview): string {
     .meta {
       display: flex; flex-direction: column; gap: 6px;
       padding: 4px 12px 8px;
+      font-size: 11px;
+    }
+    .search-box {
+      display: flex; align-items: center; gap: 4px;
+      padding: 0 0 6px 0;
+    }
+    .search-box input {
+      flex: 1;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, transparent);
+      padding: 4px 8px;
+      font-size: 12px;
+      outline: none;
+    }
+    .search-box input:focus {
+      border-color: var(--vscode-focusBorder);
+    }
+    .search-box input::placeholder {
+      color: var(--vscode-input-placeholderForeground);
+    }
+    .search-box button {
+      padding: 4px 8px;
       font-size: 11px;
     }
     .meta-top { display: flex; align-items: center; gap: 6px; }
@@ -880,6 +917,10 @@ function laneHtml(webview: vscode.Webview): string {
 </head>
 <body>
   <div class="meta">
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="Search loops (title, body, comments, files)" />
+      <button type="button" class="secondary" id="clearSearch" title="Clear search">✕</button>
+    </div>
     <div class="watch" id="watch" hidden>
       <div class="watch-row" data-role="inbox">
         <span class="role">inbox</span>
@@ -920,6 +961,23 @@ function laneHtml(webview: vscode.Webview): string {
     const list = document.getElementById("list");
     const toggle = document.getElementById("archivedToggle");
     const watchBox = document.getElementById("watch");
+    const searchInput = document.getElementById("searchInput");
+    const clearSearch = document.getElementById("clearSearch");
+    
+    let searchDebounce = null;
+    
+    searchInput.oninput = () => {
+      if (searchDebounce) clearTimeout(searchDebounce);
+      searchDebounce = setTimeout(() => {
+        vscode.postMessage({ type: "search", query: searchInput.value });
+      }, 300);
+    };
+    
+    clearSearch.onclick = () => {
+      searchInput.value = "";
+      vscode.postMessage({ type: "search", query: "" });
+    };
+    
     toggle.onclick = () => vscode.postMessage({ type: "showArchived", value: !toggle.classList.contains("on") });
     function bindWatchBtn(role, btn) {
       btn.onclick = () => {
@@ -1096,6 +1154,11 @@ function laneHtml(webview: vscode.Webview): string {
       paintWatch(msg);
       paintGhBind(msg);
       paintShepherd(msg);
+      
+      if (msg.searchQuery !== undefined && searchInput.value !== msg.searchQuery) {
+        searchInput.value = msg.searchQuery;
+      }
+      
       if (bindInProgress) {
         bindInProgress = false;
         const ghBindBtn = document.getElementById("ghBindBtn");
@@ -1120,9 +1183,14 @@ function laneHtml(webview: vscode.Webview): string {
       meta.textContent = (msg.repo ? msg.repo + " · " : "") + prs.length + " loop" + (prs.length === 1 ? "" : "s")
         + (archived ? " · " + archived + " archived" : "");
       if (!prs.length) {
-        const emptyText = archived
-          ? "No active loops. " + archived + " archived after export. Show archived to view them."
-          : "Waiting for agents. Loops land here when work is committed.";
+        let emptyText;
+        if (msg.searchQuery && msg.searchQuery.trim()) {
+          emptyText = "No loops match your search. Clear the search to view all loops.";
+        } else if (archived) {
+          emptyText = "No active loops. " + archived + " archived after export. Show archived to view them.";
+        } else {
+          emptyText = "Waiting for agents. Loops land here when work is committed.";
+        }
         if (list.dataset.empty !== emptyText) {
           list.innerHTML = '<p class="muted empty"></p>';
           list.firstChild.textContent = emptyText;
