@@ -1,17 +1,24 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
 import { shepherdStatus } from "./shepherd.js";
 import { git } from "./git.js";
 import { createLocalPr, setLocalPrStatus, addLocalPrComment } from "./prs.js";
 import { addLearnings } from "./learnings.js";
 import type { Learning } from "./types.js";
 
-const execAsync = promisify(exec);
+/**
+ * Create a cross-platform symlink to node_modules.
+ * On Windows, uses junction which doesn't require admin privileges.
+ * On Unix, uses a standard symlink.
+ */
+async function linkNodeModules(targetDir: string, sourceModulesPath: string): Promise<void> {
+  const linkPath = join(targetDir, "node_modules");
+  const type = process.platform === "win32" ? "junction" : "dir";
+  await symlink(sourceModulesPath, linkPath, type);
+}
 
 async function initRepo(): Promise<string> {
   const tmp = await mkdtemp(join(tmpdir(), "prgenie-shepherd-test-"));
@@ -300,7 +307,7 @@ describe("shepherdStatus", () => {
       await git(repo, ["checkout", "-b", "feature"]);
 
       // Link node_modules for prettier access
-      await execAsync(`ln -s ${join(process.cwd(), "node_modules")} ${join(repo, "node_modules")}`);
+      await linkNodeModules(repo, join(process.cwd(), "node_modules"));
 
       // Create a badly formatted JS file that will fail format:check
       await writeFile(join(repo, "bad.js"), 'const x = "bad"\n');
