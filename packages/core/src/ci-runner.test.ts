@@ -319,4 +319,155 @@ describe("runCiChecks", () => {
       await rm(repo, { recursive: true, force: true });
     }
   });
+
+  // RAD-46: format:check must pass on Windows autocrlf when git blob (LF) is clean
+  it("RAD-46: format:check passes when working tree is CRLF but blob is LF", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-rad46-crlf-"));
+    try {
+      // Init git repo with autocrlf enabled (simulates Windows)
+      await execAsync("git init", { cwd: repo });
+      await execAsync('git config user.email "test@test.com"', { cwd: repo });
+      await execAsync('git config user.name "Test"', { cwd: repo });
+      await execAsync("git config core.autocrlf true", { cwd: repo });
+
+      // Create package.json
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          packageManager: "pnpm@10.33.0",
+          scripts: {
+            lint: "exit 0",
+            typecheck: "exit 0",
+            test: "exit 0",
+            build: "exit 0",
+          },
+        }),
+      );
+
+      // Create .gitignore and .prettierignore
+      await writeFile(join(repo, ".gitignore"), "node_modules\n");
+      await writeFile(join(repo, ".prettierignore"), ".gitignore\nnode_modules\n");
+
+      // Link to workspace node_modules for prettier access
+      await execAsync(
+        `ln -s ${join(process.cwd(), "node_modules")} ${join(repo, "node_modules")}`,
+        { cwd: repo },
+      );
+
+      // Create .prettierrc.json with LF line ending requirement
+      await writeFile(
+        join(repo, ".prettierrc.json"),
+        JSON.stringify({
+          semi: true,
+          singleQuote: false,
+          trailingComma: "all",
+          endOfLine: "lf",
+        }),
+      );
+
+      // Create a properly formatted JS file with LF endings
+      const goodContent = 'const x = "hello";\n';
+      await writeFile(join(repo, "good.js"), goodContent);
+
+      // Format all files before committing
+      await execAsync("pnpm exec prettier --write .", { cwd: repo });
+
+      // Stage and commit - git will store as LF in blob
+      await execAsync("git add .", { cwd: repo });
+      await execAsync('git commit -m "Initial commit"', { cwd: repo });
+
+      // Simulate autocrlf checkout: convert LF to CRLF in working tree
+      // Read the blob content and write back with CRLF
+      const workingTreeContent = goodContent.replace(/\n/g, "\r\n");
+      await writeFile(join(repo, "good.js"), workingTreeContent);
+
+      // Verify working tree now has CRLF - git diff should be empty due to autocrlf normalization
+      // But we can verify the file physically has CRLF in working tree
+      const fs = await import("node:fs/promises");
+      const physicalContent = await fs.readFile(join(repo, "good.js"), "utf8");
+      assert.ok(
+        physicalContent.includes("\r\n"),
+        "Working tree file should have CRLF line endings",
+      );
+
+      // Run format:check - should PASS because blob content (LF) is properly formatted
+      const result = await runCiChecks(repo, {
+        checks: ["format:check"],
+        timeout: 10000,
+      });
+
+      assert.equal(
+        result.allPassed,
+        true,
+        "format:check should pass when blob is LF-formatted despite CRLF working tree",
+      );
+      const formatCheck = result.checks.find((c) => c.name === "format:check");
+      assert.ok(formatCheck);
+      assert.equal(formatCheck.passed, true);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  // RAD-46: Verify timeout configuration works
+  it("RAD-46: timeout configuration is respected", async () => {
+    const repo = await initTestRepo();
+    try {
+      // Override test script to sleep longer than timeout
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            test: "sleep 3",
+          },
+        }),
+      );
+
+      // Run with short timeout - should fail
+      const result = await runCiChecks(repo, {
+        checks: ["test"],
+        timeout: 1000, // 1 second timeout
+      });
+
+      assert.equal(result.allPassed, false, "Should fail due to timeout");
+      const testCheck = result.checks.find((c) => c.name === "test");
+      assert.ok(testCheck);
+      assert.equal(testCheck.passed, false);
+      assert.ok(testCheck.error, "Should have timeout error");
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  // RAD-46: Verify default timeout is sufficient for long test suites
+  it("RAD-46: default timeout allows for long test runs", async () => {
+    const repo = await initTestRepo();
+    try {
+      // Override test script to simulate a test that takes 2 seconds
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            test: "sleep 2",
+          },
+        }),
+      );
+
+      // Run with default timeout (300s) - should pass
+      const result = await runCiChecks(repo, {
+        checks: ["test"],
+        // Don't specify timeout, use default
+      });
+
+      assert.equal(result.allPassed, true, "Should pass with default timeout");
+      const testCheck = result.checks.find((c) => c.name === "test");
+      assert.ok(testCheck);
+      assert.equal(testCheck.passed, true);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
 });
