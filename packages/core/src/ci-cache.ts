@@ -82,21 +82,22 @@ async function computeTrackedFilesHash(cwd: string): Promise<string | null> {
 }
 
 /**
- * Compute hash of package.json scripts.
+ * Compute hash of package.json scripts from git HEAD.
  * Changes to scripts should invalidate the cache.
+ * Only looks at committed content, not working tree.
  */
 async function computeScriptsHash(cwd: string): Promise<string | null> {
   try {
-    const pkgPath = path.join(cwd, "package.json");
-    const content = await readFile(pkgPath, "utf8");
-    const pkg = JSON.parse(content) as { scripts?: Record<string, string> };
+    // Get package.json from git HEAD (committed version)
+    const { stdout } = await git(cwd, ["show", "HEAD:package.json"]);
+    const pkg = JSON.parse(stdout) as { scripts?: Record<string, string> };
     
     // Hash the scripts object
     const hash = createHash("sha256");
     hash.update(JSON.stringify(pkg.scripts || {}));
     return hash.digest("hex");
   } catch {
-    // No package.json or invalid - fail closed with cache miss
+    // No package.json in HEAD or invalid - fail closed with cache miss
     return null;
   }
 }
