@@ -1,4 +1,4 @@
-import { shepherdStatus, type ShepherdOptions } from "./shepherd.js";
+import { shepherdStatus } from "./shepherd.js";
 
 export interface ExportValidationResult {
   ok: boolean;
@@ -6,7 +6,7 @@ export interface ExportValidationResult {
   issues: string[];
 }
 
-export interface ExportValidationOptions extends ShepherdOptions {
+export interface ExportValidationOptions {
   /** When true, skip all export validation (emergency override). Default false. */
   skipValidation?: boolean;
 }
@@ -25,8 +25,8 @@ export async function validateExport(
     return { ok: true, issues: [] };
   }
 
-  // Use shepherd aggregator for all checks
-  const shepherd = await shepherdStatus(cwd, id, options);
+  // Use shepherd aggregator for all checks (production: never skip CI or GitHub)
+  const shepherd = await shepherdStatus(cwd, id, {});
 
   if (shepherd.status === "ready") {
     return { ok: true, issues: [] };

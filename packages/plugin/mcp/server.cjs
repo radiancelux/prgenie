@@ -1873,7 +1873,7 @@ async function validateExport(cwd, id, options = {}) {
   if (options.skipValidation) {
     return { ok: true, issues: [] };
   }
-  const shepherd = await shepherdStatus(cwd, id, options);
+  const shepherd = await shepherdStatus(cwd, id, {});
   if (shepherd.status === "ready") {
     return { ok: true, issues: [] };
   }
