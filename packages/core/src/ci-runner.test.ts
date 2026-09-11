@@ -723,4 +723,75 @@ describe("runCiChecks", () => {
       await rm(repo, { recursive: true, force: true });
     }
   });
+
+  // RAD-35: Cache-write failure does not fail the check or create duplicate results
+  it("RAD-35: cache-write failure does not mark check failed or duplicate results", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-cache-write-fail-"));
+    try {
+      // Init git repo
+      await execAsync("git init", { cwd: repo });
+      await execAsync('git config user.email "test@test.com"', { cwd: repo });
+      await execAsync('git config user.name "Test"', { cwd: repo });
+
+      // Create package.json with passing checks
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: "exit 0",
+            test: "exit 0",
+          },
+        }),
+      );
+      await writeFile(join(repo, "test.txt"), "content\n");
+      await execAsync("git add .", { cwd: repo });
+      await execAsync('git commit -m "Initial commit"', { cwd: repo });
+
+      // Make cache directory read-only to simulate cache-write failure
+      const path = await import("node:path");
+      const gitCommonDir = await import("./git.js").then((m) => m.gitCommonDir);
+      const common = await gitCommonDir(repo);
+      const cacheDir = path.join(common, "agent-console", "ci-cache");
+      const fs = await import("node:fs/promises");
+      await fs.mkdir(cacheDir, { recursive: true });
+      await fs.chmod(cacheDir, 0o444); // Read-only
+
+      // Run checks - should pass even though cache write fails
+      const result = await runCiChecks(repo, {
+        checks: ["lint", "test"],
+        timeout: 5000,
+      });
+
+      // Restore permissions for cleanup
+      await fs.chmod(cacheDir, 0o755);
+
+      // Verify checks passed
+      assert.equal(result.allPassed, true, "Checks should pass despite cache-write failure");
+      assert.equal(result.checks.length, 2, "Should have exactly 2 results (no duplicates)");
+
+      // Verify both checks show as passed
+      const lintCheck = result.checks.find((c) => c.name === "lint");
+      const testCheck = result.checks.find((c) => c.name === "test");
+      assert.ok(lintCheck, "Should have lint check result");
+      assert.ok(testCheck, "Should have test check result");
+      assert.equal(lintCheck.passed, true, "lint should pass");
+      assert.equal(testCheck.passed, true, "test should pass");
+      assert.equal(lintCheck.error, undefined, "lint should have no error");
+      assert.equal(testCheck.error, undefined, "test should have no error");
+    } finally {
+      // Ensure cleanup can happen
+      const path = await import("node:path");
+      const gitCommonDir = await import("./git.js").then((m) => m.gitCommonDir);
+      try {
+        const common = await gitCommonDir(repo);
+        const cacheDir = path.join(common, "agent-console", "ci-cache");
+        const fs = await import("node:fs/promises");
+        await fs.chmod(cacheDir, 0o755).catch(() => undefined);
+      } catch {
+        // Ignore cleanup errors
+      }
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
 });

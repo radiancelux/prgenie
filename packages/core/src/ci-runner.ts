@@ -172,8 +172,12 @@ export async function runCiChecks(
           // RAD-46: Check git blob content (LF-normalized) to match remote CI on Windows autocrlf
           await checkFormatFromBlobs(cwd, tracked);
           results.push({ name: check, passed: true });
-          // RAD-35: Record successful check in cache
-          await recordCheckPass(cwd, check);
+          // RAD-35: Record successful check in cache (ignore cache-write failures)
+          try {
+            await recordCheckPass(cwd, check);
+          } catch {
+            // Check passed; cache write failed — ignore and continue without cache
+          }
           continue;
         }
         // If no tracked files (not a git repo or empty repo), fall back to default pnpm format:check
@@ -181,8 +185,12 @@ export async function runCiChecks(
 
       await execAsync(command, { cwd, timeout });
       results.push({ name: check, passed: true });
-      // RAD-35: Record successful check in cache
-      await recordCheckPass(cwd, check);
+      // RAD-35: Record successful check in cache (ignore cache-write failures)
+      try {
+        await recordCheckPass(cwd, check);
+      } catch {
+        // Check passed; cache write failed — ignore and continue without cache
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       results.push({
