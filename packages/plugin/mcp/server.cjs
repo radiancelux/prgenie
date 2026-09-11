@@ -1802,18 +1802,35 @@ async function getTrackedFiles(cwd) {
     return [];
   }
 }
+async function checkFormatFromBlobs(cwd, files) {
+  const failures = [];
+  for (const file of files) {
+    try {
+      const command = `git show ":${file.replace(/"/g, '\\"')}" | pnpm exec prettier --stdin-filepath "${file.replace(/"/g, '\\"')}" --check`;
+      await execAsync(command, { cwd });
+    } catch {
+      failures.push(file);
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(
+      `Prettier format check failed for ${failures.length} file(s): ${failures.slice(0, 5).join(", ")}${failures.length > 5 ? "..." : ""}`
+    );
+  }
+}
 async function runCiChecks(cwd, options = {}) {
   const checks = options.checks ?? ["format:check", "lint", "typecheck", "test", "build"];
-  const timeout = options.timeout ?? 6e4;
+  const timeout = options.timeout ?? 3e5;
   const results = [];
   for (const check of checks) {
     try {
-      let command = `pnpm ${check}`;
+      const command = `pnpm ${check}`;
       if (check === "format:check") {
         const tracked = await getTrackedFiles(cwd);
         if (tracked.length > 0) {
-          const quotedFiles = tracked.map((f) => `"${f.replace(/"/g, '\\"')}"`).join(" ");
-          command = `pnpm exec prettier --check ${quotedFiles}`;
+          await checkFormatFromBlobs(cwd, tracked);
+          results.push({ name: check, passed: true });
+          continue;
         }
       }
       await execAsync(command, { cwd, timeout });
