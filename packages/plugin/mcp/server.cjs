@@ -1755,13 +1755,110 @@ var init_watchActivity = __esm({
   }
 });
 
+// packages/core/src/ci-cache.ts
+async function ciCacheDir(cwd) {
+  const common = await gitCommonDir(cwd);
+  const dir = import_node_path8.default.join(common, "agent-console", "ci-cache");
+  await (0, import_promises7.mkdir)(dir, { recursive: true });
+  return dir;
+}
+async function ciCacheFile(cwd) {
+  const dir = await ciCacheDir(cwd);
+  return import_node_path8.default.join(dir, "cache.json");
+}
+async function loadCiCache(cwd) {
+  try {
+    const file = await ciCacheFile(cwd);
+    const content = await (0, import_promises7.readFile)(file, "utf8");
+    return JSON.parse(content);
+  } catch {
+    return { checks: {} };
+  }
+}
+async function saveCiCache(cwd, cache) {
+  const file = await ciCacheFile(cwd);
+  await (0, import_promises7.writeFile)(file, JSON.stringify(cache, null, 2), "utf8");
+}
+async function computeTrackedFilesHash(cwd) {
+  try {
+    const { stdout } = await git(cwd, ["ls-tree", "-r", "HEAD"]);
+    const hash = (0, import_node_crypto3.createHash)("sha256");
+    hash.update(stdout);
+    return hash.digest("hex");
+  } catch {
+    return null;
+  }
+}
+async function computeScriptsHash(cwd) {
+  try {
+    const { stdout } = await git(cwd, ["show", "HEAD:package.json"]);
+    const pkg = JSON.parse(stdout);
+    const hash = (0, import_node_crypto3.createHash)("sha256");
+    hash.update(JSON.stringify(pkg.scripts || {}));
+    return hash.digest("hex");
+  } catch {
+    return null;
+  }
+}
+async function computeCiInputHash(cwd) {
+  const [filesHash, scriptsHash] = await Promise.all([
+    computeTrackedFilesHash(cwd),
+    computeScriptsHash(cwd)
+  ]);
+  if (!filesHash || !scriptsHash) {
+    return null;
+  }
+  const hash = (0, import_node_crypto3.createHash)("sha256");
+  hash.update(filesHash);
+  hash.update(scriptsHash);
+  return hash.digest("hex");
+}
+async function getCachedResult(cwd, check) {
+  const currentHash = await computeCiInputHash(cwd);
+  if (!currentHash) {
+    return null;
+  }
+  const cache = await loadCiCache(cwd);
+  const entry = cache.checks[check];
+  if (!entry) {
+    return null;
+  }
+  if (entry.inputHash !== currentHash) {
+    return null;
+  }
+  return entry;
+}
+async function recordCheckPass(cwd, check) {
+  const inputHash = await computeCiInputHash(cwd);
+  if (!inputHash) {
+    return;
+  }
+  const cache = await loadCiCache(cwd);
+  cache.checks[check] = {
+    inputHash,
+    passedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    check
+  };
+  await saveCiCache(cwd, cache);
+}
+var import_node_crypto3, import_promises7, import_node_path8;
+var init_ci_cache = __esm({
+  "packages/core/src/ci-cache.ts"() {
+    "use strict";
+    import_node_crypto3 = require("node:crypto");
+    import_promises7 = require("node:fs/promises");
+    import_node_path8 = __toESM(require("node:path"), 1);
+    init_git();
+  }
+});
+
 // packages/core/src/ci-runner.ts
 async function getTrackedFiles(cwd) {
   try {
     const { stdout } = await execAsync("git ls-files --exclude-standard", { cwd });
     const files = stdout.trim().split("\n").filter(Boolean);
     const fs = await import("node:fs/promises");
-    const path8 = await import("node:path");
+    const path9 = await import("node:path");
     const validFiles = [];
     const skipFiles = /* @__PURE__ */ new Set([
       ".gitignore",
@@ -1790,8 +1887,8 @@ async function getTrackedFiles(cwd) {
       ".xml"
     ]);
     for (const file of files) {
-      const basename = path8.basename(file);
-      const ext = path8.extname(file).toLowerCase();
+      const basename = path9.basename(file);
+      const ext = path9.extname(file).toLowerCase();
       if (skipFiles.has(basename)) {
         continue;
       }
@@ -1799,7 +1896,7 @@ async function getTrackedFiles(cwd) {
         continue;
       }
       try {
-        const fullPath = path8.join(cwd, file);
+        const fullPath = path9.join(cwd, file);
         const stats = await fs.stat(fullPath);
         if (stats.isFile()) {
           validFiles.push(file);
@@ -1831,8 +1928,16 @@ async function checkFormatFromBlobs(cwd, files) {
 async function runCiChecks(cwd, options = {}) {
   const checks = options.checks ?? ["format:check", "lint", "typecheck", "test", "build"];
   const timeout = options.timeout ?? 3e5;
+  const skipCache = options.skipCache ?? false;
   const results = [];
   for (const check of checks) {
+    if (!skipCache) {
+      const cached = await getCachedResult(cwd, check);
+      if (cached) {
+        results.push({ name: check, passed: true });
+        continue;
+      }
+    }
     try {
       const command = `pnpm ${check}`;
       if (check === "format:check") {
@@ -1840,11 +1945,13 @@ async function runCiChecks(cwd, options = {}) {
         if (tracked.length > 0) {
           await checkFormatFromBlobs(cwd, tracked);
           results.push({ name: check, passed: true });
+          await recordCheckPass(cwd, check);
           continue;
         }
       }
       await execAsync(command, { cwd, timeout });
       results.push({ name: check, passed: true });
+      await recordCheckPass(cwd, check);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       results.push({
@@ -1865,6 +1972,7 @@ var init_ci_runner = __esm({
     "use strict";
     import_node_child_process3 = require("node:child_process");
     import_node_util = require("node:util");
+    init_ci_cache();
     execAsync = (0, import_node_util.promisify)(import_node_child_process3.exec);
   }
 });
@@ -2115,7 +2223,7 @@ async function exportLocalPr(cwd, id, options = {}) {
 init_export_validation();
 
 // packages/core/src/sessions.ts
-var import_promises7 = require("node:fs/promises");
+var import_promises8 = require("node:fs/promises");
 init_git();
 init_store();
 async function listSessions(cwd, options = {}) {
@@ -2124,7 +2232,7 @@ async function listSessions(cwd, options = {}) {
   const file = await sessionsFile(root);
   let raw;
   try {
-    raw = await (0, import_promises7.readFile)(file, "utf8");
+    raw = await (0, import_promises8.readFile)(file, "utf8");
   } catch (err) {
     const code = err && typeof err === "object" && "code" in err ? err.code : void 0;
     if (code === "ENOENT") return [];
@@ -2333,7 +2441,7 @@ async function generateLearningDigest(cwd, options = {}) {
     }
   }
   const topKeywords = Array.from(keywordCounts.entries()).filter(([, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([keyword, count]) => ({ keyword, count }));
-  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path8, count]) => ({ path: path8, count }));
+  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path9, count]) => ({ path: path9, count }));
   const patterns = Array.from(patternCounts.entries()).filter(([, data]) => data.count >= 2).sort((a, b) => b[1].count - a[1].count).slice(0, 10).map(([pattern, data]) => ({
     pattern,
     examples: data.examples,
@@ -2373,8 +2481,8 @@ function formatLearningDigest(summary) {
   if (summary.topFiles.length > 0) {
     lines.push("## Most Commented Files");
     lines.push("");
-    for (const { path: path8, count } of summary.topFiles) {
-      lines.push(`- \`${path8}\` \u2014 ${count} comment(s)`);
+    for (const { path: path9, count } of summary.topFiles) {
+      lines.push(`- \`${path9}\` \u2014 ${count} comment(s)`);
     }
     lines.push("");
   }
@@ -2409,6 +2517,7 @@ init_github_ops();
 init_learnings();
 init_shepherd();
 init_ci_runner();
+init_ci_cache();
 
 // packages/cli/src/mcp-stdio.ts
 function encodeMcpFrame(msg) {

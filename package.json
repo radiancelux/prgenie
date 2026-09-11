@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "tsx --test packages/core/src/prs.test.ts packages/core/src/sessions.test.ts packages/core/src/github.test.ts packages/core/src/store.test.ts packages/core/src/versions.test.ts packages/core/src/watch.test.ts packages/core/src/learnings.test.ts packages/core/src/learning.test.ts packages/core/src/attach.test.ts packages/core/src/export-validation.test.ts packages/core/src/shepherd.test.ts packages/core/src/ci-runner.test.ts packages/cli/src/mcp-stdio.test.ts packages/cli/src/cli-parse.test.ts packages/cli/src/cli-run.test.ts packages/cli/src/mcp-tools.test.ts packages/cli/src/github-hook.test.ts packages/cli/src/review-hook.test.ts",
+    "test": "tsx --test packages/core/src/prs.test.ts packages/core/src/sessions.test.ts packages/core/src/github.test.ts packages/core/src/store.test.ts packages/core/src/versions.test.ts packages/core/src/watch.test.ts packages/core/src/learnings.test.ts packages/core/src/learning.test.ts packages/core/src/attach.test.ts packages/core/src/export-validation.test.ts packages/core/src/shepherd.test.ts packages/core/src/ci-runner.test.ts packages/core/src/ci-cache.test.ts packages/cli/src/mcp-stdio.test.ts packages/cli/src/cli-parse.test.ts packages/cli/src/cli-run.test.ts packages/cli/src/mcp-tools.test.ts packages/cli/src/github-hook.test.ts packages/cli/src/review-hook.test.ts",
     "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/cli --noEmit && tsc -p packages/extension --noEmit",
     "lint": "eslint packages/core/src packages/cli/src packages/extension/src scripts",
     "lint:fix": "eslint packages/core/src packages/cli/src packages/extension/src scripts --fix",

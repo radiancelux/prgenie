@@ -154,3 +154,5 @@ export type {
 } from "./shepherd.js";
 export { runCiChecks } from "./ci-runner.js";
 export type { CiCheckResult, CiRunnerOptions, CiRunnerResult } from "./ci-runner.js";
+export { clearCiCache, getCachedResult, recordCheckPass } from "./ci-cache.js";
+export type { CiCacheEntry, CiCacheData } from "./ci-cache.js";

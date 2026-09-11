@@ -878,6 +878,14 @@ var init_github_ops = __esm({
   }
 });
 
+// packages/core/src/ci-cache.ts
+var init_ci_cache = __esm({
+  "packages/core/src/ci-cache.ts"() {
+    "use strict";
+    init_git();
+  }
+});
+
 // packages/core/src/ci-runner.ts
 var import_node_child_process2, import_node_util, execAsync;
 var init_ci_runner = __esm({
@@ -885,6 +893,7 @@ var init_ci_runner = __esm({
     "use strict";
     import_node_child_process2 = require("node:child_process");
     import_node_util = require("node:util");
+    init_ci_cache();
     execAsync = (0, import_node_util.promisify)(import_node_child_process2.exec);
   }
 });
@@ -965,6 +974,7 @@ init_github_ops();
 init_learnings();
 init_shepherd();
 init_ci_runner();
+init_ci_cache();
 
 // packages/cli/src/capture-hook.ts
 function inferCwd(input) {
