@@ -71,12 +71,12 @@ The gaps are not missing lifecycle pieces — they are **operability** (recoveri
 ### Later — scale and polish
 
 11. **History surface (A6).** ✅ CLI+MCP only (no sidebar UI).
-12. **Search/filter (H5).** ✅ Core+CLI+MCP (sidebar UI deferred).
+12. **Search/filter (H5).** ✅ Core+CLI+MCP (sidebar UI deferred, see RAD-65 for H5 sidebar search UI).
 13. **Test debt (P2) + lint (P3).** ✅ Lint/format + CLI/MCP/hooks tests (PR #13). Extension UI tests still open under P2 remainder.
 14. **Release discipline (P4).** ✅
-15. **`gh` bind in the UI (H7).**
-16. **Docs (H6).**
-17. **Sidebar rename for loops (H2 remainder).** Title edits stay on `prgenie update` / MCP until the panel gains a rename control.
+15. **`gh` bind in the UI (H7).** ✅ RAD-10: `gh` bind management accessible via the UI.
+16. **Docs (H6).** ✅ RAD-14: Added architecture.md and troubleshooting.md.
+17. **Sidebar rename for loops (H2 remainder).** ✅ RAD-5: Title edits available via `prgenie update` / MCP and sidebar.
 
 ---
 
@@ -86,6 +86,25 @@ The Now items remove the failure modes daily use actually hits: hand-rolled list
 
 ### Learn — memory and shepherd
 
-18. **Repo pattern memory + ready preflight.** Remember repo-specific conventions and run a preflight before `ready` so loops match house style.
-19. **Sessions → learning digest.** Turn `sessions.jsonl` history into a concise digest agents can reuse across loops.
-20. **Export shepherd gate.** Gate `/export-local-pr` with shepherd checks (bind, drift, open findings) before push/GitHub.
+18. **Repo pattern memory + ready preflight.** ✅ RAD-6: `learnings` track repo patterns; `preflight` validates loops before `ready`.
+19. **Sessions → learning digest.** ✅ RAD-9: `prgenie sessions` CLI exposes `sessions.jsonl` history for agent reuse.
+20. **Export shepherd gate.** ✅ RAD-11: `shepherd` gate on `/export-local-pr` validates bind/drift/findings before push.
+
+### Shipped — additional control-plane work
+
+- **RAD-27**: `attach` imports GitHub PRs or branches as local loops.
+- **RAD-33**: `shepherd` verdict checks all gates (review, preflight, bind, CI).
+- **RAD-34**: Local CI gate via `/preflight` before marking loops ready.
+- **RAD-35**: CI cache to speed incremental runs.
+- **RAD-36**: Ignore untracked junk in CI diffs.
+- **RAD-38**: Reject `attach` on merged PRs.
+- **RAD-45**: `version` command and `--help` across CLI.
+- **RAD-46**: Windows CRLF and timeout fixes.
+- **RAD-49**: Windows-portable test suite.
+- **RAD-54**: Stranger-ready README with dogfood path.
+- **RAD-25**: `learnings` CLI exposes bare learnings (without full sessions).
+
+### Remaining open
+
+- **H5 sidebar search UI (RAD-65)**: Core+CLI+MCP search is complete; sidebar UI remains open.
+- **P2 extension tests**: Extension UI tests remain a gap after CLI/MCP/hooks coverage.
