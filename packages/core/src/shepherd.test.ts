@@ -3,11 +3,15 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 import { shepherdStatus } from "./shepherd.js";
 import { git } from "./git.js";
 import { createLocalPr, setLocalPrStatus, addLocalPrComment } from "./prs.js";
 import { addLearnings } from "./learnings.js";
 import type { Learning } from "./types.js";
+
+const execAsync = promisify(exec);
 
 async function initRepo(): Promise<string> {
   const tmp = await mkdtemp(join(tmpdir(), "prgenie-shepherd-test-"));
@@ -294,6 +298,12 @@ describe("shepherdStatus", () => {
     const repo = await initRepo();
     try {
       await git(repo, ["checkout", "-b", "feature"]);
+
+      // Link node_modules for prettier access
+      await execAsync(`ln -s ${join(process.cwd(), "node_modules")} ${join(repo, "node_modules")}`);
+
+      // Create a badly formatted JS file that will fail format:check
+      await writeFile(join(repo, "bad.js"), 'const x = "bad"\n');
       await writeFile(join(repo, "test.txt"), "test\n");
       await git(repo, ["add", "."]);
       await git(repo, ["commit", "-m", "Add test"]);
@@ -304,7 +314,6 @@ describe("shepherdStatus", () => {
         JSON.stringify({
           name: "test-repo",
           scripts: {
-            "format:check": "exit 1",
             lint: "exit 1",
             typecheck: "exit 0",
             test: "exit 1",

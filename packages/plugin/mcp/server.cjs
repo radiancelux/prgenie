@@ -1746,13 +1746,77 @@ var init_watchActivity = __esm({
 });
 
 // packages/core/src/ci-runner.ts
+async function getTrackedFiles(cwd) {
+  try {
+    const { stdout } = await execAsync("git ls-files --exclude-standard", { cwd });
+    const files = stdout.trim().split("\n").filter(Boolean);
+    const fs = await import("node:fs/promises");
+    const path8 = await import("node:path");
+    const validFiles = [];
+    const skipFiles = /* @__PURE__ */ new Set([
+      ".gitignore",
+      ".prettierignore",
+      ".eslintignore",
+      ".dockerignore",
+      "pnpm-lock.yaml",
+      "package-lock.json",
+      "yarn.lock"
+    ]);
+    const prettierExts = /* @__PURE__ */ new Set([
+      ".js",
+      ".jsx",
+      ".ts",
+      ".tsx",
+      ".mjs",
+      ".cjs",
+      ".json",
+      ".css",
+      ".scss",
+      ".less",
+      ".html",
+      ".md",
+      ".yml",
+      ".yaml",
+      ".xml"
+    ]);
+    for (const file of files) {
+      const basename = path8.basename(file);
+      const ext = path8.extname(file).toLowerCase();
+      if (skipFiles.has(basename)) {
+        continue;
+      }
+      if (!prettierExts.has(ext)) {
+        continue;
+      }
+      try {
+        const fullPath = path8.join(cwd, file);
+        const stats = await fs.stat(fullPath);
+        if (stats.isFile()) {
+          validFiles.push(file);
+        }
+      } catch {
+      }
+    }
+    return validFiles;
+  } catch {
+    return [];
+  }
+}
 async function runCiChecks(cwd, options = {}) {
   const checks = options.checks ?? ["format:check", "lint", "typecheck", "test", "build"];
   const timeout = options.timeout ?? 6e4;
   const results = [];
   for (const check of checks) {
     try {
-      await execAsync(`pnpm ${check}`, { cwd, timeout });
+      let command = `pnpm ${check}`;
+      if (check === "format:check") {
+        const tracked = await getTrackedFiles(cwd);
+        if (tracked.length > 0) {
+          const quotedFiles = tracked.map((f) => `"${f.replace(/"/g, '\\"')}"`).join(" ");
+          command = `pnpm exec prettier --check ${quotedFiles}`;
+        }
+      }
+      await execAsync(command, { cwd, timeout });
       results.push({ name: check, passed: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
