@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 import { runCiChecks } from "./ci-runner.js";
+
+const execAsync = promisify(exec);
 
 async function initTestRepo(): Promise<string> {
   const tmp = await mkdtemp(join(tmpdir(), "prgenie-ci-test-"));
@@ -159,6 +163,158 @@ describe("runCiChecks", () => {
       assert.equal(result.checks.length, 1);
       assert.equal(result.checks[0].passed, false);
       assert.ok(result.checks[0].error);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  // RAD-36: format:check must ignore untracked junk (match clean-checkout remote CI)
+  // Note: This test uses workspace-level prettier installation
+  it("RAD-36: format:check ignores untracked files", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-rad36-"));
+    try {
+      // Init git repo
+      await execAsync("git init", { cwd: repo });
+      await execAsync('git config user.email "test@test.com"', { cwd: repo });
+      await execAsync('git config user.name "Test"', { cwd: repo });
+
+      // Create package.json that uses workspace prettier via pnpm link
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          packageManager: "pnpm@10.33.0",
+          scripts: {
+            lint: "exit 0",
+            typecheck: "exit 0",
+            test: "exit 0",
+            build: "exit 0",
+          },
+        }),
+      );
+
+      // Create .gitignore to exclude node_modules from tracking
+      await writeFile(join(repo, ".gitignore"), "node_modules\n");
+
+      // Create .prettierignore to exclude files that can't be formatted
+      await writeFile(join(repo, ".prettierignore"), ".gitignore\nnode_modules\n");
+
+      // Link to workspace node_modules for prettier access
+      await execAsync(
+        `ln -s ${join(process.cwd(), "node_modules")} ${join(repo, "node_modules")}`,
+        {
+          cwd: repo,
+        },
+      );
+
+      // Create .prettierrc.json
+      await writeFile(
+        join(repo, ".prettierrc.json"),
+        JSON.stringify({
+          semi: true,
+          singleQuote: false,
+          trailingComma: "all",
+        }),
+      );
+
+      // Create a properly formatted tracked file
+      await writeFile(join(repo, "good.js"), 'const x = "hello";\n');
+
+      // Format all files before committing
+      await execAsync("pnpm exec prettier --write .", { cwd: repo });
+
+      // Track and commit the good files
+      await execAsync("git add .", { cwd: repo });
+      await execAsync('git commit -m "Initial commit"', { cwd: repo });
+
+      // Create an untracked file with bad formatting (missing semicolon)
+      await writeFile(join(repo, "untracked-junk.js"), 'const bad = "untracked"\n');
+
+      // Run format:check - should PASS because untracked file is ignored
+      const result = await runCiChecks(repo, {
+        checks: ["format:check"],
+        timeout: 10000,
+      });
+
+      assert.equal(result.allPassed, true, "format:check should pass despite untracked junk");
+      const formatCheck = result.checks.find((c) => c.name === "format:check");
+      assert.ok(formatCheck);
+      assert.equal(formatCheck.passed, true);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-36: format:check still fails on tracked format violations", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-rad36-fail-"));
+    try {
+      // Init git repo
+      await execAsync("git init", { cwd: repo });
+      await execAsync('git config user.email "test@test.com"', { cwd: repo });
+      await execAsync('git config user.name "Test"', { cwd: repo });
+
+      // Create package.json that uses workspace prettier via pnpm link
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          packageManager: "pnpm@10.33.0",
+          scripts: {
+            lint: "exit 0",
+            typecheck: "exit 0",
+            test: "exit 0",
+            build: "exit 0",
+          },
+        }),
+      );
+
+      // Create .gitignore to exclude node_modules from tracking
+      await writeFile(join(repo, ".gitignore"), "node_modules\n");
+
+      // Create .prettierignore to exclude files that can't be formatted
+      await writeFile(join(repo, ".prettierignore"), ".gitignore\nnode_modules\n");
+
+      // Link to workspace node_modules for prettier access
+      await execAsync(
+        `ln -s ${join(process.cwd(), "node_modules")} ${join(repo, "node_modules")}`,
+        {
+          cwd: repo,
+        },
+      );
+
+      // Create .prettierrc.json
+      await writeFile(
+        join(repo, ".prettierrc.json"),
+        JSON.stringify({
+          semi: true,
+          singleQuote: false,
+          trailingComma: "all",
+        }),
+      );
+
+      // Create a tracked file with bad formatting (missing semicolon)
+      await writeFile(join(repo, "bad.js"), 'const bad = "tracked"\n');
+
+      // Format JSON files but leave bad.js unformatted
+      await execAsync("pnpm exec prettier --write package.json .prettierrc.json", {
+        cwd: repo,
+      });
+
+      // Track and commit
+      await execAsync("git add .", { cwd: repo });
+      await execAsync('git commit -m "Initial commit"', { cwd: repo });
+
+      // Run format:check - should FAIL because tracked file has format issue
+      const result = await runCiChecks(repo, {
+        checks: ["format:check"],
+        timeout: 10000,
+      });
+
+      assert.equal(result.allPassed, false, "format:check should fail on tracked violations");
+      const formatCheck = result.checks.find((c) => c.name === "format:check");
+      assert.ok(formatCheck);
+      assert.equal(formatCheck.passed, false);
+      assert.ok(formatCheck.error, "should have error message");
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
