@@ -70,7 +70,7 @@ async function computeTrackedFilesHash(cwd: string): Promise<string | null> {
     // git ls-tree -r HEAD includes all tracked files with their blob SHAs
     // This gives us a deterministic, content-addressed view of the repository
     const { stdout } = await git(cwd, ["ls-tree", "-r", "HEAD"]);
-    
+
     // Hash the entire ls-tree output (includes paths and blob SHAs)
     const hash = createHash("sha256");
     hash.update(stdout);
@@ -91,7 +91,7 @@ async function computeScriptsHash(cwd: string): Promise<string | null> {
     // Get package.json from git HEAD (committed version)
     const { stdout } = await git(cwd, ["show", "HEAD:package.json"]);
     const pkg = JSON.parse(stdout) as { scripts?: Record<string, string> };
-    
+
     // Hash the scripts object
     const hash = createHash("sha256");
     hash.update(JSON.stringify(pkg.scripts || {}));
@@ -133,10 +133,7 @@ export async function computeCiInputHash(cwd: string): Promise<string | null> {
  *
  * Fail-closed: Any uncertainty (missing hash, hash mismatch, etc.) returns null.
  */
-export async function getCachedResult(
-  cwd: string,
-  check: string,
-): Promise<CiCacheEntry | null> {
+export async function getCachedResult(cwd: string, check: string): Promise<CiCacheEntry | null> {
   const currentHash = await computeCiInputHash(cwd);
   if (!currentHash) {
     // Cannot compute current hash - fail closed with cache miss

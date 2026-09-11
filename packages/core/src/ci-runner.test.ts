@@ -530,11 +530,7 @@ describe("runCiChecks", () => {
       // Third run - should use cache (pass) because git HEAD unchanged
       // The working tree change doesn't invalidate cache (only committed content matters)
       const result3 = await runCiChecks(repo, { checks: ["lint"], timeout: 5000 });
-      assert.equal(
-        result3.allPassed,
-        true,
-        "Third run should pass via cache (HEAD unchanged)",
-      );
+      assert.equal(result3.allPassed, true, "Third run should pass via cache (HEAD unchanged)");
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
