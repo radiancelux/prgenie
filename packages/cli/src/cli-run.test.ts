@@ -56,6 +56,49 @@ test("cli --help prints usage and exits 0", () => {
   assert.match(result.stdout, /prgenie create/);
 });
 
+test("cli -h prints usage and exits 0", () => {
+  const result = prgenie(["-h"]);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /prgenie create/);
+});
+
+test("cli version prints version and exits 0", () => {
+  const result = prgenie(["version"]);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /^\d+\.\d+\.\d+\n$/);
+});
+
+test("cli attach --help prints attach usage and exits 0", () => {
+  const result = prgenie(["attach", "--help"]);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /prgenie attach/);
+  assert.match(result.stdout, /Attach an existing GitHub PR/);
+});
+
+test("cli attach -h prints attach usage and exits 0", () => {
+  const result = prgenie(["attach", "-h"]);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /prgenie attach/);
+});
+
+test("cli create --help prints create usage and exits 0", () => {
+  const result = prgenie(["create", "--help"]);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /prgenie create/);
+});
+
+test("cli list --help prints list usage and exits 0", () => {
+  const result = prgenie(["list", "--help"]);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /prgenie list/);
+});
+
+test("cli show --help prints show usage and exits 0", () => {
+  const result = prgenie(["show", "--help"]);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /prgenie show/);
+});
+
 test("cli list rejects invalid --in fields", () => {
   const result = prgenie(["list", "--in", "title,bogus"]);
   assert.equal(result.code, 1);
