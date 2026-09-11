@@ -1027,18 +1027,33 @@ export async function attachLocalPr(cwd: string, input: AttachLocalPrInput): Pro
     baseRef = detectedBase.replace(/^origin\//, "");
 
     // Try to get PR info if this branch has an open PR
-    const prCheckResult = await runGh(["pr", "view", headRef, "--json", "title,body"], { cwd });
+    const prCheckResult = await runGh(["pr", "view", headRef, "--json", "title,body,state"], {
+      cwd,
+    });
 
     if (prCheckResult.code === 0) {
       try {
         const prData = JSON.parse(prCheckResult.stdout) as {
           title: string;
           body: string;
+          state: string;
         };
+
+        // Reject if the PR is already merged
+        if (prData.state.toUpperCase() === "MERGED") {
+          throw new Error(
+            `Branch ${headRef} has a merged GitHub PR. Cannot attach merged PRs to new lanes.`,
+          );
+        }
+
         title = input.title ?? prData.title;
         body = input.body ?? prData.body;
-      } catch {
-        // Fallback to branch-based title
+      } catch (err) {
+        // If it's our merged-PR error, re-throw it
+        if (err instanceof Error && err.message.includes("merged GitHub PR")) {
+          throw err;
+        }
+        // Otherwise, fallback to branch-based title
         title =
           input.title ?? (await shortLogSubject(cwd, headSha).catch(() => `Attached ${headRef}`));
         body = input.body ?? "";
