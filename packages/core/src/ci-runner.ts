@@ -1,5 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { getCachedResult, recordCheckPass } from "./ci-cache.js";
 
 const execAsync = promisify(exec);
 
@@ -19,6 +20,8 @@ export interface CiRunnerOptions {
   checks?: string[];
   /** Timeout per check in milliseconds. Default 300000 (5 minutes) */
   timeout?: number;
+  /** Skip cache and force all checks to run (for testing). Default false. */
+  skipCache?: boolean;
 }
 
 /**
@@ -129,9 +132,8 @@ async function checkFormatFromBlobs(cwd: string, files: string[]): Promise<void>
  * Run local CI checks. Discovers checks from package.json/CI workflow.
  * For prgenie: format:check, lint, typecheck, test, build
  *
+ * RAD-35: Implements cache/incremental CI - skips checks when inputs unchanged.
  * RAD-36: format:check runs over git-tracked files only (matching remote CI clean checkout).
- * Untracked junk in working tree does not fail CI.
- *
  * RAD-46: format:check checks git blob (LF-normalized) content, not CRLF working tree.
  * This ensures Windows autocrlf repos pass when blob content is properly formatted.
  */
@@ -143,10 +145,22 @@ export async function runCiChecks(
   const checks = options.checks ?? ["format:check", "lint", "typecheck", "test", "build"];
   // RAD-46: Raise default timeout from 60s to 5min - healthy test suite can exceed 215s
   const timeout = options.timeout ?? 300000;
+  const skipCache = options.skipCache ?? false;
 
   const results: CiCheckResult[] = [];
 
   for (const check of checks) {
+    // RAD-35: Check cache first (fail-closed: cache miss on any uncertainty)
+    if (!skipCache) {
+      const cached = await getCachedResult(cwd, check);
+      if (cached) {
+        // Cache hit - check passed previously with same inputs
+        results.push({ name: check, passed: true });
+        continue;
+      }
+    }
+
+    // Cache miss or skipCache - run the check
     try {
       const command = `pnpm ${check}`;
 
@@ -158,6 +172,8 @@ export async function runCiChecks(
           // RAD-46: Check git blob content (LF-normalized) to match remote CI on Windows autocrlf
           await checkFormatFromBlobs(cwd, tracked);
           results.push({ name: check, passed: true });
+          // RAD-35: Record successful check in cache
+          await recordCheckPass(cwd, check);
           continue;
         }
         // If no tracked files (not a git repo or empty repo), fall back to default pnpm format:check
@@ -165,6 +181,8 @@ export async function runCiChecks(
 
       await execAsync(command, { cwd, timeout });
       results.push({ name: check, passed: true });
+      // RAD-35: Record successful check in cache
+      await recordCheckPass(cwd, check);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       results.push({
@@ -172,6 +190,7 @@ export async function runCiChecks(
         passed: false,
         error: message.split("\n")[0] || `Check '${check}' failed`,
       });
+      // RAD-35: Don't cache failures - next run will try again
     }
   }
 

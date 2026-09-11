@@ -471,4 +471,260 @@ describe("runCiChecks", () => {
       await rm(repo, { recursive: true, force: true });
     }
   });
+
+  // RAD-35: Cache hit skips check execution
+  it("RAD-35: cache hit skips check execution and returns cached pass", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-cache-hit-"));
+    try {
+      // Init git repo
+      await execAsync("git init", { cwd: repo });
+      await execAsync('git config user.email "test@test.com"', { cwd: repo });
+      await execAsync('git config user.name "Test"', { cwd: repo });
+
+      // Create package.json with a script that will fail if executed
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: "exit 1", // Will fail if executed
+          },
+        }),
+      );
+      await writeFile(join(repo, "test.txt"), "content\n");
+      await execAsync("git add .", { cwd: repo });
+      await execAsync('git commit -m "Initial commit"', { cwd: repo });
+
+      // First run - will fail
+      const result1 = await runCiChecks(repo, { checks: ["lint"], timeout: 5000 });
+      assert.equal(result1.allPassed, false, "First run should fail");
+
+      // Fix the script to pass
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: "exit 0", // Now passes
+          },
+        }),
+      );
+      await execAsync("git add .", { cwd: repo });
+      await execAsync('git commit -m "Fix lint"', { cwd: repo });
+
+      // Second run - should pass and cache the result
+      const result2 = await runCiChecks(repo, { checks: ["lint"], timeout: 5000 });
+      assert.equal(result2.allPassed, true, "Second run should pass");
+
+      // Change script back to failing (but don't commit)
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: "exit 1", // Would fail if executed
+          },
+        }),
+      );
+
+      // Third run - should use cache (pass) because git HEAD unchanged
+      // The working tree change doesn't invalidate cache (only committed content matters)
+      const result3 = await runCiChecks(repo, { checks: ["lint"], timeout: 5000 });
+      assert.equal(
+        result3.allPassed,
+        true,
+        "Third run should pass via cache (HEAD unchanged)",
+      );
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  // RAD-35: Cache miss when file content changes
+  it("RAD-35: cache invalidates when tracked files change", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-cache-invalidate-"));
+    try {
+      // Init git repo
+      await execAsync("git init", { cwd: repo });
+      await execAsync('git config user.email "test@test.com"', { cwd: repo });
+      await execAsync('git config user.name "Test"', { cwd: repo });
+
+      // Create package.json with passing check
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: "exit 0",
+          },
+        }),
+      );
+      await writeFile(join(repo, "test.txt"), "initial\n");
+      await execAsync("git add .", { cwd: repo });
+      await execAsync('git commit -m "Initial commit"', { cwd: repo });
+
+      // First run - should pass and cache
+      const result1 = await runCiChecks(repo, { checks: ["lint"], timeout: 5000 });
+      assert.equal(result1.allPassed, true);
+
+      // Modify a file and commit
+      await writeFile(join(repo, "test.txt"), "modified\n");
+      await execAsync("git add .", { cwd: repo });
+      await execAsync('git commit -m "Modify file"', { cwd: repo });
+
+      // Now make the check fail
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: "exit 1", // Now fails
+          },
+        }),
+      );
+      await execAsync("git add .", { cwd: repo });
+      await execAsync('git commit -m "Break lint"', { cwd: repo });
+
+      // Second run - cache should be invalid, check should run and fail
+      const result2 = await runCiChecks(repo, { checks: ["lint"], timeout: 5000 });
+      assert.equal(result2.allPassed, false, "Cache should be invalid after file change");
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  // RAD-35: skipCache option forces check execution
+  it("RAD-35: skipCache option bypasses cache", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-skip-cache-"));
+    try {
+      // Init git repo
+      await execAsync("git init", { cwd: repo });
+      await execAsync('git config user.email "test@test.com"', { cwd: repo });
+      await execAsync('git config user.name "Test"', { cwd: repo });
+
+      // Create package.json
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: "exit 0",
+          },
+        }),
+      );
+      await writeFile(join(repo, "test.txt"), "content\n");
+      await execAsync("git add .", { cwd: repo });
+      await execAsync('git commit -m "Initial commit"', { cwd: repo });
+
+      // First run - should pass and cache
+      const result1 = await runCiChecks(repo, { checks: ["lint"], timeout: 5000 });
+      assert.equal(result1.allPassed, true);
+
+      // Make check fail
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: "exit 1",
+          },
+        }),
+      );
+      await execAsync("git add .", { cwd: repo });
+      await execAsync('git commit -m "Break lint"', { cwd: repo });
+
+      // Run with skipCache=false (default) - should use cache and pass
+      const result2 = await runCiChecks(repo, {
+        checks: ["lint"],
+        timeout: 5000,
+        skipCache: false,
+      });
+      // Cache is invalid due to file change, so this will actually run and fail
+      assert.equal(result2.allPassed, false);
+
+      // Fix the check
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: "exit 0",
+          },
+        }),
+      );
+      await execAsync("git add .", { cwd: repo });
+      await execAsync('git commit -m "Fix lint"', { cwd: repo });
+
+      // Run and cache the pass
+      const result3 = await runCiChecks(repo, { checks: ["lint"], timeout: 5000 });
+      assert.equal(result3.allPassed, true);
+
+      // Break it again
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: "exit 1",
+          },
+        }),
+      );
+      await execAsync("git add .", { cwd: repo });
+      await execAsync('git commit -m "Break lint again"', { cwd: repo });
+
+      // Run with skipCache=true - should execute and fail
+      const result4 = await runCiChecks(repo, {
+        checks: ["lint"],
+        timeout: 5000,
+        skipCache: true,
+      });
+      assert.equal(result4.allPassed, false, "skipCache should force execution");
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  // RAD-35: Multiple checks can be cached independently
+  it("RAD-35: maintains independent cache for each check", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-multi-cache-"));
+    try {
+      // Init git repo
+      await execAsync("git init", { cwd: repo });
+      await execAsync('git config user.email "test@test.com"', { cwd: repo });
+      await execAsync('git config user.name "Test"', { cwd: repo });
+
+      // Create package.json with multiple checks
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: "exit 0",
+            test: "exit 0",
+            typecheck: "exit 0",
+          },
+        }),
+      );
+      await writeFile(join(repo, "test.txt"), "content\n");
+      await execAsync("git add .", { cwd: repo });
+      await execAsync('git commit -m "Initial commit"', { cwd: repo });
+
+      // Run all checks - should pass and cache all
+      const result1 = await runCiChecks(repo, {
+        checks: ["lint", "test", "typecheck"],
+        timeout: 5000,
+      });
+      assert.equal(result1.allPassed, true);
+
+      // Second run - should use cache for all
+      const result2 = await runCiChecks(repo, {
+        checks: ["lint", "test", "typecheck"],
+        timeout: 5000,
+      });
+      assert.equal(result2.allPassed, true);
+      // All checks should pass via cache
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
 });
