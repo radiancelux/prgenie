@@ -16,6 +16,19 @@ When a **subagent** finishes with commits, PR Genie drafts a loop and puts it on
 | Cursor Plugin                   | No-push rule, `/local-pr`, `/review-local-pr`, MCP, subagent capture, **per-repo `gh` account** |
 | VS Code / Cursor extension      | Live watch list as loops land — Switch puts this window on that loop's worktree                 |
 
+## What you can do today
+
+Follow this path to dogfood the control plane (attach a CloudAgent or GitHub PR, then shepherd it to merge-ready):
+
+1. **Bind GitHub** (if needed): `prgenie gh use <your-login>` — per-repo binding so this project stays on the right account
+2. **Attach an open PR**: `prgenie attach <pr-url|branch>` — imports an existing GitHub PR or branch as a local loop
+3. **Shepherd to ready**: `prgenie shepherd <id>` — checks all gates (review, preflight, bind, CI)
+   - **ready** = all gates pass, safe to merge
+   - **blocked** = shows which gates failed (review incomplete, preflight pattern match, bind missing, CI failure)
+4. **After plugin changes merge**: `pnpm link-plugin` then `prgenie doctor` — ensures plugin is fresh and all checks pass
+
+Run `prgenie attach --help` and `prgenie --help` for full command reference.
+
 ## Docs
 
 - [Architecture](docs/architecture.md) — packages, lifecycle, watch lanes, storage, worktrees, `gh` bind
