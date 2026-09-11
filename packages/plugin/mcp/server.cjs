@@ -1747,13 +1747,7 @@ var init_watchActivity = __esm({
 
 // packages/core/src/ci-runner.ts
 async function runCiChecks(cwd, options = {}) {
-  const checks = options.checks ?? [
-    "format:check",
-    "lint",
-    "typecheck",
-    "test",
-    "build"
-  ];
+  const checks = options.checks ?? ["format:check", "lint", "typecheck", "test", "build"];
   const timeout = options.timeout ?? 6e4;
   const results = [];
   for (const check of checks) {
