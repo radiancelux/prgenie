@@ -424,6 +424,29 @@ export async function run(argv: string[]): Promise<number> {
     process.stdout.write(`${lines.join("\n")}\n`);
     return 0;
   }
+  if (sub === "learnings" || sub === "learn") {
+    const { listLearnings } = await import("@prgenie/core");
+    const learnings = await listLearnings(repo, {
+      disabled: flag(rest, "--disabled") ? true : undefined,
+      category: arg(rest, "--category"),
+    });
+    if (learnings.length === 0) {
+      process.stdout.write("No learnings.\n");
+      return 0;
+    }
+    for (const learning of learnings) {
+      const disabledFlag = learning.disabled ? " [disabled]" : "";
+      const categoryFlag = learning.category ? ` [${learning.category}]` : "";
+      process.stdout.write(
+        `${learning.id}${disabledFlag}${categoryFlag} (from ${learning.sourcePrId} ${learning.sourceCommentId})\n`,
+      );
+      process.stdout.write(`  Pattern: ${learning.pattern}\n`);
+      process.stdout.write(`  Guidance: ${learning.guidance}\n`);
+      if (learning.path) process.stdout.write(`  Path: ${learning.path}\n`);
+      process.stdout.write(`  Learned: ${learning.learnedAt}\n\n`);
+    }
+    return 0;
+  }
   const id = rest[0];
   if (!id) {
     process.stderr.write("Missing local PR id.\n");
@@ -606,29 +629,6 @@ export async function run(argv: string[]): Promise<number> {
   if (sub === "status") {
     const status = rest[1] as LocalPrStatus;
     printPr(await setLocalPrStatus(repo, id, status));
-    return 0;
-  }
-  if (sub === "learnings" || sub === "learn") {
-    const { listLearnings } = await import("@prgenie/core");
-    const learnings = await listLearnings(repo, {
-      disabled: flag(rest, "--disabled") ? true : undefined,
-      category: arg(rest, "--category"),
-    });
-    if (learnings.length === 0) {
-      process.stdout.write("No learnings.\n");
-      return 0;
-    }
-    for (const learning of learnings) {
-      const disabledFlag = learning.disabled ? " [disabled]" : "";
-      const categoryFlag = learning.category ? ` [${learning.category}]` : "";
-      process.stdout.write(
-        `${learning.id}${disabledFlag}${categoryFlag} (from ${learning.sourcePrId} ${learning.sourceCommentId})\n`,
-      );
-      process.stdout.write(`  Pattern: ${learning.pattern}\n`);
-      process.stdout.write(`  Guidance: ${learning.guidance}\n`);
-      if (learning.path) process.stdout.write(`  Path: ${learning.path}\n`);
-      process.stdout.write(`  Learned: ${learning.learnedAt}\n\n`);
-    }
     return 0;
   }
   if (sub === "disable-learning") {

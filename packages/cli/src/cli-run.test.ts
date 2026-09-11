@@ -150,3 +150,21 @@ test("cli comment requires -m", () => {
   assert.equal(result.code, 1);
   assert.match(result.stderr, /comment <id> -m/);
 });
+
+test("cli learnings with no args lists repo learnings", () => {
+  const result = prgenie(["learnings"]);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /No learnings/);
+});
+
+test("cli learnings --disabled works", () => {
+  const result = prgenie(["learnings", "--disabled"]);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /No learnings/);
+});
+
+test("cli learnings --category works", () => {
+  const result = prgenie(["learnings", "--category", "testing"]);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /No learnings/);
+});
