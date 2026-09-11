@@ -2,7 +2,7 @@
 
 Grounded in a full survey of the code as of `main` (post PR #5): `packages/core`, `packages/cli`, `packages/plugin`, `packages/extension`, the skills/rules/hooks, and the flywheel workflow (implementor chat ↔ reviewer chat ↔ human). Each item names the gap, why it matters, and where the change lands. Ordered by priority within each horizon.
 
-**Status:** Now items 1–4 and Next items 5–10 are implemented on this branch line. Later #11–12 and #14 (release discipline) shipped; #13 (test debt + lint) landed on main via PR #13. Learn horizon 18–20 is documented only. Remaining Later items stay open.
+**Status:** Now items 1–4 and Next items 5–10 are implemented on this branch line. Later #11–17 shipped (history surface, search/filter, test debt + lint, release discipline, gh bind UI, docs, sidebar rename). Learn #18–20 shipped (pattern memory + preflight, sessions digest, export shepherd gate). Remaining open: H5 sidebar search UI (RAD-65), P2 extension tests.
 
 ## Where the product stands
 
@@ -94,7 +94,7 @@ The Now items remove the failure modes daily use actually hits: hand-rolled list
 
 - **RAD-27**: `attach` imports GitHub PRs or branches as local loops.
 - **RAD-33**: `shepherd` verdict checks all gates (review, preflight, bind, CI).
-- **RAD-34**: Local CI gate via `/preflight` before marking loops ready.
+- **RAD-34**: Local CI gate (format/lint/typecheck/test/build) in shepherd/export validation.
 - **RAD-35**: CI cache to speed incremental runs.
 - **RAD-36**: Ignore untracked junk in CI diffs.
 - **RAD-38**: Reject `attach` on merged PRs.
