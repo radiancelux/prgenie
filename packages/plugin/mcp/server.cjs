@@ -1664,13 +1664,23 @@ async function attachLocalPr(cwd, input) {
     headSha = shaResult.stdout.trim();
     const detectedBase = input.base ?? await detectDefaultBase(cwd);
     baseRef = detectedBase.replace(/^origin\//, "");
-    const prCheckResult = await runGh2(["pr", "view", headRef, "--json", "title,body"], { cwd });
+    const prCheckResult = await runGh2(["pr", "view", headRef, "--json", "title,body,state"], {
+      cwd
+    });
     if (prCheckResult.code === 0) {
       try {
         const prData = JSON.parse(prCheckResult.stdout);
+        if (prData.state.toUpperCase() === "MERGED") {
+          throw new Error(
+            `Branch ${headRef} has a merged GitHub PR. Cannot attach merged PRs to new lanes.`
+          );
+        }
         title = input.title ?? prData.title;
         body = input.body ?? prData.body;
-      } catch {
+      } catch (err) {
+        if (err instanceof Error && err.message.includes("merged GitHub PR")) {
+          throw err;
+        }
         title = input.title ?? await shortLogSubject(cwd, headSha).catch(() => `Attached ${headRef}`);
         body = input.body ?? "";
       }

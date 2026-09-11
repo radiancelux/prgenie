@@ -216,3 +216,64 @@ test("attached PR respects base override", async () => {
   assert.equal(pr.baseRef, "develop");
   assert.equal(pr.headRef, "feat/from-develop");
 });
+
+test("attachLocalPr rejects branch with merged GitHub PR", async () => {
+  // Create a branch for this test
+  git(["checkout", "-b", "feat/merged-pr-test"]);
+  await writeFile(path.join(repo, "merged-feature.txt"), "merged feature content\n");
+  git(["add", "."]);
+  git(["commit", "-m", "merged feature"]);
+  git(["push", "-u", "origin", "feat/merged-pr-test"]);
+  git(["checkout", "main"]);
+
+  // Create a mock gh script that returns MERGED state
+  const mockGhDir = await mkdtemp(path.join(tmpdir(), "mock-gh-"));
+  const mockGhPath = path.join(mockGhDir, "gh");
+  const mockGhScript = `#!/bin/bash
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "feat/merged-pr-test" ]; then
+  echo '{"title":"Merged PR","body":"This PR was merged","state":"MERGED"}'
+  exit 0
+fi
+exit 1
+`;
+  await writeFile(mockGhPath, mockGhScript);
+  await execFileSync("chmod", ["+x", mockGhPath]);
+
+  // Temporarily modify PATH to use our mock
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${mockGhDir}:${originalPath}`;
+
+  try {
+    await assert.rejects(
+      async () =>
+        attachLocalPr(repo, {
+          source: "feat/merged-pr-test",
+        }),
+      /merged GitHub PR/,
+    );
+  } finally {
+    // Restore original PATH
+    process.env.PATH = originalPath;
+    // Clean up mock script
+    await rm(mockGhDir, { recursive: true, force: true });
+  }
+});
+
+test("attachLocalPr accepts branch without GitHub PR", async () => {
+  // When no GitHub PR exists for a branch, gh pr view fails,
+  // and attachLocalPr should succeed using branch-based defaults
+  git(["checkout", "-b", "feat/no-pr"]);
+  await writeFile(path.join(repo, "no-pr.txt"), "no pr content\n");
+  git(["add", "."]);
+  git(["commit", "-m", "no pr feature"]);
+  git(["push", "-u", "origin", "feat/no-pr"]);
+  git(["checkout", "main"]);
+
+  const pr = await attachLocalPr(repo, {
+    source: "feat/no-pr",
+    title: "No PR test",
+  });
+
+  assert.equal(pr.headRef, "feat/no-pr");
+  assert.equal(pr.status, "draft");
+});
