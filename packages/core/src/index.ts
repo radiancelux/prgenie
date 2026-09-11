@@ -152,3 +152,5 @@ export type {
   ShepherdResult,
   ShepherdStatus,
 } from "./shepherd.js";
+export { runCiChecks } from "./ci-runner.js";
+export type { CiCheckResult, CiRunnerOptions, CiRunnerResult } from "./ci-runner.js";

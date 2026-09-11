@@ -331,12 +331,33 @@ var init_github_ops = __esm({
   }
 });
 
+// packages/core/src/ci-runner.ts
+var import_node_child_process3, import_node_util, execAsync;
+var init_ci_runner = __esm({
+  "packages/core/src/ci-runner.ts"() {
+    "use strict";
+    import_node_child_process3 = require("node:child_process");
+    import_node_util = require("node:util");
+    execAsync = (0, import_node_util.promisify)(import_node_child_process3.exec);
+  }
+});
+
+// packages/core/src/shepherd.ts
+var init_shepherd = __esm({
+  "packages/core/src/shepherd.ts"() {
+    "use strict";
+    init_prs();
+    init_learnings();
+    init_github_ops();
+    init_ci_runner();
+  }
+});
+
 // packages/core/src/export-validation.ts
 var init_export_validation = __esm({
   "packages/core/src/export-validation.ts"() {
     "use strict";
-    init_prs();
-    init_learnings();
+    init_shepherd();
   }
 });
 
@@ -381,11 +402,8 @@ init_store();
 init_github();
 init_github_ops();
 init_learnings();
-
-// packages/core/src/shepherd.ts
-init_prs();
-init_learnings();
-init_github_ops();
+init_shepherd();
+init_ci_runner();
 
 // packages/cli/src/github-hook.ts
 function isPublish(command) {

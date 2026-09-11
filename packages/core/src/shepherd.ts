@@ -1,11 +1,12 @@
 import { getLocalPr, isArchivedPr, pendingReviewComments } from "./prs.js";
 import { runPreflight } from "./learnings.js";
 import { ensureRepoGithub } from "./github-ops.js";
+import { runCiChecks } from "./ci-runner.js";
 
 export type ShepherdStatus = "ready" | "blocked";
 
 export interface ShepherdBlockReason {
-  check: "review" | "preflight" | "github";
+  check: "review" | "preflight" | "github" | "ci";
   message: string;
 }
 
@@ -17,6 +18,8 @@ export interface ShepherdResult {
 export interface ShepherdOptions {
   /** For testing: skip GitHub check */
   skipGithubCheck?: boolean;
+  /** For testing: skip CI checks */
+  skipCiCheck?: boolean;
 }
 
 /**
@@ -83,6 +86,21 @@ export async function shepherdStatus(
           check: "github",
           message: `Repo not bound to GitHub account (run: prgenie gh use ${ghState.login})`,
         });
+      }
+    }
+
+    // 4. Check local CI passes (format, lint, typecheck, test, build)
+    if (!options.skipCiCheck) {
+      const ciResult = await runCiChecks(cwd);
+      if (!ciResult.allPassed) {
+        for (const check of ciResult.checks) {
+          if (!check.passed) {
+            reasons.push({
+              check: "ci",
+              message: `CI check failed: ${check.name}${check.error ? ` — ${check.error}` : ""}`,
+            });
+          }
+        }
       }
     }
   } catch (err) {
