@@ -306,6 +306,9 @@ describe("shepherdStatus", () => {
     try {
       await git(repo, ["checkout", "-b", "feature"]);
 
+      // Create .gitignore before linking node_modules to prevent git from indexing through junction on Windows
+      await writeFile(join(repo, ".gitignore"), "node_modules\n");
+
       // Link node_modules for prettier access
       await linkNodeModules(repo, join(process.cwd(), "node_modules"));
 
