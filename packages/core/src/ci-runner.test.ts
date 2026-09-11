@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exec } from "node:child_process";
@@ -8,6 +8,17 @@ import { promisify } from "node:util";
 import { runCiChecks } from "./ci-runner.js";
 
 const execAsync = promisify(exec);
+
+/**
+ * Create a cross-platform symlink to node_modules.
+ * On Windows, uses junction which doesn't require admin privileges.
+ * On Unix, uses a standard symlink.
+ */
+async function linkNodeModules(targetDir: string, sourceModulesPath: string): Promise<void> {
+  const linkPath = join(targetDir, "node_modules");
+  const type = process.platform === "win32" ? "junction" : "dir";
+  await symlink(sourceModulesPath, linkPath, type);
+}
 
 async function initTestRepo(): Promise<string> {
   const tmp = await mkdtemp(join(tmpdir(), "prgenie-ci-test-"));
@@ -200,12 +211,7 @@ describe("runCiChecks", () => {
       await writeFile(join(repo, ".prettierignore"), ".gitignore\nnode_modules\n");
 
       // Link to workspace node_modules for prettier access
-      await execAsync(
-        `ln -s ${join(process.cwd(), "node_modules")} ${join(repo, "node_modules")}`,
-        {
-          cwd: repo,
-        },
-      );
+      await linkNodeModules(repo, join(process.cwd(), "node_modules"));
 
       // Create .prettierrc.json
       await writeFile(
@@ -275,12 +281,7 @@ describe("runCiChecks", () => {
       await writeFile(join(repo, ".prettierignore"), ".gitignore\nnode_modules\n");
 
       // Link to workspace node_modules for prettier access
-      await execAsync(
-        `ln -s ${join(process.cwd(), "node_modules")} ${join(repo, "node_modules")}`,
-        {
-          cwd: repo,
-        },
-      );
+      await linkNodeModules(repo, join(process.cwd(), "node_modules"));
 
       // Create .prettierrc.json
       await writeFile(
