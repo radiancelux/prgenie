@@ -41,6 +41,12 @@ import {
   type RepoGithubBind,
 } from "@prgenie/core";
 import { openAllChanges, openFileChange } from "./gitDiff.js";
+import {
+  CHEAP_SHEPHERD_DEBOUNCE_MS,
+  createCheapShepherdScheduler,
+  createCoalescingFlight,
+  SIDEBAR_SHEPHERD_OPTIONS,
+} from "./sidebarPoller.js";
 
 type Surface = "lane" | "panel";
 
@@ -120,9 +126,26 @@ export class LaneHub implements vscode.Disposable {
   private lastGithubArchive = 0;
   private showArchived = false;
   private titleSaveInFlightId: string | undefined;
+  private lastShepherd: ShepherdResult | null = null;
+  private lastShepherdId: string | undefined;
+  private archiveInFlight = false;
+  private readonly enqueueSnapshot: (force?: boolean) => Promise<void>;
+  private readonly cheapShepherd = createCheapShepherdScheduler({
+    debounceMs: CHEAP_SHEPHERD_DEBOUNCE_MS,
+    fetch: (root, id) => shepherdStatus(root, id, SIDEBAR_SHEPHERD_OPTIONS),
+    onResult: (id, result) => {
+      this.lastShepherdId = id;
+      this.lastShepherd = result;
+      void this.pushSnapshot();
+    },
+    onError: (err) => {
+      console.error("[prgenie] Failed to fetch shepherd status:", err);
+    },
+  });
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.showArchived = this.context.workspaceState.get("prgenie.showArchived", false);
+    this.enqueueSnapshot = createCoalescingFlight((force) => this.pushSnapshotWork(force));
     this.poller = setInterval(() => void this.pushSnapshot(), 2000);
   }
 
@@ -559,7 +582,27 @@ export class LaneHub implements vscode.Disposable {
     }
   }
 
-  private async pushSnapshot(force = false): Promise<void> {
+  private pushSnapshot(force = false): Promise<void> {
+    return this.enqueueSnapshot(force);
+  }
+
+  /** Fire-and-forget merged-PR archive. Must not block first paint (RCA Slice 0). */
+  private scheduleGithubArchive(root: string, force: boolean): void {
+    const due = force || Date.now() - this.lastGithubArchive > 30_000;
+    if (!due || this.archiveInFlight) return;
+    this.archiveInFlight = true;
+    this.lastGithubArchive = Date.now();
+    void archiveLoopsMergedOnGithub(root)
+      .then((ids) => {
+        if (ids.length > 0) void this.pushSnapshot();
+      })
+      .catch(() => [])
+      .finally(() => {
+        this.archiveInFlight = false;
+      });
+  }
+
+  private async pushSnapshotWork(force = false): Promise<void> {
     if (this.views.size === 0) return;
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!cwd) {
@@ -597,11 +640,7 @@ export class LaneHub implements vscode.Disposable {
       }
     }
     try {
-      const due = force || Date.now() - this.lastGithubArchive > 30_000;
-      if (due) {
-        this.lastGithubArchive = Date.now();
-        await archiveLoopsMergedOnGithub(root).catch(() => []);
-      }
+      this.scheduleGithubArchive(root, force);
       const all = await listLocalPrs(root);
       const livePaths = all
         .filter((p) => !isArchivedPr(p) && p.worktreePath)
@@ -655,14 +694,7 @@ export class LaneHub implements vscode.Disposable {
           error: err instanceof Error ? err.message : String(err),
         };
       }
-      let shepherd: ShepherdResult | null = null;
-      if (selected) {
-        try {
-          shepherd = await shepherdStatus(root, selected.id);
-        } catch (err) {
-          console.error("[prgenie] Failed to fetch shepherd status:", err);
-        }
-      }
+      const shepherd = selected && this.lastShepherdId === selected.id ? this.lastShepherd : null;
       this.post(
         {
           type: "snapshot",
@@ -683,6 +715,7 @@ export class LaneHub implements vscode.Disposable {
         },
         force,
       );
+      this.cheapShepherd.schedule(root, selected?.id);
       await this.watchStore();
     } catch (err) {
       this.post(
@@ -710,6 +743,7 @@ function snapshotKey(payload: Snapshot | { type: "snapshot"; error: string; prs:
     threads: "threads" in payload ? payload.threads : [],
     watch: "watch" in payload ? payload.watch : null,
     ghBind: "ghBind" in payload ? payload.ghBind : null,
+    shepherdStatus: "shepherdStatus" in payload ? payload.shepherdStatus : null,
     prs: payload.prs,
   });
 }
