@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Reviewer queue (one tick)
 
-You are the **reviewer orchestrator**. Do not implement. Do not push unless `/export-local-pr`.
+**Transitional** (prefer `/steward-loop`). You are the **reviewer orchestrator**. Do not implement. Do not push unless `/export-local-pr`.
 
 0. Halt check — do not skip if MCP `watch_status` is missing. Prefer `node packages/cli/dist/prgenie.cjs watch queue` (the **queue** lane only). Combined `halted` is both lanes — do not treat an inbox-only stop as your halt. `listening` continues. `halted reason=stop` → kill this listen loop. `halted reason=export` → last packet shipped; do not dispatch. Do **not** `prgenie watch start` on this tick. A new `create_local_pr` resumes export-halted lanes after that id is archived or missing; it does not clear a stop halt.
 1. If this wake is `AGENT_LOOP_DONE_*` or the listen shell exited (`reason` idle/max/ticks/stop/export), run `/stop-review` and stop. Do not re-arm. Do not `/stop-watch`.

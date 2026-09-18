@@ -188,6 +188,13 @@ var init_learnings = __esm({
   }
 });
 
+// packages/core/src/export-gate.ts
+var init_export_gate = __esm({
+  "packages/core/src/export-gate.ts"() {
+    "use strict";
+  }
+});
+
 // packages/core/src/prs.ts
 var init_prs = __esm({
   "packages/core/src/prs.ts"() {
@@ -198,6 +205,7 @@ var init_prs = __esm({
     init_types();
     init_watch();
     init_learnings();
+    init_export_gate();
   }
 });
 
@@ -366,6 +374,7 @@ var init_shepherd = __esm({
 var init_export_validation = __esm({
   "packages/core/src/export-validation.ts"() {
     "use strict";
+    init_prs();
     init_shepherd();
   }
 });
@@ -386,6 +395,13 @@ init_git();
 init_prs();
 init_store();
 
+// packages/core/src/steward.ts
+init_export_gate();
+init_export_validation();
+init_git();
+init_prs();
+init_store();
+
 // packages/core/src/doctor.ts
 init_git();
 init_github_ops();
@@ -402,6 +418,7 @@ init_watch();
 
 // packages/core/src/index.ts
 init_export_validation();
+init_export_gate();
 
 // packages/core/src/sessions.ts
 init_git();

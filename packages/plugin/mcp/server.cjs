@@ -828,6 +828,65 @@ var init_learnings = __esm({
   }
 });
 
+// packages/core/src/export-gate.ts
+function pendingExportGate(headSha) {
+  return {
+    status: "pending",
+    reasons: [],
+    headSha,
+    evaluatedAt: null
+  };
+}
+function normalizeExportGate(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const g = raw;
+  if (g.status !== "ready" && g.status !== "blocked" && g.status !== "pending") return null;
+  if (typeof g.headSha !== "string" || !g.headSha) return null;
+  const reasons = [];
+  if (Array.isArray(g.reasons)) {
+    for (const item of g.reasons) {
+      if (!item || typeof item !== "object") continue;
+      const check = item.check;
+      const message = item.message;
+      if (!GATE_CHECKS.has(check) || typeof message !== "string") continue;
+      reasons.push({ check, message });
+    }
+  }
+  return {
+    status: g.status,
+    reasons,
+    headSha: g.headSha,
+    evaluatedAt: typeof g.evaluatedAt === "string" ? g.evaluatedAt : null
+  };
+}
+function exportGateForHead(pr) {
+  const gate = normalizeExportGate(pr.exportGate);
+  if (!gate || gate.headSha !== pr.headSha) return null;
+  return gate;
+}
+function needsExportGateEvaluation(pr) {
+  if (pr.status !== "reviewed") return false;
+  const gate = exportGateForHead(pr);
+  return !gate || gate.status === "pending";
+}
+function formatExportBlockLabel(reasons) {
+  const ciNames = reasons.filter((r) => r.check === "ci").map((r) => {
+    const match = r.message.match(/CI check failed:\s+([^\s—]+)/);
+    return match?.[1] ?? "ci";
+  });
+  if (ciNames.length) return ciNames.join(", ");
+  const first = reasons[0];
+  if (!first) return "export";
+  return first.check;
+}
+var GATE_CHECKS;
+var init_export_gate = __esm({
+  "packages/core/src/export-gate.ts"() {
+    "use strict";
+    GATE_CHECKS = /* @__PURE__ */ new Set(["review", "preflight", "github", "ci"]);
+  }
+});
+
 // packages/core/src/github.ts
 function parseGhAuthStatus(text) {
   const accounts = [];
@@ -1001,6 +1060,7 @@ async function readPrFile(file) {
   pr.source = pr.source ?? null;
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
   pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
+  pr.exportGate = normalizeExportGate(pr.exportGate);
   pr.comments = (pr.comments ?? []).map(normalizeComment);
   return pr;
 }
@@ -1083,6 +1143,7 @@ async function listLocalPrs(cwd, options = {}) {
     pr.source = pr.source ?? null;
     pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
     pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
+    pr.exportGate = normalizeExportGate(pr.exportGate);
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
   }
@@ -1220,6 +1281,13 @@ Address these patterns or disable the learnings, then try ready again. Use skipP
     }
     pr.status = status;
     if (status === "ready") await armReviewRequest(cwd, pr);
+    if (status === "reviewed") pr.exportGate = pendingExportGate(pr.headSha);
+    pr.updatedAt = nowIso2();
+  });
+}
+async function setLocalPrExportGate(cwd, id, gate) {
+  return withPrLock(cwd, id, (pr) => {
+    pr.exportGate = gate ? normalizeExportGate(gate) : null;
     pr.updatedAt = nowIso2();
   });
 }
@@ -1286,6 +1354,7 @@ function maybePromoteToReviewed(pr) {
   const addressed = addressedReviewComments(pr);
   if (open2.length > 0 || addressed.length > 0) return;
   pr.status = "reviewed";
+  pr.exportGate = pendingExportGate(pr.headSha);
 }
 async function armReviewRequest(cwd, pr) {
   await applyHeadRefresh(cwd, pr);
@@ -1545,6 +1614,7 @@ async function completeLocalPrReview(cwd, id, options = {}) {
     });
     if (!isArchivedPr(pr)) {
       pr.status = handedToImplementor ? "changes_requested" : "reviewed";
+      if (pr.status === "reviewed") pr.exportGate = pendingExportGate(pr.headSha);
     }
     pr.updatedAt = now;
     await writePr(cwd, pr);
@@ -1743,6 +1813,7 @@ var init_prs = __esm({
     init_types();
     init_watch();
     init_learnings();
+    init_export_gate();
     ALL_SEARCH_FIELDS = ["title", "body", "comment", "file"];
   }
 });
@@ -1858,7 +1929,7 @@ async function getTrackedFiles(cwd) {
     const { stdout } = await execAsync("git ls-files --exclude-standard", { cwd });
     const files = stdout.trim().split("\n").filter(Boolean);
     const fs = await import("node:fs/promises");
-    const path10 = await import("node:path");
+    const path11 = await import("node:path");
     const validFiles = [];
     const skipFiles = /* @__PURE__ */ new Set([
       ".gitignore",
@@ -1887,8 +1958,8 @@ async function getTrackedFiles(cwd) {
       ".xml"
     ]);
     for (const file of files) {
-      const basename = path10.basename(file);
-      const ext = path10.extname(file).toLowerCase();
+      const basename = path11.basename(file);
+      const ext = path11.extname(file).toLowerCase();
       if (skipFiles.has(basename)) {
         continue;
       }
@@ -1896,7 +1967,7 @@ async function getTrackedFiles(cwd) {
         continue;
       }
       try {
-        const fullPath = path10.join(cwd, file);
+        const fullPath = path11.join(cwd, file);
         const stats = await fs.stat(fullPath);
         if (stats.isFile()) {
           validFiles.push(file);
@@ -2072,26 +2143,67 @@ var init_shepherd = __esm({
 // packages/core/src/export-validation.ts
 var export_validation_exports = {};
 __export(export_validation_exports, {
+  evaluateAndStoreExportGate: () => evaluateAndStoreExportGate,
   validateExport: () => validateExport
 });
+async function evaluateAndStoreExportGate(cwd, id) {
+  const pr = await getLocalPr(cwd, id);
+  const key = `${cwd}\0${id}\0${pr.headSha}`;
+  const existing = inflight.get(key);
+  if (existing) return existing;
+  const run = (async () => {
+    let result;
+    try {
+      result = await shepherdStatus(cwd, id, {});
+    } catch (err) {
+      result = {
+        status: "blocked",
+        reasons: [
+          {
+            check: "review",
+            message: `Failed to check shepherd status: ${err instanceof Error ? err.message : String(err)}`
+          }
+        ]
+      };
+    }
+    await setLocalPrExportGate(cwd, id, {
+      status: result.status,
+      reasons: result.reasons,
+      headSha: pr.headSha,
+      evaluatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    return result;
+  })();
+  inflight.set(key, run);
+  try {
+    return await run;
+  } finally {
+    inflight.delete(key);
+  }
+}
+function issuesFromShepherd(shepherd) {
+  return shepherd.reasons.map((reason) => {
+    const prefix = reason.check === "review" ? "Review" : reason.check === "preflight" ? "Preflight" : reason.check === "github" ? "GitHub" : reason.check === "ci" ? "CI" : "Check";
+    return `${prefix}: ${reason.message}`;
+  });
+}
 async function validateExport(cwd, id, options = {}) {
   if (options.skipValidation) {
     return { ok: true, issues: [] };
   }
-  const shepherd = await shepherdStatus(cwd, id, {});
+  const shepherd = await evaluateAndStoreExportGate(cwd, id);
   if (shepherd.status === "ready") {
     return { ok: true, issues: [] };
   }
-  const issues = shepherd.reasons.map((reason) => {
-    const prefix = reason.check === "review" ? "Review" : reason.check === "preflight" ? "Preflight" : reason.check === "github" ? "GitHub" : reason.check === "ci" ? "CI" : "Check";
-    return `${prefix}: ${reason.message}`;
-  });
-  return { ok: false, issues };
+  return { ok: false, issues: issuesFromShepherd(shepherd) };
 }
+var inflight;
 var init_export_validation = __esm({
   "packages/core/src/export-validation.ts"() {
     "use strict";
+    init_prs();
     init_shepherd();
+    inflight = /* @__PURE__ */ new Map();
   }
 });
 
@@ -2208,6 +2320,269 @@ async function claimReview(cwd, id, options = {}) {
     await writeJsonFile(file, current);
     return { claimed: true, id: pr.id, claim, status: pr.status };
   });
+}
+
+// packages/core/src/steward.ts
+var import_promises9 = require("node:fs/promises");
+var import_node_path10 = __toESM(require("node:path"), 1);
+init_export_gate();
+init_export_validation();
+init_git();
+init_prs();
+init_store();
+function stewardsFile(dir) {
+  return import_node_path10.default.join(dir, "stewards.json");
+}
+var emptyMap = () => ({
+  updatedAt: (/* @__PURE__ */ new Date(0)).toISOString(),
+  bindings: {}
+});
+function parseTaskId(raw) {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+function parseBinding(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const parsed = raw;
+  if (typeof parsed.loopId !== "string" || !parsed.loopId) return null;
+  return {
+    loopId: parsed.loopId,
+    implementorTaskId: parseTaskId(parsed.implementorTaskId),
+    reviewerTaskId: parseTaskId(parsed.reviewerTaskId),
+    updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : (/* @__PURE__ */ new Date(0)).toISOString()
+  };
+}
+function parseMap(raw) {
+  const parsed = parseJsonObject(raw);
+  const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : emptyMap().updatedAt;
+  const bindings = {};
+  const rawBindings = parsed.bindings;
+  if (rawBindings && typeof rawBindings === "object" && !Array.isArray(rawBindings)) {
+    for (const value of Object.values(rawBindings)) {
+      const binding = parseBinding(value);
+      if (binding) bindings[binding.loopId] = binding;
+    }
+  }
+  return { updatedAt, bindings };
+}
+async function loadMap(file) {
+  try {
+    return parseMap(await (0, import_promises9.readFile)(file, "utf8"));
+  } catch {
+    return emptyMap();
+  }
+}
+async function pruneStale2(cwd, state) {
+  const live = (await listLocalPrs(cwd)).filter((pr) => !isArchivedPr(pr));
+  const liveIds = new Set(live.map((pr) => pr.id));
+  const bindings = {};
+  for (const binding of Object.values(state.bindings)) {
+    if (!liveIds.has(binding.loopId)) continue;
+    bindings[binding.loopId] = binding;
+  }
+  return { updatedAt: state.updatedAt, bindings };
+}
+function emptyBinding(loopId) {
+  return {
+    loopId,
+    implementorTaskId: null,
+    reviewerTaskId: null,
+    updatedAt: (/* @__PURE__ */ new Date(0)).toISOString()
+  };
+}
+function canResumeTask(taskId, missing, failed, restart) {
+  return Boolean(taskId) && !missing && !failed && !restart;
+}
+function decideStewardAction(pr, binding, options = {}) {
+  const current = binding ?? emptyBinding(pr.id);
+  const implementorTaskId = current.implementorTaskId;
+  const reviewerTaskId = current.reviewerTaskId;
+  const resumeImplementor = canResumeTask(
+    implementorTaskId,
+    options.implementorMissing,
+    options.implementorFailed,
+    options.restart
+  );
+  const resumeReviewer = canResumeTask(
+    reviewerTaskId,
+    options.reviewerMissing,
+    options.reviewerFailed,
+    options.restart
+  );
+  if (pr.status === "approved") {
+    return {
+      kind: "done",
+      loopId: pr.id,
+      implementorTaskId,
+      reviewerTaskId,
+      resumeSameImplementor: false,
+      humanExportable: false,
+      yourTurn: false,
+      failingCheck: null,
+      gateStatus: null,
+      reason: "Loop is archived. Steward is done."
+    };
+  }
+  if (pr.status === "ready") {
+    if (resumeReviewer) {
+      return {
+        kind: "resume_reviewer",
+        loopId: pr.id,
+        implementorTaskId,
+        reviewerTaskId,
+        resumeSameImplementor: false,
+        humanExportable: false,
+        yourTurn: false,
+        failingCheck: null,
+        gateStatus: null,
+        reason: "Loop is ready. Resume the same reviewer Task."
+      };
+    }
+    return {
+      kind: "spawn_reviewer",
+      loopId: pr.id,
+      implementorTaskId,
+      reviewerTaskId: null,
+      resumeSameImplementor: false,
+      humanExportable: false,
+      yourTurn: false,
+      failingCheck: null,
+      gateStatus: null,
+      reason: "Loop is ready. Spawn a reviewer Task and persist reviewerTaskId."
+    };
+  }
+  if (pr.status === "reviewed") {
+    const gate = pr.exportGate ?? null;
+    const gateStatus = gate && gate.headSha === pr.headSha ? gate.status : null;
+    if (!gateStatus || gateStatus === "pending") {
+      return {
+        kind: "evaluate_export_gate",
+        loopId: pr.id,
+        implementorTaskId,
+        reviewerTaskId,
+        resumeSameImplementor: false,
+        humanExportable: false,
+        yourTurn: false,
+        failingCheck: null,
+        gateStatus: gateStatus ?? "pending",
+        reason: "Reviewer cleared. Run the full export gate before any human handoff."
+      };
+    }
+    if (gateStatus === "blocked") {
+      const failingCheck = formatExportBlockLabel(gate?.reasons ?? []);
+      if (resumeImplementor) {
+        return {
+          kind: "resume_implementor",
+          loopId: pr.id,
+          implementorTaskId,
+          reviewerTaskId,
+          resumeSameImplementor: true,
+          humanExportable: false,
+          yourTurn: false,
+          failingCheck,
+          gateStatus,
+          reason: `Export gate blocked (${failingCheck}). Resume the same implementor Task \u2014 do not show Your Turn.`
+        };
+      }
+      return {
+        kind: "spawn_implementor",
+        loopId: pr.id,
+        implementorTaskId: null,
+        reviewerTaskId,
+        resumeSameImplementor: false,
+        humanExportable: false,
+        yourTurn: false,
+        failingCheck,
+        gateStatus,
+        reason: `Export gate blocked (${failingCheck}). Spawn an implementor Task \u2014 do not show Your Turn.`
+      };
+    }
+    return {
+      kind: "handoff_human",
+      loopId: pr.id,
+      implementorTaskId,
+      reviewerTaskId,
+      resumeSameImplementor: false,
+      humanExportable: true,
+      yourTurn: true,
+      failingCheck: null,
+      gateStatus,
+      reason: "Export gate ready. Hand off to the human for Push to origin."
+    };
+  }
+  if (resumeImplementor) {
+    return {
+      kind: "resume_implementor",
+      loopId: pr.id,
+      implementorTaskId,
+      reviewerTaskId,
+      resumeSameImplementor: true,
+      humanExportable: false,
+      yourTurn: false,
+      failingCheck: null,
+      gateStatus: null,
+      reason: pr.status === "changes_requested" ? "changes_requested. Resume the same implementor Task id (do not spawn a twin)." : "Resume the same implementor Task to continue the draft."
+    };
+  }
+  return {
+    kind: "spawn_implementor",
+    loopId: pr.id,
+    implementorTaskId: null,
+    reviewerTaskId,
+    resumeSameImplementor: false,
+    humanExportable: false,
+    yourTurn: false,
+    failingCheck: null,
+    gateStatus: null,
+    reason: pr.status === "changes_requested" ? "changes_requested and implementor Task is missing/failed/restart. Spawn a new implementor." : "Spawn an implementor Task and persist implementorTaskId."
+  };
+}
+async function bindSteward(cwd, id, input = {}) {
+  const root = await requireGitRoot(cwd);
+  const pr = await getLocalPr(root, id);
+  const file = stewardsFile(await consoleDir(root));
+  return withFileLock(file, async () => {
+    const current = await pruneStale2(root, await loadMap(file));
+    const existing = current.bindings[pr.id] ?? emptyBinding(pr.id);
+    const next = {
+      loopId: pr.id,
+      implementorTaskId: input.implementorTaskId === void 0 ? existing.implementorTaskId : parseTaskId(input.implementorTaskId),
+      reviewerTaskId: input.reviewerTaskId === void 0 ? existing.reviewerTaskId : parseTaskId(input.reviewerTaskId),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    current.bindings[pr.id] = next;
+    current.updatedAt = next.updatedAt;
+    await writeJsonFile(file, current);
+    return next;
+  });
+}
+async function listStewardBindings(cwd) {
+  const root = await requireGitRoot(cwd);
+  const file = stewardsFile(await consoleDir(root));
+  return withFileLock(file, async () => {
+    const current = await pruneStale2(root, await loadMap(file));
+    await writeJsonFile(file, current);
+    return Object.values(current.bindings);
+  });
+}
+async function stewardNext(cwd, id, options = {}) {
+  const root = await requireGitRoot(cwd);
+  let pr = await getLocalPr(root, id);
+  const binding = await bindSteward(root, pr.id, {
+    implementorTaskId: options.implementorTaskId,
+    reviewerTaskId: options.reviewerTaskId
+  });
+  if (pr.status === "reviewed" && options.evaluateGate !== false && needsExportGateEvaluation(pr)) {
+    await evaluateAndStoreExportGate(root, pr.id);
+    pr = await getLocalPr(root, pr.id);
+  }
+  return {
+    binding,
+    decision: decideStewardAction(pr, binding, options),
+    status: pr.status,
+    exportGate: pr.exportGate ?? null
+  };
 }
 
 // packages/core/src/doctor.ts
@@ -2334,9 +2709,10 @@ async function exportLocalPr(cwd, id, options = {}) {
 
 // packages/core/src/index.ts
 init_export_validation();
+init_export_gate();
 
 // packages/core/src/sessions.ts
-var import_promises9 = require("node:fs/promises");
+var import_promises10 = require("node:fs/promises");
 init_git();
 init_store();
 async function listSessions(cwd, options = {}) {
@@ -2345,7 +2721,7 @@ async function listSessions(cwd, options = {}) {
   const file = await sessionsFile(root);
   let raw;
   try {
-    raw = await (0, import_promises9.readFile)(file, "utf8");
+    raw = await (0, import_promises10.readFile)(file, "utf8");
   } catch (err) {
     const code = err && typeof err === "object" && "code" in err ? err.code : void 0;
     if (code === "ENOENT") return [];
@@ -2554,7 +2930,7 @@ async function generateLearningDigest(cwd, options = {}) {
     }
   }
   const topKeywords = Array.from(keywordCounts.entries()).filter(([, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([keyword, count]) => ({ keyword, count }));
-  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path10, count]) => ({ path: path10, count }));
+  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path11, count]) => ({ path: path11, count }));
   const patterns = Array.from(patternCounts.entries()).filter(([, data]) => data.count >= 2).sort((a, b) => b[1].count - a[1].count).slice(0, 10).map(([pattern, data]) => ({
     pattern,
     examples: data.examples,
@@ -2594,8 +2970,8 @@ function formatLearningDigest(summary) {
   if (summary.topFiles.length > 0) {
     lines.push("## Most Commented Files");
     lines.push("");
-    for (const { path: path10, count } of summary.topFiles) {
-      lines.push(`- \`${path10}\` \u2014 ${count} comment(s)`);
+    for (const { path: path11, count } of summary.topFiles) {
+      lines.push(`- \`${path11}\` \u2014 ${count} comment(s)`);
     }
     lines.push("");
   }
@@ -2915,7 +3291,25 @@ async function handleTool(name, args) {
       return runPreflight(cwd, pr);
     }
     case "shepherd_status":
-      return shepherdStatus(cwd, String(args.id ?? ""));
+      return evaluateAndStoreExportGate(cwd, String(args.id ?? ""));
+    case "bind_steward":
+      return bindSteward(cwd, String(args.id ?? ""), {
+        implementorTaskId: args.implementorTaskId === void 0 ? void 0 : args.implementorTaskId,
+        reviewerTaskId: args.reviewerTaskId === void 0 ? void 0 : args.reviewerTaskId
+      });
+    case "steward_next": {
+      if (!args.id) return listStewardBindings(cwd);
+      return stewardNext(cwd, String(args.id), {
+        implementorTaskId: args.implementorTaskId === void 0 ? void 0 : args.implementorTaskId,
+        reviewerTaskId: args.reviewerTaskId === void 0 ? void 0 : args.reviewerTaskId,
+        restart: args.restart === true,
+        implementorMissing: args.implementorMissing === true,
+        implementorFailed: args.implementorFailed === true,
+        reviewerMissing: args.reviewerMissing === true,
+        reviewerFailed: args.reviewerFailed === true,
+        evaluateGate: args.evaluateGate === false ? false : void 0
+      });
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -3277,7 +3671,7 @@ var tools = [
   },
   {
     name: "export_local_pr",
-    description: "Developer command: validate review status and preflight, then halt listen loops, git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export. Export is blocked unless local review is complete (status reviewed/approved, no pending comments) and preflight pattern checks pass. Use skipValidation only for emergency export.",
+    description: "Developer command: validate review status and preflight, then halt listen loops, git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export. Export is blocked unless shepherd is ready (review complete, preflight clean, gh bound, local CI green). Use skipValidation only for emergency export.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -3375,11 +3769,68 @@ var tools = [
   },
   {
     name: "shepherd_status",
-    description: "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, and gh bind OK. Returns ready or blocked with explicit reasons. Fail-closed: any unknown/missing piece returns blocked.",
+    description: "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, gh bind, and local CI. Persists the result as the human-export gate. Returns ready or blocked with explicit reasons. Fail-closed: any unknown/missing piece returns blocked.",
     inputSchema: {
       type: "object",
       required: ["id"],
       properties: { id: { type: "string" }, cwd: { type: "string" } }
+    }
+  },
+  {
+    name: "bind_steward",
+    description: "Persist this loop's steward Task ids under .git/agent-console/stewards.json ({ loopId, implementorTaskId, reviewerTaskId }). Pass null or empty string to clear a field. Used by /steward-loop so changes_requested resumes the same implementor Task.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        cwd: { type: "string" },
+        implementorTaskId: {
+          type: "string",
+          description: "Cursor Task id for the implementor subagent. Null/empty clears."
+        },
+        reviewerTaskId: {
+          type: "string",
+          description: "Cursor Task id for the reviewer subagent. Null/empty clears."
+        }
+      }
+    }
+  },
+  {
+    name: "steward_next",
+    description: "Steward flywheel next action for one local PR. Persists optional Task ids, runs the full export gate after Reviewer clear, and returns spawn/resume/handoff. Human-exportable / Your Turn only when the gate is ready. On blocked CI, action is resume_implementor with failingCheck \u2014 do not hand off. Preferred over /watch-review-inbox + /watch-ready-prs. Omit id to list bindings.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Local PR id. Omit to list steward bindings." },
+        cwd: { type: "string" },
+        implementorTaskId: {
+          type: "string",
+          description: "Optional. Persist implementor Task id before deciding."
+        },
+        reviewerTaskId: {
+          type: "string",
+          description: "Optional. Persist reviewer Task id before deciding."
+        },
+        restart: {
+          type: "boolean",
+          description: "User asked to restart. Spawn a new implementor instead of resuming."
+        },
+        implementorMissing: {
+          type: "boolean",
+          description: "Persisted implementor Task is gone. Spawn a new one."
+        },
+        implementorFailed: {
+          type: "boolean",
+          description: "Persisted implementor Task failed. Spawn a new one."
+        },
+        reviewerMissing: { type: "boolean" },
+        reviewerFailed: { type: "boolean" },
+        evaluateGate: {
+          type: "boolean",
+          description: "When reviewed, run the full export gate if pending. Default true."
+        }
+      }
     }
   }
 ];

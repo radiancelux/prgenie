@@ -109,6 +109,26 @@ export {
   reviewClaimKey,
 } from "./review-claim.js";
 export type { ClaimReviewReason, ClaimReviewResult, ReviewClaim } from "./review-claim.js";
+export {
+  bindSteward,
+  clearStewardBinding,
+  decideStewardAction,
+  formatStewardBinding,
+  formatStewardDecision,
+  getStewardBinding,
+  isStewardOwned,
+  listStewardBindings,
+  shouldEmitLegacyReviewerHandoff,
+  stewardNext,
+} from "./steward.js";
+export type {
+  BindStewardInput,
+  StewardActionKind,
+  StewardBinding,
+  StewardDecision,
+  StewardNextOptions,
+  StewardNextResult,
+} from "./steward.js";
 export { formatDoctorReport, runDoctor } from "./doctor.js";
 export type { DoctorReport, DoctorCheck } from "./doctor.js";
 export {

@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Watch ready local PRs
 
+**Transitional.** Prefer **`/steward-loop`** (one steward Tasks the reviewer when ready). Use this listen only when the user explicitly wants the two-chat queue.
+
 You are the **reviewer chat**. Stay in this conversation. Do not implement. Do not push.
 
 `ready` is the implementor asking for review. Your job is to notice those loops as they land and Task subagents to review them. Do not sit on a Task waiting for it to return. Packet status (`prgenie queue` / `prgenie show`) is the source of truth, not a Task summary.

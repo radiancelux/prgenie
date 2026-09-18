@@ -13,13 +13,16 @@ Follow [agentskills.io](https://agentskills.io/specification) and Cursor's skill
 
 | Skill                                      | Who                        | Auto-invoke?                          |
 | ------------------------------------------ | -------------------------- | ------------------------------------- |
-| `start-loop`                               | Implementor entry          | Yes (ticket paste)                    |
+| `steward-loop`                             | One steward per loop       | Yes (ticket / full flywheel)          |
+| `start-loop`                               | Implementor-only entry     | Yes (ticket paste)                    |
 | `local-pr`                                 | Create/update packets      | Yes                                   |
 | `review-local-pr`                          | Leaf + orchestrator review | Yes                                   |
-| `watch-review-inbox` / `watch-ready-prs`   | Listen                     | No (`disable-model-invocation: true`) |
+| `watch-review-inbox` / `watch-ready-prs`   | Listen (transitional)      | No (`disable-model-invocation: true`) |
 | `review-inbox` / `review-queue`            | One tick                   | No                                    |
 | `stop-loop` / `stop-review` / `stop-watch` | Halt listen                | No                                    |
 | `export-local-pr`                          | Publish                    | No                                    |
+
+Prefer **`/steward-loop`** for agent orchestration (one steward, implementor/reviewer Tasks, export gate before human handoff). Inbox/queue listen skills stay for the transitional two-chat path.
 
 User-only skills set `disable-model-invocation: true` so the agent does not start a listen loop or export from ambient context.
 

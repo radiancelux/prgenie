@@ -44,6 +44,8 @@ test("tools catalog exposes core flywheel tools", () => {
     "watch_status",
     "claim_review",
     "list_sessions",
+    "bind_steward",
+    "steward_next",
   ]) {
     assert.ok(names.has(required), `missing tool ${required}`);
   }
@@ -158,4 +160,42 @@ test("handleTool list_local_prs status filter and complete_review path", async (
     status: "reviewed",
   })) as LocalPr[];
   assert.ok(reviewed.some((p) => p.id === created.id));
+});
+
+test("handleTool bind_steward + steward_next resume same implementor", async () => {
+  const created = (await handleTool("create_local_pr", {
+    cwd: repo,
+    title: "Steward via MCP",
+    body: "Exercise steward tools.",
+    base: "main",
+  })) as LocalPr;
+  const bound = (await handleTool("bind_steward", {
+    cwd: repo,
+    id: created.id,
+    implementorTaskId: "task-impl-mcp",
+    reviewerTaskId: "task-rev-mcp",
+  })) as { loopId: string; implementorTaskId: string; reviewerTaskId: string };
+  assert.equal(bound.loopId, created.id);
+  assert.equal(bound.implementorTaskId, "task-impl-mcp");
+
+  await handleTool("set_status", { cwd: repo, id: created.id, status: "changes_requested" });
+  const next = (await handleTool("steward_next", { cwd: repo, id: created.id })) as {
+    decision: { kind: string; implementorTaskId: string; resumeSameImplementor: boolean };
+  };
+  assert.equal(next.decision.kind, "resume_implementor");
+  assert.equal(next.decision.implementorTaskId, "task-impl-mcp");
+  assert.equal(next.decision.resumeSameImplementor, true);
+
+  const bindTool = tools.find((t) => t.name === "bind_steward");
+  const nextTool = tools.find((t) => t.name === "steward_next");
+  assert.equal(
+    (bindTool?.inputSchema as { properties: { implementorTaskId: { type: string } } }).properties
+      .implementorTaskId.type,
+    "string",
+  );
+  assert.equal(
+    (nextTool?.inputSchema as { properties: { reviewerTaskId: { type: string } } }).properties
+      .reviewerTaskId.type,
+    "string",
+  );
 });

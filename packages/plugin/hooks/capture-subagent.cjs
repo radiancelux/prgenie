@@ -574,6 +574,37 @@ var init_learnings = __esm({
   }
 });
 
+// packages/core/src/export-gate.ts
+function normalizeExportGate(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const g = raw;
+  if (g.status !== "ready" && g.status !== "blocked" && g.status !== "pending") return null;
+  if (typeof g.headSha !== "string" || !g.headSha) return null;
+  const reasons = [];
+  if (Array.isArray(g.reasons)) {
+    for (const item of g.reasons) {
+      if (!item || typeof item !== "object") continue;
+      const check = item.check;
+      const message = item.message;
+      if (!GATE_CHECKS.has(check) || typeof message !== "string") continue;
+      reasons.push({ check, message });
+    }
+  }
+  return {
+    status: g.status,
+    reasons,
+    headSha: g.headSha,
+    evaluatedAt: typeof g.evaluatedAt === "string" ? g.evaluatedAt : null
+  };
+}
+var GATE_CHECKS;
+var init_export_gate = __esm({
+  "packages/core/src/export-gate.ts"() {
+    "use strict";
+    GATE_CHECKS = /* @__PURE__ */ new Set(["review", "preflight", "github", "ci"]);
+  }
+});
+
 // packages/core/src/prs.ts
 function nowIso() {
   return (/* @__PURE__ */ new Date()).toISOString();
@@ -602,6 +633,7 @@ async function readPrFile(file) {
   pr.source = pr.source ?? null;
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
   pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
+  pr.exportGate = normalizeExportGate(pr.exportGate);
   pr.comments = (pr.comments ?? []).map(normalizeComment);
   return pr;
 }
@@ -684,6 +716,7 @@ async function listLocalPrs(cwd, options = {}) {
     pr.source = pr.source ?? null;
     pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
     pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
+    pr.exportGate = normalizeExportGate(pr.exportGate);
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
   }
@@ -849,6 +882,7 @@ var init_prs = __esm({
     init_types();
     init_watch();
     init_learnings();
+    init_export_gate();
     ALL_SEARCH_FIELDS = ["title", "body", "comment", "file"];
   }
 });
@@ -913,6 +947,7 @@ var init_shepherd = __esm({
 var init_export_validation = __esm({
   "packages/core/src/export-validation.ts"() {
     "use strict";
+    init_prs();
     init_shepherd();
   }
 });
@@ -933,6 +968,13 @@ init_git();
 init_prs();
 init_store();
 
+// packages/core/src/steward.ts
+init_export_gate();
+init_export_validation();
+init_git();
+init_prs();
+init_store();
+
 // packages/core/src/doctor.ts
 init_git();
 init_github_ops();
@@ -949,6 +991,7 @@ init_watch();
 
 // packages/core/src/index.ts
 init_export_validation();
+init_export_gate();
 
 // packages/core/src/sessions.ts
 var import_promises5 = require("node:fs/promises");
