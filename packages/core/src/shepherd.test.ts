@@ -505,6 +505,9 @@ describe("shepherdStatus", () => {
     try {
       await git(repo, ["checkout", "-b", "feature"]);
       await writeFile(join(repo, "test.txt"), "test content\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "Add failing test"]);
+      // Untracked helpers: format:check ignores them so this case isolates the test gate.
       await writeFile(
         join(repo, "fail-test.mjs"),
         "process.stderr.write('not ok 1 - widget renders\\n'); process.exit(1);\n",
@@ -522,8 +525,6 @@ describe("shepherdStatus", () => {
           },
         }),
       );
-      await git(repo, ["add", "."]);
-      await git(repo, ["commit", "-m", "Add failing test"]);
       const pr = await createLocalPr(repo, {
         title: "Excerpt PR",
         body: "Body",

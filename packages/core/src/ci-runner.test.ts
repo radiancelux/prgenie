@@ -317,6 +317,10 @@ describe("runCiChecks", () => {
       assert.ok(formatCheck);
       assert.equal(formatCheck.passed, false);
       assert.ok(formatCheck.error, "should have error message");
+      assert.match(
+        formatCheck.excerpt ?? formatCheck.error ?? "",
+        /bad\.js|Prettier format check failed/,
+      );
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

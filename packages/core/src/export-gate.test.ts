@@ -212,12 +212,13 @@ describe("evaluateAndStoreExportGate", () => {
     try {
       await git(repo, ["checkout", "-b", "feature"]);
       await writeFile(join(repo, "test.txt"), "test\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "Add test"]);
+      // Untracked on purpose: format:check only sees git-tracked files (README.md).
       await writeFile(
         join(repo, "fail-test.mjs"),
         "process.stderr.write('not ok 1 - widget renders\\n'); process.exit(1);\n",
       );
-      await git(repo, ["add", "."]);
-      await git(repo, ["commit", "-m", "Add test"]);
       await writeFile(
         join(repo, "package.json"),
         JSON.stringify({
