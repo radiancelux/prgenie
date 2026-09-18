@@ -185,4 +185,17 @@ test("handleTool bind_steward + steward_next resume same implementor", async () 
   assert.equal(next.decision.kind, "resume_implementor");
   assert.equal(next.decision.implementorTaskId, "task-impl-mcp");
   assert.equal(next.decision.resumeSameImplementor, true);
+
+  const bindTool = tools.find((t) => t.name === "bind_steward");
+  const nextTool = tools.find((t) => t.name === "steward_next");
+  assert.equal(
+    (bindTool?.inputSchema as { properties: { implementorTaskId: { type: string } } }).properties
+      .implementorTaskId.type,
+    "string",
+  );
+  assert.equal(
+    (nextTool?.inputSchema as { properties: { reviewerTaskId: { type: string } } }).properties
+      .reviewerTaskId.type,
+    "string",
+  );
 });

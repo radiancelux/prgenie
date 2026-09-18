@@ -837,9 +837,11 @@ export const tools = [
         id: { type: "string" },
         cwd: { type: "string" },
         implementorTaskId: {
+          type: "string",
           description: "Cursor Task id for the implementor subagent. Null/empty clears.",
         },
         reviewerTaskId: {
+          type: "string",
           description: "Cursor Task id for the reviewer subagent. Null/empty clears.",
         },
       },
@@ -855,9 +857,11 @@ export const tools = [
         id: { type: "string", description: "Local PR id. Omit to list steward bindings." },
         cwd: { type: "string" },
         implementorTaskId: {
+          type: "string",
           description: "Optional. Persist implementor Task id before deciding.",
         },
         reviewerTaskId: {
+          type: "string",
           description: "Optional. Persist reviewer Task id before deciding.",
         },
         restart: {

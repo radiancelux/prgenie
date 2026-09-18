@@ -3,7 +3,7 @@ import path from "node:path";
 import { formatExportBlockLabel, needsExportGateEvaluation } from "./export-gate.js";
 import { evaluateAndStoreExportGate } from "./export-validation.js";
 import { requireGitRoot } from "./git.js";
-import { getLocalPr, isArchivedPr, listLocalPrs } from "./prs.js";
+import { getLocalPr, isArchivedPr, listLocalPrs, shouldSpawnReviewer } from "./prs.js";
 import { consoleDir, parseJsonObject, withFileLock, writeJsonFile } from "./store.js";
 import type { ExportGateSnapshot, ExportGateStatus, LocalPr } from "./types.js";
 
@@ -132,6 +132,22 @@ function emptyBinding(loopId: string): StewardBinding {
     reviewerTaskId: null,
     updatedAt: new Date(0).toISOString(),
   };
+}
+
+/** A persisted steward row means this loop is steward-owned (Task ids may still be empty). */
+export function isStewardOwned(binding: StewardBinding | null | undefined): boolean {
+  return Boolean(binding);
+}
+
+/**
+ * Legacy implementor-stop hook may claim/spawn a reviewer only when no steward owns the loop.
+ */
+export function shouldEmitLegacyReviewerHandoff(
+  pr: Pick<LocalPr, "status" | "headSha" | "reviewerNotifiedSha">,
+  binding: StewardBinding | null | undefined,
+): boolean {
+  if (isStewardOwned(binding)) return false;
+  return shouldSpawnReviewer(pr as LocalPr);
 }
 
 function canResumeTask(
@@ -381,13 +397,12 @@ export async function stewardNext(
 ): Promise<StewardNextResult> {
   const root = await requireGitRoot(cwd);
   let pr = await getLocalPr(root, id);
-  const hasBind = options.implementorTaskId !== undefined || options.reviewerTaskId !== undefined;
-  const binding = hasBind
-    ? await bindSteward(root, pr.id, {
-        implementorTaskId: options.implementorTaskId,
-        reviewerTaskId: options.reviewerTaskId,
-      })
-    : ((await getStewardBinding(root, pr.id)) ?? emptyBinding(pr.id));
+  // Persist ownership on first next-action so the legacy stop hook stays silent
+  // even before implementor/reviewer Task ids are known.
+  const binding = await bindSteward(root, pr.id, {
+    implementorTaskId: options.implementorTaskId,
+    reviewerTaskId: options.reviewerTaskId,
+  });
 
   if (pr.status === "reviewed" && options.evaluateGate !== false && needsExportGateEvaluation(pr)) {
     await evaluateAndStoreExportGate(root, pr.id);

@@ -350,6 +350,37 @@ var init_learnings = __esm({
   }
 });
 
+// packages/core/src/export-gate.ts
+function normalizeExportGate(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const g = raw;
+  if (g.status !== "ready" && g.status !== "blocked" && g.status !== "pending") return null;
+  if (typeof g.headSha !== "string" || !g.headSha) return null;
+  const reasons = [];
+  if (Array.isArray(g.reasons)) {
+    for (const item of g.reasons) {
+      if (!item || typeof item !== "object") continue;
+      const check = item.check;
+      const message = item.message;
+      if (!GATE_CHECKS.has(check) || typeof message !== "string") continue;
+      reasons.push({ check, message });
+    }
+  }
+  return {
+    status: g.status,
+    reasons,
+    headSha: g.headSha,
+    evaluatedAt: typeof g.evaluatedAt === "string" ? g.evaluatedAt : null
+  };
+}
+var GATE_CHECKS;
+var init_export_gate = __esm({
+  "packages/core/src/export-gate.ts"() {
+    "use strict";
+    GATE_CHECKS = /* @__PURE__ */ new Set(["review", "preflight", "github", "ci"]);
+  }
+});
+
 // packages/core/src/prs.ts
 function nowIso() {
   return (/* @__PURE__ */ new Date()).toISOString();
@@ -375,6 +406,7 @@ async function readPrFile(file) {
   pr.source = pr.source ?? null;
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
   pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
+  pr.exportGate = normalizeExportGate(pr.exportGate);
   pr.comments = (pr.comments ?? []).map(normalizeComment);
   return pr;
 }
@@ -457,6 +489,7 @@ async function listLocalPrs(cwd, options = {}) {
     pr.source = pr.source ?? null;
     pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
     pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
+    pr.exportGate = normalizeExportGate(pr.exportGate);
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
   }
@@ -593,6 +626,7 @@ var init_prs = __esm({
     init_types();
     init_watch();
     init_learnings();
+    init_export_gate();
     ALL_SEARCH_FIELDS = ["title", "body", "comment", "file"];
   }
 });
@@ -657,6 +691,7 @@ var init_shepherd = __esm({
 var init_export_validation = __esm({
   "packages/core/src/export-validation.ts"() {
     "use strict";
+    init_prs();
     init_shepherd();
   }
 });
@@ -779,6 +814,85 @@ async function claimReview(cwd, id, options = {}) {
   });
 }
 
+// packages/core/src/steward.ts
+var import_promises4 = require("node:fs/promises");
+var import_node_path6 = __toESM(require("node:path"), 1);
+init_export_gate();
+init_export_validation();
+init_git();
+init_prs();
+init_store();
+function stewardsFile(dir) {
+  return import_node_path6.default.join(dir, "stewards.json");
+}
+var emptyMap = () => ({
+  updatedAt: (/* @__PURE__ */ new Date(0)).toISOString(),
+  bindings: {}
+});
+function parseTaskId(raw) {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+function parseBinding(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const parsed = raw;
+  if (typeof parsed.loopId !== "string" || !parsed.loopId) return null;
+  return {
+    loopId: parsed.loopId,
+    implementorTaskId: parseTaskId(parsed.implementorTaskId),
+    reviewerTaskId: parseTaskId(parsed.reviewerTaskId),
+    updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : (/* @__PURE__ */ new Date(0)).toISOString()
+  };
+}
+function parseMap(raw) {
+  const parsed = parseJsonObject(raw);
+  const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : emptyMap().updatedAt;
+  const bindings = {};
+  const rawBindings = parsed.bindings;
+  if (rawBindings && typeof rawBindings === "object" && !Array.isArray(rawBindings)) {
+    for (const value of Object.values(rawBindings)) {
+      const binding = parseBinding(value);
+      if (binding) bindings[binding.loopId] = binding;
+    }
+  }
+  return { updatedAt, bindings };
+}
+async function loadMap(file) {
+  try {
+    return parseMap(await (0, import_promises4.readFile)(file, "utf8"));
+  } catch {
+    return emptyMap();
+  }
+}
+async function pruneStale2(cwd, state) {
+  const live = (await listLocalPrs(cwd)).filter((pr) => !isArchivedPr(pr));
+  const liveIds = new Set(live.map((pr) => pr.id));
+  const bindings = {};
+  for (const binding of Object.values(state.bindings)) {
+    if (!liveIds.has(binding.loopId)) continue;
+    bindings[binding.loopId] = binding;
+  }
+  return { updatedAt: state.updatedAt, bindings };
+}
+function isStewardOwned(binding) {
+  return Boolean(binding);
+}
+function shouldEmitLegacyReviewerHandoff(pr, binding) {
+  if (isStewardOwned(binding)) return false;
+  return shouldSpawnReviewer(pr);
+}
+async function getStewardBinding(cwd, id) {
+  const root = await requireGitRoot(cwd);
+  const pr = await getLocalPr(root, id);
+  const file = stewardsFile(await consoleDir(root));
+  return withFileLock(file, async () => {
+    const current = await pruneStale2(root, await loadMap(file));
+    await writeJsonFile(file, current);
+    return current.bindings[pr.id] ?? null;
+  });
+}
+
 // packages/core/src/doctor.ts
 init_git();
 init_github_ops();
@@ -795,6 +909,7 @@ init_watch();
 
 // packages/core/src/index.ts
 init_export_validation();
+init_export_gate();
 
 // packages/core/src/sessions.ts
 init_git();
@@ -825,6 +940,22 @@ function eventName(input) {
 }
 function silent() {
   process.stdout.write("{}\n");
+}
+async function runStopReviewerHandoff(cwd, id) {
+  const fresh = await refreshLocalPrHead(cwd, id);
+  if (fresh.status !== "ready") return null;
+  if ((fresh.reviewRequestedSha ?? null) !== fresh.headSha) {
+    await markReviewRequested(cwd, fresh.id);
+  }
+  const binding = await getStewardBinding(cwd, fresh.id);
+  if (!shouldEmitLegacyReviewerHandoff(fresh, binding)) return null;
+  const claimed = await claimReview(cwd, fresh.id, {
+    headSha: fresh.headSha,
+    source: "hook"
+  });
+  if (!claimed.claimed) return null;
+  await markReviewerNotified(cwd, fresh.id);
+  return formatSpawnReviewer(fresh);
 }
 async function main() {
   let input;
@@ -876,23 +1007,9 @@ async function main() {
       return;
     }
     if (pr.status === "ready") {
-      const fresh = await refreshLocalPrHead(root, pr.id);
-      if ((fresh.reviewRequestedSha ?? null) !== fresh.headSha) {
-        await markReviewRequested(root, fresh.id);
-      }
-      if (shouldSpawnReviewer(fresh)) {
-        const claimed = await claimReview(root, fresh.id, {
-          headSha: fresh.headSha,
-          source: "hook"
-        });
-        if (!claimed.claimed) {
-          silent();
-          return;
-        }
-        await markReviewerNotified(root, fresh.id);
-        process.stdout.write(
-          JSON.stringify({ followup_message: formatSpawnReviewer(fresh) }) + "\n"
-        );
+      const followup = await runStopReviewerHandoff(root, pr.id);
+      if (followup) {
+        process.stdout.write(JSON.stringify({ followup_message: followup }) + "\n");
         return;
       }
     }

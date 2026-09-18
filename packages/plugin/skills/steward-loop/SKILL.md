@@ -17,6 +17,8 @@ If there is no live local PR yet, take the brief from this message (ticket URL/i
 
 If a live loop already exists on this branch, use it. One steward per loop.
 
+Call `steward_next` / `bind_steward` **before** awaiting any Task so ownership is on disk. The implementor `stop` hook stays silent for steward-owned loops (no `claim_review`, no twin reviewer).
+
 ## Each turn
 
 1. MCP `steward_next` `{ id }` (or `prgenie steward <id>`). Optional: pass Task ids to persist them. Read `decision.kind`.
@@ -26,11 +28,11 @@ If a live loop already exists on this branch, use it. One steward per loop.
 
 Task `generalPurpose` (or `computerUse` only if the work needs a browser). Prompt: implement this loop only; `/local-pr` rules; do not review yourself; do not push; commit on the loop branch; refresh `body`; `set_status ready` + `add_comment` role=agent **Review requested.** Include the loop id, title, and body.
 
-When the Task returns an id, persist it immediately:
+Persist the Task id as soon as you have it (at spawn, not after it finishes):
 
 - MCP `bind_steward` `{ id, implementorTaskId }` or `prgenie steward bind <id> --implementor <taskId>`
 
-Await this Task. You own the lifecycle.
+Await this Task. You own the lifecycle. Do not let the implementor spawn a reviewer.
 
 ### `resume_implementor`
 

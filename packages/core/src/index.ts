@@ -116,7 +116,9 @@ export {
   formatStewardBinding,
   formatStewardDecision,
   getStewardBinding,
+  isStewardOwned,
   listStewardBindings,
+  shouldEmitLegacyReviewerHandoff,
   stewardNext,
 } from "./steward.js";
 export type {
