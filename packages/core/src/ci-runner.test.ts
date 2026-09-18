@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { runCiChecks } from "./ci-runner.js";
+import { isAbortError } from "./progress.js";
 
 const execAsync = promisify(exec);
 
@@ -791,6 +792,74 @@ describe("runCiChecks", () => {
       } catch {
         // Ignore cleanup errors
       }
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("emits start/pass/fail progress with the check command", async () => {
+    const repo = await initTestRepo();
+    try {
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: "exit 0",
+            test: "exit 1",
+          },
+        }),
+      );
+      const events: string[] = [];
+      const result = await runCiChecks(repo, {
+        checks: ["lint", "test"],
+        timeout: 5000,
+        skipCache: true,
+        onProgress: (event) => {
+          events.push(`${event.check}:${event.state}:${event.command ?? ""}`);
+        },
+      });
+      assert.equal(result.allPassed, false);
+      assert.deepEqual(events, [
+        "lint:start:pnpm lint",
+        "lint:pass:pnpm lint",
+        "test:start:pnpm test",
+        "test:fail:pnpm test",
+      ]);
+      const failed = result.checks.find((c) => c.name === "test");
+      assert.ok(failed?.error?.includes("pnpm test"));
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("aborts a long-running check and does not finish remaining checks", async () => {
+    const repo = await initTestRepo();
+    try {
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: 'node -e "setTimeout(() => {}, 30000)"',
+            test: "exit 0",
+          },
+        }),
+      );
+      const ac = new AbortController();
+      const started = Date.now();
+      setTimeout(() => ac.abort(), 80);
+      await assert.rejects(
+        () =>
+          runCiChecks(repo, {
+            checks: ["lint", "test"],
+            timeout: 30000,
+            skipCache: true,
+            signal: ac.signal,
+          }),
+        (err: unknown) => isAbortError(err),
+      );
+      assert.ok(Date.now() - started < 8000, "abort should not wait out the check");
+    } finally {
       await rm(repo, { recursive: true, force: true });
     }
   });

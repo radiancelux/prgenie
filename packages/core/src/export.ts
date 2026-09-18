@@ -3,6 +3,7 @@ import { ensureRepoGithub, runGh } from "./github-ops.js";
 import { getLocalPr, isArchivedPr, listLocalPrs, setLocalPrStatus } from "./prs.js";
 import { localBaseRef, releaseArchivedLoop } from "./worktrees.js";
 import { haltWatch, resumeWatch } from "./watch.js";
+import { throwIfAborted, type RunProgressOptions } from "./progress.js";
 
 function ghBase(ref: string): string {
   return ref.replace(/^origin\//, "").replace(/^refs\/heads\//, "");
@@ -68,7 +69,7 @@ export function exportPushRefspec(pr: { headSha: string; headRef: string }): str
 export async function exportLocalPr(
   cwd: string,
   id: string,
-  options: { skipValidation?: boolean } = {},
+  options: { skipValidation?: boolean } & RunProgressOptions = {},
 ): Promise<{
   url: string;
   id: string;
@@ -79,6 +80,8 @@ export async function exportLocalPr(
   reopen: boolean;
 }> {
   const { validateExport } = await import("./export-validation.js");
+  const onProgress = options.onProgress;
+  const signal = options.signal;
   const validation = await validateExport(cwd, id, options);
   if (!validation.ok) {
     throw new Error(
@@ -86,6 +89,7 @@ export async function exportLocalPr(
     );
   }
 
+  throwIfAborted(signal);
   const pr = await getLocalPr(cwd, id);
   const ghState = await ensureRepoGithub(cwd);
   if (!ghState.bound && !ghState.login) {
@@ -99,15 +103,37 @@ export async function exportLocalPr(
 
   await haltWatch(cwd, "export", pr.id);
   try {
+    const pushCmd = `git push -u origin ${exportPushRefspec(pr)}`;
+    onProgress?.({ phase: "push", state: "start", command: pushCmd });
+    const pushStarted = Date.now();
     const push = await git(cwd, ["push", "-u", "origin", exportPushRefspec(pr)], {
       allowFail: true,
+      signal,
     });
     if (push.code !== 0) {
+      onProgress?.({
+        phase: "push",
+        state: "fail",
+        command: pushCmd,
+        elapsedMs: Date.now() - pushStarted,
+        message: push.stderr.trim() || `git push failed for ${pr.headRef}`,
+      });
       throw new Error(push.stderr.trim() || `git push failed for ${pr.headRef}`);
     }
+    onProgress?.({
+      phase: "push",
+      state: "pass",
+      command: pushCmd,
+      elapsedMs: Date.now() - pushStarted,
+    });
 
+    throwIfAborted(signal);
+    const createCmd = "gh pr create";
+    onProgress?.({ phase: "create_pr", state: "start", command: createCmd });
+    const createStarted = Date.now();
     const existing = await runGh(githubPrViewArgs(pr.headRef, { json: "url", jq: ".url" }), {
       cwd,
+      signal,
     });
     let url: string;
     let alreadyExisted = false;
@@ -128,9 +154,16 @@ export async function exportLocalPr(
           "--head",
           pr.headRef,
         ],
-        { cwd },
+        { cwd, signal },
       );
       if (created.code !== 0) {
+        onProgress?.({
+          phase: "create_pr",
+          state: "fail",
+          command: createCmd,
+          elapsedMs: Date.now() - createStarted,
+          message: created.stderr.trim() || created.stdout.trim() || "gh pr create failed",
+        });
         throw new Error(created.stderr.trim() || created.stdout.trim() || "gh pr create failed");
       }
       url =
@@ -140,6 +173,12 @@ export async function exportLocalPr(
           .find((line) => /^https?:\/\//.test(line)) ?? created.stdout.trim();
       if (!url) throw new Error("gh pr create succeeded but returned no URL");
     }
+    onProgress?.({
+      phase: "create_pr",
+      state: "pass",
+      command: createCmd,
+      elapsedMs: Date.now() - createStarted,
+    });
 
     if (pr.status !== "approved") {
       await setLocalPrStatus(cwd, pr.id, "approved");

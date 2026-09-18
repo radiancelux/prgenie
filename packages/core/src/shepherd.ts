@@ -2,6 +2,7 @@ import { getLocalPr, isArchivedPr, pendingReviewComments } from "./prs.js";
 import { runPreflight } from "./learnings.js";
 import { ensureRepoGithub } from "./github-ops.js";
 import { runCiChecks } from "./ci-runner.js";
+import { isAbortError, throwIfAborted, type ProgressCallback } from "./progress.js";
 
 export type ShepherdStatus = "ready" | "blocked";
 
@@ -20,6 +21,9 @@ export interface ShepherdOptions {
   skipGithubCheck?: boolean;
   /** For testing: skip CI checks */
   skipCiCheck?: boolean;
+  /** Live progress for CLI / sidebar (RAD-73). */
+  onProgress?: ProgressCallback;
+  signal?: AbortSignal;
 }
 
 /**
@@ -32,9 +36,14 @@ export async function shepherdStatus(
   options: ShepherdOptions = {},
 ): Promise<ShepherdResult> {
   const reasons: ShepherdBlockReason[] = [];
+  const onProgress = options.onProgress;
+  const signal = options.signal;
 
   try {
+    throwIfAborted(signal);
     // 1. Check local review complete (status reviewed/approved, no pending findings)
+    const reviewStarted = Date.now();
+    onProgress?.({ phase: "review", state: "start" });
     const pr = await getLocalPr(cwd, id);
 
     if (!isArchivedPr(pr) && pr.status !== "reviewed" && pr.status !== "approved") {
@@ -61,8 +70,22 @@ export async function shepherdStatus(
         });
       }
     }
+    if (reasons.some((r) => r.check === "review")) {
+      const first = reasons.find((r) => r.check === "review");
+      onProgress?.({
+        phase: "review",
+        state: "fail",
+        elapsedMs: Date.now() - reviewStarted,
+        message: first?.message,
+      });
+    } else {
+      onProgress?.({ phase: "review", state: "pass", elapsedMs: Date.now() - reviewStarted });
+    }
 
+    throwIfAborted(signal);
     // 2. Check Learn #18 runPreflight clean
+    const preflightStarted = Date.now();
+    onProgress?.({ phase: "preflight", state: "start" });
     const preflight = await runPreflight(cwd, pr);
     if (!preflight.passed) {
       for (const issue of preflight.issues) {
@@ -72,9 +95,18 @@ export async function shepherdStatus(
         });
       }
     }
+    onProgress?.({
+      phase: "preflight",
+      state: preflight.passed ? "pass" : "fail",
+      elapsedMs: Date.now() - preflightStarted,
+      message: preflight.passed ? undefined : preflight.issues[0]?.pattern,
+    });
 
+    throwIfAborted(signal);
     // 3. Check gh bind OK for this repo (bound; surface unbound / active≠bound)
     if (!options.skipGithubCheck) {
+      const ghStarted = Date.now();
+      onProgress?.({ phase: "github", state: "start", command: "gh auth status" });
       const ghState = await ensureRepoGithub(cwd);
       if (!ghState.login) {
         reasons.push({
@@ -87,11 +119,22 @@ export async function shepherdStatus(
           message: `Repo not bound to GitHub account (run: prgenie gh use ${ghState.login})`,
         });
       }
+      const ghBlocked = reasons.some((r) => r.check === "github");
+      onProgress?.({
+        phase: "github",
+        state: ghBlocked ? "fail" : "pass",
+        elapsedMs: Date.now() - ghStarted,
+        command: "gh auth status",
+        message: ghBlocked ? reasons.find((r) => r.check === "github")?.message : undefined,
+      });
+    } else {
+      onProgress?.({ phase: "github", state: "skip" });
     }
 
+    throwIfAborted(signal);
     // 4. Check local CI passes (format, lint, typecheck, test, build)
     if (!options.skipCiCheck) {
-      const ciResult = await runCiChecks(cwd);
+      const ciResult = await runCiChecks(cwd, { onProgress, signal });
       if (!ciResult.allPassed) {
         for (const check of ciResult.checks) {
           if (!check.passed) {
@@ -102,8 +145,11 @@ export async function shepherdStatus(
           }
         }
       }
+    } else {
+      onProgress?.({ phase: "ci", state: "skip" });
     }
   } catch (err) {
+    if (isAbortError(err)) throw err;
     // Fail-closed: any unknown error becomes blocked
     reasons.push({
       check: "review",

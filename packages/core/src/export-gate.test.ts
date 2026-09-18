@@ -5,7 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git } from "./git.js";
 import { completeLocalPrReview, createLocalPr, getLocalPr, setLocalPrStatus } from "./prs.js";
-import { evaluateAndStoreExportGate, validateExport } from "./export-validation.js";
+import {
+  evaluateAndStoreExportGate,
+  exportGateInFlight,
+  validateExport,
+} from "./export-validation.js";
+import { isAbortError, type ProgressEvent } from "./progress.js";
 import {
   displayShepherdStatus,
   exportReadyEnterKey,
@@ -238,6 +243,89 @@ describe("evaluateAndStoreExportGate", () => {
       assert.ok(
         validation.issues.some((issue) => issue.includes("CI") && issue.includes("test")),
         `expected CI test failure in ${validation.issues.join(" | ")}`,
+      );
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("single-flights concurrent evaluations and fans out progress", async () => {
+    const repo = await initRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(join(repo, "test.txt"), "test\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "Add test"]);
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            "format:check": "exit 0",
+            lint: 'node -e "setTimeout(() => {}, 250)"',
+            typecheck: "exit 0",
+            test: "exit 0",
+            build: "exit 0",
+          },
+        }),
+      );
+      const pr = await createLocalPr(repo, { title: "Flight", body: "Body", base: "main" });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      const a: ProgressEvent[] = [];
+      const b: ProgressEvent[] = [];
+      const [first, second] = await Promise.all([
+        evaluateAndStoreExportGate(repo, pr.id, { onProgress: (e) => a.push(e) }),
+        evaluateAndStoreExportGate(repo, pr.id, { onProgress: (e) => b.push(e) }),
+      ]);
+      assert.equal(first.status, second.status);
+      const lintStartsA = a.filter(
+        (e) => e.phase === "ci" && e.check === "lint" && e.state === "start",
+      );
+      const lintStartsB = b.filter(
+        (e) => e.phase === "ci" && e.check === "lint" && e.state === "start",
+      );
+      assert.equal(lintStartsA.length, 1);
+      assert.equal(lintStartsB.length, 1);
+      assert.equal(exportGateInFlight(repo, pr.id, pr.headSha), false);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("abort does not persist a ready/blocked snapshot", async () => {
+    const repo = await initRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(join(repo, "test.txt"), "test\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "Add test"]);
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            "format:check": "exit 0",
+            lint: 'node -e "setTimeout(() => {}, 30000)"',
+            typecheck: "exit 0",
+            test: "exit 0",
+            build: "exit 0",
+          },
+        }),
+      );
+      const pr = await createLocalPr(repo, { title: "Abort", body: "Body", base: "main" });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      const ac = new AbortController();
+      setTimeout(() => ac.abort(), 80);
+      await assert.rejects(
+        () => evaluateAndStoreExportGate(repo, pr.id, { signal: ac.signal }),
+        (err: unknown) => isAbortError(err),
+      );
+      const stored = await getLocalPr(repo, pr.id);
+      assert.notEqual(stored.exportGate?.status, "ready");
+      assert.ok(
+        !stored.exportGate ||
+          stored.exportGate.status === "pending" ||
+          stored.exportGate.evaluatedAt === null,
       );
     } finally {
       await rm(repo, { recursive: true, force: true });

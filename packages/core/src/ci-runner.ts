@@ -1,6 +1,13 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { getCachedResult, recordCheckPass } from "./ci-cache.js";
+import {
+  abortError,
+  ciCheckCommand,
+  isAbortError,
+  throwIfAborted,
+  type ProgressCallback,
+} from "./progress.js";
 
 const execAsync = promisify(exec);
 
@@ -22,6 +29,10 @@ export interface CiRunnerOptions {
   timeout?: number;
   /** Skip cache and force all checks to run (for testing). Default false. */
   skipCache?: boolean;
+  /** Live progress for CLI / sidebar (RAD-73). */
+  onProgress?: ProgressCallback;
+  /** Cancel in-flight checks (kills the child process). */
+  signal?: AbortSignal;
 }
 
 /**
@@ -107,16 +118,22 @@ async function getTrackedFiles(cwd: string): Promise<string[]> {
  * RAD-46: This ensures Windows autocrlf repos pass when blob content is properly formatted,
  * even when working tree files have CRLF line endings.
  */
-async function checkFormatFromBlobs(cwd: string, files: string[]): Promise<void> {
+async function checkFormatFromBlobs(
+  cwd: string,
+  files: string[],
+  signal?: AbortSignal,
+): Promise<void> {
   const failures: string[] = [];
 
   for (const file of files) {
+    throwIfAborted(signal);
     try {
       // Use git show :file to get the index/blob version (LF-normalized)
       // Pipe to prettier --stdin-filepath to check formatting
       const command = `git show ":${file.replace(/"/g, '\\"')}" | pnpm exec prettier --stdin-filepath "${file.replace(/"/g, '\\"')}" --check`;
-      await execAsync(command, { cwd });
-    } catch {
+      await execAsync(command, { cwd, signal });
+    } catch (err) {
+      if (isAbortError(err) || signal?.aborted) throw abortError();
       failures.push(file);
     }
   }
@@ -146,32 +163,41 @@ export async function runCiChecks(
   // RAD-46: Raise default timeout from 60s to 5min - healthy test suite can exceed 215s
   const timeout = options.timeout ?? 300000;
   const skipCache = options.skipCache ?? false;
+  const onProgress = options.onProgress;
+  const signal = options.signal;
 
   const results: CiCheckResult[] = [];
 
   for (const check of checks) {
+    throwIfAborted(signal);
+    const command = ciCheckCommand(check);
+
     // RAD-35: Check cache first (fail-closed: cache miss on any uncertainty)
     if (!skipCache) {
       const cached = await getCachedResult(cwd, check);
       if (cached) {
         // Cache hit - check passed previously with same inputs
         results.push({ name: check, passed: true });
+        onProgress?.({ phase: "ci", check, state: "cached", command, elapsedMs: 0 });
         continue;
       }
     }
 
+    onProgress?.({ phase: "ci", check, state: "start", command });
+    const started = Date.now();
+
     // Cache miss or skipCache - run the check
     try {
-      const command = `pnpm ${check}`;
-
       // RAD-36/RAD-46: format:check runs over tracked files only, checking git blob content
       if (check === "format:check") {
         const tracked = await getTrackedFiles(cwd);
         // Only override command if we have a git repo with tracked files
         if (tracked.length > 0) {
           // RAD-46: Check git blob content (LF-normalized) to match remote CI on Windows autocrlf
-          await checkFormatFromBlobs(cwd, tracked);
+          await checkFormatFromBlobs(cwd, tracked, signal);
+          const elapsedMs = Date.now() - started;
           results.push({ name: check, passed: true });
+          onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
           // RAD-35: Record successful check in cache (ignore cache-write failures)
           try {
             await recordCheckPass(cwd, check);
@@ -183,8 +209,10 @@ export async function runCiChecks(
         // If no tracked files (not a git repo or empty repo), fall back to default pnpm format:check
       }
 
-      await execAsync(command, { cwd, timeout });
+      await execAsync(command, { cwd, timeout, signal });
+      const elapsedMs = Date.now() - started;
       results.push({ name: check, passed: true });
+      onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
       // RAD-35: Record successful check in cache (ignore cache-write failures)
       try {
         await recordCheckPass(cwd, check);
@@ -192,11 +220,22 @@ export async function runCiChecks(
         // Check passed; cache write failed — ignore and continue without cache
       }
     } catch (err) {
+      if (isAbortError(err) || signal?.aborted) throw abortError();
       const message = err instanceof Error ? err.message : String(err);
+      const first = message.split("\n")[0] || `Check '${check}' failed`;
+      const elapsedMs = Date.now() - started;
       results.push({
         name: check,
         passed: false,
-        error: message.split("\n")[0] || `Check '${check}' failed`,
+        error: first.includes(command) ? first : `${command} — ${first}`,
+      });
+      onProgress?.({
+        phase: "ci",
+        check,
+        state: "fail",
+        command,
+        elapsedMs,
+        message: first,
       });
       // RAD-35: Don't cache failures - next run will try again
     }
