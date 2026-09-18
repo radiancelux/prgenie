@@ -114,3 +114,4 @@ If `packages/plugin/hooks/push-gate.mjs` exists, doctor fails `legacy-push-gate`
 - [Architecture](architecture.md) — packages, storage, lifecycle, worktrees
 - [Root README](../README.md) — install notes and flywheel
 - [Plugin README](../packages/plugin/README.md) — link-plugin / MCP refresh
+- [Windows dogfood stability RCA](rca-windows-dogfood-stability.md) — watch-listen fan-out, empty Local PRs sidebar, shepherd "hang", Windows tests (analysis; fix slices not shipped)
