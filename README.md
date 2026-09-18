@@ -64,27 +64,44 @@ Then:
 ## CLI
 
 ```text
+prgenie version
 prgenie create [--title t] [--body "summary"] [--base main] [--head branch]
+prgenie attach <pr-url|pr-number|branch> [--title t] [--body b] [--base ref]
 prgenie queue
 prgenie inbox
 prgenie watch / watch inbox|queue / watch stop [inbox|queue] / watch start [inbox|queue]
 prgenie watch listen inbox|queue [--idle 30m] [--max 8h] [--interval 60] [--ticks N]
 prgenie doctor
+prgenie sessions [--limit N] [--hook name] [--since iso] [--json]
+prgenie export <id> [--skip-validation]
+prgenie shepherd <id>
 prgenie update <id> [--title t] [--body "summary"]
-prgenie list [--all]
+prgenie list [--all] [--search q] [--query q] [--in title,body,comment,file]
 prgenie show <id>
-prgenie diff <id> [--stat]
+prgenie diff <id> [--stat] [-- path...]
 prgenie delete <id> --yes
 prgenie reopen <id>
 prgenie approve <id>
-prgenie comment <id> -m "..." [--role human|agent|reviewer]
+prgenie ready <id>
+prgenie request-changes <id> -m "..."
+prgenie comment <id> -m "..." [--role human|agent|reviewer] [--author name] [--path file] [--line n] [--side left|right] [--reply-to commentId] [--body-file path]
 prgenie address <id> <commentId> -m "..."
 prgenie resolve <id> <commentId> -m "..."
-prgenie complete-review <id>
-prgenie request-changes <id> -m "..."
+prgenie edit-comment <id> <commentId> -m "..."
+prgenie delete-comment <id> <commentId> [--yes]
+prgenie complete-review <id> [-m message] [--force]
+prgenie status <id> <draft|ready|changes_requested|reviewed|approved>
 prgenie worktrees
+prgenie worktree <id>
+prgenie learnings [--disabled] [--category name]
+prgenie disable-learning <id>
+prgenie enable-learning <id>
+prgenie delete-learning <id> [--yes]
+prgenie preflight <id>
 prgenie gh list
+prgenie gh status
 prgenie gh use <login>
+prgenie mcp
 ```
 
 `prgenie doctor` checks plugin/extension freshness, monorepo/VSIX version alignment, watch lanes, corrupt PR files, orphaned `.loops` worktrees, `gh` bind, and legacy hooks. `prgenie watch listen` is the capped implementor/reviewer wake process (skills should use it instead of hand-rolled sleep loops).
