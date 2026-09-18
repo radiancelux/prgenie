@@ -22,6 +22,7 @@ import type {
   CommentStatus,
   CommentThread,
   CreateLocalPrInput,
+  ExportGateSnapshot,
   LocalPr,
   LocalPrComment,
   LocalPrStatus,
@@ -30,6 +31,8 @@ import type {
 import { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
 import { getRepoWatch, resumeWatchRole } from "./watch.js";
 import { addLearnings, extractLearningsFromResolvedComments, runPreflight } from "./learnings.js";
+import { normalizeExportGate, pendingExportGate } from "./export-gate.js";
+import type { ExportGateSnapshot } from "./types.js";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -61,6 +64,7 @@ async function readPrFile(file: string): Promise<LocalPr> {
   pr.source = pr.source ?? null;
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
   pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
+  pr.exportGate = normalizeExportGate(pr.exportGate);
   pr.comments = (pr.comments ?? []).map(normalizeComment);
   return pr;
 }
@@ -204,6 +208,7 @@ export async function listLocalPrs(
     pr.source = pr.source ?? null;
     pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
     pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
+    pr.exportGate = normalizeExportGate(pr.exportGate);
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
   }
@@ -365,6 +370,18 @@ export async function setLocalPrStatus(
     }
     pr.status = status;
     if (status === "ready") await armReviewRequest(cwd, pr);
+    if (status === "reviewed") pr.exportGate = pendingExportGate(pr.headSha);
+    pr.updatedAt = nowIso();
+  });
+}
+
+export async function setLocalPrExportGate(
+  cwd: string,
+  id: string,
+  gate: ExportGateSnapshot | null,
+): Promise<LocalPr> {
+  return withPrLock(cwd, id, (pr) => {
+    pr.exportGate = gate ? normalizeExportGate(gate) : null;
     pr.updatedAt = nowIso();
   });
 }
@@ -448,6 +465,7 @@ function maybePromoteToReviewed(pr: LocalPr): void {
   const addressed = addressedReviewComments(pr);
   if (open.length > 0 || addressed.length > 0) return;
   pr.status = "reviewed";
+  pr.exportGate = pendingExportGate(pr.headSha);
 }
 
 async function armReviewRequest(cwd: string, pr: LocalPr): Promise<void> {
@@ -828,6 +846,7 @@ export async function completeLocalPrReview(
     });
     if (!isArchivedPr(pr)) {
       pr.status = handedToImplementor ? "changes_requested" : "reviewed";
+      if (pr.status === "reviewed") pr.exportGate = pendingExportGate(pr.headSha);
     }
     pr.updatedAt = now;
     await writePr(cwd, pr);

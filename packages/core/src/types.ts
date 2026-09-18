@@ -50,6 +50,28 @@ export interface LocalPr {
   reviewRequestedSha: string | null;
   /** HEAD sha we last told the implementor chat to spawn a reviewer for (once per HEAD). */
   reviewerNotifiedSha: string | null;
+  /**
+   * Last full shepherd/export-gate snapshot (review + preflight + gh + CI).
+   * Human-exportable UI is fail-closed: missing/stale/pending is not exportable.
+   */
+  exportGate?: ExportGateSnapshot | null;
+}
+
+export type ExportGateStatus = "ready" | "blocked" | "pending";
+
+export type ExportGateCheck = "review" | "preflight" | "github" | "ci";
+
+export interface ExportGateReason {
+  check: ExportGateCheck;
+  message: string;
+}
+
+/** Persisted shepherd result used to gate Your Turn / export. */
+export interface ExportGateSnapshot {
+  status: ExportGateStatus;
+  reasons: ExportGateReason[];
+  headSha: string;
+  evaluatedAt: string | null;
 }
 
 export interface WorktreeInfo {
