@@ -59,7 +59,7 @@ Two independent lanes under `.git/agent-console/watch.json`:
 | `inbox` | `/watch-review-inbox` | Implementor — wakes on `changes_requested` |
 | `queue` | `/watch-ready-prs`    | Reviewer — wakes on `ready`                |
 
-- `prgenie watch listen inbox|queue` is the capped wake process (default **30m** idle quiet, **8h** wall max). It still polls on `--interval` (default 60s) but prints `AGENT_LOOP_TICK_*` **only when that lane's fingerprint changes** — unchanged queues do not re-wake the parent agent. Skills should use it instead of hand-rolled sleep loops. **Never re-arm listen on TICK**; the process is still running.
+- `prgenie watch listen inbox|queue` is the capped wake process (default **30m** idle quiet, **8h** wall max). It still polls on `--interval` (default 60s) but prints `AGENT_LOOP_TICK_*` **only when that lane's fingerprint changes** — unchanged queues do not re-wake the parent agent. Skills should use it instead of hand-rolled sleep loops. **Never re-arm listen on TICK**; the process is still running. Inbox/queue listen is the transitional wake path; preferred agent orchestration is one steward per local PR ([ROADMAP A8](../ROADMAP.md)).
 - One in-flight reviewer per loop HEAD: `claim_review` / `prgenie claim-review` writes `.git/agent-console/review-claims.json` keyed by `id`+`headSha`. A second claim for the same HEAD returns `already_claimed`. Stale rows drop when the packet leaves `ready` or HEAD moves.
 - Halt reasons: `stop` (explicit `/stop-loop`, `/stop-review`, `/stop-watch`) vs `export` (after `/export-local-pr`).
 - Creating a new loop resumes **export**-halted lanes only when that export id is archived or missing. It does **not** clear a `stop` halt.

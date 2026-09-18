@@ -2,7 +2,7 @@
 
 Grounded in a full survey of the code as of `main` (post PR #5): `packages/core`, `packages/cli`, `packages/plugin`, `packages/extension`, the skills/rules/hooks, and the flywheel workflow (implementor chat ↔ reviewer chat ↔ human). Each item names the gap, why it matters, and where the change lands. Ordered by priority within each horizon.
 
-**Status:** Now items 1–4 and Next items 5–10 are implemented on this branch line. Later #11–17 shipped (history surface, search/filter, test debt + lint, release discipline, gh bind UI, docs, sidebar rename). Learn #18–20 shipped (pattern memory + preflight, sessions digest, export shepherd gate). Remaining open: H5 sidebar search UI (RAD-65), P2 extension tests.
+**Status:** Now items 1–4 and Next items 5–10 are implemented on this branch line. Later #11–17 shipped (history surface, search/filter, test debt + lint, release discipline, gh bind UI, docs, sidebar rename). Learn #18–20 shipped (pattern memory + preflight, sessions digest, export shepherd gate). Remaining open: A8 steward-per-local-PR (preferred over watch listeners), H5 sidebar search UI (RAD-65), P2 extension tests.
 
 ## Where the product stands
 
@@ -37,6 +37,7 @@ The gaps are not missing lifecycle pieces — they are **operability** (recoveri
 | A5 | ~~MCP ignored core/CLI `--stat`~~ **Done:** MCP `get_diff` accepts `stat` and `paths`. Core `getLocalPrDiff` already had `{ stat }`; CLI had `prgenie diff --stat`. | `mcp.ts`, `review-local-pr` skill. |
 | A6 | ~~`sessions.jsonl` write-only~~ **Done:** `listSessions` + `prgenie sessions` + MCP `list_sessions`. | `sessions.ts`; CLI/MCP. |
 | A7 | ~~No comment edit/delete.~~ **Done:** Core + CLI + MCP + sidebar Edit/Delete for open findings. | `editLocalPrComment` / `deleteLocalPrComment`. |
+| A8 | Agent orchestration is still inbox/queue `watch listen` (parent chat wakes on TICKs, then Tasks implementor/reviewer). Preferred: one **steward** agent per local PR owns the lifecycle — spawn an implementor Task/subagent, then a reviewer when ready; on `changes_requested` **resume the same implementor Task id** (do not spawn a twin) unless the Task is missing/failed or the user asks to restart. | Listeners are transitional until this ships. Durable map under `.git/agent-console/` `{ loopId, implementorTaskId, reviewerTaskId }` not implemented. Watch fan-out: [rca-windows-dogfood-stability.md](docs/rca-windows-dogfood-stability.md) §A / Slice 1. |
 
 ### Platform / quality gaps
 
@@ -90,6 +91,10 @@ The Now items remove the failure modes daily use actually hits: hand-rolled list
 19. **Sessions → learning digest.** ✅ RAD-9: `prgenie sessions` CLI exposes `sessions.jsonl` history for agent reuse.
 20. **Export shepherd gate.** ✅ RAD-11: `shepherd` gate on `/export-local-pr` validates bind/drift/findings before push.
 
+### Next-Learn — steward-per-loop
+
+21. **Steward-per-local-PR (A8).** One steward agent per loop owns the lifecycle: spawn an implementor Task/subagent, then a reviewer when ready; on `changes_requested` resume the same implementor Task id (do not spawn a twin unless the Task is missing/failed or the user asks to restart). Persist `{ loopId, implementorTaskId, reviewerTaskId }` under `.git/agent-console/`. Preferred over inbox/queue `watch listen` for agent orchestration; listeners stay transitional until this ships. See [Windows dogfood RCA](docs/rca-windows-dogfood-stability.md) watch fan-out (R1 / Slice 1).
+
 ### Shipped — additional control-plane work
 
 - **RAD-27**: `attach` imports GitHub PRs or branches as local loops.
@@ -106,5 +111,6 @@ The Now items remove the failure modes daily use actually hits: hand-rolled list
 
 ### Remaining open
 
+- **A8 steward-per-local-PR (Next-Learn #21):** One steward agent per loop owns the lifecycle (implementor Task → reviewer; resume the same implementor Task id on `changes_requested`). Preferred over inbox/queue `watch listen`; listeners stay until this ships. Durable map under `.git/agent-console/` `{ loopId, implementorTaskId, reviewerTaskId }`.
 - **H5 sidebar search UI (RAD-65)**: Core+CLI+MCP search is complete; sidebar UI remains open.
 - **P2 extension tests**: Extension UI tests remain a gap after CLI/MCP/hooks coverage.
