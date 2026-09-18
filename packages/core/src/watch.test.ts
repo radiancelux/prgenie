@@ -98,7 +98,7 @@ test("parallel lane mutations do not lose a lane", async () => {
   await resumeWatch(repo);
 });
 
-test("listenWatchLane prints ticks and stops on halt", async () => {
+test("listenWatchLane prints ticks only when fingerprint changes then stops on halt", async () => {
   const { listenWatchLane } = await import("./watch.js");
   await resumeWatch(repo);
   const lines: string[] = [];
@@ -108,7 +108,7 @@ test("listenWatchLane prints ticks and stops on halt", async () => {
     idleMs: 60_000,
     maxMs: 60_000,
     intervalMs: 5,
-    activityFingerprint: async () => "stable",
+    activityFingerprint: async () => (sleeps === 0 ? "stable" : "changed"),
     write: (line) => lines.push(line),
     sleep: async () => {
       sleeps += 1;
@@ -117,8 +117,31 @@ test("listenWatchLane prints ticks and stops on halt", async () => {
   });
   const result = await done;
   assert.equal(result, "halted");
-  assert.ok(lines.some((l) => l.startsWith("AGENT_LOOP_TICK_review-inbox")));
+  const ticks = lines.filter((l) => l.startsWith("AGENT_LOOP_TICK_review-inbox"));
+  assert.equal(ticks.length, 1);
   assert.ok(lines.some((l) => l.includes('"reason":"stop"')));
+  await resumeWatch(repo);
+});
+
+test("listenWatchLane does not emit TICK when fingerprint is unchanged", async () => {
+  const { listenWatchLane } = await import("./watch.js");
+  await resumeWatch(repo);
+  const lines: string[] = [];
+  let clock = 0;
+  const result = await listenWatchLane(repo, "queue", {
+    idleMs: 100,
+    maxMs: 10_000,
+    intervalMs: 50,
+    now: () => clock,
+    activityFingerprint: async () => "unchanged-queue",
+    write: (line) => lines.push(line),
+    sleep: async (ms) => {
+      clock += ms;
+    },
+  });
+  assert.equal(result, "done");
+  assert.equal(lines.filter((l) => l.startsWith("AGENT_LOOP_TICK_review-queue")).length, 0);
+  assert.ok(lines.some((l) => l.includes('"reason":"idle"')));
   await resumeWatch(repo);
 });
 
@@ -143,6 +166,7 @@ test("listenWatchLane ends on idle when activity is quiet", async () => {
   });
   assert.equal(result, "done");
   assert.ok(lines.some((l) => l.includes('"reason":"idle"')));
+  assert.equal(lines.filter((l) => l.startsWith("AGENT_LOOP_TICK_review-inbox")).length, 0);
   await resumeWatch(repo);
 });
 
@@ -170,7 +194,7 @@ test("listenWatchLane idle resets when activity fingerprint changes", async () =
   assert.ok(lines.some((l) => l.includes('"reason":"idle"')));
   assert.ok(clock >= 300, `idle reset should reach clock>=300, got ${clock}`);
   const ticks = lines.filter((l) => l.startsWith("AGENT_LOOP_TICK_review-queue"));
-  assert.ok(ticks.length >= 4, `expected more ticks than quiet baseline (~2), got ${ticks.length}`);
+  assert.equal(ticks.length, 2, `expected one TICK per fingerprint change, got ${ticks.length}`);
   await resumeWatch(repo);
 });
 

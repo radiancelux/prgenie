@@ -81,10 +81,10 @@ You are the agent **on the worktree** (implementor). On completion:
 1. Loop exists, `body` is a real summary, HEAD matches the work.
 2. `set_status` `ready`.
 3. `add_comment` `role=agent`: `Review requested.`
-4. Stop. Start **`/watch-review-inbox`** in this chat if it is not already listening (30m idle / 8h max). The **reviewer chat** should be on **`/watch-ready-prs`**. It Tasks subagents — one per `ready` loop — and must not await them.
+4. Stop. Start **`/watch-review-inbox`** in this chat if it is not already listening (30m idle / 8h max). The **reviewer chat** should be on **`/watch-ready-prs`**. It `claim_review`s then Tasks subagents — one in-flight reviewer per `ready` HEAD — and must not await them. Do not re-arm listen on TICK.
 5. When review is done, status is `changes_requested` (findings) or `reviewed` (clean). `/review-inbox` (or the watch loop) only treats `pendingComments` as the brief after `changes_requested`. Do not wait for a DM; the loop is the channel. Do not start on comments while the loop is still `ready`.
 
-If there is **no** reviewer chat, Task one reviewer subagent yourself for this id only. Do not wait on it.
+If there is **no** reviewer chat, `claim_review` / `prgenie claim-review` for this id+headSha first (skip if already claimed), then Task one reviewer subagent yourself for this id only. Do not wait on it.
 
 `/stop-loop` ends the implementor listen. `/stop-review` ends the reviewer listen. `/stop-watch` ends both. None of those push. `/export-local-pr` is the developer cutting the GitHub PR at origin.
 

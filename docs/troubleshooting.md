@@ -46,7 +46,7 @@ Doctor `extension` fails when the installed version ≠ `packages/extension/pack
 
 ## Watch listen DONE / idle
 
-`prgenie watch listen` (used by `/watch-review-inbox` and `/watch-ready-prs`) eventually prints `AGENT_LOOP_DONE_*` with a reason:
+`prgenie watch listen` (used by `/watch-review-inbox` and `/watch-ready-prs`) still polls on an interval, but prints `AGENT_LOOP_TICK_*` **only when that lane's fingerprint changes**. Unchanged queues do not re-wake the parent agent. It eventually prints `AGENT_LOOP_DONE_*` with a reason:
 
 | reason   | Meaning                                                        | What to do                                                                                                                                              |
 | -------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -64,6 +64,8 @@ Lane cheat sheet:
 - Export → halts **both** with reason `export` and the exported id
 
 Check with `prgenie watch` / MCP `watch_status`.
+
+Do **not** start another `watch listen` on TICK — the existing process is still running. Reviewer dispatch uses `claim_review` / `prgenie claim-review` so a second pass cannot Task another reviewer for the same `id`+`headSha`.
 
 ## Head drift
 

@@ -96,6 +96,14 @@ export type {
   WatchRole,
 } from "./watch.js";
 export { listenActivityFingerprint } from "./watchActivity.js";
+export {
+  claimReview,
+  formatClaimReview,
+  getReviewClaim,
+  listReviewClaims,
+  reviewClaimKey,
+} from "./review-claim.js";
+export type { ClaimReviewReason, ClaimReviewResult, ReviewClaim } from "./review-claim.js";
 export { formatDoctorReport, runDoctor } from "./doctor.js";
 export type { DoctorReport, DoctorCheck } from "./doctor.js";
 export {

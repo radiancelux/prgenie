@@ -541,8 +541,8 @@ function formatSpawnReviewer(pr) {
   return [
     `PR Genie: local PR ${pr.id} ("${pr.title}") on ${pr.headRef} is ready.`,
     'That is the review request. add_comment role=agent "Review requested." if you have not already. Do not git push.',
-    "You are the implementor. Do not review this loop yourself. The reviewer chat should list_local_prs (status=ready) and Task a generalPurpose subagent per loop. Do not await those Tasks in the listen loop.",
-    "If you are covering review in this conversation because no reviewer chat exists, Task one generalPurpose reviewer for this id \u2014 but only if you have not already Tasked a reviewer for this id and headSha this session. If several loops are ready, Task one reviewer subagent each, in parallel. Do not sit waiting on them."
+    "You are the implementor. Do not review this loop yourself. The reviewer chat should claim_review (or prgenie claim-review) then Task a generalPurpose subagent per unclaimed loop. Do not await those Tasks in the listen loop.",
+    "If you are covering review in this conversation because no reviewer chat exists, claim_review / prgenie claim-review for this id+headSha first \u2014 skip if already_claimed (one in-flight reviewer per HEAD). Then Task one generalPurpose reviewer for this id. If several loops are ready, claim then Task one reviewer subagent each, in parallel. Do not sit waiting on them."
   ].join("\n");
 }
 async function markReviewRequested(cwd, id) {
@@ -672,6 +672,113 @@ init_prs();
 init_watch();
 init_watchActivity();
 
+// packages/core/src/review-claim.ts
+var import_promises3 = require("node:fs/promises");
+var import_node_path5 = __toESM(require("node:path"), 1);
+init_git();
+init_prs();
+init_store();
+function claimsFile(dir) {
+  return import_node_path5.default.join(dir, "review-claims.json");
+}
+function reviewClaimKey(id, headSha) {
+  return `${id}:${headSha}`;
+}
+var emptyClaims = () => ({
+  updatedAt: (/* @__PURE__ */ new Date(0)).toISOString(),
+  claims: {}
+});
+function parseClaims(raw) {
+  const parsed = parseJsonObject(raw);
+  const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : emptyClaims().updatedAt;
+  const claims = {};
+  const rawClaims = parsed.claims;
+  if (rawClaims && typeof rawClaims === "object" && !Array.isArray(rawClaims)) {
+    for (const [key, value] of Object.entries(rawClaims)) {
+      const claim = parseClaim(value);
+      if (claim) claims[key] = claim;
+    }
+  }
+  return { updatedAt, claims };
+}
+function parseClaim(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const parsed = raw;
+  if (typeof parsed.id !== "string" || typeof parsed.headSha !== "string") return null;
+  return {
+    id: parsed.id,
+    headSha: parsed.headSha,
+    claimedAt: typeof parsed.claimedAt === "string" ? parsed.claimedAt : (/* @__PURE__ */ new Date(0)).toISOString(),
+    source: typeof parsed.source === "string" ? parsed.source : "cli"
+  };
+}
+async function pruneStale(cwd, state) {
+  const live = (await listLocalPrs(cwd)).filter((pr) => !isArchivedPr(pr));
+  const byId = new Map(live.map((pr) => [pr.id, pr]));
+  const claims = {};
+  for (const claim of Object.values(state.claims)) {
+    const pr = byId.get(claim.id);
+    if (!pr || pr.status !== "ready" || pr.headSha !== claim.headSha) continue;
+    claims[reviewClaimKey(claim.id, claim.headSha)] = claim;
+  }
+  return { updatedAt: state.updatedAt, claims };
+}
+async function loadClaims(file) {
+  try {
+    return parseClaims(await (0, import_promises3.readFile)(file, "utf8"));
+  } catch {
+    return emptyClaims();
+  }
+}
+async function claimReview(cwd, id, options = {}) {
+  const root = await requireGitRoot(cwd);
+  const file = claimsFile(await consoleDir(root));
+  return withFileLock(file, async () => {
+    const pr = await getLocalPr(root, id);
+    if (pr.status !== "ready") {
+      return {
+        claimed: false,
+        id: pr.id,
+        claim: null,
+        reason: "not_ready",
+        status: pr.status
+      };
+    }
+    if (options.headSha && options.headSha !== pr.headSha) {
+      return {
+        claimed: false,
+        id: pr.id,
+        claim: null,
+        reason: "head_mismatch",
+        status: pr.status
+      };
+    }
+    const headSha = options.headSha ?? pr.headSha;
+    const current = await pruneStale(root, await loadClaims(file));
+    const existing = current.claims[reviewClaimKey(pr.id, headSha)];
+    if (existing) {
+      await writeJsonFile(file, current);
+      return {
+        claimed: false,
+        id: pr.id,
+        claim: existing,
+        reason: "already_claimed",
+        status: pr.status
+      };
+    }
+    const claim = {
+      id: pr.id,
+      headSha,
+      claimedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      source: options.source ?? "cli"
+    };
+    current.claims[reviewClaimKey(pr.id, headSha)] = claim;
+    current.updatedAt = claim.claimedAt;
+    await writeJsonFile(file, current);
+    return { claimed: true, id: pr.id, claim, status: pr.status };
+  });
+}
+
 // packages/core/src/doctor.ts
 init_git();
 init_github_ops();
@@ -774,6 +881,14 @@ async function main() {
         await markReviewRequested(root, fresh.id);
       }
       if (shouldSpawnReviewer(fresh)) {
+        const claimed = await claimReview(root, fresh.id, {
+          headSha: fresh.headSha,
+          source: "hook"
+        });
+        if (!claimed.claimed) {
+          silent();
+          return;
+        }
         await markReviewerNotified(root, fresh.id);
         process.stdout.write(
           JSON.stringify({ followup_message: formatSpawnReviewer(fresh) }) + "\n"

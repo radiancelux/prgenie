@@ -192,6 +192,7 @@ export function parseDurationMs(raw: string, label = "duration"): number {
 
 export type ListenDoneReason = WatchHaltReason | "idle" | "max" | "ticks";
 
+/** Poll a watch lane. Emits TICK only when the activity fingerprint changes. */
 export async function listenWatchLane(
   cwd: string,
   role: WatchRole,
@@ -200,7 +201,7 @@ export async function listenWatchLane(
     idleMs?: number;
     /** Absolute wall-clock ceiling before DONE reason=max. Default 8h. */
     maxMs?: number;
-    /** Optional hard tick ceiling (legacy --ticks). */
+    /** Optional hard tick ceiling (legacy --ticks). Counts emitted wake TICKs only. */
     ticks?: number;
     intervalMs?: number;
     write?: (line: string) => void;
@@ -257,7 +258,8 @@ export async function listenWatchLane(
     }
 
     const fingerprint = await activity(cwd, role);
-    if (fingerprint !== lastFingerprint) {
+    const changed = fingerprint !== lastFingerprint;
+    if (changed) {
       lastFingerprint = fingerprint;
       lastActivityAt = now();
     }
@@ -266,11 +268,14 @@ export async function listenWatchLane(
     if (afterWall >= maxMs) return emitDone("max");
     if (now() - lastActivityAt >= idleMs) return emitDone("idle");
 
+    // Wake the parent only when the lane fingerprint changed. Periodic no-op
+    // TICKs re-arm Cursor Notify-on-TICK and fan out duplicate Tasks.
+    if (!changed) continue;
+
     tick += 1;
+    write(`${sentinel.tick} ${JSON.stringify({ prompt: sentinel.prompt })}`);
     if (maxTicks !== undefined && tick >= maxTicks) {
-      write(`${sentinel.tick} ${JSON.stringify({ prompt: sentinel.prompt })}`);
       return emitDone("ticks");
     }
-    write(`${sentinel.tick} ${JSON.stringify({ prompt: sentinel.prompt })}`);
   }
 }

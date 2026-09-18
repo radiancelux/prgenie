@@ -18,17 +18,17 @@ Otherwise run `prgenie watch start inbox` (MCP `watch_start` `role=inbox` if lis
 
 ## Listen
 
-Arm an **idle-timeout** listen with the built-in CLI (do **not** hand-roll `for`/`Start-Sleep` loops):
+Arm an **idle-timeout** listen with the built-in CLI (do **not** hand-roll `for`/`Start-Sleep` loops). Arm **one** listen process for this chat. Never start a second `watch listen` while that process is still running.
 
 ```powershell
 node packages/cli/dist/prgenie.cjs watch listen inbox --idle 30m --max 8h --interval 60
 ```
 
-Or `prgenie watch listen inbox` if the CLI is on PATH (same defaults). Notify on `^AGENT_LOOP_(TICK|DONE)_review-inbox`. The process prints the same TICK/DONE sentinels, exits early if the inbox lane is halted, exits after **30m with no inbox activity**, or after the **8h** wall ceiling. Then run `/stop-loop`.
+Or `prgenie watch listen inbox` if the CLI is on PATH (same defaults). Notify on `^AGENT_LOOP_(TICK|DONE)_review-inbox`. Listen prints **TICK only when the inbox fingerprint changes** — not every interval. It still polls internally, exits early if the inbox lane is halted, exits after **30m with no inbox activity**, or after the **8h** wall ceiling. Then run `/stop-loop`.
 
 - Cloud: prefer `prgenie watch listen inbox` in the cloud shell (idle/max built in). If you must use a subscription timer, unsubscribe when DONE fires with `reason` idle/max/stop/export — do not hard-cap at 60 fires.
 - Do not start a duplicate loop if one is already running for this purpose.
-- Each **TICK**: MCP `watch_status` if listed (read **`inbox`**, not the combined `halted` flag), otherwise `node packages/cli/dist/prgenie.cjs watch inbox`. Do not stall looking for MCP. `listening` continues. `halted reason=stop` on **inbox** → kill this listen loop; the developer ended it (the reviewer queue may still be listening). `halted reason=export` → do not implement that packet. Do **not** `prgenie watch start` on a tick (no role, and not `start inbox`) — only this `/watch-review-inbox` command starts the inbox lane. A different live loop on this checkout is not enough. `create_local_pr` resumes export-halted lanes after that id is archived or gone; it does not clear a stop halt. Otherwise only act when `prgenie inbox` shows **this worktree's** loop (`changes_requested` with new open findings). Never pick another loop.
+- Each **TICK**: the listen process is **still running**. **Do not re-arm listen. Do not start another `watch listen`.** MCP `watch_status` if listed (read **`inbox`**, not the combined `halted` flag), otherwise `node packages/cli/dist/prgenie.cjs watch inbox`. Do not stall looking for MCP. `listening` continues. `halted reason=stop` on **inbox** → kill this listen loop; the developer ended it (the reviewer queue may still be listening). `halted reason=export` → do not implement that packet. Do **not** `prgenie watch start` on a tick (no role, and not `start inbox`) — only this `/watch-review-inbox` command starts the inbox lane. A different live loop on this checkout is not enough. `create_local_pr` resumes export-halted lanes after that id is archived or gone; it does not clear a stop halt. Otherwise only act when `prgenie inbox` shows **this worktree's** loop (`changes_requested` with new open findings). Never pick another loop.
 - Each **DONE** (or the listen process exits): run `/stop-loop` (inbox only). Tell the developer why from the DONE payload (`idle` = quiet 30m, `max` = 8h ceiling, `stop`/`export` = halt). They re-run `/watch-review-inbox` to continue. Do not re-arm. Do **not** `/stop-watch` — that would halt the reviewer queue too.
 
 Developer commands in this chat:

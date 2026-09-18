@@ -71,6 +71,7 @@ prgenie queue
 prgenie inbox
 prgenie watch / watch inbox|queue / watch stop [inbox|queue] / watch start [inbox|queue]
 prgenie watch listen inbox|queue [--idle 30m] [--max 8h] [--interval 60] [--ticks N]
+prgenie claim-review <id> [--head sha] [--source name]
 prgenie doctor
 prgenie sessions [--limit N] [--hook name] [--since iso] [--json]
 prgenie export <id> [--skip-validation]
@@ -104,7 +105,7 @@ prgenie gh use <login>
 prgenie mcp
 ```
 
-`prgenie doctor` checks plugin/extension freshness, monorepo/VSIX version alignment, watch lanes, corrupt PR files, orphaned `.loops` worktrees, `gh` bind, and legacy hooks. `prgenie watch listen` is the capped implementor/reviewer wake process (skills should use it instead of hand-rolled sleep loops).
+`prgenie doctor` checks plugin/extension freshness, monorepo/VSIX version alignment, watch lanes, corrupt PR files, orphaned `.loops` worktrees, `gh` bind, and legacy hooks. `prgenie watch listen` is the capped implementor/reviewer wake process (skills should use it instead of hand-rolled sleep loops). It prints `AGENT_LOOP_TICK_*` only when the lane fingerprint changes, so an unchanged queue does not re-wake the parent every interval. `prgenie claim-review` / MCP `claim_review` is the durable one-reviewer-per-HEAD lock.
 
 Bind a GitHub login per repo (`prgenie gh use <login>`). Before `git push` / `gh`, PR Genie switches `gh` to that account. `gh auth` is global — only one account is active at a time — so the bind is how this project stays on `radiancelux` instead of `ccc-radiancelux`.
 

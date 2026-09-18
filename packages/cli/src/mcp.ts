@@ -5,6 +5,7 @@ import {
   archiveLoopsMergedOnGithub,
   attachLocalPr,
   bindRepoGithub,
+  claimReview,
   commentThreads,
   completeLocalPrReview,
   createLocalPr,
@@ -257,6 +258,11 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
       const role = args.role === "inbox" || args.role === "queue" ? args.role : undefined;
       return role ? resumeWatchRole(cwd, role) : resumeWatch(cwd);
     }
+    case "claim_review":
+      return claimReview(cwd, String(args.id ?? ""), {
+        headSha: typeof args.headSha === "string" ? args.headSha : undefined,
+        source: typeof args.source === "string" ? args.source : "mcp",
+      });
     case "ensure_worktree": {
       const pr = await getLocalPr(cwd, String(args.id ?? ""));
       const dest = await ensureWorktreeForLoop(cwd, pr, {
@@ -652,6 +658,27 @@ export const tools = [
           type: "string",
           enum: ["inbox", "queue"],
           description: "inbox = implementor listen, queue = reviewer listen. Omit to resume both.",
+        },
+      },
+    },
+  },
+  {
+    name: "claim_review",
+    description:
+      "Claim exclusive in-flight reviewer for a ready loop HEAD (id + headSha). Returns claimed=false with reason already_claimed if another reviewer is already in flight for that HEAD. Skip Tasking when not claimed. Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        cwd: { type: "string" },
+        headSha: {
+          type: "string",
+          description: "Optional. Defaults to the packet headSha. Mismatch refuses the claim.",
+        },
+        source: {
+          type: "string",
+          description: "Who is claiming (queue, hook, mcp). Stored on the claim file.",
         },
       },
     },
