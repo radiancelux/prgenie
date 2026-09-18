@@ -1,4 +1,10 @@
-import { needsExportGateEvaluation, type ExportGateSnapshot } from "@prgenie/core";
+import {
+  isAbortError,
+  needsExportGateEvaluation,
+  type ExportGateSnapshot,
+  type ProgressCallback,
+  type ProgressEvent,
+} from "@prgenie/core";
 
 /**
  * Sidebar snapshot helpers for RCA Slice 0 (Windows dogfood stability).
@@ -132,18 +138,33 @@ export type ExportGateCandidate = {
   exportGate?: ExportGateSnapshot | null;
 };
 
+export type ExportGateEvaluateCtx = {
+  signal: AbortSignal;
+  onProgress: ProgressCallback;
+};
+
 /**
  * One-shot full shepherd (includes CI) for reviewed loops that have no
  * current export-gate snapshot. Never called from the 2s snapshot await path.
+ * Cancel skips auto-retry for that id+HEAD until retry() is called.
  */
 export function createExportGateScheduler(opts: {
-  evaluate: (root: string, id: string) => Promise<void>;
+  evaluate: (root: string, id: string, ctx: ExportGateEvaluateCtx) => Promise<void>;
+  onProgress?: (id: string, event: ProgressEvent) => void;
+  onStart?: (id: string) => void;
   onDone?: (id: string) => void;
-  onError?: (err: unknown) => void;
-}): { schedule(root: string, pr: ExportGateCandidate | undefined): void } {
+  onError?: (err: unknown, id: string) => void;
+}): {
+  schedule(root: string, pr: ExportGateCandidate | undefined): void;
+  cancel(): boolean;
+  retry(root: string, pr: ExportGateCandidate): void;
+  inFlight(): boolean;
+} {
   let inFlight = false;
   let wanted: { root: string; id: string; headSha: string } | undefined;
   let lastDone: string | undefined;
+  let controller: AbortController | undefined;
+  const skipped = new Set<string>();
 
   const keyOf = (item: { root: string; id: string; headSha: string }) =>
     `${item.root}:${item.id}:${item.headSha}`;
@@ -152,19 +173,28 @@ export function createExportGateScheduler(opts: {
     if (inFlight) return;
     const next = wanted;
     if (!next) return;
-    if (lastDone === keyOf(next)) return;
+    const key = keyOf(next);
+    if (lastDone === key || skipped.has(key)) return;
     inFlight = true;
     const started = next;
+    const ac = new AbortController();
+    controller = ac;
+    opts.onStart?.(started.id);
     void opts
-      .evaluate(started.root, started.id)
+      .evaluate(started.root, started.id, {
+        signal: ac.signal,
+        onProgress: (event) => opts.onProgress?.(started.id, event),
+      })
       .then(() => {
         lastDone = keyOf(started);
         opts.onDone?.(started.id);
       })
       .catch((err) => {
-        opts.onError?.(err);
+        if (isAbortError(err)) skipped.add(keyOf(started));
+        opts.onError?.(err, started.id);
       })
       .finally(() => {
+        if (controller === ac) controller = undefined;
         inFlight = false;
         if (
           wanted &&
@@ -183,5 +213,18 @@ export function createExportGateScheduler(opts: {
       wanted = { root, id: pr.id, headSha: pr.headSha };
       pump();
     },
+    cancel() {
+      if (!controller) return false;
+      controller.abort();
+      return true;
+    },
+    retry(root: string, pr: ExportGateCandidate) {
+      const key = `${root}:${pr.id}:${pr.headSha}`;
+      skipped.delete(key);
+      lastDone = undefined;
+      wanted = { root, id: pr.id, headSha: pr.headSha };
+      pump();
+    },
+    inFlight: () => inFlight,
   };
 }

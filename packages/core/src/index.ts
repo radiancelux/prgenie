@@ -138,8 +138,32 @@ export {
   githubPrViewArgs,
 } from "./export.js";
 export type { GithubPrHeadState } from "./export.js";
-export { evaluateAndStoreExportGate, validateExport } from "./export-validation.js";
+export {
+  abortExportGate,
+  evaluateAndStoreExportGate,
+  exportGateInFlight,
+  validateExport,
+} from "./export-validation.js";
 export type { ExportValidationOptions, ExportValidationResult } from "./export-validation.js";
+export {
+  abortError,
+  ciCheckCommand,
+  formatElapsed,
+  formatFailedCheck,
+  formatProgressLine,
+  formatProgressStep,
+  isAbortError,
+  shortCheckName,
+  throwIfAborted,
+} from "./progress.js";
+export type {
+  ProgressCallback,
+  ProgressEvent,
+  ProgressKind,
+  ProgressPhase,
+  ProgressState,
+  RunProgressOptions,
+} from "./progress.js";
 export {
   displayShepherdStatus,
   exportGateForHead,

@@ -49,6 +49,12 @@ var init_types = __esm({
 // packages/core/src/git.ts
 async function git(cwd, args, options = {}) {
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      const err = new Error("Cancelled");
+      err.name = "AbortError";
+      reject(err);
+      return;
+    }
     const child = (0, import_node_child_process.spawn)("git", args, {
       cwd,
       windowsHide: true,
@@ -65,12 +71,23 @@ async function git(cwd, args, options = {}) {
       stderr += chunk;
     });
     child.on("error", reject);
+    const onAbort2 = () => {
+      child.kill("SIGTERM");
+    };
+    options.signal?.addEventListener("abort", onAbort2, { once: true });
     if (options.stdin !== void 0) {
       child.stdin.end(options.stdin);
     } else {
       child.stdin.end();
     }
     child.on("close", (code) => {
+      options.signal?.removeEventListener("abort", onAbort2);
+      if (options.signal?.aborted) {
+        const err = new Error("Cancelled");
+        err.name = "AbortError";
+        reject(err);
+        return;
+      }
       const result = {
         stdout: stdout.replace(/\r\n/g, "\n"),
         stderr: stderr.replace(/\r\n/g, "\n"),
@@ -931,6 +948,12 @@ __export(github_ops_exports, {
 });
 function gh(args, options = {}) {
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      const err = new Error("Cancelled");
+      err.name = "AbortError";
+      reject(err);
+      return;
+    }
     const child = (0, import_node_child_process2.spawn)("gh", args, {
       cwd: options.cwd,
       windowsHide: true,
@@ -947,7 +970,18 @@ function gh(args, options = {}) {
       stderr += chunk;
     });
     child.on("error", reject);
+    const onAbort2 = () => {
+      child.kill("SIGTERM");
+    };
+    options.signal?.addEventListener("abort", onAbort2, { once: true });
     child.on("close", (code) => {
+      options.signal?.removeEventListener("abort", onAbort2);
+      if (options.signal?.aborted) {
+        const err = new Error("Cancelled");
+        err.name = "AbortError";
+        reject(err);
+        return;
+      }
       resolve({
         stdout,
         stderr,
@@ -1923,6 +1957,38 @@ var init_ci_cache = __esm({
   }
 });
 
+// packages/core/src/progress.ts
+function ciCheckCommand(check) {
+  return `pnpm ${check}`;
+}
+function abortError(message = "Cancelled") {
+  const err = new Error(message);
+  err.name = "AbortError";
+  return err;
+}
+function isAbortError(err) {
+  if (!err || typeof err !== "object") return false;
+  const e = err;
+  return e.name === "AbortError" || e.code === "ABORT_ERR";
+}
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortError();
+}
+function onAbort(signal, fn) {
+  if (!signal) return () => void 0;
+  if (signal.aborted) {
+    fn();
+    return () => void 0;
+  }
+  signal.addEventListener("abort", fn, { once: true });
+  return () => signal.removeEventListener("abort", fn);
+}
+var init_progress = __esm({
+  "packages/core/src/progress.ts"() {
+    "use strict";
+  }
+});
+
 // packages/core/src/ci-runner.ts
 async function getTrackedFiles(cwd) {
   try {
@@ -1980,13 +2046,15 @@ async function getTrackedFiles(cwd) {
     return [];
   }
 }
-async function checkFormatFromBlobs(cwd, files) {
+async function checkFormatFromBlobs(cwd, files, signal) {
   const failures = [];
   for (const file of files) {
+    throwIfAborted(signal);
     try {
       const command = `git show ":${file.replace(/"/g, '\\"')}" | pnpm exec prettier --stdin-filepath "${file.replace(/"/g, '\\"')}" --check`;
-      await execAsync(command, { cwd });
-    } catch {
+      await execAsync(command, { cwd, signal });
+    } catch (err) {
+      if (isAbortError(err) || signal?.aborted) throw abortError();
       failures.push(file);
     }
   }
@@ -2000,22 +2068,30 @@ async function runCiChecks(cwd, options = {}) {
   const checks = options.checks ?? ["format:check", "lint", "typecheck", "test", "build"];
   const timeout = options.timeout ?? 3e5;
   const skipCache = options.skipCache ?? false;
+  const onProgress = options.onProgress;
+  const signal = options.signal;
   const results = [];
   for (const check of checks) {
+    throwIfAborted(signal);
+    const command = ciCheckCommand(check);
     if (!skipCache) {
       const cached = await getCachedResult(cwd, check);
       if (cached) {
         results.push({ name: check, passed: true });
+        onProgress?.({ phase: "ci", check, state: "cached", command, elapsedMs: 0 });
         continue;
       }
     }
+    onProgress?.({ phase: "ci", check, state: "start", command });
+    const started = Date.now();
     try {
-      const command = `pnpm ${check}`;
       if (check === "format:check") {
         const tracked = await getTrackedFiles(cwd);
         if (tracked.length > 0) {
-          await checkFormatFromBlobs(cwd, tracked);
+          await checkFormatFromBlobs(cwd, tracked, signal);
+          const elapsedMs2 = Date.now() - started;
           results.push({ name: check, passed: true });
+          onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs: elapsedMs2 });
           try {
             await recordCheckPass(cwd, check);
           } catch {
@@ -2023,18 +2099,31 @@ async function runCiChecks(cwd, options = {}) {
           continue;
         }
       }
-      await execAsync(command, { cwd, timeout });
+      await execAsync(command, { cwd, timeout, signal });
+      const elapsedMs = Date.now() - started;
       results.push({ name: check, passed: true });
+      onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
       try {
         await recordCheckPass(cwd, check);
       } catch {
       }
     } catch (err) {
+      if (isAbortError(err) || signal?.aborted) throw abortError();
       const message = err instanceof Error ? err.message : String(err);
+      const first = message.split("\n")[0] || `Check '${check}' failed`;
+      const elapsedMs = Date.now() - started;
       results.push({
         name: check,
         passed: false,
-        error: message.split("\n")[0] || `Check '${check}' failed`
+        error: first.includes(command) ? first : `${command} \u2014 ${first}`
+      });
+      onProgress?.({
+        phase: "ci",
+        check,
+        state: "fail",
+        command,
+        elapsedMs,
+        message: first
       });
     }
   }
@@ -2050,6 +2139,7 @@ var init_ci_runner = __esm({
     import_node_child_process3 = require("node:child_process");
     import_node_util = require("node:util");
     init_ci_cache();
+    init_progress();
     execAsync = (0, import_node_util.promisify)(import_node_child_process3.exec);
   }
 });
@@ -2057,7 +2147,12 @@ var init_ci_runner = __esm({
 // packages/core/src/shepherd.ts
 async function shepherdStatus(cwd, id, options = {}) {
   const reasons = [];
+  const onProgress = options.onProgress;
+  const signal = options.signal;
   try {
+    throwIfAborted(signal);
+    const reviewStarted = Date.now();
+    onProgress?.({ phase: "review", state: "start" });
     const pr = await getLocalPr(cwd, id);
     if (!isArchivedPr(pr) && pr.status !== "reviewed" && pr.status !== "approved") {
       const pending = pendingReviewComments(pr);
@@ -2083,6 +2178,20 @@ async function shepherdStatus(cwd, id, options = {}) {
         });
       }
     }
+    if (reasons.some((r) => r.check === "review")) {
+      const first = reasons.find((r) => r.check === "review");
+      onProgress?.({
+        phase: "review",
+        state: "fail",
+        elapsedMs: Date.now() - reviewStarted,
+        message: first?.message
+      });
+    } else {
+      onProgress?.({ phase: "review", state: "pass", elapsedMs: Date.now() - reviewStarted });
+    }
+    throwIfAborted(signal);
+    const preflightStarted = Date.now();
+    onProgress?.({ phase: "preflight", state: "start" });
     const preflight = await runPreflight(cwd, pr);
     if (!preflight.passed) {
       for (const issue of preflight.issues) {
@@ -2092,7 +2201,16 @@ async function shepherdStatus(cwd, id, options = {}) {
         });
       }
     }
+    onProgress?.({
+      phase: "preflight",
+      state: preflight.passed ? "pass" : "fail",
+      elapsedMs: Date.now() - preflightStarted,
+      message: preflight.passed ? void 0 : preflight.issues[0]?.pattern
+    });
+    throwIfAborted(signal);
     if (!options.skipGithubCheck) {
+      const ghStarted = Date.now();
+      onProgress?.({ phase: "github", state: "start", command: "gh auth status" });
       const ghState = await ensureRepoGithub(cwd);
       if (!ghState.login) {
         reasons.push({
@@ -2105,9 +2223,20 @@ async function shepherdStatus(cwd, id, options = {}) {
           message: `Repo not bound to GitHub account (run: prgenie gh use ${ghState.login})`
         });
       }
+      const ghBlocked = reasons.some((r) => r.check === "github");
+      onProgress?.({
+        phase: "github",
+        state: ghBlocked ? "fail" : "pass",
+        elapsedMs: Date.now() - ghStarted,
+        command: "gh auth status",
+        message: ghBlocked ? reasons.find((r) => r.check === "github")?.message : void 0
+      });
+    } else {
+      onProgress?.({ phase: "github", state: "skip" });
     }
+    throwIfAborted(signal);
     if (!options.skipCiCheck) {
-      const ciResult = await runCiChecks(cwd);
+      const ciResult = await runCiChecks(cwd, { onProgress, signal });
       if (!ciResult.allPassed) {
         for (const check of ciResult.checks) {
           if (!check.passed) {
@@ -2118,8 +2247,11 @@ async function shepherdStatus(cwd, id, options = {}) {
           }
         }
       }
+    } else {
+      onProgress?.({ phase: "ci", state: "skip" });
     }
   } catch (err) {
+    if (isAbortError(err)) throw err;
     reasons.push({
       check: "review",
       message: `Failed to check shepherd status: ${err instanceof Error ? err.message : String(err)}`
@@ -2137,25 +2269,62 @@ var init_shepherd = __esm({
     init_learnings();
     init_github_ops();
     init_ci_runner();
+    init_progress();
   }
 });
 
 // packages/core/src/export-validation.ts
 var export_validation_exports = {};
 __export(export_validation_exports, {
+  abortExportGate: () => abortExportGate,
   evaluateAndStoreExportGate: () => evaluateAndStoreExportGate,
+  exportGateInFlight: () => exportGateInFlight,
   validateExport: () => validateExport
 });
-async function evaluateAndStoreExportGate(cwd, id) {
+function gateKey(cwd, id, headSha) {
+  return `${cwd}\0${id}\0${headSha}`;
+}
+async function evaluateAndStoreExportGate(cwd, id, options = {}) {
   const pr = await getLocalPr(cwd, id);
-  const key = `${cwd}\0${id}\0${pr.headSha}`;
+  const key = gateKey(cwd, id, pr.headSha);
   const existing = inflight.get(key);
-  if (existing) return existing;
+  if (existing) {
+    const unsub = existing.addListener(options.onProgress);
+    const detach = onAbort(options.signal, () => existing.abort());
+    try {
+      return await existing.promise;
+    } finally {
+      unsub();
+      detach();
+    }
+  }
+  const listeners = /* @__PURE__ */ new Set();
+  if (options.onProgress) listeners.add(options.onProgress);
+  const controller = new AbortController();
+  const detachCaller = onAbort(options.signal, () => controller.abort());
+  const emit = (event) => {
+    for (const cb of listeners) cb(event);
+  };
+  const flight = {
+    promise: Promise.resolve({ status: "blocked", reasons: [] }),
+    abort: () => controller.abort(),
+    addListener: (cb) => {
+      if (!cb) return () => void 0;
+      listeners.add(cb);
+      return () => {
+        listeners.delete(cb);
+      };
+    }
+  };
   const run = (async () => {
     let result;
     try {
-      result = await shepherdStatus(cwd, id, {});
+      result = await shepherdStatus(cwd, id, {
+        onProgress: emit,
+        signal: controller.signal
+      });
     } catch (err) {
+      if (isAbortError(err) || controller.signal.aborted) throw abortError();
       result = {
         status: "blocked",
         reasons: [
@@ -2174,12 +2343,23 @@ async function evaluateAndStoreExportGate(cwd, id) {
     });
     return result;
   })();
-  inflight.set(key, run);
+  flight.promise = run;
+  inflight.set(key, flight);
   try {
     return await run;
   } finally {
+    detachCaller();
     inflight.delete(key);
   }
+}
+function abortExportGate(cwd, id, headSha) {
+  const flight = inflight.get(gateKey(cwd, id, headSha));
+  if (!flight) return false;
+  flight.abort();
+  return true;
+}
+function exportGateInFlight(cwd, id, headSha) {
+  return inflight.has(gateKey(cwd, id, headSha));
 }
 function issuesFromShepherd(shepherd) {
   return shepherd.reasons.map((reason) => {
@@ -2191,7 +2371,10 @@ async function validateExport(cwd, id, options = {}) {
   if (options.skipValidation) {
     return { ok: true, issues: [] };
   }
-  const shepherd = await evaluateAndStoreExportGate(cwd, id);
+  const shepherd = await evaluateAndStoreExportGate(cwd, id, {
+    onProgress: options.onProgress,
+    signal: options.signal
+  });
   if (shepherd.status === "ready") {
     return { ok: true, issues: [] };
   }
@@ -2203,6 +2386,7 @@ var init_export_validation = __esm({
     "use strict";
     init_prs();
     init_shepherd();
+    init_progress();
     inflight = /* @__PURE__ */ new Map();
   }
 });
@@ -2598,6 +2782,7 @@ init_github_ops();
 init_prs();
 init_worktrees();
 init_watch();
+init_progress();
 function ghBase(ref) {
   return ref.replace(/^origin\//, "").replace(/^refs\/heads\//, "");
 }
@@ -2641,12 +2826,15 @@ function exportPushRefspec(pr) {
 }
 async function exportLocalPr(cwd, id, options = {}) {
   const { validateExport: validateExport2 } = await Promise.resolve().then(() => (init_export_validation(), export_validation_exports));
+  const onProgress = options.onProgress;
+  const signal = options.signal;
   const validation = await validateExport2(cwd, id, options);
   if (!validation.ok) {
     throw new Error(
       `Export blocked. ${validation.issues.join(" ")}${options.skipValidation ? "" : " Use --skip-validation to override (not recommended)."}`
     );
   }
+  throwIfAborted(signal);
   const pr = await getLocalPr(cwd, id);
   const ghState = await ensureRepoGithub(cwd);
   if (!ghState.bound && !ghState.login) {
@@ -2659,14 +2847,36 @@ async function exportLocalPr(cwd, id, options = {}) {
   }
   await haltWatch(cwd, "export", pr.id);
   try {
+    const pushCmd = `git push -u origin ${exportPushRefspec(pr)}`;
+    onProgress?.({ phase: "push", state: "start", command: pushCmd });
+    const pushStarted = Date.now();
     const push = await git(cwd, ["push", "-u", "origin", exportPushRefspec(pr)], {
-      allowFail: true
+      allowFail: true,
+      signal
     });
     if (push.code !== 0) {
+      onProgress?.({
+        phase: "push",
+        state: "fail",
+        command: pushCmd,
+        elapsedMs: Date.now() - pushStarted,
+        message: push.stderr.trim() || `git push failed for ${pr.headRef}`
+      });
       throw new Error(push.stderr.trim() || `git push failed for ${pr.headRef}`);
     }
+    onProgress?.({
+      phase: "push",
+      state: "pass",
+      command: pushCmd,
+      elapsedMs: Date.now() - pushStarted
+    });
+    throwIfAborted(signal);
+    const createCmd = "gh pr create";
+    onProgress?.({ phase: "create_pr", state: "start", command: createCmd });
+    const createStarted = Date.now();
     const existing = await runGh(githubPrViewArgs(pr.headRef, { json: "url", jq: ".url" }), {
-      cwd
+      cwd,
+      signal
     });
     let url;
     let alreadyExisted = false;
@@ -2687,14 +2897,27 @@ async function exportLocalPr(cwd, id, options = {}) {
           "--head",
           pr.headRef
         ],
-        { cwd }
+        { cwd, signal }
       );
       if (created.code !== 0) {
+        onProgress?.({
+          phase: "create_pr",
+          state: "fail",
+          command: createCmd,
+          elapsedMs: Date.now() - createStarted,
+          message: created.stderr.trim() || created.stdout.trim() || "gh pr create failed"
+        });
         throw new Error(created.stderr.trim() || created.stdout.trim() || "gh pr create failed");
       }
       url = created.stdout.trim().split("\n").find((line) => /^https?:\/\//.test(line)) ?? created.stdout.trim();
       if (!url) throw new Error("gh pr create succeeded but returned no URL");
     }
+    onProgress?.({
+      phase: "create_pr",
+      state: "pass",
+      command: createCmd,
+      elapsedMs: Date.now() - createStarted
+    });
     if (pr.status !== "approved") {
       await setLocalPrStatus(cwd, pr.id, "approved");
     }
@@ -2709,6 +2932,7 @@ async function exportLocalPr(cwd, id, options = {}) {
 
 // packages/core/src/index.ts
 init_export_validation();
+init_progress();
 init_export_gate();
 
 // packages/core/src/sessions.ts

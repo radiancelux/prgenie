@@ -234,7 +234,9 @@ test("CLI shepherd persists the same full export gate (no skipCiCheck)", () => {
     "utf8",
   );
   assert.match(src, /if \(sub === "shepherd"\)/);
-  assert.match(src, /await evaluateAndStoreExportGate\(repo, id\)/);
+  assert.match(src, /evaluateAndStoreExportGate\(repo, id,/);
+  assert.match(src, /formatProgressLine/);
+  assert.match(src, /Ctrl\+C to cancel/);
   assert.equal(/shepherdStatus\(repo, id,\s*\{/.test(src), false);
 });
 
@@ -252,6 +254,9 @@ test("laneView Push to origin / export CTA use humanExport, not bare reviewed st
   assert.ok(src.includes("showExportPrimary"));
   assert.ok(src.includes("createExportGateScheduler"));
   assert.ok(src.includes("evaluateAndStoreExportGate"));
+  assert.ok(src.includes("cancelProgress"));
+  assert.ok(src.includes("formatProgressStep"));
+  assert.ok(src.includes("exportBusy"));
   assert.ok(src.includes("promptExportReadyEnter"));
   assert.ok(src.includes("humanExportEnterMessage"));
   assert.ok(src.includes("HUMAN_EXPORT_PRIMARY_ACTION"));
@@ -326,4 +331,45 @@ test("export gate scheduler skips loops that are not waiting on the gate", async
   });
   await delay(10);
   assert.equal(runs, 0);
+});
+
+test("export gate scheduler cancel skips auto-retry until retry()", async () => {
+  let runs = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const scheduler = createExportGateScheduler({
+    evaluate: async (_root, _id, ctx) => {
+      runs += 1;
+      await Promise.race([
+        gate,
+        new Promise<never>((_, reject) => {
+          ctx.signal.addEventListener("abort", () => {
+            const err = new Error("Cancelled");
+            err.name = "AbortError";
+            reject(err);
+          });
+        }),
+      ]);
+    },
+  });
+  const pr = {
+    id: "lp-a",
+    status: "reviewed",
+    headSha: "aaa",
+    exportGate: { status: "pending" as const, reasons: [], headSha: "aaa", evaluatedAt: null },
+  };
+  scheduler.schedule("/repo", pr);
+  assert.equal(scheduler.inFlight(), true);
+  scheduler.cancel();
+  await delay(20);
+  assert.equal(runs, 1);
+  scheduler.schedule("/repo", pr);
+  await delay(10);
+  assert.equal(runs, 1, "cancelled id+HEAD must not auto-restart");
+  release();
+  scheduler.retry("/repo", pr);
+  await delay(20);
+  assert.equal(runs, 2);
 });

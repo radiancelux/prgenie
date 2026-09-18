@@ -37,6 +37,12 @@ var init_types = __esm({
 // packages/core/src/git.ts
 async function git(cwd, args, options = {}) {
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      const err = new Error("Cancelled");
+      err.name = "AbortError";
+      reject(err);
+      return;
+    }
     const child = (0, import_node_child_process.spawn)("git", args, {
       cwd,
       windowsHide: true,
@@ -53,12 +59,23 @@ async function git(cwd, args, options = {}) {
       stderr += chunk;
     });
     child.on("error", reject);
+    const onAbort2 = () => {
+      child.kill("SIGTERM");
+    };
+    options.signal?.addEventListener("abort", onAbort2, { once: true });
     if (options.stdin !== void 0) {
       child.stdin.end(options.stdin);
     } else {
       child.stdin.end();
     }
     child.on("close", (code) => {
+      options.signal?.removeEventListener("abort", onAbort2);
+      if (options.signal?.aborted) {
+        const err = new Error("Cancelled");
+        err.name = "AbortError";
+        reject(err);
+        return;
+      }
       const result = {
         stdout: stdout.replace(/\r\n/g, "\n"),
         stderr: stderr.replace(/\r\n/g, "\n"),
@@ -920,6 +937,13 @@ var init_ci_cache = __esm({
   }
 });
 
+// packages/core/src/progress.ts
+var init_progress = __esm({
+  "packages/core/src/progress.ts"() {
+    "use strict";
+  }
+});
+
 // packages/core/src/ci-runner.ts
 var import_node_child_process2, import_node_util, execAsync;
 var init_ci_runner = __esm({
@@ -928,6 +952,7 @@ var init_ci_runner = __esm({
     import_node_child_process2 = require("node:child_process");
     import_node_util = require("node:util");
     init_ci_cache();
+    init_progress();
     execAsync = (0, import_node_util.promisify)(import_node_child_process2.exec);
   }
 });
@@ -940,6 +965,7 @@ var init_shepherd = __esm({
     init_learnings();
     init_github_ops();
     init_ci_runner();
+    init_progress();
   }
 });
 
@@ -949,6 +975,7 @@ var init_export_validation = __esm({
     "use strict";
     init_prs();
     init_shepherd();
+    init_progress();
   }
 });
 
@@ -988,9 +1015,11 @@ init_github_ops();
 init_prs();
 init_worktrees();
 init_watch();
+init_progress();
 
 // packages/core/src/index.ts
 init_export_validation();
+init_progress();
 init_export_gate();
 
 // packages/core/src/sessions.ts

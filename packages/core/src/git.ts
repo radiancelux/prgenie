@@ -15,9 +15,15 @@ export class GitError extends Error {
 export async function git(
   cwd: string,
   args: string[],
-  options: { stdin?: string; allowFail?: boolean } = {},
+  options: { stdin?: string; allowFail?: boolean; signal?: AbortSignal } = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      const err = new Error("Cancelled");
+      err.name = "AbortError";
+      reject(err);
+      return;
+    }
     const child = spawn("git", args, {
       cwd,
       windowsHide: true,
@@ -34,12 +40,23 @@ export async function git(
       stderr += chunk;
     });
     child.on("error", reject);
+    const onAbort = () => {
+      child.kill("SIGTERM");
+    };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
     if (options.stdin !== undefined) {
       child.stdin.end(options.stdin);
     } else {
       child.stdin.end();
     }
     child.on("close", (code) => {
+      options.signal?.removeEventListener("abort", onAbort);
+      if (options.signal?.aborted) {
+        const err = new Error("Cancelled");
+        err.name = "AbortError";
+        reject(err);
+        return;
+      }
       const result = {
         stdout: stdout.replace(/\r\n/g, "\n"),
         stderr: stderr.replace(/\r\n/g, "\n"),

@@ -7,9 +7,15 @@ import { parseGhAuthStatus, type GhAccount, type RepoGithubBind } from "./github
 
 function gh(
   args: string[],
-  options: { cwd?: string } = {},
+  options: { cwd?: string; signal?: AbortSignal } = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      const err = new Error("Cancelled");
+      err.name = "AbortError";
+      reject(err);
+      return;
+    }
     const child = spawn("gh", args, {
       cwd: options.cwd,
       windowsHide: true,
@@ -26,7 +32,18 @@ function gh(
       stderr += chunk;
     });
     child.on("error", reject);
+    const onAbort = () => {
+      child.kill("SIGTERM");
+    };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
     child.on("close", (code) => {
+      options.signal?.removeEventListener("abort", onAbort);
+      if (options.signal?.aborted) {
+        const err = new Error("Cancelled");
+        err.name = "AbortError";
+        reject(err);
+        return;
+      }
       resolve({
         stdout,
         stderr,
@@ -38,7 +55,7 @@ function gh(
 
 export function runGh(
   args: string[],
-  options: { cwd?: string } = {},
+  options: { cwd?: string; signal?: AbortSignal } = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return gh(args, options);
 }

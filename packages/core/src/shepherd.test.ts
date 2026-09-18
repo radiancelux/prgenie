@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { shepherdStatus } from "./shepherd.js";
+import type { ProgressEvent } from "./progress.js";
 import { git } from "./git.js";
 import { createLocalPr, setLocalPrStatus, addLocalPrComment } from "./prs.js";
 import { addLearnings } from "./learnings.js";
@@ -443,6 +444,53 @@ describe("shepherdStatus", () => {
       const full = await shepherdStatus(repo, pr.id, { skipGithubCheck: true });
       assert.equal(full.status, "blocked", "CLI/default path still runs full CI");
       assert.ok(full.reasons.some((r) => r.check === "ci"));
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("streams gate progress including the failing CI command", async () => {
+    const repo = await initRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(join(repo, "test.txt"), "test content\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "Add test"]);
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            "format:check": "exit 0",
+            lint: "exit 0",
+            typecheck: "exit 0",
+            test: "exit 1",
+            build: "exit 0",
+          },
+        }),
+      );
+      const pr = await createLocalPr(repo, {
+        title: "Progress PR",
+        body: "Body",
+        base: "main",
+        head: "feature",
+      });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      const events: ProgressEvent[] = [];
+      const result = await shepherdStatus(repo, pr.id, {
+        skipGithubCheck: true,
+        onProgress: (event) => events.push(event),
+      });
+      assert.equal(result.status, "blocked");
+      assert.ok(events.some((e) => e.phase === "review" && e.state === "start"));
+      assert.ok(events.some((e) => e.phase === "review" && e.state === "pass"));
+      assert.ok(events.some((e) => e.phase === "ci" && e.check === "test" && e.state === "fail"));
+      assert.ok(
+        events.some((e) => e.phase === "ci" && e.check === "test" && e.command === "pnpm test"),
+      );
+      assert.ok(
+        result.reasons.some((r) => r.message.includes("test") && r.message.includes("pnpm test")),
+      );
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

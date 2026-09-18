@@ -43,7 +43,9 @@ import {
   setLocalPrStatus,
   updateLocalPr,
   evaluateAndStoreExportGate,
+  formatProgressLine,
   humanExportUi,
+  isAbortError,
   bindSteward,
   formatStewardBinding,
   formatStewardDecision,
@@ -179,6 +181,16 @@ async function cwdRepo(): Promise<string> {
     throw new Error("Not inside a git repository.");
   }
   return cwd;
+}
+
+function attachInterrupt(controller: AbortController): () => void {
+  const onSig = () => controller.abort();
+  process.on("SIGINT", onSig);
+  process.on("SIGTERM", onSig);
+  return () => {
+    process.off("SIGINT", onSig);
+    process.off("SIGTERM", onSig);
+  };
 }
 
 export async function run(argv: string[]): Promise<number> {
@@ -431,9 +443,27 @@ export async function run(argv: string[]): Promise<number> {
       process.stderr.write("prgenie export <id> [--skip-validation]\n");
       return 1;
     }
-    const result = await exportLocalPr(repo, exportId, {
-      skipValidation: flag(rest, "--skip-validation"),
-    });
+    process.stdout.write("Export: CI → push → create PR (5 min/check). Ctrl+C to cancel.\n");
+    const ac = new AbortController();
+    const detach = attachInterrupt(ac);
+    let result: Awaited<ReturnType<typeof exportLocalPr>>;
+    try {
+      result = await exportLocalPr(repo, exportId, {
+        skipValidation: flag(rest, "--skip-validation"),
+        signal: ac.signal,
+        onProgress: (event) => {
+          process.stdout.write(`${formatProgressLine(event)}\n`);
+        },
+      });
+    } catch (err) {
+      if (isAbortError(err)) {
+        process.stderr.write("Export cancelled.\n");
+        return 130;
+      }
+      throw err;
+    } finally {
+      detach();
+    }
     const lines = [`${result.alreadyExisted ? "Existing" : "Opened"} GitHub PR ${result.url}`];
     if (result.checkedOutBase) {
       lines.push("Main workspace is back on the loop base branch.");
@@ -559,7 +589,26 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (sub === "shepherd") {
-    const result = await evaluateAndStoreExportGate(repo, id);
+    process.stdout.write("Shepherd: local CI (5 min/check). Ctrl+C to cancel.\n");
+    const ac = new AbortController();
+    const detach = attachInterrupt(ac);
+    let result: Awaited<ReturnType<typeof evaluateAndStoreExportGate>>;
+    try {
+      result = await evaluateAndStoreExportGate(repo, id, {
+        signal: ac.signal,
+        onProgress: (event) => {
+          process.stdout.write(`${formatProgressLine(event)}\n`);
+        },
+      });
+    } catch (err) {
+      if (isAbortError(err)) {
+        process.stderr.write("Shepherd cancelled.\n");
+        return 130;
+      }
+      throw err;
+    } finally {
+      detach();
+    }
     process.stdout.write(`Shepherd status: ${result.status}\n`);
     if (result.reasons.length > 0) {
       process.stdout.write("\nBlocking reasons:\n");
