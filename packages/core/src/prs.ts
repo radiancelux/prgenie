@@ -32,7 +32,6 @@ import { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
 import { getRepoWatch, resumeWatchRole } from "./watch.js";
 import { addLearnings, extractLearningsFromResolvedComments, runPreflight } from "./learnings.js";
 import { normalizeExportGate, pendingExportGate } from "./export-gate.js";
-import type { ExportGateSnapshot } from "./types.js";
 
 function nowIso(): string {
   return new Date().toISOString();
