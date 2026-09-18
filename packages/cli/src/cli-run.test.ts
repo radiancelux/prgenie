@@ -117,6 +117,12 @@ test("cli watch listen rejects bad --interval", () => {
   assert.match(result.stderr, /--interval must be/);
 });
 
+test("cli claim-review --help prints usage and exits 0", () => {
+  const result = prgenie(["claim-review", "--help"]);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /prgenie claim-review/);
+});
+
 test("cli create + ready + list --search round-trip", () => {
   const created = prgenie([
     "create",
@@ -137,6 +143,29 @@ test("cli create + ready + list --search round-trip", () => {
   const listed = prgenie(["list", "--search", "CLI parse", "--in", "title"]);
   assert.equal(listed.code, 0, listed.stderr);
   assert.match(listed.stdout, new RegExp(id));
+});
+
+test("cli claim-review is exclusive per HEAD", () => {
+  const created = prgenie([
+    "create",
+    "--title",
+    "CLI claim loop",
+    "--body",
+    "Exercise claim-review.",
+    "--base",
+    "main",
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+  const idMatch = created.stdout.match(/lp-[0-9a-f]{8}/);
+  assert.ok(idMatch, created.stdout);
+  const id = idMatch![0];
+  assert.equal(prgenie(["ready", id]).code, 0);
+  const first = prgenie(["claim-review", id, "--source", "queue"]);
+  assert.equal(first.code, 0, first.stderr);
+  assert.match(first.stdout, /^claimed {2}/);
+  const second = prgenie(["claim-review", id, "--source", "hook"]);
+  assert.equal(second.code, 0, second.stderr);
+  assert.match(second.stdout, /^already_claimed {2}/);
 });
 
 test("cli delete requires --yes", () => {

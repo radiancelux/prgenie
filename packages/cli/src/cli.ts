@@ -5,6 +5,7 @@ import {
   archiveLoopsMergedOnGithub,
   attachLocalPr,
   bindRepoGithub,
+  claimReview,
   completeLocalPrReview,
   createLocalPr,
   deleteLocalPr,
@@ -14,6 +15,7 @@ import {
   ensureWorktreeForLoop,
   findGitRoot,
   findLocalPrForCurrentWorktree,
+  formatClaimReview,
   formatDoctorReport,
   getLocalPr,
   getLocalPrDiff,
@@ -67,6 +69,7 @@ Usage:
   prgenie watch start inbox
   prgenie watch start queue
   prgenie watch listen inbox|queue [--idle 30m] [--max 8h] [--interval 60] [--ticks N]
+  prgenie claim-review <id> [--head <sha>] [--source <name>]
   prgenie doctor
   prgenie sessions [--limit N] [--hook <name>] [--since <iso>] [--json]
   prgenie export <id> [--skip-validation]
@@ -445,6 +448,25 @@ export async function run(argv: string[]): Promise<number> {
       if (learning.path) process.stdout.write(`  Path: ${learning.path}\n`);
       process.stdout.write(`  Learned: ${learning.learnedAt}\n\n`);
     }
+    return 0;
+  }
+  if (sub === "claim-review") {
+    if (flag(rest, "-h") || flag(rest, "--help")) {
+      process.stdout.write(
+        "prgenie claim-review <id> [--head <sha>] [--source <name>]\n\nClaim exclusive in-flight reviewer for this loop HEAD.\n",
+      );
+      return 0;
+    }
+    const claimId = rest[0];
+    if (!claimId) {
+      process.stderr.write("prgenie claim-review <id> [--head <sha>] [--source <name>]\n");
+      return 1;
+    }
+    const result = await claimReview(repo, claimId, {
+      headSha: arg(rest, "--head"),
+      source: arg(rest, "--source") ?? "cli",
+    });
+    process.stdout.write(`${formatClaimReview(result)}\n`);
     return 0;
   }
   const id = rest[0];

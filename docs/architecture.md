@@ -59,7 +59,8 @@ Two independent lanes under `.git/agent-console/watch.json`:
 | `inbox` | `/watch-review-inbox` | Implementor — wakes on `changes_requested` |
 | `queue` | `/watch-ready-prs`    | Reviewer — wakes on `ready`                |
 
-- `prgenie watch listen inbox|queue` is the capped wake process (default **30m** idle quiet, **8h** wall max). Skills should use it instead of hand-rolled sleep loops.
+- `prgenie watch listen inbox|queue` is the capped wake process (default **30m** idle quiet, **8h** wall max). It still polls on `--interval` (default 60s) but prints `AGENT_LOOP_TICK_*` **only when that lane's fingerprint changes** — unchanged queues do not re-wake the parent agent. Skills should use it instead of hand-rolled sleep loops. **Never re-arm listen on TICK**; the process is still running.
+- One in-flight reviewer per loop HEAD: `claim_review` / `prgenie claim-review` writes `.git/agent-console/review-claims.json` keyed by `id`+`headSha`. A second claim for the same HEAD returns `already_claimed`. Stale rows drop when the packet leaves `ready` or HEAD moves.
 - Halt reasons: `stop` (explicit `/stop-loop`, `/stop-review`, `/stop-watch`) vs `export` (after `/export-local-pr`).
 - Creating a new loop resumes **export**-halted lanes only when that export id is archived or missing. It does **not** clear a `stop` halt.
 - Listen exits with `AGENT_LOOP_DONE_*` and reason `idle` | `max` | `ticks` | `stop` | `export`. Re-run the watch skill to continue after idle/max.
@@ -74,6 +75,7 @@ All local-PR state is git-native / machine-local — not committed:
 | `refs/notes/local-pr`                                | Notes                                                    |
 | `.git/agent-console/prs/<id>.json`                   | Packet metadata (title, body, status, comments, SHAs)    |
 | `.git/agent-console/watch.json`                      | Inbox/queue halt + export id                             |
+| `.git/agent-console/review-claims.json`              | In-flight reviewer claims keyed by `id`+`headSha`        |
 | `.git/agent-console/sessions.jsonl`                  | Session log events                                       |
 | `.git/agent-console/github.json`                     | Per-repo `gh` login bind (`bindFile` in `github-ops.ts`) |
 
@@ -102,7 +104,7 @@ Skills (one slash name each — do not also add duplicate `commands/*.md`):
 
 `/start-loop`, `/local-pr`, `/review-local-pr`, `/watch-ready-prs`, `/watch-review-inbox`, `/review-queue`, `/review-inbox`, `/stop-loop`, `/stop-review`, `/stop-watch`, `/export-local-pr`
 
-MCP server name: `prgenie` (tools such as `list_local_prs`, `create_local_pr`, `set_status`, `complete_review`, `export_local_pr`, `watch_status`, `gh_use`, …).
+MCP server name: `prgenie` (tools such as `list_local_prs`, `create_local_pr`, `set_status`, `complete_review`, `claim_review`, `export_local_pr`, `watch_status`, `gh_use`, …).
 
 Hooks registered in `hooks.json`:
 

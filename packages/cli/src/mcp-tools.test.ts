@@ -42,6 +42,7 @@ test("tools catalog exposes core flywheel tools", () => {
     "complete_review",
     "get_diff",
     "watch_status",
+    "claim_review",
     "list_sessions",
   ]) {
     assert.ok(names.has(required), `missing tool ${required}`);
@@ -89,6 +90,32 @@ test("handleTool create/list/get/set_status/add_comment/get_diff", async () => {
     stat: true,
   })) as { files: unknown; diff: string };
   assert.match(diff.diff, /tool\.txt/);
+});
+
+test("handleTool claim_review is exclusive per HEAD", async () => {
+  const created = (await handleTool("create_local_pr", {
+    cwd: repo,
+    title: "Claim via MCP",
+    body: "Exercise claim_review.",
+    base: "main",
+  })) as LocalPr;
+  await handleTool("set_status", { cwd: repo, id: created.id, status: "ready" });
+
+  const first = (await handleTool("claim_review", {
+    cwd: repo,
+    id: created.id,
+    source: "queue",
+  })) as { claimed: boolean; claim: { headSha: string } };
+  assert.equal(first.claimed, true);
+  assert.equal(first.claim.headSha, created.headSha);
+
+  const second = (await handleTool("claim_review", {
+    cwd: repo,
+    id: created.id,
+    source: "hook",
+  })) as { claimed: boolean; reason?: string };
+  assert.equal(second.claimed, false);
+  assert.equal(second.reason, "already_claimed");
 });
 
 test("handleTool watch_status and unknown tool", async () => {

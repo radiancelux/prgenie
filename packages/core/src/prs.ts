@@ -512,8 +512,8 @@ export function formatSpawnReviewer(pr: LocalPr): string {
   return [
     `PR Genie: local PR ${pr.id} ("${pr.title}") on ${pr.headRef} is ready.`,
     'That is the review request. add_comment role=agent "Review requested." if you have not already. Do not git push.',
-    "You are the implementor. Do not review this loop yourself. The reviewer chat should list_local_prs (status=ready) and Task a generalPurpose subagent per loop. Do not await those Tasks in the listen loop.",
-    "If you are covering review in this conversation because no reviewer chat exists, Task one generalPurpose reviewer for this id — but only if you have not already Tasked a reviewer for this id and headSha this session. If several loops are ready, Task one reviewer subagent each, in parallel. Do not sit waiting on them.",
+    "You are the implementor. Do not review this loop yourself. The reviewer chat should claim_review (or prgenie claim-review) then Task a generalPurpose subagent per unclaimed loop. Do not await those Tasks in the listen loop.",
+    "If you are covering review in this conversation because no reviewer chat exists, claim_review / prgenie claim-review for this id+headSha first — skip if already_claimed (one in-flight reviewer per HEAD). Then Task one generalPurpose reviewer for this id. If several loops are ready, claim then Task one reviewer subagent each, in parallel. Do not sit waiting on them.",
   ].join("\n");
 }
 

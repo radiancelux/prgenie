@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import {
+  claimReview,
   findGitRoot,
   findLocalPrForCurrentWorktree,
   formatReviewInbox,
@@ -91,6 +92,14 @@ export async function main(): Promise<void> {
       }
       // Spawn reminder once per HEAD (separate from the drift baseline).
       if (shouldSpawnReviewer(fresh)) {
+        const claimed = await claimReview(root, fresh.id, {
+          headSha: fresh.headSha,
+          source: "hook",
+        });
+        if (!claimed.claimed) {
+          silent();
+          return;
+        }
         await markReviewerNotified(root, fresh.id);
         process.stdout.write(
           JSON.stringify({ followup_message: formatSpawnReviewer(fresh) }) + "\n",
