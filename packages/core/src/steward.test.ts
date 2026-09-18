@@ -129,7 +129,7 @@ test("decideStewardAction does not hand off while export gate is blocked", () =>
   assert.equal(blocked.failingCheck, "lint");
   assert.equal(blocked.yourTurn, false);
   assert.equal(blocked.humanExportable, false);
-  assert.match(blocked.reason, /do not show Your Turn/);
+  assert.match(blocked.reason, /do not show Push to origin/);
 });
 
 test("decideStewardAction hands off only when the export gate is ready", () => {

@@ -93,7 +93,7 @@ The Now items remove the failure modes daily use actually hits: hand-rolled list
 
 ### Next-Learn — steward-per-loop
 
-21. **Steward-per-local-PR (A8).** ✅ RAD-70: `/steward-loop` + durable `stewards.json` + `steward_next` (export gate before Your Turn). Listeners remain as a transitional two-chat path.
+21. **Steward-per-local-PR (A8).** ✅ RAD-70: `/steward-loop` + durable `stewards.json` + `steward_next` (export gate before Push to origin). Listeners remain as a transitional two-chat path.
 
 ### Shipped — additional control-plane work
 
@@ -108,7 +108,8 @@ The Now items remove the failure modes daily use actually hits: hand-rolled list
 - **RAD-49**: Windows-portable test suite.
 - **RAD-54**: Stranger-ready README with dogfood path.
 - **RAD-25**: `learnings` CLI exposes bare learnings (without full sessions).
-- **RAD-71**: Human export / Your Turn gated on shepherd CI green (`exportGate`).
+- **RAD-71**: Human export / Push to origin gated on shepherd CI green (`exportGate`).
+- **RAD-72**: Export CTA renamed to Push to origin, higher-contrast attention, first-enter popup.
 
 ### Remaining open
 

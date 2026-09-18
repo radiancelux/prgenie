@@ -19,6 +19,59 @@ export interface HumanExportUi {
   blockedLabel: string | null;
 }
 
+/**
+ * RAD-72 label pair (keep these in lockstep in UI + CLI):
+ * - status / pill / helper: Push to origin
+ * - primary action (detail CTA, confirm, first-enter popup): Open on GitHub
+ */
+export const HUMAN_EXPORT_STATUS_LABEL = "push to origin";
+export const HUMAN_EXPORT_PRIMARY_ACTION = "Open on GitHub";
+export const HUMAN_EXPORT_DISMISS_ACTION = "Dismiss";
+export const HUMAN_EXPORT_HINT =
+  "Review is done — push to origin. Open on GitHub pushes the branch and creates the pull request. Archive locally keeps it local only.";
+export const HUMAN_EXPORT_COMPOSER_HINT =
+  "Open findings go to the implementor. Address nests a reply underneath. When status is push to origin, Open on GitHub creates the PR.";
+
+export function humanExportEnterMessage(title: string): string {
+  return `"${title}" is ready — push to origin`;
+}
+
+export function humanExportConfirmMessage(title: string): string {
+  return `Push "${title}" to origin? This pushes the loop branch and creates a GitHub pull request.`;
+}
+
+export function exportReadyEnterKey(pr: Pick<LocalPr, "id" | "headSha">): string {
+  return `${pr.id}@${pr.headSha}`;
+}
+
+export function nextExportReadyEnter(
+  prs: Array<{
+    id: string;
+    title: string;
+    headSha: string;
+    humanExport?: Pick<HumanExportUi, "kind">;
+  }>,
+  notified: Iterable<string>,
+): { id: string; title: string; key: string } | null {
+  const seen = new Set(notified);
+  for (const pr of prs) {
+    if (pr.humanExport?.kind !== "exportable") continue;
+    const key = exportReadyEnterKey(pr);
+    if (!seen.has(key)) return { id: pr.id, title: pr.title, key };
+  }
+  return null;
+}
+
+export function retainExportReadyNotified(
+  prs: Array<{ id: string; headSha: string; humanExport?: Pick<HumanExportUi, "kind"> }>,
+  notified: Iterable<string>,
+): string[] {
+  const live = new Set(
+    prs.filter((pr) => pr.humanExport?.kind === "exportable").map(exportReadyEnterKey),
+  );
+  return [...new Set(notified)].filter((key) => live.has(key));
+}
+
 const GATE_CHECKS = new Set<ExportGateReason["check"]>(["review", "preflight", "github", "ci"]);
 
 export function pendingExportGate(headSha: string): ExportGateSnapshot {
@@ -130,9 +183,9 @@ export function humanExportUi(pr: LocalPr): HumanExportUi {
       kind: "exportable",
       yourTurn: true,
       showExportPrimary: true,
-      listStatus: "your turn — open on GitHub",
-      pillText: "your turn",
-      hint: "Review is done — your turn. Open on GitHub pushes the branch and creates the pull request. Archive locally keeps it local only.",
+      listStatus: HUMAN_EXPORT_STATUS_LABEL,
+      pillText: HUMAN_EXPORT_STATUS_LABEL,
+      hint: HUMAN_EXPORT_HINT,
       blockedLabel: null,
     };
   }

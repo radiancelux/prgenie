@@ -2482,7 +2482,7 @@ function decideStewardAction(pr, binding, options = {}) {
           yourTurn: false,
           failingCheck,
           gateStatus,
-          reason: `Export gate blocked (${failingCheck}). Resume the same implementor Task \u2014 do not show Your Turn.`
+          reason: `Export gate blocked (${failingCheck}). Resume the same implementor Task \u2014 do not show Push to origin.`
         };
       }
       return {
@@ -2495,7 +2495,7 @@ function decideStewardAction(pr, binding, options = {}) {
         yourTurn: false,
         failingCheck,
         gateStatus,
-        reason: `Export gate blocked (${failingCheck}). Spawn an implementor Task \u2014 do not show Your Turn.`
+        reason: `Export gate blocked (${failingCheck}). Spawn an implementor Task \u2014 do not show Push to origin.`
       };
     }
     return {
@@ -3798,7 +3798,7 @@ var tools = [
   },
   {
     name: "steward_next",
-    description: "Steward flywheel next action for one local PR. Persists optional Task ids, runs the full export gate after Reviewer clear, and returns spawn/resume/handoff. Human-exportable / Your Turn only when the gate is ready. On blocked CI, action is resume_implementor with failingCheck \u2014 do not hand off. Preferred over /watch-review-inbox + /watch-ready-prs. Omit id to list bindings.",
+    description: "Steward flywheel next action for one local PR. Persists optional Task ids, runs the full export gate after Reviewer clear, and returns spawn/resume/handoff. Human-exportable / Push to origin only when the gate is ready. On blocked CI, action is resume_implementor with failingCheck \u2014 do not hand off. Preferred over /watch-review-inbox + /watch-ready-prs. Omit id to list bindings.",
     inputSchema: {
       type: "object",
       properties: {

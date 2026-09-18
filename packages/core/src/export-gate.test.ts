@@ -8,12 +8,20 @@ import { completeLocalPrReview, createLocalPr, getLocalPr, setLocalPrStatus } fr
 import { evaluateAndStoreExportGate, validateExport } from "./export-validation.js";
 import {
   displayShepherdStatus,
+  exportReadyEnterKey,
   formatExportBlockLabel,
+  HUMAN_EXPORT_HINT,
+  HUMAN_EXPORT_PRIMARY_ACTION,
+  HUMAN_EXPORT_STATUS_LABEL,
+  humanExportConfirmMessage,
+  humanExportEnterMessage,
   humanExportState,
   humanExportUi,
   isHumanExportable,
   needsExportGateEvaluation,
+  nextExportReadyEnter,
   pendingExportGate,
+  retainExportReadyNotified,
 } from "./export-gate.js";
 import type { LocalPr } from "./types.js";
 
@@ -92,13 +100,16 @@ describe("humanExportState", () => {
       },
     });
     assert.equal(isHumanExportable(pr), true);
-    assert.equal(humanExportUi(pr).yourTurn, true);
-    assert.equal(humanExportUi(pr).showExportPrimary, true);
-    assert.equal(humanExportUi(pr).listStatus, "your turn — open on GitHub");
+    const ui = humanExportUi(pr);
+    assert.equal(ui.yourTurn, true);
+    assert.equal(ui.showExportPrimary, true);
+    assert.equal(ui.listStatus, HUMAN_EXPORT_STATUS_LABEL);
+    assert.equal(ui.pillText, HUMAN_EXPORT_STATUS_LABEL);
+    assert.equal(ui.hint, HUMAN_EXPORT_HINT);
     assert.equal(needsExportGateEvaluation(pr), false);
   });
 
-  it("shows blocked with the failing CI check name, not Your Turn", () => {
+  it("shows blocked with the failing CI check name, not Push to origin", () => {
     const pr = reviewedPr({
       exportGate: {
         status: "blocked",
@@ -172,7 +183,7 @@ describe("displayShepherdStatus", () => {
 });
 
 describe("evaluateAndStoreExportGate", () => {
-  it("complete_review leaves the loop pending, not Your Turn", async () => {
+  it("complete_review leaves the loop pending, not Push to origin", async () => {
     const repo = await initRepo();
     try {
       await git(repo, ["checkout", "-b", "feature"]);
@@ -231,5 +242,59 @@ describe("evaluateAndStoreExportGate", () => {
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
+  });
+});
+
+describe("first-enter export notice", () => {
+  it("keys a loop by id + HEAD so a later exportable HEAD can notify again", () => {
+    assert.equal(exportReadyEnterKey({ id: "lp-a", headSha: "abc" }), "lp-a@abc");
+    assert.equal(
+      humanExportEnterMessage("Fix the gate"),
+      '"Fix the gate" is ready — push to origin',
+    );
+    assert.match(humanExportConfirmMessage("Fix the gate"), /Push "Fix the gate" to origin/);
+    assert.equal(HUMAN_EXPORT_PRIMARY_ACTION, "Open on GitHub");
+  });
+
+  it("offers the first exportable loop that has not been notified", () => {
+    const pending = {
+      id: "lp-pending",
+      title: "Still gating",
+      headSha: "aaa",
+      humanExport: { kind: "pending" as const },
+    };
+    const blocked = {
+      id: "lp-blocked",
+      title: "CI red",
+      headSha: "bbb",
+      humanExport: { kind: "blocked" as const },
+    };
+    const ready = {
+      id: "lp-ready",
+      title: "Ship me",
+      headSha: "ccc",
+      humanExport: { kind: "exportable" as const },
+    };
+    assert.equal(nextExportReadyEnter([pending, blocked], []), null);
+    assert.deepEqual(nextExportReadyEnter([pending, blocked, ready], []), {
+      id: "lp-ready",
+      title: "Ship me",
+      key: "lp-ready@ccc",
+    });
+    assert.equal(nextExportReadyEnter([ready], ["lp-ready@ccc"]), null);
+  });
+
+  it("drops notified keys once the loop leaves exportable (re-enter can notify)", () => {
+    const ready = {
+      id: "lp-ready",
+      title: "Ship me",
+      headSha: "ccc",
+      humanExport: { kind: "exportable" as const },
+    };
+    const pending = { ...ready, humanExport: { kind: "pending" as const } };
+    assert.deepEqual(retainExportReadyNotified([ready], ["lp-ready@ccc", "stale@old"]), [
+      "lp-ready@ccc",
+    ]);
+    assert.deepEqual(retainExportReadyNotified([pending], ["lp-ready@ccc"]), []);
   });
 });

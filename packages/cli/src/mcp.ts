@@ -850,7 +850,7 @@ export const tools = [
   {
     name: "steward_next",
     description:
-      "Steward flywheel next action for one local PR. Persists optional Task ids, runs the full export gate after Reviewer clear, and returns spawn/resume/handoff. Human-exportable / Your Turn only when the gate is ready. On blocked CI, action is resume_implementor with failingCheck — do not hand off. Preferred over /watch-review-inbox + /watch-ready-prs. Omit id to list bindings.",
+      "Steward flywheel next action for one local PR. Persists optional Task ids, runs the full export gate after Reviewer clear, and returns spawn/resume/handoff. Human-exportable / Push to origin only when the gate is ready. On blocked CI, action is resume_implementor with failingCheck — do not hand off. Preferred over /watch-review-inbox + /watch-ready-prs. Omit id to list bindings.",
     inputSchema: {
       type: "object",
       properties: {

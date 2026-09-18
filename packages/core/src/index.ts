@@ -143,13 +143,23 @@ export type { ExportValidationOptions, ExportValidationResult } from "./export-v
 export {
   displayShepherdStatus,
   exportGateForHead,
+  exportReadyEnterKey,
   formatExportBlockLabel,
+  HUMAN_EXPORT_COMPOSER_HINT,
+  HUMAN_EXPORT_DISMISS_ACTION,
+  HUMAN_EXPORT_HINT,
+  HUMAN_EXPORT_PRIMARY_ACTION,
+  HUMAN_EXPORT_STATUS_LABEL,
+  humanExportConfirmMessage,
+  humanExportEnterMessage,
   humanExportState,
   humanExportUi,
   isHumanExportable,
   needsExportGateEvaluation,
+  nextExportReadyEnter,
   normalizeExportGate,
   pendingExportGate,
+  retainExportReadyNotified,
 } from "./export-gate.js";
 export type { HumanExportKind, HumanExportState, HumanExportUi } from "./export-gate.js";
 export { appendSession, formatSessionEvent, listSessions } from "./sessions.js";

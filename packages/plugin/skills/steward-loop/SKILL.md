@@ -43,7 +43,7 @@ Resume unless `steward_next` already said spawn (missing/failed/restart). If the
 Prompt on resume:
 
 - `changes_requested` — `pendingComments` is the brief. Address each (`address_comment`). Last open finding sets `ready`.
-- Export-gate blocked — `decision.failingCheck` is the brief (especially CI). Fix that check, commit, do **not** expect Your Turn. Steward will re-run the gate.
+- Export-gate blocked — `decision.failingCheck` is the brief (especially CI). Fix that check, commit, do **not** expect Push to origin. Steward will re-run the gate.
 
 ### `spawn_reviewer` / `resume_reviewer`
 
@@ -57,14 +57,14 @@ Reviewer cleared. Run the full export gate (RAD-71): MCP `steward_next` (default
 
 ### `handoff_human`
 
-Export gate is **ready**. Now — and only now — tell the human: review is done, shepherd CI is green, **Your Turn / Push to origin**. They run `/export-local-pr`. Do not push yourself.
+Export gate is **ready**. Now — and only now — tell the human: review is done, shepherd CI is green, **Push to origin**. They run `/export-local-pr` or **Open on GitHub** in the loop panel. Do not push yourself.
 
 ### Blocked gate (especially CI)
 
 If `decision.kind` is `resume_implementor` / `spawn_implementor` with `failingCheck` and `yourTurn=false`:
 
 - Resume the implementor with the failing check name.
-- Do **not** show Your Turn. Do **not** ask the human to re-push to discover CI failures.
+- Do **not** show Push to origin. Do **not** ask the human to re-push to discover CI failures.
 
 ## Restart
 

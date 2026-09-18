@@ -36,7 +36,14 @@ import {
   exportLocalPr,
   evaluateAndStoreExportGate,
   displayShepherdStatus,
+  HUMAN_EXPORT_COMPOSER_HINT,
+  HUMAN_EXPORT_DISMISS_ACTION,
+  HUMAN_EXPORT_PRIMARY_ACTION,
+  humanExportConfirmMessage,
+  humanExportEnterMessage,
   humanExportUi,
+  nextExportReadyEnter,
+  retainExportReadyNotified,
   type LocalPr,
   type HumanExportUi,
   type ShepherdResult,
@@ -158,6 +165,7 @@ export class LaneHub implements vscode.Disposable {
       console.error("[prgenie] Failed to evaluate export gate:", err);
     },
   });
+  private exportReadyPromptInFlight = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.showArchived = this.context.workspaceState.get("prgenie.showArchived", false);
@@ -313,6 +321,60 @@ export class LaneHub implements vscode.Disposable {
     return false;
   }
 
+  private async exportLoop(
+    cwd: string,
+    id: string,
+    options: { confirmed?: boolean } = {},
+  ): Promise<void> {
+    if (await this.rejectIfArchived(cwd, id)) return;
+    const prs = await listLocalPrs(cwd);
+    const pr = prs.find((p) => p.id === id);
+    const title = pr?.title ?? id;
+    if (!options.confirmed) {
+      const pick = await vscode.window.showInformationMessage(
+        humanExportConfirmMessage(title),
+        { modal: true },
+        HUMAN_EXPORT_PRIMARY_ACTION,
+      );
+      if (pick !== HUMAN_EXPORT_PRIMARY_ACTION) return;
+    }
+    const result = await exportLocalPr(cwd, id);
+    await this.pushSnapshot(true);
+    const open = await vscode.window.showInformationMessage(
+      result.alreadyExisted ? `GitHub PR already exists: ${result.url}` : `Opened ${result.url}`,
+      "Open",
+    );
+    if (open === "Open") await vscode.env.openExternal(vscode.Uri.parse(result.url));
+  }
+
+  private async promptExportReadyEnter(prs: SidebarPr[]): Promise<void> {
+    const stored = this.context.workspaceState.get<string[]>("prgenie.exportReadyNotified", []);
+    const retained = retainExportReadyNotified(prs, stored);
+    if (retained.length !== stored.length || retained.some((key, i) => key !== stored[i])) {
+      await this.context.workspaceState.update("prgenie.exportReadyNotified", retained);
+    }
+    const next = nextExportReadyEnter(prs, retained);
+    if (!next || this.exportReadyPromptInFlight) return;
+    this.exportReadyPromptInFlight = true;
+    try {
+      await this.context.workspaceState.update("prgenie.exportReadyNotified", [
+        ...retained,
+        next.key,
+      ]);
+      const pick = await vscode.window.showInformationMessage(
+        humanExportEnterMessage(next.title),
+        HUMAN_EXPORT_PRIMARY_ACTION,
+        HUMAN_EXPORT_DISMISS_ACTION,
+      );
+      if (pick !== HUMAN_EXPORT_PRIMARY_ACTION) return;
+      const cwd = await this.repoCwd({ warn: false });
+      if (!cwd) return;
+      await this.exportLoop(cwd, next.id, { confirmed: true });
+    } finally {
+      this.exportReadyPromptInFlight = false;
+    }
+  }
+
   private async onMessage(msg: ClientMessage): Promise<void> {
     if (msg.type === "ready" || msg.type === "refresh") {
       await this.pushSnapshot(true);
@@ -414,25 +476,7 @@ export class LaneHub implements vscode.Disposable {
         });
         await this.pushSnapshot();
       } else if (msg.type === "export") {
-        if (await this.rejectIfArchived(cwd, msg.id)) return;
-        const prs = await listLocalPrs(cwd);
-        const pr = prs.find((p) => p.id === msg.id);
-        const title = pr?.title ?? msg.id;
-        const pick = await vscode.window.showInformationMessage(
-          `Open "${title}" on GitHub? This pushes the loop branch and creates a pull request.`,
-          { modal: true },
-          "Open on GitHub",
-        );
-        if (pick !== "Open on GitHub") return;
-        const result = await exportLocalPr(cwd, msg.id);
-        await this.pushSnapshot(true);
-        const open = await vscode.window.showInformationMessage(
-          result.alreadyExisted
-            ? `GitHub PR already exists: ${result.url}`
-            : `Opened ${result.url}`,
-          "Open",
-        );
-        if (open === "Open") await vscode.env.openExternal(vscode.Uri.parse(result.url));
+        await this.exportLoop(cwd, msg.id);
       } else if (msg.type === "comment") {
         if (await this.rejectIfArchived(cwd, msg.id)) return;
         await addLocalPrComment(cwd, msg.id, msg.body, { role: "human" });
@@ -713,6 +757,7 @@ export class LaneHub implements vscode.Disposable {
       const cheap = selected && this.lastShepherdId === selected.id ? this.lastShepherd : null;
       const shepherd = selected ? displayShepherdStatus(cheap, selected) : null;
       const sidebarPrs = prs.map((pr) => ({ ...pr, humanExport: humanExportUi(pr) }));
+      void this.promptExportReadyEnter(sidebarPrs);
       this.post(
         {
           type: "snapshot",
@@ -813,9 +858,9 @@ function sharedCss(): string {
       text-transform: uppercase;
       color: var(--vscode-descriptionForeground);
     }
-    .status.your-turn {
-      color: var(--vscode-charts-green, #3fb950);
-      font-weight: 600;
+    .status.push-to-origin {
+      color: var(--vscode-editorWarning-foreground, #e2b203);
+      font-weight: 700;
     }
     .status.blocked {
       color: var(--vscode-charts-orange, #f59f00);
@@ -927,7 +972,11 @@ function laneHtml(webview: vscode.Webview): string {
     }
     .pr.here { border-left-color: var(--vscode-charts-green, #3fb950); }
     .pr.fresh { box-shadow: inset 2px 0 0 var(--vscode-focusBorder); }
-    .pr.reviewed-turn { border-left-color: var(--vscode-charts-green, #3fb950); }
+    .pr.push-to-origin {
+      border-left-width: 3px;
+      border-left-color: var(--vscode-editorWarning-foreground, #e2b203);
+      background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #e2b203) 14%, transparent);
+    }
     .pr.export-blocked { border-left-color: var(--vscode-charts-orange, #f59f00); }
     .pr.archived { opacity: 0.72; }
     .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1212,14 +1261,14 @@ function laneHtml(webview: vscode.Webview): string {
           + (fresh.has(pr.id) ? " fresh" : "")
           + (here ? " here" : "")
           + (archivedPr ? " archived" : "")
-          + (yourTurn ? " reviewed-turn" : "")
+          + (yourTurn ? " push-to-origin" : "")
           + (exportBlocked ? " export-blocked" : "");
         const src = pr.source && pr.source.kind === "subagent"
           ? (pr.source.subagentType || "subagent")
           : (pr.source && pr.source.kind) || "local";
         const info = el.querySelector(".info");
         const statusEl = info.children[0];
-        statusEl.className = "status" + (yourTurn ? " your-turn" : "") + (exportBlocked ? " blocked" : "");
+        statusEl.className = "status" + (yourTurn ? " push-to-origin" : "") + (exportBlocked ? " blocked" : "");
         statusEl.textContent = archivedPr
           ? "archived"
           : exportUi.listStatus
@@ -1279,10 +1328,11 @@ function panelHtml(webview: vscode.Webview): string {
       background: var(--vscode-badge-background);
       color: var(--vscode-badge-foreground);
     }
-    .pill.your-turn {
-      background: color-mix(in srgb, var(--vscode-charts-green, #3fb950) 28%, var(--vscode-badge-background));
-      color: var(--vscode-foreground);
-      font-weight: 600;
+    .pill.push-to-origin {
+      background: var(--vscode-editorWarning-foreground, #e2b203);
+      color: var(--vscode-editor-background, #1e1e1e);
+      font-weight: 700;
+      box-shadow: 0 0 0 1px var(--vscode-editorWarning-border, #e2b203);
     }
     .pill.blocked {
       background: color-mix(in srgb, var(--vscode-charts-orange, #f59f00) 28%, var(--vscode-badge-background));
@@ -1365,6 +1415,8 @@ function panelHtml(webview: vscode.Webview): string {
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const root = document.getElementById("root");
+    const COMPOSER_HINT = ${JSON.stringify(HUMAN_EXPORT_COMPOSER_HINT)};
+    const EXPORT_PRIMARY = ${JSON.stringify(HUMAN_EXPORT_PRIMARY_ACTION)};
     let layoutId = null;
     let serverSum = "";
     let paintedFiles = "";
@@ -1482,7 +1534,7 @@ function panelHtml(webview: vscode.Webview): string {
       root.querySelector("h1").title = selected.title;
       const pill = root.querySelector(".pill");
       pill.textContent = exportUi.pillText || selected.status.replace("_", " ");
-      pill.className = "pill" + (yourTurn ? " your-turn" : "") + (exportBlocked ? " blocked" : "");
+      pill.className = "pill" + (yourTurn ? " push-to-origin" : "") + (exportBlocked ? " blocked" : "");
       root.querySelector("#range").textContent =
         selected.id + " · " + selected.headRef + " → " + selected.baseRef + " · " + short(selected.headSha) + " " + (when ? "· " + when : "");
       const filesH2 = root.querySelector(".files h2");
@@ -1504,7 +1556,7 @@ function panelHtml(webview: vscode.Webview): string {
           ship.hidden = false;
           ship.disabled = false;
           ship.className = "cta";
-          ship.textContent = "Open on GitHub";
+          ship.textContent = EXPORT_PRIMARY;
         } else if (reviewed) {
           ship.hidden = true;
         } else if (ready) {
@@ -1561,7 +1613,7 @@ function panelHtml(webview: vscode.Webview): string {
             ? exportUi.hint
             : ready
               ? "Waiting on the reviewer. Complete review if you finished a sidebar pass, or Open on GitHub anyway to skip."
-              : "Open findings go to the implementor. Address nests a reply underneath. When status is your turn, Open on GitHub creates the PR.";
+              : COMPOSER_HINT;
       }
       const sum = root.querySelector("#sum");
       const next = selected.body || "";
@@ -1647,7 +1699,7 @@ function panelHtml(webview: vscode.Webview): string {
           '<span class="pill"></span>',
           '<span class="muted" id="range"></span>',
           '<div class="actions">',
-          '<button id="exportPr" class="cta">Open on GitHub</button>',
+          '<button id="exportPr" class="cta">' + EXPORT_PRIMARY + '</button>',
           '<button class="secondary" id="completeReview">Complete review</button>',
           '<button class="secondary" id="openDiffs">Open diffs</button>',
           '<button class="secondary" id="markReady" data-s="ready">Mark ready</button>',
@@ -1664,7 +1716,7 @@ function panelHtml(webview: vscode.Webview): string {
           '<div class="summary"><h2>Summary</h2><div class="pad"><textarea id="sum" placeholder="Why this exists, what changed, how to test. The implementing agent writes this for reviewers."></textarea><div style="margin-top:6px"><button id="saveSum">Save summary</button></div></div></div>',
           '<div class="body">',
           '<div class="files"><h2>Changes (' + where + ')</h2><div id="flist">' + fileHtml + '</div><p class="muted empty">Click a file to open the VS Code diff — loop base on the left, this worktree on the right.</p></div>',
-          '<div class="comments"><h2>Comments</h2><div id="clist">' + commentHtml + '</div><div class="composer"><p class="muted hint" id="hint">Open findings go to the implementor. Address nests a reply underneath. When status is your turn, Open on GitHub creates the PR.</p><textarea id="cmt" placeholder="Comment for the agent working this PR"></textarea><div style="margin-top:6px"><button id="send">Comment</button></div></div></div>',
+          '<div class="comments"><h2>Comments</h2><div id="clist">' + commentHtml + '</div><div class="composer"><p class="muted hint" id="hint">' + COMPOSER_HINT + '</p><textarea id="cmt" placeholder="Comment for the agent working this PR"></textarea><div style="margin-top:6px"><button id="send">Comment</button></div></div></div>',
           "</div>"
         ].join("");
         paintedFiles = fileHtml;
