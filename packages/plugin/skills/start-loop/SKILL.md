@@ -7,7 +7,9 @@ description: Kick off implementor work from a ClickUp, Jira, Linear, or GitHub t
 
 You are the **implementor**. Do not review your own loop. Do not `git push` unless `/export-local-pr`.
 
-This is how work _enters_ the flywheel. A ticket MCP or a message in this chat is enough. Do not wait for a local PR that does not exist yet.
+Prefer **`/steward-loop`** when the user wants **one** agent to own implement ↔ review until Push to origin. This skill is the implementor-only entry (you implement here; listen is transitional).
+
+This is how work _enters_ the two-chat flywheel. A ticket MCP or a message in this chat is enough. Do not wait for a local PR that does not exist yet.
 
 ## Brief
 
@@ -37,4 +39,4 @@ Stay off the repo base (`main`/`master`). `create_local_pr` checks out `lp-<id>`
 1. Commit on this branch if needed. Do not push.
 2. Refresh `body` to a reviewer summary: why, what changed, how to test (keep the ticket link).
 3. `set_status` `ready` and `add_comment` `role=agent` **Review requested.**
-4. Start **`/watch-review-inbox`** in this chat if it is not already listening. That listen **stops after 30m of inactivity** (or 8h max). Re-run `/watch-review-inbox` to continue. The reviewer chat should be on **`/watch-ready-prs`**. It claims then Tasks reviewers (one in-flight per HEAD) and must not await them. Do not re-arm listen on TICK.
+4. If a **steward** is driving this loop, stop — the steward will Task the reviewer. Otherwise start **`/watch-review-inbox`** in this chat if it is not already listening (transitional). That listen **stops after 30m of inactivity** (or 8h max). Re-run `/watch-review-inbox` to continue. The reviewer chat should be on **`/watch-ready-prs`**. It claims then Tasks reviewers (one in-flight per HEAD) and must not await them. Do not re-arm listen on TICK.

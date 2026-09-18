@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Implementor inbox (one tick)
 
-You are the **implementor** on this worktree. Do not review your own loop. Do not git push unless `/export-local-pr`.
+**Transitional** (prefer `/steward-loop`). You are the **implementor** on this worktree. Do not review your own loop. Do not git push unless `/export-local-pr`.
 
 0. Halt check — do not skip if MCP `watch_status` is missing. Prefer `node packages/cli/dist/prgenie.cjs watch inbox` (the **inbox** lane only). Combined `halted` is both lanes — do not treat a queue-only stop as your halt. `listening` continues. `halted reason=stop` → kill this listen loop. Do not implement. `halted reason=export` → that packet shipped or export is in flight. Do **not** `prgenie watch start` on this tick. A different live loop on this checkout is not enough. `create_local_pr` resumes export-halted lanes when that id is archived or gone; it does not clear a stop halt.
 1. If this wake is `AGENT_LOOP_DONE_*` or the listen shell exited (`reason` idle/max/ticks/stop/export), run `/stop-loop` and stop. Do not re-arm. Do not `/stop-watch`.

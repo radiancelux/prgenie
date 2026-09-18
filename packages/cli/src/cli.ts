@@ -44,6 +44,11 @@ import {
   updateLocalPr,
   evaluateAndStoreExportGate,
   humanExportUi,
+  bindSteward,
+  formatStewardBinding,
+  formatStewardDecision,
+  listStewardBindings,
+  stewardNext,
   type CommentRole,
   type LocalPr,
   type LocalPrStatus,
@@ -71,6 +76,9 @@ Usage:
   prgenie watch start queue
   prgenie watch listen inbox|queue [--idle 30m] [--max 8h] [--interval 60] [--ticks N]
   prgenie claim-review <id> [--head <sha>] [--source <name>]
+  prgenie steward
+  prgenie steward <id> [--restart] [--implementor-missing] [--implementor-failed] [--json]
+  prgenie steward bind <id> [--implementor <taskId>] [--reviewer <taskId>]
   prgenie doctor
   prgenie sessions [--limit N] [--hook <name>] [--since <iso>] [--json]
   prgenie export <id> [--skip-validation]
@@ -459,6 +467,54 @@ export async function run(argv: string[]): Promise<number> {
       process.stdout.write(`  Guidance: ${learning.guidance}\n`);
       if (learning.path) process.stdout.write(`  Path: ${learning.path}\n`);
       process.stdout.write(`  Learned: ${learning.learnedAt}\n\n`);
+    }
+    return 0;
+  }
+  if (sub === "steward") {
+    if (flag(rest, "-h") || flag(rest, "--help")) {
+      process.stdout.write(
+        "prgenie steward [<id>] [--restart] [--implementor-missing] [--implementor-failed] [--json]\nprgenie steward bind <id> [--implementor <taskId>] [--reviewer <taskId>]\n\nOne steward per loop: persist Task ids and print the next implement/review/export-gate action.\n",
+      );
+      return 0;
+    }
+    if (rest[0] === "bind") {
+      const bindId = rest[1];
+      if (!bindId) {
+        process.stderr.write(
+          "prgenie steward bind <id> [--implementor <taskId>] [--reviewer <taskId>]\n",
+        );
+        return 1;
+      }
+      const binding = await bindSteward(repo, bindId, {
+        implementorTaskId: arg(rest, "--implementor"),
+        reviewerTaskId: arg(rest, "--reviewer"),
+      });
+      process.stdout.write(`${formatStewardBinding(binding)}\n`);
+      return 0;
+    }
+    const stewardId = rest[0];
+    if (!stewardId) {
+      const bindings = await listStewardBindings(repo);
+      if (bindings.length === 0) {
+        process.stdout.write("No steward bindings.\n");
+        return 0;
+      }
+      for (const binding of bindings) {
+        process.stdout.write(`${formatStewardBinding(binding)}\n`);
+      }
+      return 0;
+    }
+    const result = await stewardNext(repo, stewardId, {
+      restart: flag(rest, "--restart"),
+      implementorMissing: flag(rest, "--implementor-missing"),
+      implementorFailed: flag(rest, "--implementor-failed"),
+      reviewerMissing: flag(rest, "--reviewer-missing"),
+      reviewerFailed: flag(rest, "--reviewer-failed"),
+    });
+    if (flag(rest, "--json")) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } else {
+      process.stdout.write(`${formatStewardDecision(result)}\n`);
     }
     return 0;
   }

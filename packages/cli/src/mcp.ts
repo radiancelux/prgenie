@@ -43,6 +43,9 @@ import {
   runPreflight,
   setLocalPrStatus,
   evaluateAndStoreExportGate,
+  bindSteward,
+  listStewardBindings,
+  stewardNext,
   updateLocalPr,
   type CommentRole,
   type LocalPr,
@@ -296,6 +299,32 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
     }
     case "shepherd_status":
       return evaluateAndStoreExportGate(cwd, String(args.id ?? ""));
+    case "bind_steward":
+      return bindSteward(cwd, String(args.id ?? ""), {
+        implementorTaskId:
+          args.implementorTaskId === undefined
+            ? undefined
+            : (args.implementorTaskId as string | null),
+        reviewerTaskId:
+          args.reviewerTaskId === undefined ? undefined : (args.reviewerTaskId as string | null),
+      });
+    case "steward_next": {
+      if (!args.id) return listStewardBindings(cwd);
+      return stewardNext(cwd, String(args.id), {
+        implementorTaskId:
+          args.implementorTaskId === undefined
+            ? undefined
+            : (args.implementorTaskId as string | null),
+        reviewerTaskId:
+          args.reviewerTaskId === undefined ? undefined : (args.reviewerTaskId as string | null),
+        restart: args.restart === true,
+        implementorMissing: args.implementorMissing === true,
+        implementorFailed: args.implementorFailed === true,
+        reviewerMissing: args.reviewerMissing === true,
+        reviewerFailed: args.reviewerFailed === true,
+        evaluateGate: args.evaluateGate === false ? false : undefined,
+      });
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -795,6 +824,61 @@ export const tools = [
       type: "object",
       required: ["id"],
       properties: { id: { type: "string" }, cwd: { type: "string" } },
+    },
+  },
+  {
+    name: "bind_steward",
+    description:
+      "Persist this loop's steward Task ids under .git/agent-console/stewards.json ({ loopId, implementorTaskId, reviewerTaskId }). Pass null or empty string to clear a field. Used by /steward-loop so changes_requested resumes the same implementor Task.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        cwd: { type: "string" },
+        implementorTaskId: {
+          description: "Cursor Task id for the implementor subagent. Null/empty clears.",
+        },
+        reviewerTaskId: {
+          description: "Cursor Task id for the reviewer subagent. Null/empty clears.",
+        },
+      },
+    },
+  },
+  {
+    name: "steward_next",
+    description:
+      "Steward flywheel next action for one local PR. Persists optional Task ids, runs the full export gate after Reviewer clear, and returns spawn/resume/handoff. Human-exportable / Your Turn only when the gate is ready. On blocked CI, action is resume_implementor with failingCheck — do not hand off. Preferred over /watch-review-inbox + /watch-ready-prs. Omit id to list bindings.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Local PR id. Omit to list steward bindings." },
+        cwd: { type: "string" },
+        implementorTaskId: {
+          description: "Optional. Persist implementor Task id before deciding.",
+        },
+        reviewerTaskId: {
+          description: "Optional. Persist reviewer Task id before deciding.",
+        },
+        restart: {
+          type: "boolean",
+          description: "User asked to restart. Spawn a new implementor instead of resuming.",
+        },
+        implementorMissing: {
+          type: "boolean",
+          description: "Persisted implementor Task is gone. Spawn a new one.",
+        },
+        implementorFailed: {
+          type: "boolean",
+          description: "Persisted implementor Task failed. Spawn a new one.",
+        },
+        reviewerMissing: { type: "boolean" },
+        reviewerFailed: { type: "boolean" },
+        evaluateGate: {
+          type: "boolean",
+          description: "When reviewed, run the full export gate if pending. Default true.",
+        },
+      },
     },
   },
 ];

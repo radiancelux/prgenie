@@ -106,7 +106,7 @@ If `packages/plugin/hooks/push-gate.mjs` exists, doctor fails `legacy-push-gate`
 1. `prgenie doctor`
 2. Stale plugin → build + `link-plugin` + disable/enable
 3. Stale sidebar → `link-extension` + full quit
-4. Watch quiet → re-run `/watch-review-inbox` or `/watch-ready-prs`
+4. Watch quiet → prefer `/steward-loop` (`prgenie steward <id>`); listen is transitional (`/watch-review-inbox` / `/watch-ready-prs`)
 5. Export halt stuck → archive/missing export id, or create next loop (export resume only)
 6. Wrong GitHub user → `prgenie gh use <login>`
 7. Bad packet → inspect `.git/agent-console/prs/<id>.json`

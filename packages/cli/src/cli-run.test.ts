@@ -117,6 +117,36 @@ test("cli watch listen rejects bad --interval", () => {
   assert.match(result.stderr, /--interval must be/);
 });
 
+test("cli steward --help prints usage and exits 0", () => {
+  const result = prgenie(["steward", "--help"]);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /prgenie steward/);
+});
+
+test("cli steward bind + next resumes the same implementor Task", () => {
+  const created = prgenie([
+    "create",
+    "--title",
+    "CLI steward loop",
+    "--body",
+    "Exercise steward bind/next.",
+    "--base",
+    "main",
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+  const idMatch = created.stdout.match(/lp-[0-9a-f]{8}/);
+  assert.ok(idMatch, created.stdout);
+  const id = idMatch![0];
+  const bound = prgenie(["steward", "bind", id, "--implementor", "task-impl-cli"]);
+  assert.equal(bound.code, 0, bound.stderr);
+  assert.match(bound.stdout, /implementor=task-impl-cli/);
+  assert.equal(prgenie(["status", id, "changes_requested"]).code, 0);
+  const next = prgenie(["steward", id]);
+  assert.equal(next.code, 0, next.stderr);
+  assert.match(next.stdout, /action=resume_implementor/);
+  assert.match(next.stdout, /resumeSameImplementor=true/);
+});
+
 test("cli claim-review --help prints usage and exits 0", () => {
   const result = prgenie(["claim-review", "--help"]);
   assert.equal(result.code, 0);

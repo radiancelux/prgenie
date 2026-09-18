@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Watch review inbox
 
+**Transitional.** Prefer **`/steward-loop`** (one steward, resume the same implementor Task, export gate before Your Turn). Use this listen only when the user explicitly wants the two-chat inbox.
+
 You are the **implementor** on this worktree. Stay in this conversation. Do not review your own loop. Do not push.
 
 `changes_requested` is how review completion reaches you — **for this worktree's local PR only**. Reviewer comments on a still-`ready` loop are in progress — wait for `complete_review`. Then `pendingComments` is the brief. Never implement a different loop just because it appears in the repo inbox.
