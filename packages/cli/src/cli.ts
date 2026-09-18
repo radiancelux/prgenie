@@ -161,7 +161,7 @@ function printPr(pr: LocalPr): void {
     pr.status === "reviewed"
       ? `\n  export: ${
           exportUi.kind === "exportable"
-            ? "ready"
+            ? exportUi.listStatus
             : exportUi.kind === "blocked"
               ? `blocked — ${exportUi.blockedLabel}`
               : "pending (shepherd CI not green yet)"

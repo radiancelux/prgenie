@@ -161,7 +161,7 @@ function canResumeTask(
 
 /**
  * Pure next-action for one steward per loop.
- * Human handoff (Your Turn) only when status is reviewed and the export gate is ready.
+ * Human handoff (Push to origin) only when status is reviewed and the export gate is ready.
  */
 export function decideStewardAction(
   pr: Pick<LocalPr, "id" | "status" | "headSha" | "exportGate">,
@@ -258,7 +258,7 @@ export function decideStewardAction(
           yourTurn: false,
           failingCheck,
           gateStatus,
-          reason: `Export gate blocked (${failingCheck}). Resume the same implementor Task — do not show Your Turn.`,
+          reason: `Export gate blocked (${failingCheck}). Resume the same implementor Task — do not show Push to origin.`,
         };
       }
       return {
@@ -271,7 +271,7 @@ export function decideStewardAction(
         yourTurn: false,
         failingCheck,
         gateStatus,
-        reason: `Export gate blocked (${failingCheck}). Spawn an implementor Task — do not show Your Turn.`,
+        reason: `Export gate blocked (${failingCheck}). Spawn an implementor Task — do not show Push to origin.`,
       };
     }
     return {

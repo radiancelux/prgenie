@@ -113,6 +113,6 @@ prgenie gh use <login>
 
 ## Open on GitHub
 
-`reviewed` means the automated reviewer is done and **you** should look. In Local PRs / the loop panel, **Open on GitHub** pushes the loop branch and creates the GitHub PR (`/export-local-pr` does the same). **Archive locally** keeps it local only (no GitHub).
+`reviewed` means the automated reviewer is done and **you** should look. When the export gate is ready, Local PRs shows **Push to origin**. **Open on GitHub** pushes the loop branch and creates the GitHub PR (`/export-local-pr` does the same). **Archive locally** keeps it local only (no GitHub).
 
 Only open on GitHub if you explicitly want to publish. That marks the loop `approved` (archived). Late reviewer comments cannot un-archive it. If GitHub already merged that head, PR Genie archives the local packet on list/refresh.

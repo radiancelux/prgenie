@@ -66,7 +66,7 @@ export interface ExportGateReason {
   message: string;
 }
 
-/** Persisted shepherd result used to gate Your Turn / export. */
+/** Persisted shepherd result used to gate Push to origin / export. */
 export interface ExportGateSnapshot {
   status: ExportGateStatus;
   reasons: ExportGateReason[];

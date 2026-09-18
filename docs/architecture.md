@@ -57,7 +57,7 @@ One steward chat owns one loop. It does **not** implement or review in-chat. It:
 1. Spawns an implementor Task and persists `implementorTaskId` in `.git/agent-console/stewards.json`.
 2. When status is `ready`, Tasks a reviewer and persists `reviewerTaskId`.
 3. On `changes_requested`, **resumes the same implementor Task id** (no twin) unless missing/failed or the user asks to restart.
-4. After Reviewer clear (`reviewed`), runs the full export gate (`evaluateAndStoreExportGate` / `steward_next`). Human-exportable / Your Turn only when the gate is **ready**. On **blocked** (especially CI), resume the implementor with `failingCheck` — do not hand off.
+4. After Reviewer clear (`reviewed`), runs the full export gate (`evaluateAndStoreExportGate` / `steward_next`). Human-exportable / Push to origin only when the gate is **ready**. On **blocked** (especially CI), resume the implementor with `failingCheck` — do not hand off.
 
 CLI: `prgenie steward <id>`, `prgenie steward bind <id> --implementor <taskId>`. MCP: `steward_next`, `bind_steward`. Skill: `/steward-loop`.
 

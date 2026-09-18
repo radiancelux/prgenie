@@ -238,7 +238,7 @@ test("CLI shepherd persists the same full export gate (no skipCiCheck)", () => {
   assert.equal(/shepherdStatus\(repo, id,\s*\{/.test(src), false);
 });
 
-test("laneView Your Turn / export CTA use humanExport, not bare reviewed status", () => {
+test("laneView Push to origin / export CTA use humanExport, not bare reviewed status", () => {
   const src = readFileSync(
     path.join(path.dirname(fileURLToPath(import.meta.url)), "laneView.ts"),
     "utf8",
@@ -246,12 +246,22 @@ test("laneView Your Turn / export CTA use humanExport, not bare reviewed status"
   assert.equal(
     /const yourTurn = pr\.status === "reviewed"/.test(src),
     false,
-    "list must not treat reviewed as Your Turn before the export gate is green",
+    "list must not treat reviewed as Push to origin before the export gate is green",
   );
   assert.ok(src.includes("humanExport"));
   assert.ok(src.includes("showExportPrimary"));
   assert.ok(src.includes("createExportGateScheduler"));
   assert.ok(src.includes("evaluateAndStoreExportGate"));
+  assert.ok(src.includes("promptExportReadyEnter"));
+  assert.ok(src.includes("humanExportEnterMessage"));
+  assert.ok(src.includes("HUMAN_EXPORT_PRIMARY_ACTION"));
+  assert.ok(src.includes("push-to-origin"));
+  assert.ok(src.includes("editorWarning-foreground"));
+  assert.equal(
+    src.includes("your-turn") || src.includes("reviewed-turn") || /your turn/i.test(src),
+    false,
+    "user-facing Your Turn copy must be gone",
+  );
   assert.equal(
     /await\s+evaluateAndStoreExportGate\s*\(/.test(src),
     false,

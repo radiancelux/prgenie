@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Watch review inbox
 
-**Transitional.** Prefer **`/steward-loop`** (one steward, resume the same implementor Task, export gate before Your Turn). Use this listen only when the user explicitly wants the two-chat inbox.
+**Transitional.** Prefer **`/steward-loop`** (one steward, resume the same implementor Task, export gate before Push to origin). Use this listen only when the user explicitly wants the two-chat inbox.
 
 You are the **implementor** on this worktree. Stay in this conversation. Do not review your own loop. Do not push.
 
