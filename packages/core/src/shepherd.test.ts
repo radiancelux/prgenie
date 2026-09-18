@@ -397,4 +397,54 @@ describe("shepherdStatus", () => {
       await rm(repo, { recursive: true, force: true });
     }
   });
+
+  it("skipCiCheck does not run failing CI scripts (sidebar cheap path)", async () => {
+    const repo = await initRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(join(repo, "test.txt"), "test\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "Add test"]);
+
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            "format:check": "exit 0",
+            lint: "exit 1",
+            typecheck: "exit 0",
+            test: "exit 0",
+            build: "exit 0",
+          },
+        }),
+      );
+
+      const pr = await createLocalPr(repo, {
+        title: "PR with CI failure",
+        body: "Body",
+        base: "main",
+        head: "feature",
+      });
+
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+
+      const cheap = await shepherdStatus(repo, pr.id, {
+        skipGithubCheck: true,
+        skipCiCheck: true,
+      });
+      assert.equal(cheap.status, "ready", "sidebar cheap path must not wait on CI");
+      assert.equal(
+        cheap.reasons.filter((r) => r.check === "ci").length,
+        0,
+        "skipCiCheck must not report CI failures",
+      );
+
+      const full = await shepherdStatus(repo, pr.id, { skipGithubCheck: true });
+      assert.equal(full.status, "blocked", "CLI/default path still runs full CI");
+      assert.ok(full.reasons.some((r) => r.check === "ci"));
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
 });
