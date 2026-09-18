@@ -2,6 +2,12 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { getCachedResult, recordCheckPass } from "./ci-cache.js";
 import {
+  collectExecOutput,
+  formatCiCheckError,
+  formatFailureExcerpt,
+  writeCiFailureLog,
+} from "./ci-failure.js";
+import {
   abortError,
   ciCheckCommand,
   isAbortError,
@@ -15,6 +21,10 @@ export interface CiCheckResult {
   name: string;
   passed: boolean;
   error?: string;
+  /** Short toast/CLI excerpt (first failing test or last N lines). */
+  excerpt?: string;
+  /** Relative or absolute path to the capped full log. */
+  logPath?: string;
 }
 
 export interface CiRunnerResult {
@@ -209,7 +219,7 @@ export async function runCiChecks(
         // If no tracked files (not a git repo or empty repo), fall back to default pnpm format:check
       }
 
-      await execAsync(command, { cwd, timeout, signal });
+      await execAsync(command, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });
       const elapsedMs = Date.now() - started;
       results.push({ name: check, passed: true });
       onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
@@ -221,13 +231,17 @@ export async function runCiChecks(
       }
     } catch (err) {
       if (isAbortError(err) || signal?.aborted) throw abortError();
-      const message = err instanceof Error ? err.message : String(err);
-      const first = message.split("\n")[0] || `Check '${check}' failed`;
+      const output = collectExecOutput(err);
+      const excerpt = formatFailureExcerpt(check, output);
+      const logPath = await writeCiFailureLog(cwd, check, command, output, excerpt);
       const elapsedMs = Date.now() - started;
+      const error = formatCiCheckError({ command, excerpt, logPath });
       results.push({
         name: check,
         passed: false,
-        error: first.includes(command) ? first : `${command} — ${first}`,
+        error,
+        excerpt,
+        logPath: logPath ?? undefined,
       });
       onProgress?.({
         phase: "ci",
@@ -235,7 +249,8 @@ export async function runCiChecks(
         state: "fail",
         command,
         elapsedMs,
-        message: first,
+        message: excerpt,
+        logPath: logPath ?? undefined,
       });
       // RAD-35: Don't cache failures - next run will try again
     }

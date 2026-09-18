@@ -10,7 +10,10 @@ export interface ProgressEvent {
   elapsedMs?: number;
   /** User-facing command, e.g. `pnpm test` or `git push`. */
   command?: string;
+  /** Short failure excerpt (RAD-74). */
   message?: string;
+  /** Capped full log path when a CI check failed. */
+  logPath?: string;
 }
 
 export type ProgressCallback = (event: ProgressEvent) => void;
@@ -104,7 +107,7 @@ export function formatProgressStep(event: ProgressEvent, kind: ProgressKind = "g
 }
 
 export function formatFailedCheck(
-  event: Pick<ProgressEvent, "check" | "command" | "message">,
+  event: Pick<ProgressEvent, "check" | "command" | "message" | "logPath">,
 ): string {
   const name = event.check ? shortCheckName(event.check) : "check";
   const command = event.command ? ` — ${event.command}` : "";
@@ -114,5 +117,6 @@ export function formatFailedCheck(
       : event.message && event.message !== event.command
         ? ` — ${event.message}`
         : "";
-  return `${name}${command}${extra}`;
+  const log = event.logPath ? ` — full log: ${event.logPath}` : "";
+  return `${name}${command}${extra}${log}`;
 }

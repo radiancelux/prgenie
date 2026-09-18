@@ -120,6 +120,8 @@ type LiveProgress = {
   check?: string;
   state: string;
   command?: string;
+  message?: string;
+  logPath?: string;
   elapsedMs?: number;
   cancellable: boolean;
   failed?: boolean;
@@ -387,6 +389,8 @@ export class LaneHub implements vscode.Disposable {
       check: event.check,
       state: event.state,
       command: event.command,
+      message: event.message,
+      logPath: event.logPath,
       elapsedMs: event.elapsedMs,
       cancellable: true,
       failed: event.state === "fail",
@@ -1121,7 +1125,7 @@ function laneHtml(webview: vscode.Webview): string {
       flex: none; text-transform: uppercase; letter-spacing: 0.04em;
       font-weight: 600; min-width: 60px;
     }
-    .shepherd-reason .message { flex: 1; }
+    .shepherd-reason .message { flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; }
     .pr {
       display: flex; align-items: flex-start; gap: 8px;
       padding: 6px 12px;
@@ -1335,6 +1339,15 @@ function laneHtml(webview: vscode.Webview): string {
         }
       }
     }
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[ch]);
+    }
     function paintShepherd(msg) {
       const shepherdBox = document.getElementById("shepherd");
       const shepherdStatus = document.getElementById("shepherdStatus");
@@ -1372,7 +1385,11 @@ function laneHtml(webview: vscode.Webview): string {
       if (progressBox && stepEl) {
         if (progress) {
           progressBox.hidden = false;
-          const extra = progress.failed && progress.command ? " — " + progress.command : "";
+          const extra = progress.failed
+            ? [progress.command, progress.message].filter(Boolean).length
+              ? " — " + [progress.command, progress.message].filter(Boolean).join(" — ")
+              : ""
+            : "";
           stepEl.textContent = (progress.step || "CI checks") + extra;
           if (spinner) spinner.hidden = !!progress.cancelled;
         } else {
@@ -1391,7 +1408,7 @@ function laneHtml(webview: vscode.Webview): string {
         for (const reason of shepherd.reasons) {
           const reasonEl = document.createElement('div');
           reasonEl.className = 'shepherd-reason';
-          reasonEl.innerHTML = '<span class="check">' + reason.check + '</span><span class="message">' + reason.message + '</span>';
+          reasonEl.innerHTML = '<span class="check">' + escapeHtml(reason.check) + '</span><span class="message">' + escapeHtml(reason.message) + '</span>';
           shepherdReasons.appendChild(reasonEl);
         }
       }
@@ -1820,7 +1837,11 @@ function panelHtml(webview: vscode.Webview): string {
         if (progress) {
           runBox.hidden = false;
           if (runStep) {
-            const extra = progress.failed && progress.command ? " — " + progress.command : "";
+            const extra = progress.failed
+              ? [progress.command, progress.message].filter(Boolean).length
+                ? " — " + [progress.command, progress.message].filter(Boolean).join(" — ")
+                : ""
+              : "";
             runStep.textContent = (progress.step || "CI checks") + extra;
           }
           if (runSpinner) runSpinner.hidden = !!progress.cancelled;

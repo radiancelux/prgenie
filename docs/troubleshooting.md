@@ -16,6 +16,7 @@ Start with `prgenie doctor` from any worktree of the repo. It reports the checks
 | `gh-bind`          | Repo unbound (or no `gh` accounts)                    | `gh auth login`, then `prgenie gh use <login>`                                  |
 | `package-versions` | Monorepo package.json / local VSIX version skew       | Align versions; `pnpm build && pnpm pack:extension` (see [Release](release.md)) |
 | `legacy-push-gate` | Old `push-gate.mjs` still on disk                     | Delete it (superseded by `github-gate.cjs`) and re-run `pnpm link-plugin`       |
+| `ci-failure-log`   | Last shepherd/export CI failure (informational)       | Open the path or `prgenie shepherd <id> --verbose`                              |
 
 Example FAIL line:
 
@@ -96,6 +97,10 @@ Doctor `corrupt-prs` lists unparsable files under `.git/agent-console/prs/`. Cor
 Doctor `package-versions` fails when root / `packages/*/package.json` disagree, or when a local `packages/extension/prgenie-*.vsix` name or embedded manifest lags the extension version.
 
 **Fix:** set every listed `package.json` to the same version, then `pnpm build && pnpm check-versions && pnpm pack:extension`. VSIX files are gitignored — pack on demand (see [Release](release.md)). For the installed sidebar, still run `pnpm link-extension` and quit Cursor fully.
+
+## Shepherd / export CI failure toast
+
+A blocked export used to toast only `Command failed: pnpm test`. The toast, CLI `prgenie shepherd` / `prgenie export`, and sidebar reasons now include the **check name** (format/lint/typecheck/test/build) and a **short excerpt** (first failing test name when parseable, otherwise the last few stderr/stdout lines). The capped full log is written to `.git/agent-console/ci-logs/<check>.log`. Doctor `ci-failure-log` names that path; `prgenie shepherd <id> --verbose` prints it.
 
 ## Legacy push-gate
 

@@ -77,8 +77,8 @@ prgenie steward <id> [--restart] [--implementor-missing] [--implementor-failed] 
 prgenie steward bind <id> [--implementor taskId] [--reviewer taskId]
 prgenie doctor
 prgenie sessions [--limit N] [--hook name] [--since iso] [--json]
-prgenie export <id> [--skip-validation]
-prgenie shepherd <id>
+prgenie export <id> [--skip-validation] [--verbose]
+prgenie shepherd <id> [--verbose]
 prgenie update <id> [--title t] [--body "summary"]
 prgenie list [--all] [--search q] [--query q] [--in title,body,comment,file]
 prgenie show <id>
@@ -108,7 +108,7 @@ prgenie gh use <login>
 prgenie mcp
 ```
 
-`prgenie doctor` checks plugin/extension freshness, monorepo/VSIX version alignment, watch lanes, corrupt PR files, orphaned `.loops` worktrees, `gh` bind, and legacy hooks. Preferred agent orchestration is `/steward-loop` (`prgenie steward` / MCP `steward_next`): one steward per loop, durable Task ids in `.git/agent-console/stewards.json`, export gate before Push to origin. `prgenie watch listen` is the transitional implementor/reviewer wake process. It prints `AGENT_LOOP_TICK_*` only when the lane fingerprint changes, so an unchanged queue does not re-wake the parent every interval. `prgenie claim-review` / MCP `claim_review` is the durable one-reviewer-per-HEAD lock.
+`prgenie doctor` checks plugin/extension freshness, monorepo/VSIX version alignment, watch lanes, corrupt PR files, orphaned `.loops` worktrees, `gh` bind, legacy hooks, and the last shepherd CI failure log (when present). On CI failure, toast/CLI name the check and a short excerpt; `prgenie shepherd <id> --verbose` prints the capped full log under `.git/agent-console/ci-logs/`. Preferred agent orchestration is `/steward-loop` (`prgenie steward` / MCP `steward_next`): one steward per loop, durable Task ids in `.git/agent-console/stewards.json`, export gate before Push to origin. `prgenie watch listen` is the transitional implementor/reviewer wake process. It prints `AGENT_LOOP_TICK_*` only when the lane fingerprint changes, so an unchanged queue does not re-wake the parent every interval. `prgenie claim-review` / MCP `claim_review` is the durable one-reviewer-per-HEAD lock.
 
 Bind a GitHub login per repo (`prgenie gh use <login>`). Before `git push` / `gh`, PR Genie switches `gh` to that account. `gh auth` is global — only one account is active at a time — so the bind is how this project stays on `radiancelux` instead of `ccc-radiancelux`.
 
@@ -118,7 +118,7 @@ Works from a Conductor workspace or any other worktree — same repo git dir.
 
 - `refs/local-pr/<id>/head` and `refs/local-pr/<id>/base`
 - Notes on `refs/notes/local-pr`
-- Metadata in `.git/agent-console/` (not committed)
+- Metadata in `.git/agent-console/` (not committed); CI failure logs in `.git/agent-console/ci-logs/`
 
 Cursor may auto-clean worktrees. The loop remains.
 

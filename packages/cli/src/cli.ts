@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   addLocalPrComment,
   addressLocalPrComment,
@@ -83,9 +84,9 @@ Usage:
   prgenie steward bind <id> [--implementor <taskId>] [--reviewer <taskId>]
   prgenie doctor
   prgenie sessions [--limit N] [--hook <name>] [--since <iso>] [--json]
-  prgenie export <id> [--skip-validation]
+  prgenie export <id> [--skip-validation] [--verbose]
   prgenie show <id>
-  prgenie shepherd <id>
+  prgenie shepherd <id> [--verbose]
   prgenie update <id> [--title <t>] [--body <summary>]
   prgenie diff <id> [--stat] [-- <path>...]
   prgenie delete <id> [--yes]
@@ -191,6 +192,19 @@ function attachInterrupt(controller: AbortController): () => void {
     process.off("SIGINT", onSig);
     process.off("SIGTERM", onSig);
   };
+}
+
+function printVerboseFailureLog(cwd: string, logPath: string | undefined): void {
+  if (!logPath) return;
+  try {
+    const abs = path.isAbsolute(logPath) ? logPath : path.resolve(cwd, logPath);
+    const body = readFileSync(abs, "utf8");
+    process.stdout.write(`--- full log ${logPath} ---\n`);
+    process.stdout.write(body.endsWith("\n") ? body : `${body}\n`);
+    process.stdout.write("---\n");
+  } catch {
+    process.stdout.write(`(full log missing: ${logPath})\n`);
+  }
 }
 
 export async function run(argv: string[]): Promise<number> {
@@ -440,9 +454,10 @@ export async function run(argv: string[]): Promise<number> {
   if (sub === "export") {
     const exportId = rest[0];
     if (!exportId) {
-      process.stderr.write("prgenie export <id> [--skip-validation]\n");
+      process.stderr.write("prgenie export <id> [--skip-validation] [--verbose]\n");
       return 1;
     }
+    const exportVerbose = flag(rest, "--verbose") || flag(rest, "-v");
     process.stdout.write("Export: CI → push → create PR (5 min/check). Ctrl+C to cancel.\n");
     const ac = new AbortController();
     const detach = attachInterrupt(ac);
@@ -453,6 +468,9 @@ export async function run(argv: string[]): Promise<number> {
         signal: ac.signal,
         onProgress: (event) => {
           process.stdout.write(`${formatProgressLine(event)}\n`);
+          if (exportVerbose && event.state === "fail") {
+            printVerboseFailureLog(repo, event.logPath);
+          }
         },
       });
     } catch (err) {
@@ -589,6 +607,13 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (sub === "shepherd") {
+    if (flag(rest, "-h") || flag(rest, "--help")) {
+      process.stdout.write(
+        "prgenie shepherd <id> [--verbose]\n\nRun the export gate (review + preflight + gh + local CI). --verbose prints the full capped CI log on failure.\n",
+      );
+      return 0;
+    }
+    const verbose = flag(rest, "--verbose") || flag(rest, "-v");
     process.stdout.write("Shepherd: local CI (5 min/check). Ctrl+C to cancel.\n");
     const ac = new AbortController();
     const detach = attachInterrupt(ac);
@@ -598,6 +623,7 @@ export async function run(argv: string[]): Promise<number> {
         signal: ac.signal,
         onProgress: (event) => {
           process.stdout.write(`${formatProgressLine(event)}\n`);
+          if (verbose && event.state === "fail") printVerboseFailureLog(repo, event.logPath);
         },
       });
     } catch (err) {

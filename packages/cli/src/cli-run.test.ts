@@ -147,6 +147,13 @@ test("cli steward bind + next resumes the same implementor Task", () => {
   assert.match(next.stdout, /resumeSameImplementor=true/);
 });
 
+test("cli shepherd --help mentions --verbose", () => {
+  const result = prgenie(["shepherd", "--help"]);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /prgenie shepherd/);
+  assert.match(result.stdout, /--verbose/);
+});
+
 test("cli claim-review --help prints usage and exits 0", () => {
   const result = prgenie(["claim-review", "--help"]);
   assert.equal(result.code, 0);

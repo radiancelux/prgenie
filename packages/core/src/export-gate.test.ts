@@ -212,6 +212,10 @@ describe("evaluateAndStoreExportGate", () => {
     try {
       await git(repo, ["checkout", "-b", "feature"]);
       await writeFile(join(repo, "test.txt"), "test\n");
+      await writeFile(
+        join(repo, "fail-test.mjs"),
+        "process.stderr.write('not ok 1 - widget renders\\n'); process.exit(1);\n",
+      );
       await git(repo, ["add", "."]);
       await git(repo, ["commit", "-m", "Add test"]);
       await writeFile(
@@ -222,7 +226,7 @@ describe("evaluateAndStoreExportGate", () => {
             "format:check": "exit 0",
             lint: "exit 0",
             typecheck: "exit 0",
-            test: "exit 1",
+            test: "node fail-test.mjs",
             build: "exit 0",
           },
         }),
@@ -243,6 +247,10 @@ describe("evaluateAndStoreExportGate", () => {
       assert.ok(
         validation.issues.some((issue) => issue.includes("CI") && issue.includes("test")),
         `expected CI test failure in ${validation.issues.join(" | ")}`,
+      );
+      assert.ok(
+        validation.issues.some((issue) => issue.includes("widget renders")),
+        `expected toast-facing excerpt in ${validation.issues.join(" | ")}`,
       );
     } finally {
       await rm(repo, { recursive: true, force: true });

@@ -4,6 +4,7 @@ import {
   abortError,
   ciCheckCommand,
   formatElapsed,
+  formatFailedCheck,
   formatProgressLine,
   formatProgressStep,
   isAbortError,
@@ -28,9 +29,9 @@ describe("progress helpers", () => {
         state: "fail",
         elapsedMs: 3400,
         command: "pnpm test",
-        message: "Command failed: pnpm test",
+        message: "not ok 1 - formats CLI lines",
       }),
-      "[ci:test] fail (3.4s) — pnpm test — Command failed: pnpm test",
+      "[ci:test] fail (3.4s) — pnpm test — not ok 1 - formats CLI lines",
     );
     assert.equal(
       formatProgressLine({ phase: "ci", check: "lint", state: "cached", elapsedMs: 0 }),
@@ -64,6 +65,15 @@ describe("progress helpers", () => {
     assert.equal(ciCheckCommand("test"), "pnpm test");
     assert.equal(shortCheckName("format:check"), "format");
     assert.equal(formatElapsed(40), "40ms");
+    assert.equal(
+      formatFailedCheck({
+        check: "test",
+        command: "pnpm test",
+        message: "not ok 1 - formats CLI lines",
+        logPath: ".git/agent-console/ci-logs/test.log",
+      }),
+      "test — pnpm test — not ok 1 - formats CLI lines — full log: .git/agent-console/ci-logs/test.log",
+    );
     const err = abortError();
     assert.equal(isAbortError(err), true);
     assert.equal(isAbortError(new Error("nope")), false);
