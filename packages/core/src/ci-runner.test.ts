@@ -317,6 +317,10 @@ describe("runCiChecks", () => {
       assert.ok(formatCheck);
       assert.equal(formatCheck.passed, false);
       assert.ok(formatCheck.error, "should have error message");
+      assert.match(
+        formatCheck.excerpt ?? formatCheck.error ?? "",
+        /bad\.js|Prettier format check failed/,
+      );
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
@@ -827,6 +831,98 @@ describe("runCiChecks", () => {
       ]);
       const failed = result.checks.find((c) => c.name === "test");
       assert.ok(failed?.error?.includes("pnpm test"));
+      assert.ok(failed?.excerpt, "failing check should carry a short excerpt");
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-74: excerpt prefers the first failing test name and writes a log", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-excerpt-"));
+    try {
+      await execAsync("git init", { cwd: repo });
+      await execAsync('git config user.email "test@test.com"', { cwd: repo });
+      await execAsync('git config user.name "Test"', { cwd: repo });
+      await writeFile(
+        join(repo, "fail-test.mjs"),
+        "process.stderr.write('not ok 1 - widget renders\\n'); process.exit(1);\n",
+      );
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: { test: "node fail-test.mjs" },
+        }),
+      );
+      await writeFile(join(repo, "README.md"), "x\n");
+      await execAsync("git add .", { cwd: repo });
+      await execAsync('git commit -m "init"', { cwd: repo });
+
+      const events: { message?: string; logPath?: string }[] = [];
+      const result = await runCiChecks(repo, {
+        checks: ["test"],
+        timeout: 5000,
+        skipCache: true,
+        onProgress: (event) => {
+          if (event.state === "fail") {
+            events.push({ message: event.message, logPath: event.logPath });
+          }
+        },
+      });
+      assert.equal(result.allPassed, false);
+      const failed = result.checks.find((c) => c.name === "test");
+      assert.ok(failed);
+      assert.match(failed.excerpt ?? "", /widget renders/);
+      assert.match(failed.error ?? "", /test/);
+      assert.match(failed.error ?? "", /widget renders/);
+      assert.match(failed.error ?? "", /full log:/);
+      assert.ok(failed.logPath);
+      assert.match(events[0]?.message ?? "", /widget renders/);
+      assert.ok(events[0]?.logPath);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-74: lint/typecheck/build failures keep a truncated excerpt, not only Command failed", async () => {
+    const repo = await initTestRepo();
+    try {
+      await writeFile(
+        join(repo, "fail-lint.mjs"),
+        "console.error('src/foo.ts\\n  3:1  error  Unexpected var  no-var'); process.exit(1);\n",
+      );
+      await writeFile(
+        join(repo, "fail-tsc.mjs"),
+        "console.error(\"src/foo.ts(3,1): error TS2322: Type 'string' is not assignable.\"); process.exit(1);\n",
+      );
+      await writeFile(
+        join(repo, "fail-build.mjs"),
+        "console.error('ERROR: esbuild failed with 1 error'); process.exit(1);\n",
+      );
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: "node fail-lint.mjs",
+            typecheck: "node fail-tsc.mjs",
+            build: "node fail-build.mjs",
+          },
+        }),
+      );
+      const result = await runCiChecks(repo, {
+        checks: ["lint", "typecheck", "build"],
+        timeout: 5000,
+        skipCache: true,
+      });
+      assert.equal(result.allPassed, false);
+      const lint = result.checks.find((c) => c.name === "lint");
+      const typecheck = result.checks.find((c) => c.name === "typecheck");
+      const build = result.checks.find((c) => c.name === "build");
+      assert.match(lint?.excerpt ?? "", /no-var|foo\.ts/);
+      assert.match(typecheck?.excerpt ?? "", /TS2322/);
+      assert.match(build?.excerpt ?? "", /esbuild failed/);
+      assert.ok(!(lint?.excerpt ?? "").startsWith("Command failed"));
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

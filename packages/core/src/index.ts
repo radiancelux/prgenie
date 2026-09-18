@@ -233,5 +233,17 @@ export type {
 } from "./shepherd.js";
 export { runCiChecks } from "./ci-runner.js";
 export type { CiCheckResult, CiRunnerOptions, CiRunnerResult } from "./ci-runner.js";
+export {
+  collectExecOutput,
+  formatCiCheckError,
+  formatFailureExcerpt,
+  latestCiFailure,
+  listCiFailureLogs,
+  parseFirstFailingTest,
+  parseGateExcerpt,
+  readCiFailureLog,
+  writeCiFailureLog,
+} from "./ci-failure.js";
+export type { CiFailureLogMeta, ExecFailureOutput } from "./ci-failure.js";
 export { clearCiCache, getCachedResult, recordCheckPass } from "./ci-cache.js";
 export type { CiCacheEntry, CiCacheData } from "./ci-cache.js";

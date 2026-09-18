@@ -491,6 +491,67 @@ describe("shepherdStatus", () => {
       assert.ok(
         result.reasons.some((r) => r.message.includes("test") && r.message.includes("pnpm test")),
       );
+      assert.ok(
+        result.reasons.some((r) => r.message.includes("CI check failed: test")),
+        "blocked reason must name the failing check",
+      );
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-74: CI block names the check and includes a test excerpt + log path", async () => {
+    const repo = await initRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(join(repo, "test.txt"), "test content\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "Add failing test"]);
+      // Untracked helpers: format:check ignores them so this case isolates the test gate.
+      await writeFile(
+        join(repo, "fail-test.mjs"),
+        "process.stderr.write('not ok 1 - widget renders\\n'); process.exit(1);\n",
+      );
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            "format:check": "exit 0",
+            lint: "exit 0",
+            typecheck: "exit 0",
+            test: "node fail-test.mjs",
+            build: "exit 0",
+          },
+        }),
+      );
+      const pr = await createLocalPr(repo, {
+        title: "Excerpt PR",
+        body: "Body",
+        base: "main",
+        head: "feature",
+      });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      const events: ProgressEvent[] = [];
+      const result = await shepherdStatus(repo, pr.id, {
+        skipGithubCheck: true,
+        onProgress: (event) => events.push(event),
+      });
+      assert.equal(result.status, "blocked");
+      const ci = result.reasons.find((r) => r.check === "ci");
+      assert.ok(ci);
+      assert.match(ci.message, /CI check failed: test/);
+      assert.match(ci.message, /widget renders/);
+      assert.match(ci.message, /full log:/);
+      assert.ok(
+        events.some(
+          (e) =>
+            e.phase === "ci" &&
+            e.check === "test" &&
+            e.state === "fail" &&
+            /widget renders/.test(e.message ?? ""),
+        ),
+      );
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

@@ -14,6 +14,7 @@ import {
   sameFsPath,
 } from "./worktrees.js";
 import { checkReleaseVersions, findPackageRoot } from "./versions.js";
+import { latestCiFailure } from "./ci-failure.js";
 
 export interface DoctorCheck {
   id: string;
@@ -242,6 +243,23 @@ export async function runDoctor(cwd: string): Promise<DoctorReport> {
   const legacyGate = packageRoot
     ? path.join(packageRoot, "packages", "plugin", "hooks", "push-gate.mjs")
     : path.join(installedPlugin, "hooks", "push-gate.mjs");
+  const ciFail = await latestCiFailure(root);
+  if (ciFail) {
+    const excerpt = ciFail.excerpt ? ` — ${ciFail.excerpt}` : "";
+    checks.push({
+      id: "ci-failure-log",
+      ok: true,
+      summary: `Last shepherd CI failure (${ciFail.check}) logged at ${ciFail.logPath}${excerpt}`,
+      fix: "prgenie shepherd <id> --verbose (or open the log) for the full stdout/stderr.",
+    });
+  } else {
+    checks.push({
+      id: "ci-failure-log",
+      ok: true,
+      summary: "No recent shepherd CI failure log.",
+    });
+  }
+
   if (existsSync(legacyGate)) {
     checks.push({
       id: "legacy-push-gate",

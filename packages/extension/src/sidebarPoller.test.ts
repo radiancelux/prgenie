@@ -237,6 +237,8 @@ test("CLI shepherd persists the same full export gate (no skipCiCheck)", () => {
   assert.match(src, /evaluateAndStoreExportGate\(repo, id,/);
   assert.match(src, /formatProgressLine/);
   assert.match(src, /Ctrl\+C to cancel/);
+  assert.match(src, /--verbose/);
+  assert.match(src, /printVerboseFailureLog/);
   assert.equal(/shepherdStatus\(repo, id,\s*\{/.test(src), false);
 });
 

@@ -819,7 +819,7 @@ export const tools = [
   {
     name: "shepherd_status",
     description:
-      "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, gh bind, and local CI. Persists the result as the human-export gate. Returns ready or blocked with explicit reasons. Fail-closed: any unknown/missing piece returns blocked.",
+      "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, gh bind, and local CI. Persists the result as the human-export gate. Returns ready or blocked with explicit reasons (CI failures include the check name plus a short excerpt; full log under .git/agent-console/ci-logs/). Fail-closed: any unknown/missing piece returns blocked.",
     inputSchema: {
       type: "object",
       required: ["id"],
