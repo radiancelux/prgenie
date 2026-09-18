@@ -1758,18 +1758,18 @@ var init_watchActivity = __esm({
 // packages/core/src/ci-cache.ts
 async function ciCacheDir(cwd) {
   const common = await gitCommonDir(cwd);
-  const dir = import_node_path8.default.join(common, "agent-console", "ci-cache");
-  await (0, import_promises7.mkdir)(dir, { recursive: true });
+  const dir = import_node_path9.default.join(common, "agent-console", "ci-cache");
+  await (0, import_promises8.mkdir)(dir, { recursive: true });
   return dir;
 }
 async function ciCacheFile(cwd) {
   const dir = await ciCacheDir(cwd);
-  return import_node_path8.default.join(dir, "cache.json");
+  return import_node_path9.default.join(dir, "cache.json");
 }
 async function loadCiCache(cwd) {
   try {
     const file = await ciCacheFile(cwd);
-    const content = await (0, import_promises7.readFile)(file, "utf8");
+    const content = await (0, import_promises8.readFile)(file, "utf8");
     return JSON.parse(content);
   } catch {
     return { checks: {} };
@@ -1777,7 +1777,7 @@ async function loadCiCache(cwd) {
 }
 async function saveCiCache(cwd, cache) {
   const file = await ciCacheFile(cwd);
-  await (0, import_promises7.writeFile)(file, JSON.stringify(cache, null, 2), "utf8");
+  await (0, import_promises8.writeFile)(file, JSON.stringify(cache, null, 2), "utf8");
 }
 async function computeTrackedFilesHash(cwd) {
   try {
@@ -1841,13 +1841,13 @@ async function recordCheckPass(cwd, check) {
   };
   await saveCiCache(cwd, cache);
 }
-var import_node_crypto3, import_promises7, import_node_path8;
+var import_node_crypto3, import_promises8, import_node_path9;
 var init_ci_cache = __esm({
   "packages/core/src/ci-cache.ts"() {
     "use strict";
     import_node_crypto3 = require("node:crypto");
-    import_promises7 = require("node:fs/promises");
-    import_node_path8 = __toESM(require("node:path"), 1);
+    import_promises8 = require("node:fs/promises");
+    import_node_path9 = __toESM(require("node:path"), 1);
     init_git();
   }
 });
@@ -1858,7 +1858,7 @@ async function getTrackedFiles(cwd) {
     const { stdout } = await execAsync("git ls-files --exclude-standard", { cwd });
     const files = stdout.trim().split("\n").filter(Boolean);
     const fs = await import("node:fs/promises");
-    const path9 = await import("node:path");
+    const path10 = await import("node:path");
     const validFiles = [];
     const skipFiles = /* @__PURE__ */ new Set([
       ".gitignore",
@@ -1887,8 +1887,8 @@ async function getTrackedFiles(cwd) {
       ".xml"
     ]);
     for (const file of files) {
-      const basename = path9.basename(file);
-      const ext = path9.extname(file).toLowerCase();
+      const basename = path10.basename(file);
+      const ext = path10.extname(file).toLowerCase();
       if (skipFiles.has(basename)) {
         continue;
       }
@@ -1896,7 +1896,7 @@ async function getTrackedFiles(cwd) {
         continue;
       }
       try {
-        const fullPath = path9.join(cwd, file);
+        const fullPath = path10.join(cwd, file);
         const stats = await fs.stat(fullPath);
         if (stats.isFile()) {
           validFiles.push(file);
@@ -1945,13 +1945,19 @@ async function runCiChecks(cwd, options = {}) {
         if (tracked.length > 0) {
           await checkFormatFromBlobs(cwd, tracked);
           results.push({ name: check, passed: true });
-          await recordCheckPass(cwd, check);
+          try {
+            await recordCheckPass(cwd, check);
+          } catch {
+          }
           continue;
         }
       }
       await execAsync(command, { cwd, timeout });
       results.push({ name: check, passed: true });
-      await recordCheckPass(cwd, check);
+      try {
+        await recordCheckPass(cwd, check);
+      } catch {
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       results.push({
@@ -2097,6 +2103,113 @@ init_prs();
 init_watch();
 init_watchActivity();
 
+// packages/core/src/review-claim.ts
+var import_promises7 = require("node:fs/promises");
+var import_node_path8 = __toESM(require("node:path"), 1);
+init_git();
+init_prs();
+init_store();
+function claimsFile(dir) {
+  return import_node_path8.default.join(dir, "review-claims.json");
+}
+function reviewClaimKey(id, headSha) {
+  return `${id}:${headSha}`;
+}
+var emptyClaims = () => ({
+  updatedAt: (/* @__PURE__ */ new Date(0)).toISOString(),
+  claims: {}
+});
+function parseClaims(raw) {
+  const parsed = parseJsonObject(raw);
+  const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : emptyClaims().updatedAt;
+  const claims = {};
+  const rawClaims = parsed.claims;
+  if (rawClaims && typeof rawClaims === "object" && !Array.isArray(rawClaims)) {
+    for (const [key, value] of Object.entries(rawClaims)) {
+      const claim = parseClaim(value);
+      if (claim) claims[key] = claim;
+    }
+  }
+  return { updatedAt, claims };
+}
+function parseClaim(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const parsed = raw;
+  if (typeof parsed.id !== "string" || typeof parsed.headSha !== "string") return null;
+  return {
+    id: parsed.id,
+    headSha: parsed.headSha,
+    claimedAt: typeof parsed.claimedAt === "string" ? parsed.claimedAt : (/* @__PURE__ */ new Date(0)).toISOString(),
+    source: typeof parsed.source === "string" ? parsed.source : "cli"
+  };
+}
+async function pruneStale(cwd, state) {
+  const live = (await listLocalPrs(cwd)).filter((pr) => !isArchivedPr(pr));
+  const byId = new Map(live.map((pr) => [pr.id, pr]));
+  const claims = {};
+  for (const claim of Object.values(state.claims)) {
+    const pr = byId.get(claim.id);
+    if (!pr || pr.status !== "ready" || pr.headSha !== claim.headSha) continue;
+    claims[reviewClaimKey(claim.id, claim.headSha)] = claim;
+  }
+  return { updatedAt: state.updatedAt, claims };
+}
+async function loadClaims(file) {
+  try {
+    return parseClaims(await (0, import_promises7.readFile)(file, "utf8"));
+  } catch {
+    return emptyClaims();
+  }
+}
+async function claimReview(cwd, id, options = {}) {
+  const root = await requireGitRoot(cwd);
+  const file = claimsFile(await consoleDir(root));
+  return withFileLock(file, async () => {
+    const pr = await getLocalPr(root, id);
+    if (pr.status !== "ready") {
+      return {
+        claimed: false,
+        id: pr.id,
+        claim: null,
+        reason: "not_ready",
+        status: pr.status
+      };
+    }
+    if (options.headSha && options.headSha !== pr.headSha) {
+      return {
+        claimed: false,
+        id: pr.id,
+        claim: null,
+        reason: "head_mismatch",
+        status: pr.status
+      };
+    }
+    const headSha = options.headSha ?? pr.headSha;
+    const current = await pruneStale(root, await loadClaims(file));
+    const existing = current.claims[reviewClaimKey(pr.id, headSha)];
+    if (existing) {
+      await writeJsonFile(file, current);
+      return {
+        claimed: false,
+        id: pr.id,
+        claim: existing,
+        reason: "already_claimed",
+        status: pr.status
+      };
+    }
+    const claim = {
+      id: pr.id,
+      headSha,
+      claimedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      source: options.source ?? "cli"
+    };
+    current.claims[reviewClaimKey(pr.id, headSha)] = claim;
+    current.updatedAt = claim.claimedAt;
+    await writeJsonFile(file, current);
+    return { claimed: true, id: pr.id, claim, status: pr.status };
+  });
+}
+
 // packages/core/src/doctor.ts
 init_git();
 init_github_ops();
@@ -2223,7 +2336,7 @@ async function exportLocalPr(cwd, id, options = {}) {
 init_export_validation();
 
 // packages/core/src/sessions.ts
-var import_promises8 = require("node:fs/promises");
+var import_promises9 = require("node:fs/promises");
 init_git();
 init_store();
 async function listSessions(cwd, options = {}) {
@@ -2232,7 +2345,7 @@ async function listSessions(cwd, options = {}) {
   const file = await sessionsFile(root);
   let raw;
   try {
-    raw = await (0, import_promises8.readFile)(file, "utf8");
+    raw = await (0, import_promises9.readFile)(file, "utf8");
   } catch (err) {
     const code = err && typeof err === "object" && "code" in err ? err.code : void 0;
     if (code === "ENOENT") return [];
@@ -2441,7 +2554,7 @@ async function generateLearningDigest(cwd, options = {}) {
     }
   }
   const topKeywords = Array.from(keywordCounts.entries()).filter(([, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([keyword, count]) => ({ keyword, count }));
-  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path9, count]) => ({ path: path9, count }));
+  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path10, count]) => ({ path: path10, count }));
   const patterns = Array.from(patternCounts.entries()).filter(([, data]) => data.count >= 2).sort((a, b) => b[1].count - a[1].count).slice(0, 10).map(([pattern, data]) => ({
     pattern,
     examples: data.examples,
@@ -2481,8 +2594,8 @@ function formatLearningDigest(summary) {
   if (summary.topFiles.length > 0) {
     lines.push("## Most Commented Files");
     lines.push("");
-    for (const { path: path9, count } of summary.topFiles) {
-      lines.push(`- \`${path9}\` \u2014 ${count} comment(s)`);
+    for (const { path: path10, count } of summary.topFiles) {
+      lines.push(`- \`${path10}\` \u2014 ${count} comment(s)`);
     }
     lines.push("");
   }
@@ -2767,6 +2880,11 @@ async function handleTool(name, args) {
       const role = args.role === "inbox" || args.role === "queue" ? args.role : void 0;
       return role ? resumeWatchRole(cwd, role) : resumeWatch(cwd);
     }
+    case "claim_review":
+      return claimReview(cwd, String(args.id ?? ""), {
+        headSha: typeof args.headSha === "string" ? args.headSha : void 0,
+        source: typeof args.source === "string" ? args.source : "mcp"
+      });
     case "ensure_worktree": {
       const pr = await getLocalPr(cwd, String(args.id ?? ""));
       const dest = await ensureWorktreeForLoop(cwd, pr, {
@@ -3133,6 +3251,26 @@ var tools = [
           type: "string",
           enum: ["inbox", "queue"],
           description: "inbox = implementor listen, queue = reviewer listen. Omit to resume both."
+        }
+      }
+    }
+  },
+  {
+    name: "claim_review",
+    description: "Claim exclusive in-flight reviewer for a ready loop HEAD (id + headSha). Returns claimed=false with reason already_claimed if another reviewer is already in flight for that HEAD. Skip Tasking when not claimed. Do not git push.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        cwd: { type: "string" },
+        headSha: {
+          type: "string",
+          description: "Optional. Defaults to the packet headSha. Mismatch refuses the claim."
+        },
+        source: {
+          type: "string",
+          description: "Who is claiming (queue, hook, mcp). Stored on the claim file."
         }
       }
     }

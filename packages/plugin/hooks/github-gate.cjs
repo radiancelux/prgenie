@@ -381,6 +381,11 @@ init_prs();
 init_watch();
 init_watchActivity();
 
+// packages/core/src/review-claim.ts
+init_git();
+init_prs();
+init_store();
+
 // packages/core/src/doctor.ts
 init_git();
 init_github_ops();
