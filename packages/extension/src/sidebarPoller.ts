@@ -1,3 +1,5 @@
+import { needsExportGateEvaluation, type ExportGateSnapshot } from "@prgenie/core";
+
 /**
  * Sidebar snapshot helpers for RCA Slice 0 (Windows dogfood stability).
  * The 2s poller / fs.watch path must never await full local CI.
@@ -118,6 +120,67 @@ export function createCheapShepherdScheduler<T>(opts: {
       wantedRoot = root;
       wantedId = id;
       if (!id) return;
+      pump();
+    },
+  };
+}
+
+export type ExportGateCandidate = {
+  id: string;
+  status: string;
+  headSha: string;
+  exportGate?: ExportGateSnapshot | null;
+};
+
+/**
+ * One-shot full shepherd (includes CI) for reviewed loops that have no
+ * current export-gate snapshot. Never called from the 2s snapshot await path.
+ */
+export function createExportGateScheduler(opts: {
+  evaluate: (root: string, id: string) => Promise<void>;
+  onDone?: (id: string) => void;
+  onError?: (err: unknown) => void;
+}): { schedule(root: string, pr: ExportGateCandidate | undefined): void } {
+  let inFlight = false;
+  let wanted: { root: string; id: string; headSha: string } | undefined;
+  let lastDone: string | undefined;
+
+  const keyOf = (item: { root: string; id: string; headSha: string }) =>
+    `${item.root}:${item.id}:${item.headSha}`;
+
+  const pump = (): void => {
+    if (inFlight) return;
+    const next = wanted;
+    if (!next) return;
+    if (lastDone === keyOf(next)) return;
+    inFlight = true;
+    const started = next;
+    void opts
+      .evaluate(started.root, started.id)
+      .then(() => {
+        lastDone = keyOf(started);
+        opts.onDone?.(started.id);
+      })
+      .catch((err) => {
+        opts.onError?.(err);
+      })
+      .finally(() => {
+        inFlight = false;
+        if (
+          wanted &&
+          (wanted.id !== started.id ||
+            wanted.headSha !== started.headSha ||
+            wanted.root !== started.root)
+        ) {
+          pump();
+        }
+      });
+  };
+
+  return {
+    schedule(root: string, pr: ExportGateCandidate | undefined) {
+      if (!pr || !needsExportGateEvaluation(pr)) return;
+      wanted = { root, id: pr.id, headSha: pr.headSha };
       pump();
     },
   };

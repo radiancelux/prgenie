@@ -9,6 +9,10 @@ export type {
   LocalPrComment,
   LocalPrSource,
   LocalPrStatus,
+  ExportGateCheck,
+  ExportGateReason,
+  ExportGateSnapshot,
+  ExportGateStatus,
   PreflightIssue,
   PreflightResult,
   WorktreeInfo,
@@ -64,6 +68,7 @@ export {
   reopenLocalPr,
   resolveLocalPrComment,
   resumeWatchForNextLoop,
+  setLocalPrExportGate,
   setLocalPrStatus,
   shouldSpawnReviewer,
   updateLocalPr,
@@ -113,8 +118,20 @@ export {
   githubPrViewArgs,
 } from "./export.js";
 export type { GithubPrHeadState } from "./export.js";
-export { validateExport } from "./export-validation.js";
+export { evaluateAndStoreExportGate, validateExport } from "./export-validation.js";
 export type { ExportValidationOptions, ExportValidationResult } from "./export-validation.js";
+export {
+  displayShepherdStatus,
+  exportGateForHead,
+  formatExportBlockLabel,
+  humanExportState,
+  humanExportUi,
+  isHumanExportable,
+  needsExportGateEvaluation,
+  normalizeExportGate,
+  pendingExportGate,
+} from "./export-gate.js";
+export type { HumanExportKind, HumanExportState, HumanExportUi } from "./export-gate.js";
 export { appendSession, formatSessionEvent, listSessions } from "./sessions.js";
 export type { ListSessionsOptions, SessionEvent } from "./sessions.js";
 export { generateLearningDigest, formatLearningDigest } from "./learning.js";

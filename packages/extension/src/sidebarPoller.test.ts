@@ -7,6 +7,7 @@ import {
   CHEAP_SHEPHERD_DEBOUNCE_MS,
   createCheapShepherdScheduler,
   createCoalescingFlight,
+  createExportGateScheduler,
   SIDEBAR_SHEPHERD_OPTIONS,
 } from "./sidebarPoller.js";
 
@@ -227,12 +228,92 @@ test("laneView snapshot path does not await full shepherdStatus", () => {
   assert.ok(src.includes("scheduleGithubArchive"));
 });
 
-test("CLI shepherd still calls shepherdStatus without skipCiCheck", () => {
+test("CLI shepherd persists the same full export gate (no skipCiCheck)", () => {
   const src = readFileSync(
     path.join(path.dirname(fileURLToPath(import.meta.url)), "../../cli/src/cli.ts"),
     "utf8",
   );
   assert.match(src, /if \(sub === "shepherd"\)/);
-  assert.match(src, /await shepherdStatus\(repo, id\)/);
+  assert.match(src, /await evaluateAndStoreExportGate\(repo, id\)/);
   assert.equal(/shepherdStatus\(repo, id,\s*\{/.test(src), false);
+});
+
+test("laneView Your Turn / export CTA use humanExport, not bare reviewed status", () => {
+  const src = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "laneView.ts"),
+    "utf8",
+  );
+  assert.equal(
+    /const yourTurn = pr\.status === "reviewed"/.test(src),
+    false,
+    "list must not treat reviewed as Your Turn before the export gate is green",
+  );
+  assert.ok(src.includes("humanExport"));
+  assert.ok(src.includes("showExportPrimary"));
+  assert.ok(src.includes("createExportGateScheduler"));
+  assert.ok(src.includes("evaluateAndStoreExportGate"));
+  assert.equal(
+    /await\s+evaluateAndStoreExportGate\s*\(/.test(src),
+    false,
+    "snapshot path must not await full export-gate CI",
+  );
+});
+
+test("export gate scheduler runs once per id+HEAD and ignores in-flight overlap", async () => {
+  let inflight = 0;
+  let maxInflight = 0;
+  let runs = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const done: string[] = [];
+  const scheduler = createExportGateScheduler({
+    evaluate: async () => {
+      inflight += 1;
+      maxInflight = Math.max(maxInflight, inflight);
+      runs += 1;
+      await gate;
+      inflight -= 1;
+    },
+    onDone: (id) => {
+      done.push(id);
+    },
+  });
+  const pr = {
+    id: "lp-a",
+    status: "reviewed",
+    headSha: "aaa",
+    exportGate: { status: "pending" as const, reasons: [], headSha: "aaa", evaluatedAt: null },
+  };
+  scheduler.schedule("/repo", pr);
+  scheduler.schedule("/repo", pr);
+  scheduler.schedule("/repo", pr);
+  release();
+  await delay(20);
+  assert.equal(maxInflight, 1);
+  assert.equal(runs, 1);
+  assert.deepEqual(done, ["lp-a"]);
+});
+
+test("export gate scheduler skips loops that are not waiting on the gate", async () => {
+  let runs = 0;
+  const scheduler = createExportGateScheduler({
+    evaluate: async () => {
+      runs += 1;
+    },
+  });
+  scheduler.schedule("/repo", {
+    id: "lp-ready",
+    status: "ready",
+    headSha: "aaa",
+  });
+  scheduler.schedule("/repo", {
+    id: "lp-green",
+    status: "reviewed",
+    headSha: "bbb",
+    exportGate: { status: "ready", reasons: [], headSha: "bbb", evaluatedAt: "now" },
+  });
+  await delay(10);
+  assert.equal(runs, 0);
 });

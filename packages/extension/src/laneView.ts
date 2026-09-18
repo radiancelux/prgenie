@@ -34,7 +34,11 @@ import {
   shepherdStatus,
   updateLocalPr,
   exportLocalPr,
+  evaluateAndStoreExportGate,
+  displayShepherdStatus,
+  humanExportUi,
   type LocalPr,
+  type HumanExportUi,
   type ShepherdResult,
   type WatchRole,
   type GhAccount,
@@ -45,6 +49,7 @@ import {
   CHEAP_SHEPHERD_DEBOUNCE_MS,
   createCheapShepherdScheduler,
   createCoalescingFlight,
+  createExportGateScheduler,
   SIDEBAR_SHEPHERD_OPTIONS,
 } from "./sidebarPoller.js";
 
@@ -93,10 +98,12 @@ type GhBindSnapshot = {
   error?: string;
 };
 
+type SidebarPr = LocalPr & { humanExport: HumanExportUi };
+
 type Snapshot = {
   type: "snapshot";
   error?: string;
-  prs: LocalPr[];
+  prs: SidebarPr[];
   selectedId: string | null;
   files: { status: string; path: string }[];
   threads?: { root: LocalPr["comments"][number]; replies: LocalPr["comments"] }[];
@@ -140,6 +147,15 @@ export class LaneHub implements vscode.Disposable {
     },
     onError: (err) => {
       console.error("[prgenie] Failed to fetch shepherd status:", err);
+    },
+  });
+  private readonly exportGate = createExportGateScheduler({
+    evaluate: (root, id) => evaluateAndStoreExportGate(root, id).then(() => undefined),
+    onDone: () => {
+      void this.pushSnapshot();
+    },
+    onError: (err) => {
+      console.error("[prgenie] Failed to evaluate export gate:", err);
     },
   });
 
@@ -694,11 +710,13 @@ export class LaneHub implements vscode.Disposable {
           error: err instanceof Error ? err.message : String(err),
         };
       }
-      const shepherd = selected && this.lastShepherdId === selected.id ? this.lastShepherd : null;
+      const cheap = selected && this.lastShepherdId === selected.id ? this.lastShepherd : null;
+      const shepherd = selected ? displayShepherdStatus(cheap, selected) : null;
+      const sidebarPrs = prs.map((pr) => ({ ...pr, humanExport: humanExportUi(pr) }));
       this.post(
         {
           type: "snapshot",
-          prs,
+          prs: sidebarPrs,
           selectedId: this.selectedId ?? null,
           files,
           threads: selected ? commentThreads(selected.comments) : [],
@@ -716,6 +734,7 @@ export class LaneHub implements vscode.Disposable {
         force,
       );
       this.cheapShepherd.schedule(root, selected?.id);
+      this.exportGate.schedule(root, selected);
       await this.watchStore();
     } catch (err) {
       this.post(
@@ -796,6 +815,10 @@ function sharedCss(): string {
     }
     .status.your-turn {
       color: var(--vscode-charts-green, #3fb950);
+      font-weight: 600;
+    }
+    .status.blocked {
+      color: var(--vscode-charts-orange, #f59f00);
       font-weight: 600;
     }
   `;
@@ -905,6 +928,7 @@ function laneHtml(webview: vscode.Webview): string {
     .pr.here { border-left-color: var(--vscode-charts-green, #3fb950); }
     .pr.fresh { box-shadow: inset 2px 0 0 var(--vscode-focusBorder); }
     .pr.reviewed-turn { border-left-color: var(--vscode-charts-green, #3fb950); }
+    .pr.export-blocked { border-left-color: var(--vscode-charts-orange, #f59f00); }
     .pr.archived { opacity: 0.72; }
     .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .empty { padding: 12px; }
@@ -1180,23 +1204,26 @@ function laneHtml(webview: vscode.Webview): string {
         }
         const here = pr.id === msg.hereId;
         const archivedPr = pr.status === "approved";
-        const yourTurn = pr.status === "reviewed";
+        const exportUi = pr.humanExport || {};
+        const yourTurn = !!exportUi.yourTurn;
+        const exportBlocked = exportUi.kind === "blocked";
         el.className = "pr"
           + (pr.id === msg.selectedId ? " active" : "")
           + (fresh.has(pr.id) ? " fresh" : "")
           + (here ? " here" : "")
           + (archivedPr ? " archived" : "")
-          + (yourTurn ? " reviewed-turn" : "");
+          + (yourTurn ? " reviewed-turn" : "")
+          + (exportBlocked ? " export-blocked" : "");
         const src = pr.source && pr.source.kind === "subagent"
           ? (pr.source.subagentType || "subagent")
           : (pr.source && pr.source.kind) || "local";
         const info = el.querySelector(".info");
         const statusEl = info.children[0];
-        statusEl.className = "status" + (yourTurn ? " your-turn" : "");
+        statusEl.className = "status" + (yourTurn ? " your-turn" : "") + (exportBlocked ? " blocked" : "");
         statusEl.textContent = archivedPr
           ? "archived"
-          : yourTurn
-            ? "your turn — open on GitHub"
+          : exportUi.listStatus
+            ? exportUi.listStatus
             : pr.status.replace("_", " ");
         info.children[1].textContent = pr.title;
         info.children[1].title = pr.title;
@@ -1254,6 +1281,11 @@ function panelHtml(webview: vscode.Webview): string {
     }
     .pill.your-turn {
       background: color-mix(in srgb, var(--vscode-charts-green, #3fb950) 28%, var(--vscode-badge-background));
+      color: var(--vscode-foreground);
+      font-weight: 600;
+    }
+    .pill.blocked {
+      background: color-mix(in srgb, var(--vscode-charts-orange, #f59f00) 28%, var(--vscode-badge-background));
       color: var(--vscode-foreground);
       font-weight: 600;
     }
@@ -1443,11 +1475,14 @@ function panelHtml(webview: vscode.Webview): string {
       const archived = selected.status === "approved";
       const reviewed = selected.status === "reviewed";
       const ready = selected.status === "ready";
+      const exportUi = selected.humanExport || {};
+      const yourTurn = !!exportUi.yourTurn;
+      const exportBlocked = exportUi.kind === "blocked";
       root.querySelector("h1").textContent = selected.title;
       root.querySelector("h1").title = selected.title;
       const pill = root.querySelector(".pill");
-      pill.textContent = reviewed ? "your turn" : selected.status.replace("_", " ");
-      pill.className = "pill" + (reviewed ? " your-turn" : "");
+      pill.textContent = exportUi.pillText || selected.status.replace("_", " ");
+      pill.className = "pill" + (yourTurn ? " your-turn" : "") + (exportBlocked ? " blocked" : "");
       root.querySelector("#range").textContent =
         selected.id + " · " + selected.headRef + " → " + selected.baseRef + " · " + short(selected.headSha) + " " + (when ? "· " + when : "");
       const filesH2 = root.querySelector(".files h2");
@@ -1465,11 +1500,13 @@ function panelHtml(webview: vscode.Webview): string {
       if (ship) {
         if (archived) {
           ship.hidden = true;
-        } else if (reviewed) {
+        } else if (exportUi.showExportPrimary) {
           ship.hidden = false;
           ship.disabled = false;
           ship.className = "cta";
           ship.textContent = "Open on GitHub";
+        } else if (reviewed) {
+          ship.hidden = true;
         } else if (ready) {
           ship.hidden = false;
           ship.disabled = false;
@@ -1520,8 +1557,8 @@ function panelHtml(webview: vscode.Webview): string {
       if (hint) {
         hint.textContent = archived
           ? "Archived after opening on GitHub (or Archive locally). Reopen to continue, or Delete to remove the record."
-          : reviewed
-            ? "Review is done — your turn. Open on GitHub pushes the branch and creates the pull request. Archive locally keeps it local only."
+          : reviewed && exportUi.hint
+            ? exportUi.hint
             : ready
               ? "Waiting on the reviewer. Complete review if you finished a sidebar pass, or Open on GitHub anyway to skip."
               : "Open findings go to the implementor. Address nests a reply underneath. When status is your turn, Open on GitHub creates the PR.";

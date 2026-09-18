@@ -41,8 +41,9 @@ import {
   resumeWatchRole,
   runDoctor,
   setLocalPrStatus,
-  shepherdStatus,
   updateLocalPr,
+  evaluateAndStoreExportGate,
+  humanExportUi,
   type CommentRole,
   type LocalPr,
   type LocalPrStatus,
@@ -147,8 +148,19 @@ function printPr(pr: LocalPr): void {
   const summary = pr.body.trim()
     ? `\n  summary: ${pr.body.trim().split("\n")[0].slice(0, 100)}`
     : "\n  summary: (none)";
+  const exportUi = humanExportUi(pr);
+  const exportNote =
+    pr.status === "reviewed"
+      ? `\n  export: ${
+          exportUi.kind === "exportable"
+            ? "ready"
+            : exportUi.kind === "blocked"
+              ? `blocked — ${exportUi.blockedLabel}`
+              : "pending (shepherd CI not green yet)"
+        }`
+      : "";
   process.stdout.write(
-    `${pr.id}  ${pr.status.padEnd(18)}  ${pr.headRef} -> ${pr.baseRef}\n  ${pr.title}${filesNote}${summary}\n`,
+    `${pr.id}  ${pr.status.padEnd(18)}  ${pr.headRef} -> ${pr.baseRef}\n  ${pr.title}${filesNote}${summary}${exportNote}\n`,
   );
 }
 
@@ -491,7 +503,7 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (sub === "shepherd") {
-    const result = await shepherdStatus(repo, id);
+    const result = await evaluateAndStoreExportGate(repo, id);
     process.stdout.write(`Shepherd status: ${result.status}\n`);
     if (result.reasons.length > 0) {
       process.stdout.write("\nBlocking reasons:\n");

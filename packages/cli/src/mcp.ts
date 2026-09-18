@@ -42,7 +42,7 @@ import {
   resumeWatchRole,
   runPreflight,
   setLocalPrStatus,
-  shepherdStatus,
+  evaluateAndStoreExportGate,
   updateLocalPr,
   type CommentRole,
   type LocalPr,
@@ -295,7 +295,7 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
       return runPreflight(cwd, pr);
     }
     case "shepherd_status":
-      return shepherdStatus(cwd, String(args.id ?? ""));
+      return evaluateAndStoreExportGate(cwd, String(args.id ?? ""));
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -686,7 +686,7 @@ export const tools = [
   {
     name: "export_local_pr",
     description:
-      "Developer command: validate review status and preflight, then halt listen loops, git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export. Export is blocked unless local review is complete (status reviewed/approved, no pending comments) and preflight pattern checks pass. Use skipValidation only for emergency export.",
+      "Developer command: validate review status and preflight, then halt listen loops, git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export. Export is blocked unless shepherd is ready (review complete, preflight clean, gh bound, local CI green). Use skipValidation only for emergency export.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -790,7 +790,7 @@ export const tools = [
   {
     name: "shepherd_status",
     description:
-      "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, and gh bind OK. Returns ready or blocked with explicit reasons. Fail-closed: any unknown/missing piece returns blocked.",
+      "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, gh bind, and local CI. Persists the result as the human-export gate. Returns ready or blocked with explicit reasons. Fail-closed: any unknown/missing piece returns blocked.",
     inputSchema: {
       type: "object",
       required: ["id"],
