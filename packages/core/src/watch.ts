@@ -77,10 +77,13 @@ export function watchLane(state: RepoWatchState, role: WatchRole): WatchLaneStat
   return state[role];
 }
 
+export const LISTEN_REMOVED_MESSAGE =
+  "Listen flywheel removed. Use /loop (MCP steward_next / bind_steward). Do not arm inbox/queue listen.";
+
 export function formatWatchLane(state: RepoWatchState, role: WatchRole): string {
   const lane = watchLane(state, role);
-  if (!lane.halted) return "listening";
-  return `halted  reason=${lane.reason ?? "stop"}${lane.exportId ? `  export=${lane.exportId}` : ""}`;
+  if (!lane.halted) return "idle";
+  return `halted  reason=${lane.reason ?? "export"}${lane.exportId ? `  export=${lane.exportId}` : ""}`;
 }
 
 export function formatWatchStatus(state: RepoWatchState): string {
@@ -148,134 +151,4 @@ export async function resumeWatchRole(cwd: string, role: WatchRole): Promise<Rep
 
 export async function resumeWatch(cwd: string): Promise<RepoWatchState> {
   return mutateWatch(cwd, () => derive(idleLane(), idleLane(), new Date().toISOString()));
-}
-
-export interface WatchListenSentinel {
-  tick: string;
-  done: string;
-  prompt: string;
-  donePrompt: string;
-}
-
-export function listenSentinel(role: WatchRole): WatchListenSentinel {
-  if (role === "inbox") {
-    return {
-      tick: "AGENT_LOOP_TICK_review-inbox",
-      done: "AGENT_LOOP_DONE_review-inbox",
-      prompt: "/inbox",
-      donePrompt: "/stop",
-    };
-  }
-  return {
-    tick: "AGENT_LOOP_TICK_review-queue",
-    done: "AGENT_LOOP_DONE_review-queue",
-    prompt: "/queue",
-    donePrompt: "/stop-review",
-  };
-}
-
-/** Parse durations like `30m`, `8h`, `45s`, `500ms`, or a bare number (minutes). */
-export function parseDurationMs(raw: string, label = "duration"): number {
-  const text = raw.trim();
-  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)?$/i.exec(text);
-  if (!match) {
-    throw new Error(`${label} must look like 30m, 8h, 45s, or a number of minutes`);
-  }
-  const n = Number(match[1]);
-  if (!Number.isFinite(n) || n < 0) {
-    throw new Error(`${label} must be a non-negative number`);
-  }
-  const unit = (match[2] ?? "m").toLowerCase();
-  const mult = unit === "ms" ? 1 : unit === "s" ? 1000 : unit === "h" ? 3_600_000 : 60_000;
-  return Math.round(n * mult);
-}
-
-export type ListenDoneReason = WatchHaltReason | "idle" | "max" | "ticks";
-
-/** Poll a watch lane. Emits TICK only when the activity fingerprint changes. */
-export async function listenWatchLane(
-  cwd: string,
-  role: WatchRole,
-  options: {
-    /** Max quiet period before DONE reason=idle. Default 30m. */
-    idleMs?: number;
-    /** Absolute wall-clock ceiling before DONE reason=max. Default 8h. */
-    maxMs?: number;
-    /** Optional hard tick ceiling (legacy --ticks). Counts emitted wake TICKs only. */
-    ticks?: number;
-    intervalMs?: number;
-    write?: (line: string) => void;
-    sleep?: (ms: number) => Promise<void>;
-    now?: () => number;
-    activityFingerprint?: (cwd: string, role: WatchRole) => Promise<string>;
-  } = {},
-): Promise<"halted" | "done"> {
-  const idleMs = options.idleMs ?? 30 * 60_000;
-  const maxMs = options.maxMs ?? 8 * 60 * 60_000;
-  const maxTicks = options.ticks;
-  const intervalMs = options.intervalMs ?? 60_000;
-  const write = options.write ?? ((line) => process.stdout.write(`${line}\n`));
-  const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const now = options.now ?? Date.now;
-  const activity =
-    options.activityFingerprint ??
-    (async (dir: string, lane: WatchRole) => {
-      const { listenActivityFingerprint } = await import("./watchActivity.js");
-      return listenActivityFingerprint(dir, lane);
-    });
-  const sentinel = listenSentinel(role);
-  const startedAt = now();
-  let lastActivityAt = startedAt;
-  let lastFingerprint = await activity(cwd, role);
-  let tick = 0;
-
-  const emitDone = (reason: ListenDoneReason): "halted" | "done" => {
-    write(
-      `${sentinel.done} ${JSON.stringify({
-        prompt: sentinel.donePrompt,
-        reason,
-      })}`,
-    );
-    return reason === "stop" || reason === "export" ? "halted" : "done";
-  };
-
-  while (true) {
-    const before = await getRepoWatch(cwd);
-    if (before[role].halted) {
-      return emitDone(before[role].reason ?? "stop");
-    }
-
-    const wall = now() - startedAt;
-    if (wall >= maxMs) return emitDone("max");
-    if (now() - lastActivityAt >= idleMs) return emitDone("idle");
-    if (maxTicks !== undefined && tick >= maxTicks) return emitDone("ticks");
-
-    await sleep(intervalMs);
-
-    const after = await getRepoWatch(cwd);
-    if (after[role].halted) {
-      return emitDone(after[role].reason ?? "stop");
-    }
-
-    const fingerprint = await activity(cwd, role);
-    const changed = fingerprint !== lastFingerprint;
-    if (changed) {
-      lastFingerprint = fingerprint;
-      lastActivityAt = now();
-    }
-
-    const afterWall = now() - startedAt;
-    if (afterWall >= maxMs) return emitDone("max");
-    if (now() - lastActivityAt >= idleMs) return emitDone("idle");
-
-    // Wake the parent only when the lane fingerprint changed. Periodic no-op
-    // TICKs re-arm Cursor Notify-on-TICK and fan out duplicate Tasks.
-    if (!changed) continue;
-
-    tick += 1;
-    write(`${sentinel.tick} ${JSON.stringify({ prompt: sentinel.prompt })}`);
-    if (maxTicks !== undefined && tick >= maxTicks) {
-      return emitDone("ticks");
-    }
-  }
 }

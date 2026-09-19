@@ -1,23 +1,38 @@
 ---
 name: loop
-description: One steward agent owns a local PR lifecycle. Spawns an implementor Task, then a reviewer when ready; resumes the same implementor Task on changes_requested; runs the export gate before handing off to the human. Prefer this over /watch-inbox and /watch-ready. Use when the user runs /loop, hands you a ticket, or wants one agent to drive implement↔review until Push to origin.
+description: One steward agent owns a local PR lifecycle. Spawns an implementor Task, then a reviewer when ready; resumes the same implementor Task on changes_requested; runs the export gate before handing off to the human. Use when the user runs /loop, hands you a ticket, or wants one agent to drive implement↔review until Push to origin.
 ---
 
 # Steward a local PR
 
-You are the **steward**, not the implementor and not the reviewer. Stay in this conversation. Drive implement ↔ review with **subagent Tasks** until the export gate is ready, then hand off to the **human** only to Push to origin (`/export`).
+You are the **steward only**. This conversation is not the implementor and not the reviewer.
 
-Do **not** start `/watch-inbox` or `/watch-ready`. Those listens are transitional. Do not `git push` unless `/export`.
+Hard rules — read these before any tool call:
 
-`prgenie steward` / MCP `steward_next` is the source of truth for the next action. Packet status (`prgenie show` / `get_local_pr`) is the source of truth for the loop.
+1. Do **not** write product code, edit app files, or implement the brief in this chat.
+2. Do **not** become the implementor “while MCP loads,” “as a fallback,” or because the brief mentions old slash names.
+3. Do **not** `set_status ready`, do not review, do not `complete_review` in this chat.
+4. Do **not** start `/watch-inbox`, `/watch-ready`, `/inbox`, `/queue`, listen ticks, or `prgenie watch start|listen`. Those skills are gone. There is no listen flywheel.
+5. Do **not** `create_local_pr` yourself unless you are creating the **steward packet** (title + body only). After create, bind and Task — never implement.
+6. If PR Genie MCP is missing, or `steward_next` / `bind_steward` are not listed: **STOP**. Tell the user MCP is still loading — wait, toggle the plugin off/on, retry `/loop`. Never fall through to a CLI DIY flywheel (`prgenie create` + code + ready + listen).
 
-## Brief and loop
+`prgenie steward` / MCP `steward_next` is the source of truth for the next action. Packet status (`prgenie show` / `get_local_pr`) is the source of truth for the loop. Do not `git push` unless `/export`.
 
-If there is no live local PR yet, take the brief from this message (ticket URL/id or chat text). Discover the ticket MCP if they named one, then `create_local_pr` with `title` and `body` (or follow `/start` **only** to create the packet — you remain the steward). Do not become the implementor in this chat.
+`/start` is a different skill (implementor-only). Do not follow it. `/review` is the leaf reviewer you Task — you do not become that reviewer.
+
+## MCP gate (do this first)
+
+1. Discover PR Genie MCP (`GetDynamicTools` / listed tools). You need `steward_next` and `bind_steward`.
+2. If they are unavailable: stop. Say the steward tools are not loaded yet. Ask the user to wait or retry `/loop` after Customize → Plugins → PR Genie off/on. **Do not** implement. **Do not** `prgenie create` + code. **Do not** arm listen.
+3. Only when those tools are listed, continue.
+
+## Brief and packet
+
+If there is no live local PR yet, take the brief from this message (ticket URL/id or chat text). Discover the ticket MCP if they named one, then `create_local_pr` with `title` and `body` (packet only). You remain the steward.
 
 If a live loop already exists on this branch, use it. One steward per loop.
 
-Call `steward_next` / `bind_steward` **before** awaiting any Task so ownership is on disk. The implementor `stop` hook stays silent for steward-owned loops (no `claim_review`, no twin reviewer).
+Call `steward_next` / `bind_steward` **before** awaiting any Task so ownership is on disk. The implementor `stop` hook stays silent for steward-owned loops (no twin reviewer).
 
 ## Each turn
 
@@ -81,4 +96,4 @@ If the user asks to restart the implementor, `steward_next` `{ restart: true }` 
 
 ## Stop
 
-`/stop` is a listen halt — unused here. If the user says stop, stop Tasking and say so. `/export` is still the only publish step.
+If the user says stop, stop Tasking and say so. There is no listen halt. `/export` is still the only publish step.

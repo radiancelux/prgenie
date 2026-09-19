@@ -23,23 +23,18 @@ import {
   getLocalPrNameStatus,
   getRepoGithubBind,
   getRepoWatch,
-  haltWatch,
-  haltWatchRole,
   formatWatchLane,
   formatWatchStatus,
+  LISTEN_REMOVED_MESSAGE,
   listGhAccounts,
   listLocalPrs,
   listSessions,
   formatSessionEvent,
   isArchivedPr,
   listWorktrees,
-  listenWatchLane,
-  parseDurationMs,
   pendingReviewComments,
   reopenLocalPr,
   resolveLocalPrComment,
-  resumeWatch,
-  resumeWatchRole,
   runDoctor,
   setLocalPrStatus,
   updateLocalPr,
@@ -57,7 +52,6 @@ import {
   type CommentRole,
   type LocalPr,
   type LocalPrStatus,
-  type WatchRole,
 } from "@prgenie/core";
 
 function usage(): string {
@@ -71,15 +65,6 @@ Usage:
   prgenie queue
   prgenie inbox
   prgenie watch
-  prgenie watch inbox
-  prgenie watch queue
-  prgenie watch stop
-  prgenie watch stop inbox
-  prgenie watch stop queue
-  prgenie watch start
-  prgenie watch start inbox
-  prgenie watch start queue
-  prgenie watch listen inbox|queue [--idle 30m] [--max 8h] [--interval 60] [--ticks N]
   prgenie claim-review <id> [--head <sha>] [--source <name>]
   prgenie steward
   prgenie steward <id> [--restart] [--implementor-missing] [--implementor-failed] [--json]
@@ -362,63 +347,9 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "watch") {
     const action = rest[0] ?? "status";
-    if (action === "stop") {
-      const role = rest[1];
-      if (role === "inbox" || role === "queue") {
-        const state = await haltWatchRole(repo, role, "stop");
-        process.stdout.write(`${role} halted (${state[role].reason}).\n`);
-        return 0;
-      }
-      const state = await haltWatch(repo, "stop");
-      process.stdout.write(`Watch halted (${state.reason}).\n`);
-      return 0;
-    }
-    if (action === "start") {
-      const role = rest[1];
-      if (role === "inbox" || role === "queue") {
-        await resumeWatchRole(repo, role);
-        process.stdout.write(`${role} resumed.\n`);
-        return 0;
-      }
-      await resumeWatch(repo);
-      process.stdout.write("Watch resumed.\n");
-      return 0;
-    }
-    if (action === "listen") {
-      const role = rest[1] as WatchRole | undefined;
-      if (role !== "inbox" && role !== "queue") {
-        process.stderr.write(
-          "prgenie watch listen inbox|queue [--idle 30m] [--max 8h] [--interval 60] [--ticks N]\n",
-        );
-        return 1;
-      }
-      const intervalSec = Number(arg(rest, "--interval") ?? "60");
-      if (!Number.isFinite(intervalSec) || intervalSec < 1) {
-        process.stderr.write("--interval must be a positive number of seconds.\n");
-        return 1;
-      }
-      let idleMs: number;
-      let maxMs: number;
-      try {
-        idleMs = parseDurationMs(arg(rest, "--idle") ?? "30m", "--idle");
-        maxMs = parseDurationMs(arg(rest, "--max") ?? "8h", "--max");
-      } catch (err) {
-        process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-        return 1;
-      }
-      const ticksRaw = arg(rest, "--ticks");
-      const ticks = ticksRaw === undefined ? undefined : Number(ticksRaw);
-      if (ticks !== undefined && (!Number.isFinite(ticks) || ticks < 1)) {
-        process.stderr.write("--ticks must be a positive number when set.\n");
-        return 1;
-      }
-      await listenWatchLane(repo, role, {
-        idleMs,
-        maxMs,
-        ticks,
-        intervalMs: intervalSec * 1000,
-      });
-      return 0;
+    if (action === "start" || action === "stop" || action === "listen") {
+      process.stderr.write(`${LISTEN_REMOVED_MESSAGE}\n`);
+      return 1;
     }
     const state = await getRepoWatch(repo);
     if (action === "inbox" || action === "queue") {

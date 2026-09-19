@@ -226,14 +226,6 @@ var init_prs = __esm({
   }
 });
 
-// packages/core/src/watchActivity.ts
-var init_watchActivity = __esm({
-  "packages/core/src/watchActivity.ts"() {
-    "use strict";
-    init_prs();
-  }
-});
-
 // packages/core/src/progress.ts
 var init_progress = __esm({
   "packages/core/src/progress.ts"() {
@@ -468,7 +460,6 @@ init_git();
 init_worktrees();
 init_prs();
 init_watch();
-init_watchActivity();
 
 // packages/core/src/review-claim.ts
 init_git();

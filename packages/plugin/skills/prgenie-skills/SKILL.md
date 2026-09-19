@@ -11,29 +11,25 @@ Follow [agentskills.io](https://agentskills.io/specification) and Cursor's skill
 
 ## One job per skill
 
-| Skill                              | Who                        | Auto-invoke?                          |
-| ---------------------------------- | -------------------------- | ------------------------------------- |
-| `loop`                             | One steward per loop       | Yes (ticket / full flywheel)          |
-| `start`                            | Implementor-only entry     | Yes (ticket paste)                    |
-| `local-pr`                         | Create/update packets      | Yes                                   |
-| `review`                           | Leaf + orchestrator review | Yes                                   |
-| `watch-inbox` / `watch-ready`      | Listen (transitional)      | No (`disable-model-invocation: true`) |
-| `inbox` / `queue`                  | One tick                   | No                                    |
-| `stop` / `stop-review` / `unwatch` | Halt listen                | No                                    |
-| `export`                           | Publish                    | No                                    |
+| Skill      | Who                    | Auto-invoke?                 |
+| ---------- | ---------------------- | ---------------------------- |
+| `loop`     | One steward per loop   | Yes (ticket / full flywheel) |
+| `start`    | Implementor-only entry | Yes (ticket paste)           |
+| `local-pr` | Create/update packets  | Yes                          |
+| `review`   | Leaf reviewer          | Yes                          |
+| `export`   | Publish                | No                           |
 
-Prefer **`/loop`** for agent orchestration (one steward, implementor/reviewer Tasks, export gate before human handoff). Inbox/queue listen skills stay for the transitional two-chat path.
+`/loop` is the only orchestrator (one steward, implementor/reviewer Tasks, export gate before human handoff). Do not add inbox/queue listen skills. `/start` stays implementor-only — do not blur it with `/loop`.
 
-User-only skills set `disable-model-invocation: true` so the agent does not start a listen loop or export from ambient context.
+User-only skills set `disable-model-invocation: true` so the agent does not export from ambient context.
 
 ## Product rules to copy, not invent
 
-Keep terminology fixed: **loop** (local PR packet), **halt** (`stop` vs `export`), **address** (implementor) vs **resolve** (reviewer) vs **complete_review** (end of review). Do not push unless `/export`.
+Keep terminology fixed: **loop** (local PR packet), **address** (implementor) vs **resolve** (reviewer) vs **complete_review** (end of review). Do not push unless `/export`.
 
-- Export halt resumes only when that export id is **missing or archived**. Id inequality is not enough. Stop halt never auto-resumes.
-- Listen shells use **idle timeout** (default 30m quiet) with an **8h** wall ceiling, then `/stop` or `/stop-review` for that chat only. Never `while ($true)`. Never `/unwatch` from an idle/max DONE.
-- `prgenie watch start inbox` / `start queue` resume one lane. `/watch-inbox` and `/watch-ready` start only their lane. Ticks never `watch start`.
-- Implementor acts only on **this worktree** when `changes_requested`. Reviewer Tasks must not be awaited.
+- `/loop` is steward only. If MCP / `steward_next` / `bind_steward` are unavailable, stop and tell the user to wait/retry — never CLI DIY.
+- `/start` implements and stops at ready. It does not review and does not arm listen.
+- Implementor acts only on **this worktree** when `changes_requested`.
 - Implementor runs `prgenie ci` / MCP `run_ci` before ready and on CI-resume (`docs/ci-checks.md`). CI-resume is implementor → export gate again — no automatic re-review.
 
 Edit `packages/plugin/rules/no-remote-pr.mdc` when the flywheel protocol changes — it is always applied. Skills stay the procedure; the rule stays the guardrail.

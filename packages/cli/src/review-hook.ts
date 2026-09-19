@@ -1,16 +1,9 @@
 import { readFileSync } from "node:fs";
 import {
-  claimReview,
   findGitRoot,
   findLocalPrForCurrentWorktree,
   formatReviewInbox,
-  formatSpawnReviewer,
-  getStewardBinding,
-  markReviewRequested,
-  markReviewerNotified,
   pendingReviewComments,
-  refreshLocalPrHead,
-  shouldEmitLegacyReviewerHandoff,
 } from "@prgenie/core";
 
 type HookInput = Record<string, unknown>;
@@ -28,27 +21,6 @@ export function eventName(input: HookInput): string {
 
 function silent(): void {
   process.stdout.write("{}\n");
-}
-
-/**
- * Transitional implementor-stop reviewer handoff.
- * Steward-owned loops stay silent (no claim, no spawn prompt).
- */
-export async function runStopReviewerHandoff(cwd: string, id: string): Promise<string | null> {
-  const fresh = await refreshLocalPrHead(cwd, id);
-  if (fresh.status !== "ready") return null;
-  if ((fresh.reviewRequestedSha ?? null) !== fresh.headSha) {
-    await markReviewRequested(cwd, fresh.id);
-  }
-  const binding = await getStewardBinding(cwd, fresh.id);
-  if (!shouldEmitLegacyReviewerHandoff(fresh, binding)) return null;
-  const claimed = await claimReview(cwd, fresh.id, {
-    headSha: fresh.headSha,
-    source: "hook",
-  });
-  if (!claimed.claimed) return null;
-  await markReviewerNotified(cwd, fresh.id);
-  return formatSpawnReviewer(fresh);
 }
 
 export async function main(): Promise<void> {
@@ -105,13 +77,6 @@ export async function main(): Promise<void> {
     if (newest?.role === "human" && inbox) {
       process.stdout.write(JSON.stringify({ followup_message: inbox }) + "\n");
       return;
-    }
-    if (pr.status === "ready") {
-      const followup = await runStopReviewerHandoff(root, pr.id);
-      if (followup) {
-        process.stdout.write(JSON.stringify({ followup_message: followup }) + "\n");
-        return;
-      }
     }
     silent();
     return;

@@ -1,6 +1,7 @@
 # RCA: Windows dogfood stability (Brett Humphreys)
 
-**Status:** Analysis only. No runtime code changes in this revision.
+**Status:** Historical analysis. Inbox/queue listen was **removed in RAD-81** — `/loop` is the only orchestrator. Keep this page as RCA, not as a dogfood path.
+
 **Audience:** PM + next CloudAgent implement slices.
 **Scope:** Windows MVP dogfood against `radiancelux/prgenie` checkout
 `C:\Users\BrettHumphreys\Documents\GitHub\pr-genie` (loops `lp-9ff837d2`, draft `lp-15976a74`).

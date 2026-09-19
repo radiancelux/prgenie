@@ -3,7 +3,7 @@ import path from "node:path";
 import { formatExportBlockLabel, needsExportGateEvaluation } from "./export-gate.js";
 import { evaluateAndStoreExportGate } from "./export-validation.js";
 import { requireGitRoot } from "./git.js";
-import { getLocalPr, isArchivedPr, listLocalPrs, shouldSpawnReviewer } from "./prs.js";
+import { getLocalPr, isArchivedPr, listLocalPrs } from "./prs.js";
 import type { ProgressCallback } from "./progress.js";
 import { consoleDir, parseJsonObject, withFileLock, writeJsonFile } from "./store.js";
 import type { ExportGateSnapshot, ExportGateStatus, LocalPr } from "./types.js";
@@ -143,16 +143,6 @@ export function isStewardOwned(binding: StewardBinding | null | undefined): bool
   return Boolean(binding);
 }
 
-/**
- * Legacy implementor-stop hook may claim/spawn a reviewer only when no steward owns the loop.
- */
-export function shouldEmitLegacyReviewerHandoff(
-  pr: Pick<LocalPr, "status" | "headSha" | "reviewerNotifiedSha">,
-  binding: StewardBinding | null | undefined,
-): boolean {
-  if (isStewardOwned(binding)) return false;
-  return shouldSpawnReviewer(pr as LocalPr);
-}
 
 function canResumeTask(
   taskId: string | null,

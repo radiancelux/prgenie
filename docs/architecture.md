@@ -7,7 +7,7 @@ PR Genie is a local review lane that sits in front of GitHub. The product flywhe
 | Package                    | Path                 | Role                                                                                                                                                 |
 | -------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `@prgenie/core`            | `packages/core`      | Local PR CRUD, status transitions, watch state, worktrees, export helpers, `doctor`, `gh` bind                                                       |
-| `prgenie` CLI              | `packages/cli`       | Thin CLI + MCP stdio server over core (`prgenie`, `prgenie doctor`, `watch listen`, hooks)                                                           |
+| `prgenie` CLI              | `packages/cli`       | Thin CLI + MCP stdio server over core (`prgenie`, `prgenie doctor`, steward, hooks)                                                                  |
 | Cursor plugin              | `packages/plugin`    | Rules, skills (`/loop`, `/start`, `/export`, …), MCP entry, hooks (`github-gate.cjs`, `review-inbox.cjs`, `capture-subagent.cjs`, `session-log.mjs`) |
 | VS Code / Cursor extension | `packages/extension` | **Local PRs** sidebar: watch list, Switch to worktree, Complete review, Open on GitHub                                                               |
 
@@ -44,7 +44,7 @@ Typical path:
 3. **Review** — reviewer files findings while status stays `ready`, then **`complete_review`**. That flip wakes the implementor (`changes_requested`) or marks `reviewed` (review cleared — steward runs the export gate; not a human handoff).
 4. **Address** — implementor `address_comment`s each open finding; addressing the last open finding returns `ready` and posts Review requested again.
 5. **Resolve + complete** — reviewer resolves addressed comments, then always `complete_review`.
-6. **Export** (`/export` / `export_local_pr`) — push + `gh pr create`, status `approved` (archived, not deleted), listen lanes halted for that export id.
+6. **Export** (`/export` / `export_local_pr`) — push + `gh pr create`, status `approved` (archived, not deleted). Export records a halt in `watch.json` for that export id (resume on next create after archive).
 
 Human comments can request changes immediately; agent/reviewer findings go through address/resolve.
 
@@ -59,22 +59,15 @@ One steward chat owns one loop. It does **not** implement or review in-chat. It:
 3. On `changes_requested`, **resumes the same implementor Task id** (no twin) unless missing/failed or the user asks to restart.
 4. After Reviewer clear (`reviewed`), runs the full export gate (`evaluateAndStoreExportGate` / `steward_next`). Human-exportable / Push to origin only when the gate is **ready**. On **blocked** (especially CI), resume the implementor with `failingCheck`, then `evaluate_export_gate` **again**. Do **not** auto-spawn a reviewer because CI failed. See [ci-checks.md](ci-checks.md).
 
-CLI: `prgenie steward <id>`, `prgenie steward bind <id> --implementor <taskId>`. MCP: `steward_next`, `bind_steward`. Skill: `/loop`.
+CLI: `prgenie steward <id>`, `prgenie steward bind <id> --implementor <taskId>`. MCP: `steward_next`, `bind_steward`. Skill: `/loop`. There is no inbox/queue listen flywheel.
 
-## Watch lanes
+## Export halt (`watch.json`)
 
-Two independent lanes under `.git/agent-console/watch.json`:
+`.git/agent-console/watch.json` still records an **export halt** so a later `create_local_pr` can resume after that export id is archived or missing. It is not a listen arming surface.
 
-| Lane    | Skill          | Who                                        |
-| ------- | -------------- | ------------------------------------------ |
-| `inbox` | `/watch-inbox` | Implementor — wakes on `changes_requested` |
-| `queue` | `/watch-ready` | Reviewer — wakes on `ready`                |
-
-- `prgenie watch listen inbox|queue` is the capped wake process (default **30m** idle quiet, **8h** wall max). It still polls on `--interval` (default 60s) but prints `AGENT_LOOP_TICK_*` **only when that lane's fingerprint changes** — unchanged queues do not re-wake the parent agent. Skills should use it instead of hand-rolled sleep loops. **Never re-arm listen on TICK**; the process is still running. Inbox/queue listen is the **transitional** wake path. Preferred orchestration is **one steward per local PR** (`/loop`, `prgenie steward` / MCP `steward_next`).
+- `prgenie watch start|stop|listen` and MCP `watch_start` / `watch_stop` **hard-error** and point at `/loop`.
+- `prgenie watch` / MCP `watch_status` remain read-only diagnostics of that halt file.
 - One in-flight reviewer per loop HEAD: `claim_review` / `prgenie claim-review` writes `.git/agent-console/review-claims.json` keyed by `id`+`headSha`. A second claim for the same HEAD returns `already_claimed`. Stale rows drop when the packet leaves `ready` or HEAD moves.
-- Halt reasons: `stop` (explicit `/stop`, `/stop-review`, `/unwatch`) vs `export` (after `/export`).
-- Creating a new loop resumes **export**-halted lanes only when that export id is archived or missing. It does **not** clear a `stop` halt.
-- Listen exits with `AGENT_LOOP_DONE_*` and reason `idle` | `max` | `ticks` | `stop` | `export`. Re-run the watch skill to continue after idle/max.
 
 ## Where state lives
 
@@ -85,7 +78,7 @@ All local-PR state is git-native / machine-local — not committed:
 | `refs/local-pr/<id>/head`, `refs/local-pr/<id>/base` | Branch tips for the loop                                         |
 | `refs/notes/local-pr`                                | Notes                                                            |
 | `.git/agent-console/prs/<id>.json`                   | Packet metadata (title, body, status, comments, SHAs)            |
-| `.git/agent-console/watch.json`                      | Inbox/queue halt + export id                                     |
+| `.git/agent-console/watch.json`                      | Export-halt record (not a listen control)                        |
 | `.git/agent-console/review-claims.json`              | In-flight reviewer claims keyed by `id`+`headSha`                |
 | `.git/agent-console/stewards.json`                   | Steward Task map `{ loopId, implementorTaskId, reviewerTaskId }` |
 | `.git/agent-console/sessions.jsonl`                  | Session log events                                               |
@@ -114,14 +107,14 @@ All local-PR state is git-native / machine-local — not committed:
 
 Skills (one slash name each — do not also add duplicate `commands/*.md`):
 
-`/loop`, `/start`, `/local-pr`, `/review`, `/watch-ready`, `/watch-inbox`, `/queue`, `/inbox`, `/stop`, `/stop-review`, `/unwatch`, `/export`
+`/loop`, `/start`, `/local-pr`, `/review`, `/export`
 
-MCP server name: `prgenie` (tools such as `list_local_prs`, `create_local_pr`, `set_status`, `complete_review`, `claim_review`, `steward_next`, `bind_steward`, `export_local_pr`, `watch_status`, `gh_use`, …).
+MCP server name: `prgenie` (tools such as `list_local_prs`, `create_local_pr`, `set_status`, `complete_review`, `claim_review`, `steward_next`, `bind_steward`, `export_local_pr`, `watch_status`, `gh_use`, …). `watch_start` / `watch_stop` remain listed only to hard-error and point at `/loop`.
 
 Hooks registered in `hooks.json`:
 
 - `github-gate.cjs` — push / `gh pr create` gate + bound-account switch
-- `review-inbox.cjs` — review-loop nudges for the implementor inbox
+- `review-inbox.cjs` — inject pending comments into implementor sessions (no listen ticks; no stop-hook reviewer spawn)
 - `capture-subagent.cjs` — subagentStop capture into local PRs
 - `session-log.mjs` — session log helper used by hooks
 

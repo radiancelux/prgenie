@@ -37,7 +37,7 @@ The gaps are not missing lifecycle pieces — they are **operability** (recoveri
 | A5 | ~~MCP ignored core/CLI `--stat`~~ **Done:** MCP `get_diff` accepts `stat` and `paths`. Core `getLocalPrDiff` already had `{ stat }`; CLI had `prgenie diff --stat`. | `mcp.ts`, `review` skill. |
 | A6 | ~~`sessions.jsonl` write-only~~ **Done:** `listSessions` + `prgenie sessions` + MCP `list_sessions`. | `sessions.ts`; CLI/MCP. |
 | A7 | ~~No comment edit/delete.~~ **Done:** Core + CLI + MCP + sidebar Edit/Delete for open findings. | `editLocalPrComment` / `deleteLocalPrComment`. |
-| A8 | ~~Inbox/queue `watch listen` was the only orchestrator.~~ **Done (RAD-70):** one **steward** per local PR (`/loop`, `steward_next` / `prgenie steward`) owns the lifecycle — spawn implementor Task, then reviewer when ready; on `changes_requested` resume the same `implementorTaskId`; after Reviewer clear run the RAD-71 export gate and only then hand off. Durable `{ loopId, implementorTaskId, reviewerTaskId }` in `.git/agent-console/stewards.json`. Listeners stay transitional. | Watch fan-out context: [rca-windows-dogfood-stability.md](docs/rca-windows-dogfood-stability.md) §A / Slice 1. |
+| A8 | ~~Inbox/queue `watch listen` was the only orchestrator.~~ **Done (RAD-70 + RAD-81):** one **steward** per local PR (`/loop`, `steward_next` / `prgenie steward`) owns the lifecycle — spawn implementor Task, then reviewer when ready; on `changes_requested` resume the same `implementorTaskId`; after Reviewer clear run the RAD-71 export gate and only then hand off. Durable `{ loopId, implementorTaskId, reviewerTaskId }` in `.git/agent-console/stewards.json`. Listen flywheel **removed** (RAD-81): no `/watch-inbox` / `/watch-ready`, no sidebar Start/Stop, CLI/MCP `watch start\|stop\|listen` hard-error to `/loop`. | Historical watch fan-out: [rca-windows-dogfood-stability.md](docs/rca-windows-dogfood-stability.md) §A / Slice 1. |
 
 ### Platform / quality gaps
 
@@ -93,7 +93,7 @@ The Now items remove the failure modes daily use actually hits: hand-rolled list
 
 ### Next-Learn — steward-per-loop
 
-21. **Steward-per-local-PR (A8).** ✅ RAD-70: `/loop` + durable `stewards.json` + `steward_next` (export gate before Push to origin). Listeners remain as a transitional two-chat path.
+21. **Steward-per-local-PR (A8).** ✅ RAD-70: `/loop` + durable `stewards.json` + `steward_next` (export gate before Push to origin). **RAD-81:** listen/watch flywheel removed; `/loop` is the only orchestrator and hard-stops if MCP/`steward_next` is unavailable.
 22. **Dogfood polish (RAD-77).** ✅ Comment action colors, short slash names, CI check modal, Open terminal, chat CI progress card, review-cleared copy, implementor preflight + smart/fail-fast CI. See [docs/ci-checks.md](docs/ci-checks.md).
 
 ### Shipped — additional control-plane work
@@ -112,6 +112,7 @@ The Now items remove the failure modes daily use actually hits: hand-rolled list
 - **RAD-71**: Human export / Push to origin gated on shepherd CI green (`exportGate`).
 - **RAD-72**: Export CTA renamed to Push to origin, higher-contrast attention, first-enter popup.
 - **RAD-77**: Dogfood polish — comment colors, short slash names, CI modal + chat card, Open terminal, review-cleared copy, implementor preflight + smart/fail-fast CI.
+- **RAD-81**: `/loop` hard steward-only (stop if MCP/`steward_next` unavailable). Listen/watch flywheel removed.
 
 ### Remaining open
 
