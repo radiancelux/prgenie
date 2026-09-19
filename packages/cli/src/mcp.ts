@@ -53,7 +53,7 @@ import {
 } from "@prgenie/core";
 
 import { writeSync } from "node:fs";
-import { encodeMcpFrame, takeMcpMessages } from "./mcp-stdio.js";
+import { encodeMcpFrame, MCP_STDIO_READY, takeMcpMessages } from "./mcp-stdio.js";
 
 type Json = Record<string, unknown>;
 
@@ -1008,8 +1008,20 @@ async function onRequest(msg: Json): Promise<void> {
 }
 
 export async function startMcp(): Promise<void> {
+  try {
+    writeSync(2, `${MCP_STDIO_READY}\n`);
+  } catch {
+    // stderr may be closed
+  }
   let buffer = Buffer.alloc(0);
   let draining = false;
+  process.stdin.on("error", (err) => {
+    try {
+      writeSync(2, `[prgenie] mcp stdin error: ${err.message}\n`);
+    } catch {
+      // ignore
+    }
+  });
   process.stdin.resume();
   process.stdin.on("data", (chunk: Buffer | string) => {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8");

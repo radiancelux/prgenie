@@ -66,10 +66,11 @@ A single Plugin row can still hang — dual registration is necessary to clean u
 **Diagnosis path:**
 
 1. `prgenie doctor` — `mcp-config`, `mcp-duplicate`, `mcp-node`, `plugin-stale`.
-2. Output → **MCP Logs**. Only `supported=false` → handshake/spawn (rebuild). `server was not started` → sandbox policy. `ENOENT` → PATH/`node`.
-3. Connected MCPs: **one** `prgenie` row, tag **Plugin**. If you also see tag **pr-genie**, delete `.cursor/mcp.json`.
-4. `pnpm build && pnpm link-plugin`, then Customize → Plugins → PR Genie **off/on**. Quit Cursor fully if Windows still holds the old `server.cjs`.
-5. Do not add a workspace `prgenie` for live-reload. If you must, use a **different** server id and keep the plugin off.
+2. `prgenie mcp --smoke` (or `node packages/cli/dist/prgenie.cjs mcp --smoke`) — must print `steward_next: true` in under a few seconds. That is the same `initialize` / `tools/list` Cursor needs. If smoke passes and Cursor still shows 0 tools, Cursor did not complete stdio (spawn/sandbox), not a hang inside our tool catalog.
+3. Output → **MCP Logs**. Look for `[prgenie] mcp stdio ready` on stderr after toggle. Only `supported=false` with **no** ready line → process never started. `server was not started` / `unsupported_platform` → sandbox policy. `ENOENT` → PATH/`node`. Ready + still Connecting → framing (rebuild this branch).
+4. Connected MCPs: **one** `prgenie` row, tag **Plugin**. If you also see tag **pr-genie**, delete `.cursor/mcp.json`.
+5. `pnpm build && pnpm link-plugin`, then Customize → Plugins → PR Genie **off/on**. Quit Cursor fully if Windows still holds the old `server.cjs`.
+6. Do not add a workspace `prgenie` for live-reload. If you must, use a **different** server id and keep the plugin off.
 
 `where.exe node` succeeding and a quiet manual `node …\server.cjs` do **not** prove Cursor completed `initialize` / `tools/list`.
 

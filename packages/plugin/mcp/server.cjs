@@ -4009,6 +4009,7 @@ init_ci_cache();
 var import_node_fs4 = require("node:fs");
 
 // packages/cli/src/mcp-stdio.ts
+var MCP_STDIO_READY = "[prgenie] mcp stdio ready";
 function encodeMcpFrame(msg) {
   return Buffer.from(`${JSON.stringify(msg)}
 `, "utf8");
@@ -4989,8 +4990,20 @@ async function onRequest(msg) {
   }
 }
 async function startMcp() {
+  try {
+    (0, import_node_fs4.writeSync)(2, `${MCP_STDIO_READY}
+`);
+  } catch {
+  }
   let buffer = Buffer.alloc(0);
   let draining = false;
+  process.stdin.on("error", (err) => {
+    try {
+      (0, import_node_fs4.writeSync)(2, `[prgenie] mcp stdin error: ${err.message}
+`);
+    } catch {
+    }
+  });
   process.stdin.resume();
   process.stdin.on("data", (chunk) => {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8");

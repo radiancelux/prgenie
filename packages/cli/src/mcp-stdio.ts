@@ -4,6 +4,9 @@
  * on Connecting… forever (RAD-82) because the JSON body had no trailing newline.
  */
 
+/** Written to stderr on listen so Output → MCP Logs proves Cursor spawned us. */
+export const MCP_STDIO_READY = "[prgenie] mcp stdio ready";
+
 export function encodeMcpFrame(msg: unknown): Buffer {
   return Buffer.from(`${JSON.stringify(msg)}\n`, "utf8");
 }

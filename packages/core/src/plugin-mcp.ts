@@ -121,6 +121,7 @@ export function pinPluginMcpJson(
     type: "stdio",
     command: spawn.command,
     args: spawn.args,
+    cwd: opts.pluginRoot.split(path.sep).join("/"),
   };
   cfg.mcpServers = servers;
   return `${JSON.stringify(cfg, null, 2)}\n`;

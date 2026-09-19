@@ -32,6 +32,7 @@ servers[name] = {
   type: "stdio",
   command: useCmd ? "cmd" : nodeCommand,
   args: useCmd ? ["/c", nodeCommand, serverPath] : [serverPath],
+  cwd: dest.split(path.sep).join("/"),
 };
 cfg.mcpServers = servers;
 

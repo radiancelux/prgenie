@@ -127,7 +127,7 @@ export async function runDoctor(cwd: string, options?: { home?: string }): Promi
       id: "mcp-config",
       ok: false,
       summary: `Installed plugin mcp.json is not valid JSON (${installedInspect.parseError}).`,
-      fix: "Re-run pnpm link-plugin (it rewrites mcp.json as UTF-8 without a BOM). Then Customize → Plugins → disable/enable PR Genie.",
+      fix: "Re-run pnpm link-plugin (it rewrites mcp.json as UTF-8 without a BOM). Then Customize → Plugins → disable/enable PR Genie. Prove handshake with prgenie mcp --smoke; check Output → MCP Logs for [prgenie] mcp stdio ready.",
     });
   } else if (installedInspect?.hasBom) {
     checks.push({

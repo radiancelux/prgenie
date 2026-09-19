@@ -110,7 +110,7 @@ prgenie preflight <id>
 prgenie gh list
 prgenie gh status
 prgenie gh use <login>
-prgenie mcp
+prgenie mcp [--smoke]
 ```
 
 `prgenie doctor` checks plugin/extension freshness, MCP config (BOM / `${PLUGIN_ROOT}` / duplicate `prgenie` name / pinned `node`), monorepo/VSIX version alignment, export-halt state, corrupt PR files, orphaned `.loops` worktrees, `gh` bind, legacy hooks, and the last shepherd CI failure log (when present). On CI failure, toast/CLI name the check and a short excerpt; `prgenie shepherd <id> --verbose` prints the capped full log under `.git/agent-console/ci-logs/`. Agent orchestration is `/loop` (`prgenie steward` / MCP `steward_next`): one steward per loop, durable Task ids in `.git/agent-console/stewards.json`, export gate before Push to origin. `prgenie watch start|stop|listen` hard-errors and points at `/loop`. `prgenie claim-review` / MCP `claim_review` is the durable one-reviewer-per-HEAD lock.
