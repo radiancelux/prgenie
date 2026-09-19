@@ -42,6 +42,7 @@ import {
   resumeWatchRole,
   runPreflight,
   setLocalPrStatus,
+  abortExportGate,
   createProgressCardSink,
   evaluateAndStoreExportGate,
   bindSteward,
@@ -318,6 +319,14 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
         onProgress: card.onProgress,
       });
       return { ...result, progressCard: card.card() };
+    }
+    case "abort_ci": {
+      const aborted = abortExportGate(
+        cwd,
+        String(args.id ?? ""),
+        typeof args.headSha === "string" ? args.headSha : undefined,
+      );
+      return { aborted };
     }
     case "shepherd_status": {
       const card = createProgressCardSink((line) => process.stderr.write(`${line}\n`));
@@ -849,7 +858,7 @@ export const tools = [
   {
     name: "run_ci",
     description:
-      "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; uncertain → full suite). Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Returns allPassed, checks, selection, and a progressCard for the agent chat. Skip only when the toolchain cannot run — say so; do not skip a flaky failure.",
+      "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; uncertain → full suite). Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Returns allPassed, checks, selection, and a progressCard for the agent chat. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run — say so; do not skip a flaky failure.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -872,9 +881,26 @@ export const tools = [
     },
   },
   {
+    name: "abort_ci",
+    description:
+      "Cancel in-flight implementor preflight or export-gate CI for a loop. Same abort as the loop panel Cancel: bumps the shared abort token under .git/agent-console/ci-abort and stops the in-process gate. Steward MCP and the panel share one suite per id+HEAD.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        cwd: { type: "string" },
+        headSha: {
+          type: "string",
+          description: "Optional. Abort only this HEAD's in-process flight.",
+        },
+      },
+    },
+  },
+  {
     name: "shepherd_status",
     description:
-      "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, gh bind, and smart local CI (path-selected; uncertain → full suite). Persists the result as the human-export gate. Streams a CI progress card (check names + running/pass/fail) on stderr — cancel is the same abort as the loop panel. Returns ready or blocked with reasons, ciPlan, ciChecks, and progressCard. Fail-closed: any unknown/missing piece returns blocked.",
+      "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, gh bind, and smart local CI (path-selected; uncertain → full suite). Persists the result as the human-export gate. Streams a CI progress card (check names + running/pass/fail) on stderr — cancel is abort_ci / loop panel Cancel (shared abort token; one suite per id+HEAD). Returns ready or blocked with reasons, ciPlan, ciChecks, and progressCard. Fail-closed: any unknown/missing piece returns blocked.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -905,7 +931,7 @@ export const tools = [
   {
     name: "steward_next",
     description:
-      "Steward flywheel next action for one local PR. Persists optional Task ids, runs the full export gate after Reviewer clear, and returns spawn/resume/handoff. Streams a CI progress card while the gate runs (same abort as the loop panel Cancel). Human-exportable / Push to origin only when the gate is ready (handoff_human). On blocked CI, action is resume_implementor with failingCheck — then evaluate_export_gate again. Do not auto-spawn a reviewer. Preferred over /watch-inbox + /watch-ready. Omit id to list bindings.",
+      "Steward flywheel next action for one local PR. Persists optional Task ids, runs the full export gate after Reviewer clear, and returns spawn/resume/handoff. Streams a CI progress card while the gate runs. Cancel is abort_ci / loop panel Cancel (shared abort token — one suite per id+HEAD, not a second full run). Human-exportable / Push to origin only when the gate is ready (handoff_human). On blocked CI, action is resume_implementor with failingCheck — then evaluate_export_gate again. Do not auto-spawn a reviewer. Preferred over /watch-inbox + /watch-ready. Omit id to list bindings.",
     inputSchema: {
       type: "object",
       properties: {

@@ -943,6 +943,23 @@ var init_watchActivity = __esm({
   }
 });
 
+// packages/core/src/progress.ts
+var init_progress = __esm({
+  "packages/core/src/progress.ts"() {
+    "use strict";
+  }
+});
+
+// packages/core/src/ci-abort.ts
+var STALE_LOCK_MS;
+var init_ci_abort = __esm({
+  "packages/core/src/ci-abort.ts"() {
+    "use strict";
+    init_progress();
+    STALE_LOCK_MS = 30 * 60 * 1e3;
+  }
+});
+
 // packages/core/src/github.ts
 var init_github = __esm({
   "packages/core/src/github.ts"() {
@@ -988,13 +1005,6 @@ var init_ci_select = __esm({
   }
 });
 
-// packages/core/src/progress.ts
-var init_progress = __esm({
-  "packages/core/src/progress.ts"() {
-    "use strict";
-  }
-});
-
 // packages/core/src/ci-runner.ts
 var import_node_child_process2, import_node_util, execAsync;
 var init_ci_runner = __esm({
@@ -1005,6 +1015,7 @@ var init_ci_runner = __esm({
     init_ci_cache();
     init_ci_failure();
     init_ci_select();
+    init_ci_abort();
     init_prs();
     init_progress();
     execAsync = (0, import_node_util.promisify)(import_node_child_process2.exec);
@@ -1028,6 +1039,7 @@ var init_shepherd = __esm({
 var init_export_validation = __esm({
   "packages/core/src/export-validation.ts"() {
     "use strict";
+    init_ci_abort();
     init_prs();
     init_shepherd();
     init_progress();
@@ -1075,6 +1087,7 @@ init_progress();
 
 // packages/core/src/index.ts
 init_export_validation();
+init_ci_abort();
 init_progress();
 init_export_gate();
 

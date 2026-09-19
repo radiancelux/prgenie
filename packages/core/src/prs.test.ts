@@ -225,6 +225,15 @@ test("complete_review with no findings clears review for the export gate", async
   assert.equal(done.comments[0].status, "resolved");
 });
 
+test("complete_review default copy is review-cleared, not ready-for-human", async () => {
+  const pr = await createLocalPr(repo, { title: "Default copy", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready");
+  const done = await completeLocalPrReview(repo, pr.id);
+  assert.equal(done.status, "reviewed");
+  assert.match(done.comments[0].body, /Review cleared\. Steward will run the export gate/);
+  assert.doesNotMatch(done.comments[0].body, /ready for human|Push to origin/i);
+});
+
 test("complete_review with findings hands the loop to the implementor", async () => {
   const pr = await createLocalPr(repo, { title: "Batch", base: "main" });
   await setLocalPrStatus(repo, pr.id, "ready");

@@ -38,9 +38,13 @@ Uncertain mapping **always** runs the full configured suite.
 
 Skip implementor preflight only when the toolchain cannot run (say so). Do not skip a red check.
 
+## Cancel (panel + chat)
+
+Loop panel **Cancel** and MCP `abort_ci` / a cancelled `run_ci` · `shepherd_status` · `steward_next` share one abort token at `.git/agent-console/ci-abort/<id>.json`. That stops the in-flight suite in every process. Export-gate evaluations also take a per id+HEAD lock (`.git/agent-console/ci-lock/`) so steward and the panel do not run two full suites; a waiter adopts the persisted snapshot or aborts with the owner.
+
 ## UI
 
-Panel + lane + agent-chat progress card list **which** checks were selected and **why**. Click a check name for status + RAD-74 excerpt/log.
+Panel + lane + agent-chat progress card list **which** checks were selected and **why**. Click a check name for status + RAD-74 excerpt/log. Elapsed time uses the same `formatElapsed` units as the CLI card.
 
 ## CI-resume (locked)
 

@@ -146,6 +146,14 @@ export {
   exportGateInFlight,
   validateExport,
 } from "./export-validation.js";
+export {
+  acquireCiLock,
+  ciAbortFile,
+  pidAlive,
+  readCiAbortSeq,
+  requestCiAbort,
+  watchCiAbort,
+} from "./ci-abort.js";
 export type { ExportValidationOptions, ExportValidationResult } from "./export-validation.js";
 export {
   abortError,

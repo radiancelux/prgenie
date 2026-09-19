@@ -1891,410 +1891,6 @@ var init_watchActivity = __esm({
   }
 });
 
-// packages/core/src/ci-cache.ts
-async function ciCacheDir(cwd) {
-  const common = await gitCommonDir(cwd);
-  const dir = import_node_path9.default.join(common, "agent-console", "ci-cache");
-  await (0, import_promises8.mkdir)(dir, { recursive: true });
-  return dir;
-}
-async function ciCacheFile(cwd) {
-  const dir = await ciCacheDir(cwd);
-  return import_node_path9.default.join(dir, "cache.json");
-}
-async function loadCiCache(cwd) {
-  try {
-    const file = await ciCacheFile(cwd);
-    const content = await (0, import_promises8.readFile)(file, "utf8");
-    return JSON.parse(content);
-  } catch {
-    return { checks: {} };
-  }
-}
-async function saveCiCache(cwd, cache) {
-  const file = await ciCacheFile(cwd);
-  await (0, import_promises8.writeFile)(file, JSON.stringify(cache, null, 2), "utf8");
-}
-async function computeTrackedFilesHash(cwd) {
-  try {
-    const { stdout } = await git(cwd, ["ls-tree", "-r", "HEAD"]);
-    const hash = (0, import_node_crypto3.createHash)("sha256");
-    hash.update(stdout);
-    return hash.digest("hex");
-  } catch {
-    return null;
-  }
-}
-async function computeScriptsHash(cwd) {
-  try {
-    const { stdout } = await git(cwd, ["show", "HEAD:package.json"]);
-    const pkg = JSON.parse(stdout);
-    const hash = (0, import_node_crypto3.createHash)("sha256");
-    hash.update(JSON.stringify(pkg.scripts || {}));
-    return hash.digest("hex");
-  } catch {
-    return null;
-  }
-}
-async function computeCiInputHash(cwd) {
-  const [filesHash, scriptsHash] = await Promise.all([
-    computeTrackedFilesHash(cwd),
-    computeScriptsHash(cwd)
-  ]);
-  if (!filesHash || !scriptsHash) {
-    return null;
-  }
-  const hash = (0, import_node_crypto3.createHash)("sha256");
-  hash.update(filesHash);
-  hash.update(scriptsHash);
-  return hash.digest("hex");
-}
-async function getCachedResult(cwd, check) {
-  const currentHash = await computeCiInputHash(cwd);
-  if (!currentHash) {
-    return null;
-  }
-  const cache = await loadCiCache(cwd);
-  const entry = cache.checks[check];
-  if (!entry) {
-    return null;
-  }
-  if (entry.inputHash !== currentHash) {
-    return null;
-  }
-  return entry;
-}
-async function recordCheckPass(cwd, check) {
-  const inputHash = await computeCiInputHash(cwd);
-  if (!inputHash) {
-    return;
-  }
-  const cache = await loadCiCache(cwd);
-  cache.checks[check] = {
-    inputHash,
-    passedAt: (/* @__PURE__ */ new Date()).toISOString(),
-    check
-  };
-  await saveCiCache(cwd, cache);
-}
-var import_node_crypto3, import_promises8, import_node_path9;
-var init_ci_cache = __esm({
-  "packages/core/src/ci-cache.ts"() {
-    "use strict";
-    import_node_crypto3 = require("node:crypto");
-    import_promises8 = require("node:fs/promises");
-    import_node_path9 = __toESM(require("node:path"), 1);
-    init_git();
-  }
-});
-
-// packages/core/src/ci-failure.ts
-function stripAnsi(text) {
-  return text.replace(ANSI_RE, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-}
-function collectExecOutput(err) {
-  const e = err;
-  const stdout = typeof e.stdout === "string" ? e.stdout : "";
-  const stderr = typeof e.stderr === "string" ? e.stderr : "";
-  const message = err instanceof Error ? err.message : String(err);
-  const firstLine = (message.split("\n")[0] || message).trim() || "Command failed";
-  let combined = [stderr, stdout].filter((s) => s.trim()).join("\n");
-  if (!combined.trim()) {
-    const rest = message.split("\n").slice(1).join("\n").trim();
-    combined = rest;
-  }
-  return { firstLine, stdout, stderr, combined };
-}
-function lastNonEmptyLines(text, n) {
-  const lines = stripAnsi(text).split("\n").map((line) => line.trimEnd()).filter((line) => line.trim().length > 0 && !NOISE_LINE.test(line.trim()));
-  return lines.slice(-n).join("\n");
-}
-function truncateChars(text, max = CI_EXCERPT_MAX_CHARS) {
-  const collapsed = text.replace(/\s+\n/g, "\n").trim();
-  if (collapsed.length <= max) return collapsed;
-  return `${collapsed.slice(0, Math.max(0, max - 1)).trimEnd()}\u2026`;
-}
-function flattenExcerpt(text) {
-  return truncateChars(text.replace(/\n+/g, " \xB7 "));
-}
-function parseFirstFailingTest(text) {
-  const clean = stripAnsi(text);
-  const tap = clean.match(/^not ok\s+\d+\s+-\s+(.+)$/m);
-  if (tap?.[1]) return tap[0].trim();
-  const spec = clean.match(/^[✖×]\s+(.+?)(?:\s+\([\d.]+m?s\))?\s*$/m);
-  if (spec?.[1]) return spec[0].trim();
-  const jest = clean.match(/^●\s+(.+)$/m);
-  if (jest?.[1]) return `\u25CF ${jest[1].trim()}`;
-  const mocha = clean.match(/^\s*(\d+)\)\s+(.+)$/m);
-  if (mocha?.[2]) return `${mocha[1]}) ${mocha[2].trim()}`;
-  const failFile = clean.match(/^FAIL\s+(\S+)/m);
-  if (failFile?.[1]) return `FAIL ${failFile[1]}`;
-  return null;
-}
-function parseLintExcerpt(text) {
-  const clean = stripAnsi(text);
-  const file = clean.match(/^(?:[\w./\\-]+\.(?:js|jsx|ts|tsx|mjs|cjs|json))\b.*$/m);
-  const err = clean.match(/^\s+\d+:\d+\s+error\s+.+$/m);
-  if (file && err) {
-    const base = import_node_path10.default.basename(file[0].trim().split(/\s+/)[0] ?? file[0]);
-    return `${base} ${err[0].trim()}`;
-  }
-  if (err) return err[0].trim();
-  const summary = clean.match(/^✖\s+.+$/m);
-  return summary?.[0]?.trim() ?? null;
-}
-function parseTypecheckExcerpt(text) {
-  const clean = stripAnsi(text);
-  const ts = clean.match(/^[^\n]*error TS\d+:[^\n]+$/m);
-  if (ts) return ts[0].trim();
-  const generic = clean.match(/^[^\n]*error TS[^\n]+$/m);
-  return generic?.[0]?.trim() ?? null;
-}
-function parseFormatExcerpt(text) {
-  const clean = stripAnsi(text);
-  if (/Prettier format check failed/i.test(clean)) {
-    const line = clean.split("\n").find((l) => /Prettier format check failed/i.test(l));
-    return line?.trim() ?? null;
-  }
-  const warn = clean.match(/^\[warn\]\s+.+$/m);
-  return warn?.[0]?.trim() ?? null;
-}
-function parseBuildExcerpt(text) {
-  const clean = stripAnsi(text);
-  const err = clean.match(/^[^\n]*(?:error|Error|ERROR)[^\n]*$/m);
-  return err?.[0]?.trim() ?? null;
-}
-function parseGateExcerpt(check, text) {
-  const name = check === "format:check" || check === "format" ? "format" : check;
-  if (name === "test") return parseFirstFailingTest(text);
-  if (name === "lint") return parseLintExcerpt(text);
-  if (name === "typecheck") return parseTypecheckExcerpt(text);
-  if (name === "format") return parseFormatExcerpt(text);
-  if (name === "build") return parseBuildExcerpt(text);
-  return parseFirstFailingTest(text);
-}
-function formatFailureExcerpt(check, output) {
-  const source = output.combined.trim() ? output.combined : output.firstLine;
-  const parsed = parseGateExcerpt(check, source);
-  if (parsed) return flattenExcerpt(parsed);
-  const tail = lastNonEmptyLines(source, CI_EXCERPT_LINES);
-  if (tail) return flattenExcerpt(tail);
-  return flattenExcerpt(output.firstLine);
-}
-function formatCiCheckError(input) {
-  const parts = [input.command];
-  if (input.excerpt && input.excerpt !== input.command) parts.push(input.excerpt);
-  if (input.logPath) parts.push(`full log: ${input.logPath}`);
-  return parts.join(" \u2014 ");
-}
-function displayLogPath(cwd, absPath) {
-  const rel = import_node_path10.default.relative(cwd, absPath);
-  return rel && !rel.startsWith("..") ? rel : absPath;
-}
-async function ciLogsDir(cwd, create = true) {
-  const common = await gitCommonDir(cwd);
-  const dir = import_node_path10.default.join(common, "agent-console", "ci-logs");
-  if (create) await (0, import_promises9.mkdir)(dir, { recursive: true });
-  return dir;
-}
-function safeCheckFile(check) {
-  return check.replace(/[^a-zA-Z0-9._-]+/g, "_") || "check";
-}
-function truncateBytes(text, max) {
-  const buf = Buffer.from(text, "utf8");
-  if (buf.length <= max) return text;
-  const slice = buf.subarray(buf.length - max);
-  return `\u2026(truncated to last ${max} bytes)
-${slice.toString("utf8")}`;
-}
-async function writeCiFailureLog(cwd, check, command, output, excerpt) {
-  try {
-    const dir = await ciLogsDir(cwd);
-    const logPath = import_node_path10.default.join(dir, `${safeCheckFile(check)}.log`);
-    const header = `# ${check} (${command}) failed ${(/* @__PURE__ */ new Date()).toISOString()}
-
-`;
-    const body = truncateBytes(
-      `${header}${output.combined.trim() || output.firstLine}
-`,
-      CI_LOG_MAX_BYTES
-    );
-    await (0, import_promises9.writeFile)(logPath, body, "utf8");
-    const meta = {
-      check,
-      command,
-      excerpt,
-      logPath,
-      writtenAt: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    await (0, import_promises9.writeFile)(import_node_path10.default.join(dir, "latest.json"), `${JSON.stringify(meta, null, 2)}
-`, "utf8");
-    return displayLogPath(cwd, logPath);
-  } catch {
-    return null;
-  }
-}
-var import_promises9, import_node_path10, CI_EXCERPT_LINES, CI_EXCERPT_MAX_CHARS, CI_LOG_MAX_BYTES, ANSI_RE, NOISE_LINE;
-var init_ci_failure = __esm({
-  "packages/core/src/ci-failure.ts"() {
-    "use strict";
-    import_promises9 = require("node:fs/promises");
-    import_node_path10 = __toESM(require("node:path"), 1);
-    init_git();
-    CI_EXCERPT_LINES = 8;
-    CI_EXCERPT_MAX_CHARS = 480;
-    CI_LOG_MAX_BYTES = 64 * 1024;
-    ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, "g");
-    NOISE_LINE = /^(?:npm ERR!|pnpm ERR!|ELIFECYCLE|Command failed:|ERROR: command failed|error Command failed)/i;
-  }
-});
-
-// packages/core/src/ci-select.ts
-function normalizeCiPath(filePath) {
-  return filePath.replace(/\\/g, "/").replace(/^\.\//, "");
-}
-function basename(filePath) {
-  const parts = normalizeCiPath(filePath).split("/");
-  return parts[parts.length - 1] ?? filePath;
-}
-function classifyCiPath(filePath) {
-  const p = normalizeCiPath(filePath);
-  const base = basename(p);
-  const lower = p.toLowerCase();
-  if (CONFIG_BASENAMES.has(base) || p.startsWith(".github/") || p.startsWith("scripts/") || /(^|\/)tsconfig(\.[\w-]+)?\.json$/.test(p) || /(^|\/)eslint\.config\./.test(p) || /(^|\/)\.eslintrc/.test(p) || p.endsWith("mcp.json") || p.endsWith("hooks.json") || p.endsWith("plugin.json") || p.includes(".cursor/")) {
-    return "config";
-  }
-  if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(lower) || /(^|\/)__tests__\//.test(p) || /(^|\/)tests?\//.test(p)) {
-    return "test";
-  }
-  if (/\.([cm]?[jt]sx?)$/.test(lower)) return "source";
-  if (/\.(md|txt)$/.test(lower) || p.startsWith("docs/") || /^(readme|license|changelog|authors|roadmap)(\.|$)/i.test(base)) {
-    return "docs";
-  }
-  if (/\.(css|scss|less|html|xml|json|ya?ml)$/.test(lower)) return "style";
-  return "unknown";
-}
-function fullSuite(reason, paths, uncertain) {
-  const mapping = DEFAULT_CI_CHECKS.map((check) => ({ check, reason }));
-  return {
-    checks: [...DEFAULT_CI_CHECKS],
-    reason,
-    mapping,
-    uncertain,
-    changedPaths: paths
-  };
-}
-function selectCiChecks(changedPaths) {
-  const paths = [...new Set(changedPaths.map(normalizeCiPath).filter(Boolean))];
-  if (paths.length === 0) {
-    return fullSuite("no changed paths; running full suite", paths, true);
-  }
-  const kinds = paths.map(classifyCiPath);
-  if (kinds.some((kind) => kind === "unknown")) {
-    return fullSuite("uncertain path mapping; running full suite", paths, true);
-  }
-  if (kinds.some((kind) => kind === "config")) {
-    return fullSuite("config/CI scripts changed; running full suite", paths, false);
-  }
-  const onlyDocsOrStyle = kinds.every((kind) => kind === "docs" || kind === "style");
-  if (onlyDocsOrStyle) {
-    const reason2 = kinds.every((kind) => kind === "docs") ? "docs/markdown-only \u2014 format only, skip lint/test/build" : "docs/style-only \u2014 format only, skip lint/test/build";
-    return {
-      checks: ["format:check"],
-      reason: reason2,
-      mapping: [{ check: "format:check", reason: reason2 }],
-      uncertain: false,
-      changedPaths: paths
-    };
-  }
-  const hasCli = paths.some((p) => p.startsWith("packages/cli/"));
-  const hasCore = paths.some((p) => p.startsWith("packages/core/"));
-  const hasExtension = paths.some((p) => p.startsWith("packages/extension/"));
-  const scope = [hasCli && "cli", hasCore && "core", hasExtension && "extension"].filter(Boolean).join("+") || "source";
-  const reason = `${scope} source/test changed \u2014 format, lint, typecheck, test, build`;
-  return {
-    checks: [...DEFAULT_CI_CHECKS],
-    reason,
-    mapping: DEFAULT_CI_CHECKS.map((check) => ({ check, reason })),
-    uncertain: false,
-    changedPaths: paths
-  };
-}
-function resolveCiCwd(cwd, worktreePath) {
-  if (worktreePath && (0, import_node_fs2.existsSync)(worktreePath)) return worktreePath;
-  return cwd;
-}
-function addSplitPaths(set, raw) {
-  const parts = raw.split("	").filter(Boolean);
-  const file = parts[parts.length - 1];
-  if (file) set.add(normalizeCiPath(file));
-}
-async function changedPathsForCi(cwd, id) {
-  const paths = /* @__PURE__ */ new Set();
-  if (id) {
-    try {
-      for (const file of await getLocalPrNameStatus(cwd, id)) {
-        addSplitPaths(paths, file.path);
-      }
-    } catch {
-    }
-  }
-  try {
-    for (const args of [
-      ["diff", "--name-only", "HEAD"],
-      ["diff", "--name-only", "--cached"],
-      ["ls-files", "-o", "--exclude-standard"]
-    ]) {
-      const result = await git(cwd, args, { allowFail: true });
-      if (result.code !== 0) continue;
-      for (const line of result.stdout.split("\n")) {
-        if (line.trim()) addSplitPaths(paths, line.trim());
-      }
-    }
-  } catch {
-  }
-  return [...paths];
-}
-function envFlag(name, fallback) {
-  const raw = process.env[name];
-  if (raw == null || raw === "") return fallback;
-  if (raw === "0" || raw.toLowerCase() === "false") return false;
-  if (raw === "1" || raw.toLowerCase() === "true") return true;
-  return fallback;
-}
-var import_node_fs2, DEFAULT_CI_CHECKS, CONFIG_BASENAMES;
-var init_ci_select = __esm({
-  "packages/core/src/ci-select.ts"() {
-    "use strict";
-    import_node_fs2 = require("node:fs");
-    init_git();
-    init_prs();
-    DEFAULT_CI_CHECKS = ["format:check", "lint", "typecheck", "test", "build"];
-    CONFIG_BASENAMES = /* @__PURE__ */ new Set([
-      "package.json",
-      "pnpm-lock.yaml",
-      "package-lock.json",
-      "yarn.lock",
-      "pnpm-workspace.yaml",
-      "tsconfig.json",
-      "tsconfig.base.json",
-      "eslint.config.mjs",
-      "eslint.config.js",
-      "eslint.config.cjs",
-      ".eslintrc",
-      ".eslintrc.js",
-      ".eslintrc.cjs",
-      ".eslintrc.json",
-      ".prettierrc",
-      ".prettierrc.json",
-      ".prettierignore",
-      "Dockerfile",
-      "docker-compose.yml",
-      "docker-compose.yaml"
-    ]);
-  }
-});
-
 // packages/core/src/progress.ts
 function ciCheckCommand(check) {
   return `pnpm ${check}`;
@@ -2409,13 +2005,567 @@ var init_progress = __esm({
   }
 });
 
+// packages/core/src/ci-abort.ts
+function safeId(id) {
+  return id.replace(/[^A-Za-z0-9._-]+/g, "_");
+}
+function gitCommonDirSync(cwd) {
+  const dir = (0, import_node_child_process3.execFileSync)("git", ["rev-parse", "--git-common-dir"], {
+    cwd,
+    encoding: "utf8",
+    windowsHide: true
+  }).trim();
+  return import_node_path9.default.isAbsolute(dir) ? import_node_path9.default.normalize(dir) : import_node_path9.default.resolve(cwd, dir);
+}
+function ciAbortFile(cwd, id) {
+  return import_node_path9.default.join(gitCommonDirSync(cwd), "agent-console", "ci-abort", `${safeId(id)}.json`);
+}
+function ciLockFile(cwd, id, headSha) {
+  const short = headSha.replace(/[^A-Za-z0-9]/g, "").slice(0, 16) || "head";
+  return import_node_path9.default.join(
+    gitCommonDirSync(cwd),
+    "agent-console",
+    "ci-lock",
+    `${safeId(id)}-${short}.json`
+  );
+}
+function readJson(file) {
+  try {
+    return JSON.parse((0, import_node_fs2.readFileSync)(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function readCiAbortSeq(cwd, id) {
+  const token = readJson(ciAbortFile(cwd, id));
+  return typeof token?.seq === "number" ? token.seq : 0;
+}
+function requestCiAbort(cwd, id) {
+  const file = ciAbortFile(cwd, id);
+  (0, import_node_fs2.mkdirSync)(import_node_path9.default.dirname(file), { recursive: true });
+  const next = readCiAbortSeq(cwd, id) + 1;
+  const token = {
+    id,
+    seq: next,
+    requestedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  (0, import_node_fs2.writeFileSync)(file, `${JSON.stringify(token)}
+`, "utf8");
+  return next;
+}
+function watchCiAbort(cwd, id, controller) {
+  const startSeq = readCiAbortSeq(cwd, id);
+  const tick = () => {
+    if (controller.signal.aborted) return;
+    if (readCiAbortSeq(cwd, id) > startSeq) controller.abort();
+  };
+  tick();
+  const timer = setInterval(tick, POLL_MS);
+  return () => clearInterval(timer);
+}
+function pidAlive(pid) {
+  if (!pid || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function lockStale(lock) {
+  if (!pidAlive(lock.pid)) return true;
+  const started = Date.parse(lock.startedAt);
+  return Number.isFinite(started) && Date.now() - started > STALE_LOCK_MS;
+}
+async function acquireCiLock(cwd, id, headSha, signal) {
+  const file = ciLockFile(cwd, id, headSha);
+  (0, import_node_fs2.mkdirSync)(import_node_path9.default.dirname(file), { recursive: true });
+  const record = {
+    pid: process.pid,
+    id,
+    headSha,
+    startedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  for (; ; ) {
+    throwIfAborted(signal);
+    const existing = (0, import_node_fs2.existsSync)(file) ? readJson(file) : null;
+    if (existing && !lockStale(existing)) {
+      await new Promise((resolve, reject) => {
+        const onAbort2 = () => {
+          clearTimeout(timer);
+          reject(abortError());
+        };
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", onAbort2);
+          resolve();
+        }, POLL_MS);
+        if (signal) {
+          if (signal.aborted) {
+            clearTimeout(timer);
+            reject(abortError());
+            return;
+          }
+          signal.addEventListener("abort", onAbort2, { once: true });
+        }
+      });
+      const still = (0, import_node_fs2.existsSync)(file) ? readJson(file) : null;
+      if (!still || lockStale(still) || still.pid !== existing.pid) {
+        return { peerDone: true, release: () => void 0 };
+      }
+      continue;
+    }
+    if (existing && lockStale(existing)) {
+      try {
+        (0, import_node_fs2.unlinkSync)(file);
+      } catch {
+      }
+    }
+    try {
+      const fd = (0, import_node_fs2.openSync)(file, "wx");
+      try {
+        (0, import_node_fs2.writeFileSync)(fd, `${JSON.stringify(record)}
+`, "utf8");
+      } finally {
+        (0, import_node_fs2.closeSync)(fd);
+      }
+      return {
+        peerDone: false,
+        release: () => {
+          try {
+            (0, import_node_fs2.unlinkSync)(file);
+          } catch {
+          }
+        }
+      };
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    }
+  }
+}
+var import_node_child_process3, import_node_fs2, import_node_path9, POLL_MS, STALE_LOCK_MS;
+var init_ci_abort = __esm({
+  "packages/core/src/ci-abort.ts"() {
+    "use strict";
+    import_node_child_process3 = require("node:child_process");
+    import_node_fs2 = require("node:fs");
+    import_node_path9 = __toESM(require("node:path"), 1);
+    init_progress();
+    POLL_MS = 150;
+    STALE_LOCK_MS = 30 * 60 * 1e3;
+  }
+});
+
+// packages/core/src/ci-cache.ts
+async function ciCacheDir(cwd) {
+  const common = await gitCommonDir(cwd);
+  const dir = import_node_path10.default.join(common, "agent-console", "ci-cache");
+  await (0, import_promises8.mkdir)(dir, { recursive: true });
+  return dir;
+}
+async function ciCacheFile(cwd) {
+  const dir = await ciCacheDir(cwd);
+  return import_node_path10.default.join(dir, "cache.json");
+}
+async function loadCiCache(cwd) {
+  try {
+    const file = await ciCacheFile(cwd);
+    const content = await (0, import_promises8.readFile)(file, "utf8");
+    return JSON.parse(content);
+  } catch {
+    return { checks: {} };
+  }
+}
+async function saveCiCache(cwd, cache) {
+  const file = await ciCacheFile(cwd);
+  await (0, import_promises8.writeFile)(file, JSON.stringify(cache, null, 2), "utf8");
+}
+async function computeTrackedFilesHash(cwd) {
+  try {
+    const { stdout } = await git(cwd, ["ls-tree", "-r", "HEAD"]);
+    const hash = (0, import_node_crypto3.createHash)("sha256");
+    hash.update(stdout);
+    return hash.digest("hex");
+  } catch {
+    return null;
+  }
+}
+async function computeScriptsHash(cwd) {
+  try {
+    const { stdout } = await git(cwd, ["show", "HEAD:package.json"]);
+    const pkg = JSON.parse(stdout);
+    const hash = (0, import_node_crypto3.createHash)("sha256");
+    hash.update(JSON.stringify(pkg.scripts || {}));
+    return hash.digest("hex");
+  } catch {
+    return null;
+  }
+}
+async function computeCiInputHash(cwd) {
+  const [filesHash, scriptsHash] = await Promise.all([
+    computeTrackedFilesHash(cwd),
+    computeScriptsHash(cwd)
+  ]);
+  if (!filesHash || !scriptsHash) {
+    return null;
+  }
+  const hash = (0, import_node_crypto3.createHash)("sha256");
+  hash.update(filesHash);
+  hash.update(scriptsHash);
+  return hash.digest("hex");
+}
+async function getCachedResult(cwd, check) {
+  const currentHash = await computeCiInputHash(cwd);
+  if (!currentHash) {
+    return null;
+  }
+  const cache = await loadCiCache(cwd);
+  const entry = cache.checks[check];
+  if (!entry) {
+    return null;
+  }
+  if (entry.inputHash !== currentHash) {
+    return null;
+  }
+  return entry;
+}
+async function recordCheckPass(cwd, check) {
+  const inputHash = await computeCiInputHash(cwd);
+  if (!inputHash) {
+    return;
+  }
+  const cache = await loadCiCache(cwd);
+  cache.checks[check] = {
+    inputHash,
+    passedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    check
+  };
+  await saveCiCache(cwd, cache);
+}
+var import_node_crypto3, import_promises8, import_node_path10;
+var init_ci_cache = __esm({
+  "packages/core/src/ci-cache.ts"() {
+    "use strict";
+    import_node_crypto3 = require("node:crypto");
+    import_promises8 = require("node:fs/promises");
+    import_node_path10 = __toESM(require("node:path"), 1);
+    init_git();
+  }
+});
+
+// packages/core/src/ci-failure.ts
+function stripAnsi(text) {
+  return text.replace(ANSI_RE, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+function collectExecOutput(err) {
+  const e = err;
+  const stdout = typeof e.stdout === "string" ? e.stdout : "";
+  const stderr = typeof e.stderr === "string" ? e.stderr : "";
+  const message = err instanceof Error ? err.message : String(err);
+  const firstLine = (message.split("\n")[0] || message).trim() || "Command failed";
+  let combined = [stderr, stdout].filter((s) => s.trim()).join("\n");
+  if (!combined.trim()) {
+    const rest = message.split("\n").slice(1).join("\n").trim();
+    combined = rest;
+  }
+  return { firstLine, stdout, stderr, combined };
+}
+function lastNonEmptyLines(text, n) {
+  const lines = stripAnsi(text).split("\n").map((line) => line.trimEnd()).filter((line) => line.trim().length > 0 && !NOISE_LINE.test(line.trim()));
+  return lines.slice(-n).join("\n");
+}
+function truncateChars(text, max = CI_EXCERPT_MAX_CHARS) {
+  const collapsed = text.replace(/\s+\n/g, "\n").trim();
+  if (collapsed.length <= max) return collapsed;
+  return `${collapsed.slice(0, Math.max(0, max - 1)).trimEnd()}\u2026`;
+}
+function flattenExcerpt(text) {
+  return truncateChars(text.replace(/\n+/g, " \xB7 "));
+}
+function parseFirstFailingTest(text) {
+  const clean = stripAnsi(text);
+  const tap = clean.match(/^not ok\s+\d+\s+-\s+(.+)$/m);
+  if (tap?.[1]) return tap[0].trim();
+  const spec = clean.match(/^[✖×]\s+(.+?)(?:\s+\([\d.]+m?s\))?\s*$/m);
+  if (spec?.[1]) return spec[0].trim();
+  const jest = clean.match(/^●\s+(.+)$/m);
+  if (jest?.[1]) return `\u25CF ${jest[1].trim()}`;
+  const mocha = clean.match(/^\s*(\d+)\)\s+(.+)$/m);
+  if (mocha?.[2]) return `${mocha[1]}) ${mocha[2].trim()}`;
+  const failFile = clean.match(/^FAIL\s+(\S+)/m);
+  if (failFile?.[1]) return `FAIL ${failFile[1]}`;
+  return null;
+}
+function parseLintExcerpt(text) {
+  const clean = stripAnsi(text);
+  const file = clean.match(/^(?:[\w./\\-]+\.(?:js|jsx|ts|tsx|mjs|cjs|json))\b.*$/m);
+  const err = clean.match(/^\s+\d+:\d+\s+error\s+.+$/m);
+  if (file && err) {
+    const base = import_node_path11.default.basename(file[0].trim().split(/\s+/)[0] ?? file[0]);
+    return `${base} ${err[0].trim()}`;
+  }
+  if (err) return err[0].trim();
+  const summary = clean.match(/^✖\s+.+$/m);
+  return summary?.[0]?.trim() ?? null;
+}
+function parseTypecheckExcerpt(text) {
+  const clean = stripAnsi(text);
+  const ts = clean.match(/^[^\n]*error TS\d+:[^\n]+$/m);
+  if (ts) return ts[0].trim();
+  const generic = clean.match(/^[^\n]*error TS[^\n]+$/m);
+  return generic?.[0]?.trim() ?? null;
+}
+function parseFormatExcerpt(text) {
+  const clean = stripAnsi(text);
+  if (/Prettier format check failed/i.test(clean)) {
+    const line = clean.split("\n").find((l) => /Prettier format check failed/i.test(l));
+    return line?.trim() ?? null;
+  }
+  const warn = clean.match(/^\[warn\]\s+.+$/m);
+  return warn?.[0]?.trim() ?? null;
+}
+function parseBuildExcerpt(text) {
+  const clean = stripAnsi(text);
+  const err = clean.match(/^[^\n]*(?:error|Error|ERROR)[^\n]*$/m);
+  return err?.[0]?.trim() ?? null;
+}
+function parseGateExcerpt(check, text) {
+  const name = check === "format:check" || check === "format" ? "format" : check;
+  if (name === "test") return parseFirstFailingTest(text);
+  if (name === "lint") return parseLintExcerpt(text);
+  if (name === "typecheck") return parseTypecheckExcerpt(text);
+  if (name === "format") return parseFormatExcerpt(text);
+  if (name === "build") return parseBuildExcerpt(text);
+  return parseFirstFailingTest(text);
+}
+function formatFailureExcerpt(check, output) {
+  const source = output.combined.trim() ? output.combined : output.firstLine;
+  const parsed = parseGateExcerpt(check, source);
+  if (parsed) return flattenExcerpt(parsed);
+  const tail = lastNonEmptyLines(source, CI_EXCERPT_LINES);
+  if (tail) return flattenExcerpt(tail);
+  return flattenExcerpt(output.firstLine);
+}
+function formatCiCheckError(input) {
+  const parts = [input.command];
+  if (input.excerpt && input.excerpt !== input.command) parts.push(input.excerpt);
+  if (input.logPath) parts.push(`full log: ${input.logPath}`);
+  return parts.join(" \u2014 ");
+}
+function displayLogPath(cwd, absPath) {
+  const rel = import_node_path11.default.relative(cwd, absPath);
+  return rel && !rel.startsWith("..") ? rel : absPath;
+}
+async function ciLogsDir(cwd, create = true) {
+  const common = await gitCommonDir(cwd);
+  const dir = import_node_path11.default.join(common, "agent-console", "ci-logs");
+  if (create) await (0, import_promises9.mkdir)(dir, { recursive: true });
+  return dir;
+}
+function safeCheckFile(check) {
+  return check.replace(/[^a-zA-Z0-9._-]+/g, "_") || "check";
+}
+function truncateBytes(text, max) {
+  const buf = Buffer.from(text, "utf8");
+  if (buf.length <= max) return text;
+  const slice = buf.subarray(buf.length - max);
+  return `\u2026(truncated to last ${max} bytes)
+${slice.toString("utf8")}`;
+}
+async function writeCiFailureLog(cwd, check, command, output, excerpt) {
+  try {
+    const dir = await ciLogsDir(cwd);
+    const logPath = import_node_path11.default.join(dir, `${safeCheckFile(check)}.log`);
+    const header = `# ${check} (${command}) failed ${(/* @__PURE__ */ new Date()).toISOString()}
+
+`;
+    const body = truncateBytes(
+      `${header}${output.combined.trim() || output.firstLine}
+`,
+      CI_LOG_MAX_BYTES
+    );
+    await (0, import_promises9.writeFile)(logPath, body, "utf8");
+    const meta = {
+      check,
+      command,
+      excerpt,
+      logPath,
+      writtenAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    await (0, import_promises9.writeFile)(import_node_path11.default.join(dir, "latest.json"), `${JSON.stringify(meta, null, 2)}
+`, "utf8");
+    return displayLogPath(cwd, logPath);
+  } catch {
+    return null;
+  }
+}
+var import_promises9, import_node_path11, CI_EXCERPT_LINES, CI_EXCERPT_MAX_CHARS, CI_LOG_MAX_BYTES, ANSI_RE, NOISE_LINE;
+var init_ci_failure = __esm({
+  "packages/core/src/ci-failure.ts"() {
+    "use strict";
+    import_promises9 = require("node:fs/promises");
+    import_node_path11 = __toESM(require("node:path"), 1);
+    init_git();
+    CI_EXCERPT_LINES = 8;
+    CI_EXCERPT_MAX_CHARS = 480;
+    CI_LOG_MAX_BYTES = 64 * 1024;
+    ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, "g");
+    NOISE_LINE = /^(?:npm ERR!|pnpm ERR!|ELIFECYCLE|Command failed:|ERROR: command failed|error Command failed)/i;
+  }
+});
+
+// packages/core/src/ci-select.ts
+function normalizeCiPath(filePath) {
+  return filePath.replace(/\\/g, "/").replace(/^\.\//, "");
+}
+function basename(filePath) {
+  const parts = normalizeCiPath(filePath).split("/");
+  return parts[parts.length - 1] ?? filePath;
+}
+function classifyCiPath(filePath) {
+  const p = normalizeCiPath(filePath);
+  const base = basename(p);
+  const lower = p.toLowerCase();
+  if (CONFIG_BASENAMES.has(base) || p.startsWith(".github/") || p.startsWith("scripts/") || /(^|\/)tsconfig(\.[\w-]+)?\.json$/.test(p) || /(^|\/)eslint\.config\./.test(p) || /(^|\/)\.eslintrc/.test(p) || p.endsWith("mcp.json") || p.endsWith("hooks.json") || p.endsWith("plugin.json") || p.includes(".cursor/")) {
+    return "config";
+  }
+  if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(lower) || /(^|\/)__tests__\//.test(p) || /(^|\/)tests?\//.test(p)) {
+    return "test";
+  }
+  if (/\.([cm]?[jt]sx?)$/.test(lower)) return "source";
+  if (/\.(md|txt)$/.test(lower) || p.startsWith("docs/") || /^(readme|license|changelog|authors|roadmap)(\.|$)/i.test(base)) {
+    return "docs";
+  }
+  if (/\.(css|scss|less|html|xml|json|ya?ml)$/.test(lower)) return "style";
+  return "unknown";
+}
+function fullSuite(reason, paths, uncertain) {
+  const mapping = DEFAULT_CI_CHECKS.map((check) => ({ check, reason }));
+  return {
+    checks: [...DEFAULT_CI_CHECKS],
+    reason,
+    mapping,
+    uncertain,
+    changedPaths: paths
+  };
+}
+function selectCiChecks(changedPaths) {
+  const paths = [...new Set(changedPaths.map(normalizeCiPath).filter(Boolean))];
+  if (paths.length === 0) {
+    return fullSuite("no changed paths; running full suite", paths, true);
+  }
+  const kinds = paths.map(classifyCiPath);
+  if (kinds.some((kind) => kind === "unknown")) {
+    return fullSuite("uncertain path mapping; running full suite", paths, true);
+  }
+  if (kinds.some((kind) => kind === "config")) {
+    return fullSuite("config/CI scripts changed; running full suite", paths, false);
+  }
+  const onlyDocsOrStyle = kinds.every((kind) => kind === "docs" || kind === "style");
+  if (onlyDocsOrStyle) {
+    const reason2 = kinds.every((kind) => kind === "docs") ? "docs/markdown-only \u2014 format only, skip lint/test/build" : "docs/style-only \u2014 format only, skip lint/test/build";
+    return {
+      checks: ["format:check"],
+      reason: reason2,
+      mapping: [{ check: "format:check", reason: reason2 }],
+      uncertain: false,
+      changedPaths: paths
+    };
+  }
+  const hasCli = paths.some((p) => p.startsWith("packages/cli/"));
+  const hasCore = paths.some((p) => p.startsWith("packages/core/"));
+  const hasExtension = paths.some((p) => p.startsWith("packages/extension/"));
+  const scope = [hasCli && "cli", hasCore && "core", hasExtension && "extension"].filter(Boolean).join("+") || "source";
+  const reason = `${scope} source/test changed \u2014 format, lint, typecheck, test, build`;
+  return {
+    checks: [...DEFAULT_CI_CHECKS],
+    reason,
+    mapping: DEFAULT_CI_CHECKS.map((check) => ({ check, reason })),
+    uncertain: false,
+    changedPaths: paths
+  };
+}
+function resolveCiCwd(cwd, worktreePath) {
+  if (worktreePath && (0, import_node_fs3.existsSync)(worktreePath)) return worktreePath;
+  return cwd;
+}
+function addSplitPaths(set, raw) {
+  const parts = raw.split("	").filter(Boolean);
+  const file = parts[parts.length - 1];
+  if (file) set.add(normalizeCiPath(file));
+}
+async function changedPathsForCi(cwd, id) {
+  const paths = /* @__PURE__ */ new Set();
+  if (id) {
+    try {
+      for (const file of await getLocalPrNameStatus(cwd, id)) {
+        addSplitPaths(paths, file.path);
+      }
+    } catch {
+    }
+  }
+  try {
+    for (const args of [
+      ["diff", "--name-only", "HEAD"],
+      ["diff", "--name-only", "--cached"],
+      ["ls-files", "-o", "--exclude-standard"]
+    ]) {
+      const result = await git(cwd, args, { allowFail: true });
+      if (result.code !== 0) continue;
+      for (const line of result.stdout.split("\n")) {
+        if (line.trim()) addSplitPaths(paths, line.trim());
+      }
+    }
+  } catch {
+  }
+  return [...paths];
+}
+function envFlag(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || raw === "") return fallback;
+  if (raw === "0" || raw.toLowerCase() === "false") return false;
+  if (raw === "1" || raw.toLowerCase() === "true") return true;
+  return fallback;
+}
+var import_node_fs3, DEFAULT_CI_CHECKS, CONFIG_BASENAMES;
+var init_ci_select = __esm({
+  "packages/core/src/ci-select.ts"() {
+    "use strict";
+    import_node_fs3 = require("node:fs");
+    init_git();
+    init_prs();
+    DEFAULT_CI_CHECKS = ["format:check", "lint", "typecheck", "test", "build"];
+    CONFIG_BASENAMES = /* @__PURE__ */ new Set([
+      "package.json",
+      "pnpm-lock.yaml",
+      "package-lock.json",
+      "yarn.lock",
+      "pnpm-workspace.yaml",
+      "tsconfig.json",
+      "tsconfig.base.json",
+      "eslint.config.mjs",
+      "eslint.config.js",
+      "eslint.config.cjs",
+      ".eslintrc",
+      ".eslintrc.js",
+      ".eslintrc.cjs",
+      ".eslintrc.json",
+      ".prettierrc",
+      ".prettierrc.json",
+      ".prettierignore",
+      "Dockerfile",
+      "docker-compose.yml",
+      "docker-compose.yaml"
+    ]);
+  }
+});
+
 // packages/core/src/ci-runner.ts
 async function getTrackedFiles(cwd) {
   try {
     const { stdout } = await execAsync("git ls-files --exclude-standard", { cwd });
     const files = stdout.trim().split("\n").filter(Boolean);
     const fs = await import("node:fs/promises");
-    const path12 = await import("node:path");
+    const path13 = await import("node:path");
     const validFiles = [];
     const skipFiles = /* @__PURE__ */ new Set([
       ".gitignore",
@@ -2444,8 +2594,8 @@ async function getTrackedFiles(cwd) {
       ".xml"
     ]);
     for (const file of files) {
-      const basename2 = path12.basename(file);
-      const ext = path12.extname(file).toLowerCase();
+      const basename2 = path13.basename(file);
+      const ext = path13.extname(file).toLowerCase();
       if (skipFiles.has(basename2)) {
         continue;
       }
@@ -2453,7 +2603,7 @@ async function getTrackedFiles(cwd) {
         continue;
       }
       try {
-        const fullPath = path12.join(cwd, file);
+        const fullPath = path13.join(cwd, file);
         const stats = await fs.stat(fullPath);
         if (stats.isFile()) {
           validFiles.push(file);
@@ -2644,20 +2794,42 @@ async function runLoopCi(cwd, id, options = {}) {
   const selection = options.selection ?? selectCiChecks(paths);
   const extra = (options.failingChecks ?? []).map((name) => name.trim()).filter(Boolean);
   const checks = options.checks ?? [.../* @__PURE__ */ new Set([...selection.checks, ...extra])];
-  return runCiChecks(ciCwd, { ...options, checks, selection, changedPaths: paths });
+  const controller = new AbortController();
+  const detach = onAbort(options.signal, () => {
+    controller.abort();
+    try {
+      requestCiAbort(cwd, id);
+    } catch {
+    }
+  });
+  const stopWatch = watchCiAbort(cwd, id, controller);
+  try {
+    throwIfAborted(controller.signal);
+    return await runCiChecks(ciCwd, {
+      ...options,
+      checks,
+      selection,
+      changedPaths: paths,
+      signal: controller.signal
+    });
+  } finally {
+    stopWatch();
+    detach();
+  }
 }
-var import_node_child_process3, import_node_util, execAsync;
+var import_node_child_process4, import_node_util, execAsync;
 var init_ci_runner = __esm({
   "packages/core/src/ci-runner.ts"() {
     "use strict";
-    import_node_child_process3 = require("node:child_process");
+    import_node_child_process4 = require("node:child_process");
     import_node_util = require("node:util");
     init_ci_cache();
     init_ci_failure();
     init_ci_select();
+    init_ci_abort();
     init_prs();
     init_progress();
-    execAsync = (0, import_node_util.promisify)(import_node_child_process3.exec);
+    execAsync = (0, import_node_util.promisify)(import_node_child_process4.exec);
   }
 });
 
@@ -2818,13 +2990,44 @@ __export(export_validation_exports, {
 function gateKey(cwd, id, headSha) {
   return `${cwd}\0${id}\0${headSha}`;
 }
+function requestAbortQuiet(cwd, id) {
+  try {
+    requestCiAbort(cwd, id);
+  } catch {
+  }
+}
+function snapshotIsComplete(snap, headSha) {
+  return Boolean(
+    snap && snap.headSha === headSha && snap.evaluatedAt && (snap.status === "ready" || snap.status === "blocked")
+  );
+}
+function shepherdFromSnapshot(snap) {
+  return {
+    status: snap.status === "ready" ? "ready" : "blocked",
+    reasons: snap.reasons,
+    ciPlan: snap.ciPlan ? {
+      checks: snap.ciPlan.checks,
+      reason: snap.ciPlan.reason,
+      mapping: snap.ciPlan.checks.map((check) => ({
+        check,
+        reason: snap.ciPlan?.reason ?? ""
+      })),
+      uncertain: snap.ciPlan.uncertain ?? false,
+      changedPaths: []
+    } : void 0,
+    ciChecks: snap.ciChecks ?? void 0
+  };
+}
 async function evaluateAndStoreExportGate(cwd, id, options = {}) {
   const pr = await getLocalPr(cwd, id);
   const key = gateKey(cwd, id, pr.headSha);
   const existing = inflight.get(key);
   if (existing) {
     const unsub = existing.addListener(options.onProgress);
-    const detach = onAbort(options.signal, () => existing.abort());
+    const detach = onAbort(options.signal, () => {
+      existing.abort();
+      requestAbortQuiet(cwd, id);
+    });
     try {
       return await existing.promise;
     } finally {
@@ -2835,7 +3038,11 @@ async function evaluateAndStoreExportGate(cwd, id, options = {}) {
   const listeners = /* @__PURE__ */ new Set();
   if (options.onProgress) listeners.add(options.onProgress);
   const controller = new AbortController();
-  const detachCaller = onAbort(options.signal, () => controller.abort());
+  const detachCaller = onAbort(options.signal, () => {
+    controller.abort();
+    requestAbortQuiet(cwd, id);
+  });
+  const stopWatch = watchCiAbort(cwd, id, controller);
   const emit = (event) => {
     for (const cb of listeners) cb(event);
   };
@@ -2851,52 +3058,86 @@ async function evaluateAndStoreExportGate(cwd, id, options = {}) {
     }
   };
   const run = (async () => {
-    let result;
+    let lock = await acquireCiLock(cwd, id, pr.headSha, controller.signal);
     try {
-      result = await shepherdStatus(cwd, id, {
-        onProgress: emit,
-        signal: controller.signal
+      while (lock.peerDone) {
+        throwIfAborted(controller.signal);
+        const latest = await getLocalPr(cwd, id);
+        if (snapshotIsComplete(latest.exportGate, pr.headSha)) {
+          return shepherdFromSnapshot(latest.exportGate);
+        }
+        lock.release();
+        lock = await acquireCiLock(cwd, id, pr.headSha, controller.signal);
+      }
+      throwIfAborted(controller.signal);
+      let result;
+      try {
+        result = await shepherdStatus(cwd, id, {
+          onProgress: emit,
+          signal: controller.signal
+        });
+      } catch (err) {
+        if (isAbortError(err) || controller.signal.aborted) throw abortError();
+        result = {
+          status: "blocked",
+          reasons: [
+            {
+              check: "review",
+              message: `Failed to check shepherd status: ${err instanceof Error ? err.message : String(err)}`
+            }
+          ]
+        };
+      }
+      await setLocalPrExportGate(cwd, id, {
+        status: result.status,
+        reasons: result.reasons,
+        headSha: pr.headSha,
+        evaluatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        ciPlan: result.ciPlan ? {
+          checks: result.ciPlan.checks,
+          reason: result.ciPlan.reason,
+          uncertain: result.ciPlan.uncertain
+        } : null,
+        ciChecks: result.ciChecks ?? null
       });
-    } catch (err) {
-      if (isAbortError(err) || controller.signal.aborted) throw abortError();
-      result = {
-        status: "blocked",
-        reasons: [
-          {
-            check: "review",
-            message: `Failed to check shepherd status: ${err instanceof Error ? err.message : String(err)}`
-          }
-        ]
-      };
+      return result;
+    } finally {
+      lock.release();
     }
-    await setLocalPrExportGate(cwd, id, {
-      status: result.status,
-      reasons: result.reasons,
-      headSha: pr.headSha,
-      evaluatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      ciPlan: result.ciPlan ? {
-        checks: result.ciPlan.checks,
-        reason: result.ciPlan.reason,
-        uncertain: result.ciPlan.uncertain
-      } : null,
-      ciChecks: result.ciChecks ?? null
-    });
-    return result;
   })();
   flight.promise = run;
   inflight.set(key, flight);
   try {
     return await run;
   } finally {
+    stopWatch();
     detachCaller();
     inflight.delete(key);
   }
 }
 function abortExportGate(cwd, id, headSha) {
-  const flight = inflight.get(gateKey(cwd, id, headSha));
-  if (!flight) return false;
-  flight.abort();
-  return true;
+  let hit = false;
+  if (headSha) {
+    const flight = inflight.get(gateKey(cwd, id, headSha));
+    if (flight) {
+      flight.abort();
+      hit = true;
+    }
+  } else {
+    const prefix = `${cwd}\0${id}\0`;
+    for (const [key, flight] of inflight) {
+      if (key.startsWith(prefix)) {
+        flight.abort();
+        hit = true;
+      }
+    }
+  }
+  try {
+    requestCiAbort(cwd, id);
+    hit = true;
+  } catch {
+  }
+  return hit;
 }
 function exportGateInFlight(cwd, id, headSha) {
   return inflight.has(gateKey(cwd, id, headSha));
@@ -2924,6 +3165,7 @@ var inflight;
 var init_export_validation = __esm({
   "packages/core/src/export-validation.ts"() {
     "use strict";
+    init_ci_abort();
     init_prs();
     init_shepherd();
     init_progress();
@@ -3048,14 +3290,14 @@ async function claimReview(cwd, id, options = {}) {
 
 // packages/core/src/steward.ts
 var import_promises10 = require("node:fs/promises");
-var import_node_path11 = __toESM(require("node:path"), 1);
+var import_node_path12 = __toESM(require("node:path"), 1);
 init_export_gate();
 init_export_validation();
 init_git();
 init_prs();
 init_store();
 function stewardsFile(dir) {
-  return import_node_path11.default.join(dir, "stewards.json");
+  return import_node_path12.default.join(dir, "stewards.json");
 }
 var emptyMap = () => ({
   updatedAt: (/* @__PURE__ */ new Date(0)).toISOString(),
@@ -3476,6 +3718,7 @@ async function exportLocalPr(cwd, id, options = {}) {
 
 // packages/core/src/index.ts
 init_export_validation();
+init_ci_abort();
 init_progress();
 init_export_gate();
 
@@ -3698,7 +3941,7 @@ async function generateLearningDigest(cwd, options = {}) {
     }
   }
   const topKeywords = Array.from(keywordCounts.entries()).filter(([, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([keyword, count]) => ({ keyword, count }));
-  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path12, count]) => ({ path: path12, count }));
+  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path13, count]) => ({ path: path13, count }));
   const patterns = Array.from(patternCounts.entries()).filter(([, data]) => data.count >= 2).sort((a, b) => b[1].count - a[1].count).slice(0, 10).map(([pattern, data]) => ({
     pattern,
     examples: data.examples,
@@ -3738,8 +3981,8 @@ function formatLearningDigest(summary) {
   if (summary.topFiles.length > 0) {
     lines.push("## Most Commented Files");
     lines.push("");
-    for (const { path: path12, count } of summary.topFiles) {
-      lines.push(`- \`${path12}\` \u2014 ${count} comment(s)`);
+    for (const { path: path13, count } of summary.topFiles) {
+      lines.push(`- \`${path13}\` \u2014 ${count} comment(s)`);
     }
     lines.push("");
   }
@@ -4072,6 +4315,14 @@ async function handleTool(name, args) {
         onProgress: card.onProgress
       });
       return { ...result, progressCard: card.card() };
+    }
+    case "abort_ci": {
+      const aborted = abortExportGate(
+        cwd,
+        String(args.id ?? ""),
+        typeof args.headSha === "string" ? args.headSha : void 0
+      );
+      return { aborted };
     }
     case "shepherd_status": {
       const card = createProgressCardSink((line) => process.stderr.write(`${line}
@@ -4562,7 +4813,7 @@ var tools = [
   },
   {
     name: "run_ci",
-    description: "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; uncertain \u2192 full suite). Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Returns allPassed, checks, selection, and a progressCard for the agent chat. Skip only when the toolchain cannot run \u2014 say so; do not skip a flaky failure.",
+    description: "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; uncertain \u2192 full suite). Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Returns allPassed, checks, selection, and a progressCard for the agent chat. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run \u2014 say so; do not skip a flaky failure.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -4585,8 +4836,24 @@ var tools = [
     }
   },
   {
+    name: "abort_ci",
+    description: "Cancel in-flight implementor preflight or export-gate CI for a loop. Same abort as the loop panel Cancel: bumps the shared abort token under .git/agent-console/ci-abort and stops the in-process gate. Steward MCP and the panel share one suite per id+HEAD.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        cwd: { type: "string" },
+        headSha: {
+          type: "string",
+          description: "Optional. Abort only this HEAD's in-process flight."
+        }
+      }
+    }
+  },
+  {
     name: "shepherd_status",
-    description: "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, gh bind, and smart local CI (path-selected; uncertain \u2192 full suite). Persists the result as the human-export gate. Streams a CI progress card (check names + running/pass/fail) on stderr \u2014 cancel is the same abort as the loop panel. Returns ready or blocked with reasons, ciPlan, ciChecks, and progressCard. Fail-closed: any unknown/missing piece returns blocked.",
+    description: "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, gh bind, and smart local CI (path-selected; uncertain \u2192 full suite). Persists the result as the human-export gate. Streams a CI progress card (check names + running/pass/fail) on stderr \u2014 cancel is abort_ci / loop panel Cancel (shared abort token; one suite per id+HEAD). Returns ready or blocked with reasons, ciPlan, ciChecks, and progressCard. Fail-closed: any unknown/missing piece returns blocked.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -4615,7 +4882,7 @@ var tools = [
   },
   {
     name: "steward_next",
-    description: "Steward flywheel next action for one local PR. Persists optional Task ids, runs the full export gate after Reviewer clear, and returns spawn/resume/handoff. Streams a CI progress card while the gate runs (same abort as the loop panel Cancel). Human-exportable / Push to origin only when the gate is ready (handoff_human). On blocked CI, action is resume_implementor with failingCheck \u2014 then evaluate_export_gate again. Do not auto-spawn a reviewer. Preferred over /watch-inbox + /watch-ready. Omit id to list bindings.",
+    description: "Steward flywheel next action for one local PR. Persists optional Task ids, runs the full export gate after Reviewer clear, and returns spawn/resume/handoff. Streams a CI progress card while the gate runs. Cancel is abort_ci / loop panel Cancel (shared abort token \u2014 one suite per id+HEAD, not a second full run). Human-exportable / Push to origin only when the gate is ready (handoff_human). On blocked CI, action is resume_implementor with failingCheck \u2014 then evaluate_export_gate again. Do not auto-spawn a reviewer. Preferred over /watch-inbox + /watch-ready. Omit id to list bindings.",
     inputSchema: {
       type: "object",
       properties: {

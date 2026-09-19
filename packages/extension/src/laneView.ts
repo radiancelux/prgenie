@@ -34,6 +34,7 @@ import {
   shepherdStatus,
   updateLocalPr,
   exportLocalPr,
+  abortExportGate,
   applyCiProgressEvent,
   emptyCiProgressSnapshot,
   evaluateAndStoreExportGate,
@@ -579,6 +580,9 @@ export class LaneHub implements vscode.Disposable {
     if (msg.type === "cancelProgress") {
       this.exportAbort?.abort();
       this.exportGate.cancel();
+      const cancelCwd = await this.repoCwd({ warn: false });
+      const cancelId = this.selectedId ?? this.liveProgress?.id;
+      if (cancelCwd && cancelId) abortExportGate(cancelCwd, cancelId);
       return;
     }
     if (msg.type === "openTerminal") {
@@ -1199,19 +1203,29 @@ function ciUiScript(): string {
     function escapeHtml(s) {
       return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     }
+    function formatElapsed(ms) {
+      if (ms < 1000) return Math.round(ms) + "ms";
+      return (ms / 1000).toFixed(1) + "s";
+    }
     function bindCiModal() {
-      const modal = document.getElementById("ciModal");
-      const title = document.getElementById("ciModalTitle");
-      const body = document.getElementById("ciModalBody");
-      const close = () => { if (modal) modal.hidden = true; };
+      // Query fresh #ciModal nodes on every open/close. Selecting another loop
+      // rebuilds root.innerHTML (new dialog); capturing the first node once
+      // left clicks/Esc writing to a detached element (RAD-77 AC3).
+      const close = () => {
+        const modal = document.getElementById("ciModal");
+        if (modal) modal.hidden = true;
+      };
       const open = (detail) => {
+        const modal = document.getElementById("ciModal");
+        const title = document.getElementById("ciModalTitle");
+        const body = document.getElementById("ciModalBody");
         if (!modal || !title || !body) return;
         const name = detail.check || "CI check";
         const state = detail.state || "unknown";
         title.textContent = name + " — " + state;
         const parts = [];
         if (detail.reason) parts.push("Why selected: " + detail.reason);
-        if (detail.elapsedMs != null) parts.push("Elapsed: " + detail.elapsedMs + "ms");
+        if (detail.elapsedMs != null) parts.push("Elapsed: " + formatElapsed(detail.elapsedMs));
         if (detail.excerpt) parts.push("Excerpt:\\n" + detail.excerpt);
         if (detail.log) parts.push("Log:\\n" + detail.log);
         if (detail.logPath && !detail.log) parts.push("Log path: " + detail.logPath);
@@ -1226,9 +1240,12 @@ function ciUiScript(): string {
         }
         modal.hidden = false;
       };
-      document.getElementById("ciModalClose")?.addEventListener("click", close);
-      document.getElementById("ciModalBackdrop")?.addEventListener("click", close);
+      document.addEventListener("click", (e) => {
+        const el = e.target && e.target.closest ? e.target.closest("#ciModalClose, #ciModalBackdrop") : null;
+        if (el) close();
+      });
       document.addEventListener("keydown", (e) => {
+        const modal = document.getElementById("ciModal");
         if (e.key === "Escape" && modal && !modal.hidden) close();
       });
       window.addEventListener("message", (event) => {
@@ -1267,7 +1284,7 @@ function ciUiScript(): string {
       for (const name of rows) {
         const row = byName[name] || { name, state: progress && !progress.cancelled ? "queued" : "unknown" };
         const st = row.state || "queued";
-        const elapsed = row.elapsedMs != null ? " · " + row.elapsedMs + "ms" : "";
+        const elapsed = row.elapsedMs != null ? " · " + formatElapsed(row.elapsedMs) : "";
         html += '<li><button type="button" class="ci-check ' + escapeHtml(st) + '" data-check="' + escapeHtml(name) + '" data-state="' + escapeHtml(st) + '" data-excerpt="' + escapeHtml(row.message || "") + '" data-log="' + escapeHtml(row.logPath || "") + '" data-elapsed="' + (row.elapsedMs != null ? row.elapsedMs : "") + '" data-reason="' + escapeHtml(row.reason || reason || "") + '"><span class="st">' + escapeHtml(st) + '</span><span class="name">' + escapeHtml(name) + "</span><span class='muted'>" + elapsed + "</span></button></li>";
       }
       html += "</ul>";
@@ -1929,7 +1946,7 @@ function panelHtml(webview: vscode.Webview): string {
     const vscode = acquireVsCodeApi();
     ${ciUiScript()}
     const root = document.getElementById("root");
-    let ciModalBound = false;
+    bindCiModal();
     const COMPOSER_HINT = ${JSON.stringify(HUMAN_EXPORT_COMPOSER_HINT)};
     const EXPORT_PRIMARY = ${JSON.stringify(HUMAN_EXPORT_PRIMARY_ACTION)};
     let layoutId = null;
@@ -2207,7 +2224,6 @@ function panelHtml(webview: vscode.Webview): string {
       if (Object.prototype.hasOwnProperty.call(msg, "progress")) liveProgress = msg.progress || null;
       if (msg.error) {
         layoutId = null;
-        ciModalBound = false;
         paintedFiles = "";
         paintedComments = "";
         root.innerHTML = '<p class="error"></p>';
@@ -2217,7 +2233,6 @@ function panelHtml(webview: vscode.Webview): string {
       const selected = (msg.prs || []).find((p) => p.id === msg.selectedId);
       if (!selected) {
         layoutId = null;
-        ciModalBound = false;
         paintedFiles = "";
         paintedComments = "";
         const n = msg.archivedCount || 0;
@@ -2299,7 +2314,6 @@ function panelHtml(webview: vscode.Webview): string {
         bindChrome(selected, msg);
         bindFiles();
         bindComments(selected);
-        if (!ciModalBound) { bindCiModal(); ciModalBound = true; }
         const sum = root.querySelector("#sum");
         if (sum) sum.value = selected.body || "";
         root.querySelector("#cmt").value = "";

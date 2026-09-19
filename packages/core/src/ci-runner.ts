@@ -14,6 +14,7 @@ import {
   selectCiChecks,
   type CiCheckSelection,
 } from "./ci-select.js";
+import { requestCiAbort, watchCiAbort } from "./ci-abort.js";
 import { getLocalPr } from "./prs.js";
 import {
   abortError,
@@ -390,5 +391,27 @@ export async function runLoopCi(
   const selection = options.selection ?? selectCiChecks(paths);
   const extra = (options.failingChecks ?? []).map((name) => name.trim()).filter(Boolean);
   const checks = options.checks ?? [...new Set([...selection.checks, ...extra])];
-  return runCiChecks(ciCwd, { ...options, checks, selection, changedPaths: paths });
+  const controller = new AbortController();
+  const detach = onAbort(options.signal, () => {
+    controller.abort();
+    try {
+      requestCiAbort(cwd, id);
+    } catch {
+      // ignore
+    }
+  });
+  const stopWatch = watchCiAbort(cwd, id, controller);
+  try {
+    throwIfAborted(controller.signal);
+    return await runCiChecks(ciCwd, {
+      ...options,
+      checks,
+      selection,
+      changedPaths: paths,
+      signal: controller.signal,
+    });
+  } finally {
+    stopWatch();
+    detach();
+  }
 }

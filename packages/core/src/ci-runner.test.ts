@@ -5,8 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { runCiChecks } from "./ci-runner.js";
+import { abortExportGate } from "./export-validation.js";
+import { runCiChecks, runLoopCi } from "./ci-runner.js";
+import { git } from "./git.js";
 import { isAbortError } from "./progress.js";
+import { createLocalPr } from "./prs.js";
 
 const execAsync = promisify(exec);
 
@@ -1012,6 +1015,94 @@ describe("runCiChecks", () => {
       });
       assert.equal(result.allPassed, true);
       assert.deepEqual(new Set(started), new Set(["lint", "test"]));
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("runLoopCi", () => {
+  async function initGitRepo(): Promise<string> {
+    const tmp = await mkdtemp(join(tmpdir(), "prgenie-loop-ci-"));
+    await git(tmp, ["init", "-b", "main"]);
+    await git(tmp, ["config", "user.email", "test@example.com"]);
+    await git(tmp, ["config", "user.name", "Test"]);
+    await writeFile(join(tmp, "README.md"), "hi\n");
+    await writeFile(
+      join(tmp, "package.json"),
+      JSON.stringify({
+        name: "test-repo",
+        scripts: {
+          "format:check": "exit 0",
+          lint: "exit 0",
+          typecheck: "exit 0",
+          test: "exit 0",
+          build: "exit 0",
+        },
+      }),
+    );
+    await git(tmp, ["add", "."]);
+    await git(tmp, ["commit", "-m", "init"]);
+    return tmp;
+  }
+
+  it("merges failingChecks into the smart-selected set", async () => {
+    const repo = await initGitRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(join(repo, "notes.md"), "docs only\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "docs"]);
+      const pr = await createLocalPr(repo, { title: "Docs", body: "Body", base: "main" });
+      const result = await runLoopCi(repo, pr.id, {
+        failingChecks: ["lint", "test"],
+        skipCache: true,
+        timeout: 5000,
+      });
+      const names = result.checks.map((c) => c.name);
+      assert.ok(names.includes("format:check"), "docs-only still selects format");
+      assert.ok(names.includes("lint"), "failingChecks merge lint");
+      assert.ok(names.includes("test"), "failingChecks merge test");
+      assert.ok(result.selection);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("aborts when abortExportGate bumps the shared token", async () => {
+    const repo = await initGitRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            "format:check": "exit 0",
+            lint: 'node -e "setTimeout(() => {}, 30000)"',
+            typecheck: "exit 0",
+            test: "exit 0",
+            build: "exit 0",
+          },
+        }),
+      );
+      await writeFile(join(repo, "code.ts"), "export const n = 1;\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "code"]);
+      const pr = await createLocalPr(repo, { title: "Code", body: "Body", base: "main" });
+      const started = Date.now();
+      setTimeout(() => abortExportGate(repo, pr.id), 80);
+      await assert.rejects(
+        () =>
+          runLoopCi(repo, pr.id, {
+            checks: ["lint"],
+            skipCache: true,
+            timeout: 30000,
+            parallel: false,
+          }),
+        (err: unknown) => isAbortError(err),
+      );
+      assert.ok(Date.now() - started < 8000);
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

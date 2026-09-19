@@ -47,6 +47,7 @@ test("tools catalog exposes core flywheel tools", () => {
     "bind_steward",
     "steward_next",
     "run_ci",
+    "abort_ci",
   ]) {
     assert.ok(names.has(required), `missing tool ${required}`);
   }

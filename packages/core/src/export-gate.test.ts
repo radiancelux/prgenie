@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { git } from "./git.js";
 import { completeLocalPrReview, createLocalPr, getLocalPr, setLocalPrStatus } from "./prs.js";
 import {
+  abortExportGate,
   evaluateAndStoreExportGate,
   exportGateInFlight,
   validateExport,
@@ -296,6 +297,42 @@ describe("evaluateAndStoreExportGate", () => {
       assert.equal(lintStartsA.length, 1);
       assert.equal(lintStartsB.length, 1);
       assert.equal(exportGateInFlight(repo, pr.id, pr.headSha), false);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("abortExportGate file token cancels another caller without a shared AbortSignal", async () => {
+    const repo = await initRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(join(repo, "test.txt"), "test\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "Add test"]);
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            "format:check": "exit 0",
+            lint: 'node -e "setTimeout(() => {}, 30000)"',
+            typecheck: "exit 0",
+            test: "exit 0",
+            build: "exit 0",
+          },
+        }),
+      );
+      const pr = await createLocalPr(repo, { title: "File abort", body: "Body", base: "main" });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      const started = Date.now();
+      setTimeout(() => abortExportGate(repo, pr.id, pr.headSha), 80);
+      await assert.rejects(
+        () => evaluateAndStoreExportGate(repo, pr.id),
+        (err: unknown) => isAbortError(err),
+      );
+      assert.ok(Date.now() - started < 8000, "file abort should not wait out the check");
+      const stored = await getLocalPr(repo, pr.id);
+      assert.notEqual(stored.exportGate?.status, "ready");
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

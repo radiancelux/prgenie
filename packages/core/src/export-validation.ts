@@ -1,12 +1,15 @@
+import { acquireCiLock, requestCiAbort, watchCiAbort } from "./ci-abort.js";
 import { getLocalPr, setLocalPrExportGate } from "./prs.js";
 import { shepherdStatus, type ShepherdResult } from "./shepherd.js";
 import {
   abortError,
   isAbortError,
   onAbort,
+  throwIfAborted,
   type ProgressCallback,
   type RunProgressOptions,
 } from "./progress.js";
+import type { ExportGateSnapshot } from "./types.js";
 
 export interface ExportValidationResult {
   ok: boolean;
@@ -31,6 +34,46 @@ function gateKey(cwd: string, id: string, headSha: string): string {
   return `${cwd}\0${id}\0${headSha}`;
 }
 
+function requestAbortQuiet(cwd: string, id: string): void {
+  try {
+    requestCiAbort(cwd, id);
+  } catch {
+    // not a git repo / cannot write the token
+  }
+}
+
+function snapshotIsComplete(
+  snap: ExportGateSnapshot | null | undefined,
+  headSha: string,
+): snap is ExportGateSnapshot {
+  return Boolean(
+    snap &&
+    snap.headSha === headSha &&
+    snap.evaluatedAt &&
+    (snap.status === "ready" || snap.status === "blocked"),
+  );
+}
+
+function shepherdFromSnapshot(snap: ExportGateSnapshot): ShepherdResult {
+  return {
+    status: snap.status === "ready" ? "ready" : "blocked",
+    reasons: snap.reasons,
+    ciPlan: snap.ciPlan
+      ? {
+          checks: snap.ciPlan.checks,
+          reason: snap.ciPlan.reason,
+          mapping: snap.ciPlan.checks.map((check) => ({
+            check,
+            reason: snap.ciPlan?.reason ?? "",
+          })),
+          uncertain: snap.ciPlan.uncertain ?? false,
+          changedPaths: [],
+        }
+      : undefined,
+    ciChecks: snap.ciChecks ?? undefined,
+  };
+}
+
 /**
  * Run the same shepherd aggregator export uses, then persist the snapshot
  * so sidebar/CLI human-export UI shares the gate (RAD-71).
@@ -48,7 +91,10 @@ export async function evaluateAndStoreExportGate(
   const existing = inflight.get(key);
   if (existing) {
     const unsub = existing.addListener(options.onProgress);
-    const detach = onAbort(options.signal, () => existing.abort());
+    const detach = onAbort(options.signal, () => {
+      existing.abort();
+      requestAbortQuiet(cwd, id);
+    });
     try {
       return await existing.promise;
     } finally {
@@ -60,7 +106,11 @@ export async function evaluateAndStoreExportGate(
   const listeners = new Set<ProgressCallback>();
   if (options.onProgress) listeners.add(options.onProgress);
   const controller = new AbortController();
-  const detachCaller = onAbort(options.signal, () => controller.abort());
+  const detachCaller = onAbort(options.signal, () => {
+    controller.abort();
+    requestAbortQuiet(cwd, id);
+  });
+  const stopWatch = watchCiAbort(cwd, id, controller);
   const emit: ProgressCallback = (event) => {
     for (const cb of listeners) cb(event);
   };
@@ -78,39 +128,54 @@ export async function evaluateAndStoreExportGate(
   };
 
   const run = (async () => {
-    let result: ShepherdResult;
+    let lock = await acquireCiLock(cwd, id, pr.headSha, controller.signal);
     try {
-      result = await shepherdStatus(cwd, id, {
-        onProgress: emit,
-        signal: controller.signal,
+      while (lock.peerDone) {
+        throwIfAborted(controller.signal);
+        const latest = await getLocalPr(cwd, id);
+        if (snapshotIsComplete(latest.exportGate, pr.headSha)) {
+          return shepherdFromSnapshot(latest.exportGate);
+        }
+        lock.release();
+        lock = await acquireCiLock(cwd, id, pr.headSha, controller.signal);
+      }
+      throwIfAborted(controller.signal);
+      let result: ShepherdResult;
+      try {
+        result = await shepherdStatus(cwd, id, {
+          onProgress: emit,
+          signal: controller.signal,
+        });
+      } catch (err) {
+        if (isAbortError(err) || controller.signal.aborted) throw abortError();
+        result = {
+          status: "blocked",
+          reasons: [
+            {
+              check: "review",
+              message: `Failed to check shepherd status: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+        };
+      }
+      await setLocalPrExportGate(cwd, id, {
+        status: result.status,
+        reasons: result.reasons,
+        headSha: pr.headSha,
+        evaluatedAt: new Date().toISOString(),
+        ciPlan: result.ciPlan
+          ? {
+              checks: result.ciPlan.checks,
+              reason: result.ciPlan.reason,
+              uncertain: result.ciPlan.uncertain,
+            }
+          : null,
+        ciChecks: result.ciChecks ?? null,
       });
-    } catch (err) {
-      if (isAbortError(err) || controller.signal.aborted) throw abortError();
-      result = {
-        status: "blocked",
-        reasons: [
-          {
-            check: "review",
-            message: `Failed to check shepherd status: ${err instanceof Error ? err.message : String(err)}`,
-          },
-        ],
-      };
+      return result;
+    } finally {
+      lock.release();
     }
-    await setLocalPrExportGate(cwd, id, {
-      status: result.status,
-      reasons: result.reasons,
-      headSha: pr.headSha,
-      evaluatedAt: new Date().toISOString(),
-      ciPlan: result.ciPlan
-        ? {
-            checks: result.ciPlan.checks,
-            reason: result.ciPlan.reason,
-            uncertain: result.ciPlan.uncertain,
-          }
-        : null,
-      ciChecks: result.ciChecks ?? null,
-    });
-    return result;
   })();
 
   flight.promise = run;
@@ -118,16 +183,41 @@ export async function evaluateAndStoreExportGate(
   try {
     return await run;
   } finally {
+    stopWatch();
     detachCaller();
     inflight.delete(key);
   }
 }
 
-export function abortExportGate(cwd: string, id: string, headSha: string): boolean {
-  const flight = inflight.get(gateKey(cwd, id, headSha));
-  if (!flight) return false;
-  flight.abort();
-  return true;
+/**
+ * Cancel in-process gate CI and bump the file abort token so MCP `run_ci` /
+ * `shepherd_status` / `steward_next` (other processes) stop too. Panel Cancel
+ * and MCP `abort_ci` share this path.
+ */
+export function abortExportGate(cwd: string, id: string, headSha?: string): boolean {
+  let hit = false;
+  if (headSha) {
+    const flight = inflight.get(gateKey(cwd, id, headSha));
+    if (flight) {
+      flight.abort();
+      hit = true;
+    }
+  } else {
+    const prefix = `${cwd}\0${id}\0`;
+    for (const [key, flight] of inflight) {
+      if (key.startsWith(prefix)) {
+        flight.abort();
+        hit = true;
+      }
+    }
+  }
+  try {
+    requestCiAbort(cwd, id);
+    hit = true;
+  } catch {
+    // ignore write failures — in-memory abort still counts
+  }
+  return hit;
 }
 
 export function exportGateInFlight(cwd: string, id: string, headSha: string): boolean {
