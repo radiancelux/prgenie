@@ -52,12 +52,14 @@ import {
   type LocalPrStatus,
 } from "@prgenie/core";
 
+import { writeSync } from "node:fs";
 import { encodeMcpFrame, takeMcpMessages } from "./mcp-stdio.js";
 
 type Json = Record<string, unknown>;
 
 function writeMessage(msg: Json): void {
-  process.stdout.write(encodeMcpFrame(msg));
+  // writeSync so Windows piped stdout is not block-buffered (Connecting… / 0 tools).
+  writeSync(1, encodeMcpFrame(msg));
 }
 
 function ok(id: unknown, result: unknown): void {

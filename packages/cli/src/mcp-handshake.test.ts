@@ -52,6 +52,7 @@ test("Cursor-style NDJSON initialize lists steward tools (RAD-82)", async () => 
     throw new Error(`timeout waiting for NDJSON MCP message. stdout=${JSON.stringify(preview)}`);
   };
 
+  const started = Date.now();
   try {
     send({
       jsonrpc: "2.0",
@@ -88,6 +89,8 @@ test("Cursor-style NDJSON initialize lists steward tools (RAD-82)", async () => 
     const names = new Set(tools.map((t) => t.name));
     assert.ok(names.has("steward_next"), "missing steward_next");
     assert.ok(names.has("bind_steward"), "missing bind_steward");
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 2000, `tools/list smoke took ${elapsed}ms (want <2s)`);
   } finally {
     child.kill("SIGTERM");
   }

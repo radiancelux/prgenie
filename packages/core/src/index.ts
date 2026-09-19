@@ -131,6 +131,7 @@ export {
   pinPluginMcpJson,
   sameNameCollision,
   stripBom,
+  windowsStdioSpawn,
 } from "./plugin-mcp.js";
 export type { McpFile, McpJsonInspection, McpServerEntry } from "./plugin-mcp.js";
 export {

@@ -62,7 +62,7 @@ pnpm link-extension
 Then:
 
 1. **CLI** — `pnpm cli --help` or `node packages/cli/dist/prgenie.cjs list`
-2. **Cursor Plugin** (rules, `/local-pr`, MCP) — `link-plugin` copies to `%USERPROFILE%\.cursor\plugins\local\prgenie`. A reload often **does not** refresh the MCP tool list. In **Customize → Plugins**, turn PR Genie **off and on**. Plugin MCP is **`prgenie`**. This repo's `.cursor/mcp.json` is **`prgenie-dev`** (live `packages/plugin/mcp/server.cjs`) — enable **one** name, not both as `prgenie`, or Local can stick on Connecting….
+2. **Cursor Plugin** (rules, `/local-pr`, MCP) — `link-plugin` copies to `%USERPROFILE%\.cursor\plugins\local\prgenie`. A reload often **does not** refresh the MCP tool list. In **Customize → Plugins**, turn PR Genie **off and on**. **Canonical MCP is the plugin** (`prgenie`). Do not add a workspace `.cursor/mcp.json` named `prgenie` — Connected MCPs will show two rows (tag Plugin + tag folder, e.g. pr-genie) and Local can stick on Connecting…. Enable **only one** `prgenie` entry.
 3. **Sidebar / Local PRs** — that is a **VS Code extension**, not the plugin. `link-plugin` does not update it. Run `pnpm link-extension`, then **quit Cursor fully and reopen** (or F5 `Run PR Genie Extension` for a debug host).
 
 `link-plugin` pins MCP `command` to this machine's `node.exe` and `server.cjs` to the plugin folder (UTF-8, no BOM) so Cursor does not look for `mcp/server.cjs` in the workspace root.

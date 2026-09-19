@@ -25,15 +25,16 @@ if (!name || !servers[name]) {
   process.exit(1);
 }
 
+const nodeCommand = process.execPath;
+const useCmd = process.platform === "win32" && /\s/.test(nodeCommand);
 servers[name] = {
   ...servers[name],
   type: "stdio",
-  command: process.execPath,
-  args: [serverPath],
+  command: useCmd ? "cmd" : nodeCommand,
+  args: useCmd ? ["/c", nodeCommand, serverPath] : [serverPath],
 };
 cfg.mcpServers = servers;
 
 writeFileSync(mcpPath, `${JSON.stringify(cfg, null, 2)}\n`, { encoding: "utf8" });
 console.log(`Pinned MCP ${name}:`);
-console.log(`  ${process.execPath}`);
-console.log(`  ${serverPath}`);
+console.log(`  ${servers[name].command} ${servers[name].args.join(" ")}`);

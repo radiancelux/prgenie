@@ -169,30 +169,24 @@ export async function runDoctor(cwd: string, options?: { home?: string }): Promi
     ? installedInspect.names
     : (sourceInspect?.names ?? []);
   const workspaceNames = workspaceInspect?.names ?? [];
-  if (sameNameCollision(workspaceNames, pluginNames)) {
+  if (sameNameCollision(workspaceNames, pluginNames) || workspaceNames.includes(PRGENIE_MCP_NAME)) {
     checks.push({
       id: "mcp-duplicate",
       ok: false,
-      summary: `Workspace .cursor/mcp.json and the plugin both register "${PRGENIE_MCP_NAME}". Dual same-name can leave Configure → Local on Connecting… (0 tools).`,
-      fix: "Keep the plugin entry. Rename the workspace server (this repo uses prgenie-dev) or remove .cursor/mcp.json while the plugin is enabled. Then disable/enable PR Genie.",
-    });
-  } else if (workspaceNames.includes(PRGENIE_MCP_NAME)) {
-    checks.push({
-      id: "mcp-duplicate",
-      ok: true,
-      summary: `Workspace MCP registers ${PRGENIE_MCP_NAME} (plugin not installed — that is the live-reload path).`,
+      summary: `Workspace .cursor/mcp.json registers "${PRGENIE_MCP_NAME}" (same name as the plugin). Connected MCPs shows two disabled/enabled prgenie rows (tag Plugin + tag <folder, e.g. pr-genie>). Dual same-name can leave Local on Connecting… (0 tools).`,
+      fix: "Dogfood path is the plugin only. Delete .cursor/mcp.json (do not ship it) or rename the workspace server. Then disable/enable PR Genie — enable only one prgenie entry.",
     });
   } else if (workspaceNames.length) {
     checks.push({
       id: "mcp-duplicate",
       ok: true,
-      summary: `Workspace MCP server(s) ${workspaceNames.join(", ")} do not collide with plugin ${PRGENIE_MCP_NAME}.`,
+      summary: `Workspace MCP ${workspaceNames.join(", ")} is extra (Cursor tags it with the folder name). Dogfood: enable only plugin prgenie.`,
     });
   } else {
     checks.push({
       id: "mcp-duplicate",
       ok: true,
-      summary: "No workspace .cursor/mcp.json colliding with plugin prgenie.",
+      summary: "Plugin prgenie is the only shipped MCP (no workspace .cursor/mcp.json).",
     });
   }
 

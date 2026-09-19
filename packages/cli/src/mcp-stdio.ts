@@ -60,15 +60,21 @@ export function takeMcpMessages(buffer: Buffer): { messages: unknown[]; rest: Bu
 
     if (rest[0] === 0x7b /* { */) {
       const nl = rest.indexOf(0x0a);
-      if (nl === -1) break;
-      const line = rest.subarray(0, nl).toString("utf8").replace(/\r$/, "").trim();
-      rest = rest.subarray(nl + 1);
-      if (!line) continue;
-      try {
-        messages.push(JSON.parse(line));
-      } catch {
-        // skip malformed NDJSON line
+      if (nl !== -1) {
+        const line = rest.subarray(0, nl).toString("utf8").replace(/\r$/, "").trim();
+        rest = rest.subarray(nl + 1);
+        if (!line) continue;
+        try {
+          messages.push(JSON.parse(line));
+        } catch {
+          // skip malformed NDJSON line
+        }
+        continue;
       }
+      const complete = takeCompleteJsonObject(rest);
+      if (!complete) break;
+      messages.push(complete.value);
+      rest = complete.rest;
       continue;
     }
 
@@ -78,4 +84,48 @@ export function takeMcpMessages(buffer: Buffer): { messages: unknown[]; rest: Bu
   }
 
   return { messages, rest };
+}
+
+/** Cursor may write initialize without a trailing newline. Brace-match one object. */
+export function takeCompleteJsonObject(buffer: Buffer): { value: unknown; rest: Buffer } | null {
+  if (buffer.length === 0 || buffer[0] !== 0x7b) return null;
+  const text = buffer.toString("utf8");
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (inStr) {
+      if (esc) {
+        esc = false;
+        continue;
+      }
+      if (ch === "\\") {
+        esc = true;
+        continue;
+      }
+      if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        const slice = text.slice(0, i + 1);
+        try {
+          return {
+            value: JSON.parse(slice),
+            rest: buffer.subarray(Buffer.byteLength(slice, "utf8")),
+          };
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
 }

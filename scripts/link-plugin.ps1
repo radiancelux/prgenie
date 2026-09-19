@@ -31,4 +31,4 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "Installed Cursor plugin (real copy, not a junction):"
 Write-Host "  $dest"
 Write-Host "Reload is often not enough for MCP tools. In Customize → Plugins, disable and re-enable PR Genie."
-Write-Host "If Configure → Local stays on Connecting…, disable workspace MCP prgenie (keep the plugin) and see docs/troubleshooting.md."
+Write-Host "Canonical MCP is this plugin (prgenie). Delete leftover .cursor/mcp.json if Connected MCPs shows two prgenie rows. See docs/troubleshooting.md."

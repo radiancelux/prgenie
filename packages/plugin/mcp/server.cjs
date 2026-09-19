@@ -4005,6 +4005,9 @@ init_ci_select();
 init_ci_failure();
 init_ci_cache();
 
+// packages/cli/src/mcp.ts
+var import_node_fs4 = require("node:fs");
+
 // packages/cli/src/mcp-stdio.ts
 function encodeMcpFrame(msg) {
   return Buffer.from(`${JSON.stringify(msg)}
@@ -4052,14 +4055,20 @@ function takeMcpMessages(buffer) {
     }
     if (rest[0] === 123) {
       const nl2 = rest.indexOf(10);
-      if (nl2 === -1) break;
-      const line = rest.subarray(0, nl2).toString("utf8").replace(/\r$/, "").trim();
-      rest = rest.subarray(nl2 + 1);
-      if (!line) continue;
-      try {
-        messages.push(JSON.parse(line));
-      } catch {
+      if (nl2 !== -1) {
+        const line = rest.subarray(0, nl2).toString("utf8").replace(/\r$/, "").trim();
+        rest = rest.subarray(nl2 + 1);
+        if (!line) continue;
+        try {
+          messages.push(JSON.parse(line));
+        } catch {
+        }
+        continue;
       }
+      const complete = takeCompleteJsonObject(rest);
+      if (!complete) break;
+      messages.push(complete.value);
+      rest = complete.rest;
       continue;
     }
     const nl = rest.indexOf(10);
@@ -4068,10 +4077,52 @@ function takeMcpMessages(buffer) {
   }
   return { messages, rest };
 }
+function takeCompleteJsonObject(buffer) {
+  if (buffer.length === 0 || buffer[0] !== 123) return null;
+  const text = buffer.toString("utf8");
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) {
+        esc = false;
+        continue;
+      }
+      if (ch === "\\") {
+        esc = true;
+        continue;
+      }
+      if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        const slice = text.slice(0, i + 1);
+        try {
+          return {
+            value: JSON.parse(slice),
+            rest: buffer.subarray(Buffer.byteLength(slice, "utf8"))
+          };
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
 
 // packages/cli/src/mcp.ts
 function writeMessage(msg) {
-  process.stdout.write(encodeMcpFrame(msg));
+  (0, import_node_fs4.writeSync)(1, encodeMcpFrame(msg));
 }
 function ok(id, result) {
   writeMessage({ jsonrpc: "2.0", id, result });

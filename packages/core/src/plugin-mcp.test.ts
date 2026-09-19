@@ -12,6 +12,7 @@ import {
   pinPluginMcpJson,
   sameNameCollision,
   stripBom,
+  windowsStdioSpawn,
 } from "./plugin-mcp.js";
 
 let dir = "";
@@ -71,6 +72,16 @@ test("sameNameCollision is only plugin + workspace both named prgenie", () => {
   assert.equal(sameNameCollision(["prgenie"], []), false);
 });
 
+test("windowsStdioSpawn wraps Program Files node.exe in cmd /c", () => {
+  const spaced = "C:/Program Files/nodejs/node.exe";
+  const wrapped = windowsStdioSpawn(spaced, "C:/plugin/mcp/server.cjs", "win32");
+  assert.equal(wrapped.command, "cmd");
+  assert.deepEqual(wrapped.args, ["/c", spaced, "C:/plugin/mcp/server.cjs"]);
+  const unix = windowsStdioSpawn("/usr/bin/node", "/plugin/mcp/server.cjs", "linux");
+  assert.equal(unix.command, "/usr/bin/node");
+  assert.deepEqual(unix.args, ["/plugin/mcp/server.cjs"]);
+});
+
 test("pinPluginMcpJson writes stdio + absolute node + absolute server (no BOM)", async () => {
   const pluginRoot = path.join(dir, "prgenie");
   await mkdir(path.join(pluginRoot, "mcp"), { recursive: true });
@@ -99,6 +110,22 @@ test("pinPluginMcpJson writes stdio + absolute node + absolute server (no BOM)",
   const inspect = inspectMcpJson(Buffer.from(pinned, "utf8"));
   assert.equal(inspect.hasBom, false);
   assert.equal(inspect.unresolvedPluginRoot, false);
+
+  const winPinned = pinPluginMcpJson(
+    JSON.stringify({
+      mcpServers: { prgenie: { command: "node", args: ["${PLUGIN_ROOT}/mcp/server.cjs"] } },
+    }),
+    {
+      pluginRoot,
+      nodeCommand: "C:/Program Files/nodejs/node.exe",
+      platform: "win32",
+    },
+  );
+  const win = JSON.parse(winPinned) as {
+    mcpServers: { prgenie: { command: string; args: string[] } };
+  };
+  assert.equal(win.mcpServers.prgenie.command, "cmd");
+  assert.equal(win.mcpServers.prgenie.args[0], "/c");
 });
 
 test("pin-plugin-mcp.mjs writes UTF-8 without BOM and pins execPath", async () => {

@@ -85,9 +85,26 @@ export function inspectMcpJson(raw: Buffer | string): McpJsonInspection {
   }
 }
 
+/** Cursor on Windows splits unquoted command paths at spaces (Program Files). */
+export function windowsStdioSpawn(
+  nodeCommand: string,
+  serverPath: string,
+  platform: NodeJS.Platform = process.platform,
+): { command: string; args: string[] } {
+  if (platform === "win32" && /\s/.test(nodeCommand)) {
+    return { command: "cmd", args: ["/c", nodeCommand, serverPath] };
+  }
+  return { command: nodeCommand, args: [serverPath] };
+}
+
 export function pinPluginMcpJson(
   raw: string,
-  opts: { pluginRoot: string; nodeCommand: string; serverName?: string },
+  opts: {
+    pluginRoot: string;
+    nodeCommand: string;
+    serverName?: string;
+    platform?: NodeJS.Platform;
+  },
 ): string {
   const cfg = parseMcpJson(raw);
   const servers = cfg.mcpServers ?? {};
@@ -97,11 +114,13 @@ export function pinPluginMcpJson(
     throw new Error("pinPluginMcpJson: no mcpServers entry to pin");
   }
   const serverPath = path.join(opts.pluginRoot, "mcp", "server.cjs").split(path.sep).join("/");
+  const platform = opts.platform ?? process.platform;
+  const spawn = windowsStdioSpawn(opts.nodeCommand, serverPath, platform);
   servers[name] = {
     ...servers[name],
     type: "stdio",
-    command: opts.nodeCommand,
-    args: [serverPath],
+    command: spawn.command,
+    args: spawn.args,
   };
   cfg.mcpServers = servers;
   return `${JSON.stringify(cfg, null, 2)}\n`;
@@ -114,5 +133,5 @@ export function sameNameCollision(a: string[], b: string[], name = PRGENIE_MCP_N
 export function commandLooksRunnable(command: string | undefined): boolean {
   if (!command) return false;
   if (path.isAbsolute(command)) return existsSync(command);
-  return command === "node" || command === "node.exe";
+  return command === "node" || command === "node.exe" || command === "cmd" || command === "cmd.exe";
 }
