@@ -4,22 +4,22 @@ Start with `prgenie doctor` from any worktree of the repo. It reports the checks
 
 ## `prgenie doctor` checks
 
-| id                 | Meaning                                               | Typical fix                                                                     |
-| ------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `git`              | Not inside a git repo                                 | `cd` into a PR Genie checkout                                                   |
-| `plugin-install`   | No Cursor plugin at `~/.cursor/plugins/local/prgenie` | `pnpm build && pnpm link-plugin`, then disable/enable the plugin                |
-| `plugin-stale`     | Installed `mcp/server.cjs` hash ≠ repo build          | Same as above — **reload alone often keeps a stale MCP tool list**              |
-| `extension`        | Local PRs extension missing or wrong version          | `pnpm build && pnpm link-extension`, then **quit Cursor fully and reopen**      |
-| `watch`            | Export-halt record in `watch.json`                    | Informational — export halt only; listen is removed                             |
-| `corrupt-prs`      | Unparsable JSON under `.git/agent-console/prs/`       | Inspect or delete listed files; `listLocalPrs` skips them silently              |
-| `orphan-worktrees` | `.loops/<id>` worktree with no live local PR          | `git worktree remove <path>` (or reopen/delete the matching loop)               |
-| `gh-bind`          | Repo unbound (or no `gh` accounts)                    | `gh auth login`, then `prgenie gh use <login>`                                  |
-| `package-versions` | Monorepo package.json / local VSIX version skew       | Align versions; `pnpm build && pnpm pack:extension` (see [Release](release.md)) |
-| `legacy-push-gate` | Old `push-gate.mjs` still on disk                     | Delete it (superseded by `github-gate.cjs`) and re-run `pnpm link-plugin`       |
-| `mcp-config`       | Installed plugin `mcp.json` invalid, UTF-8 BOM, or `${PLUGIN_ROOT}` | `pnpm link-plugin` (rewrites UTF-8 no BOM + absolute `node` + `server.cjs`) |
-| `mcp-duplicate`    | Workspace `.cursor/mcp.json` and the plugin both name `prgenie` | Rename workspace server to `prgenie-dev` (or remove it) while the plugin is on |
-| `mcp-node`         | Plugin MCP `command` is missing / not a real file     | `pnpm link-plugin` pins `node.exe`; or set an absolute Node path               |
-| `ci-failure-log`   | Last shepherd/export CI failure (informational)       | Open the path or `prgenie shepherd <id> --verbose`                              |
+| id                 | Meaning                                                             | Typical fix                                                                     |
+| ------------------ | ------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `git`              | Not inside a git repo                                               | `cd` into a PR Genie checkout                                                   |
+| `plugin-install`   | No Cursor plugin at `~/.cursor/plugins/local/prgenie`               | `pnpm build && pnpm link-plugin`, then disable/enable the plugin                |
+| `plugin-stale`     | Installed `mcp/server.cjs` hash ≠ repo build                        | Same as above — **reload alone often keeps a stale MCP tool list**              |
+| `extension`        | Local PRs extension missing or wrong version                        | `pnpm build && pnpm link-extension`, then **quit Cursor fully and reopen**      |
+| `watch`            | Export-halt record in `watch.json`                                  | Informational — export halt only; listen is removed                             |
+| `corrupt-prs`      | Unparsable JSON under `.git/agent-console/prs/`                     | Inspect or delete listed files; `listLocalPrs` skips them silently              |
+| `orphan-worktrees` | `.loops/<id>` worktree with no live local PR                        | `git worktree remove <path>` (or reopen/delete the matching loop)               |
+| `gh-bind`          | Repo unbound (or no `gh` accounts)                                  | `gh auth login`, then `prgenie gh use <login>`                                  |
+| `package-versions` | Monorepo package.json / local VSIX version skew                     | Align versions; `pnpm build && pnpm pack:extension` (see [Release](release.md)) |
+| `legacy-push-gate` | Old `push-gate.mjs` still on disk                                   | Delete it (superseded by `github-gate.cjs`) and re-run `pnpm link-plugin`       |
+| `mcp-config`       | Installed plugin `mcp.json` invalid, UTF-8 BOM, or `${PLUGIN_ROOT}` | `pnpm link-plugin` (rewrites UTF-8 no BOM + absolute `node` + `server.cjs`)     |
+| `mcp-duplicate`    | Workspace `.cursor/mcp.json` and the plugin both name `prgenie`     | Rename workspace server to `prgenie-dev` (or remove it) while the plugin is on  |
+| `mcp-node`         | Plugin MCP `command` is missing / not a real file                   | `pnpm link-plugin` pins `node.exe`; or set an absolute Node path                |
+| `ci-failure-log`   | Last shepherd/export CI failure (informational)                     | Open the path or `prgenie shepherd <id> --verbose`                              |
 
 Example FAIL line:
 

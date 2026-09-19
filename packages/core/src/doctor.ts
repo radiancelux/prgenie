@@ -46,10 +46,7 @@ async function hashFile(file: string): Promise<string | null> {
   }
 }
 
-export async function runDoctor(
-  cwd: string,
-  options?: { home?: string },
-): Promise<DoctorReport> {
+export async function runDoctor(cwd: string, options?: { home?: string }): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
   const root = await findGitRoot(cwd);
   if (!root) {

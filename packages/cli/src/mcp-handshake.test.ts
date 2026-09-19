@@ -26,7 +26,7 @@ test("Cursor-style NDJSON initialize lists steward tools (RAD-82)", async () => 
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
   });
-  let stdout = Buffer.alloc(0);
+  let stdout: Buffer = Buffer.alloc(0);
   child.stdout.on("data", (chunk: Buffer) => {
     stdout = Buffer.concat([stdout, chunk]);
   });

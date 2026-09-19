@@ -92,8 +92,7 @@ export function pinPluginMcpJson(
   const cfg = parseMcpJson(raw);
   const servers = cfg.mcpServers ?? {};
   const name =
-    opts.serverName ??
-    (servers[PRGENIE_MCP_NAME] ? PRGENIE_MCP_NAME : Object.keys(servers)[0]);
+    opts.serverName ?? (servers[PRGENIE_MCP_NAME] ? PRGENIE_MCP_NAME : Object.keys(servers)[0]);
   if (!name || !servers[name]) {
     throw new Error("pinPluginMcpJson: no mcpServers entry to pin");
   }
