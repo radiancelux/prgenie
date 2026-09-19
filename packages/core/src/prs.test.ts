@@ -367,7 +367,11 @@ test("reviewer Task is requested once per loop HEAD", async () => {
   const notified = await markReviewerNotified(repo, pr.id);
   assert.equal(shouldSpawnReviewer(notified), false);
   assert.equal(notified.reviewerNotifiedSha, notified.headSha);
-  assert.match(formatSpawnReviewer(ready), /claim_review/);
+  const spawnCopy = formatSpawnReviewer(ready);
+  assert.match(spawnCopy, /\/loop/);
+  assert.match(spawnCopy, /Do not claim_review/);
+  assert.match(spawnCopy, /Do not Task a reviewer/);
+  assert.doesNotMatch(spawnCopy, /Then Task one generalPurpose reviewer/);
 });
 
 test("a loop whose branch is not checked out gets a sibling worktree", async () => {

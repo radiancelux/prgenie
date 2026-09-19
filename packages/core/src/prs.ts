@@ -529,8 +529,8 @@ export function formatSpawnReviewer(pr: LocalPr): string {
   return [
     `PR Genie: local PR ${pr.id} ("${pr.title}") on ${pr.headRef} is ready.`,
     'That is the review request. add_comment role=agent "Review requested." if you have not already. Do not git push.',
-    "You are the implementor. Do not review this loop yourself. /loop (steward) Tasks the reviewer when ready.",
-    "If you are covering review in this conversation because no steward exists, claim_review / prgenie claim-review for this id+headSha first — skip if already_claimed (one in-flight reviewer per HEAD). Then Task one generalPurpose reviewer for this id. Do not sit waiting on them.",
+    "You are the implementor. Do not review this loop yourself. Do not claim_review. Do not Task a reviewer.",
+    "Review is steward-only: /loop Tasks a /review leaf. If no steward is driving this loop, tell the user to run /loop — do not DIY a twin reviewer.",
   ].join("\n");
 }
 
