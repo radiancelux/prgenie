@@ -1,6 +1,7 @@
 {
   "mcpServers": {
-    "prgenie": {
+    "prgenie-dev": {
+      "type": "stdio",
       "command": "node",
       "args": ["${workspaceFolder}/packages/plugin/mcp/server.cjs"]
     }

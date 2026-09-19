@@ -4007,11 +4007,8 @@ init_ci_cache();
 
 // packages/cli/src/mcp-stdio.ts
 function encodeMcpFrame(msg) {
-  const body = Buffer.from(JSON.stringify(msg), "utf8");
-  const header = Buffer.from(`Content-Length: ${body.length}\r
-\r
-`, "ascii");
-  return Buffer.concat([header, body]);
+  return Buffer.from(`${JSON.stringify(msg)}
+`, "utf8");
 }
 function headerEnd(buffer) {
   const crlf = buffer.indexOf("\r\n\r\n");

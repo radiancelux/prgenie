@@ -1,9 +1,11 @@
-/** MCP stdio is LSP-style Content-Length frames (UTF-8 byte counts), not NDJSON. */
+/**
+ * Official MCP stdio is one compact JSON-RPC object per line (no Content-Length).
+ * Cursor's Windows host reads line-delimited JSON; LSP-style headers left Local
+ * on Connecting… forever (RAD-82) because the JSON body had no trailing newline.
+ */
 
 export function encodeMcpFrame(msg: unknown): Buffer {
-  const body = Buffer.from(JSON.stringify(msg), "utf8");
-  const header = Buffer.from(`Content-Length: ${body.length}\r\n\r\n`, "ascii");
-  return Buffer.concat([header, body]);
+  return Buffer.from(`${JSON.stringify(msg)}\n`, "utf8");
 }
 
 function headerEnd(buffer: Buffer): number {
@@ -22,7 +24,7 @@ function contentLengthOf(headers: string): number | null {
 
 /**
  * Pull complete JSON-RPC messages off a byte buffer.
- * Prefers Content-Length; falls back to newline-delimited JSON for old clients.
+ * Official clients send NDJSON; still accept Content-Length from older hosts.
  */
 export function takeMcpMessages(buffer: Buffer): { messages: unknown[]; rest: Buffer } {
   const messages: unknown[] = [];

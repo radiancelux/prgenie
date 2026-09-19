@@ -16,6 +16,9 @@ Start with `prgenie doctor` from any worktree of the repo. It reports the checks
 | `gh-bind`          | Repo unbound (or no `gh` accounts)                    | `gh auth login`, then `prgenie gh use <login>`                                  |
 | `package-versions` | Monorepo package.json / local VSIX version skew       | Align versions; `pnpm build && pnpm pack:extension` (see [Release](release.md)) |
 | `legacy-push-gate` | Old `push-gate.mjs` still on disk                     | Delete it (superseded by `github-gate.cjs`) and re-run `pnpm link-plugin`       |
+| `mcp-config`       | Installed plugin `mcp.json` invalid, UTF-8 BOM, or `${PLUGIN_ROOT}` | `pnpm link-plugin` (rewrites UTF-8 no BOM + absolute `node` + `server.cjs`) |
+| `mcp-duplicate`    | Workspace `.cursor/mcp.json` and the plugin both name `prgenie` | Rename workspace server to `prgenie-dev` (or remove it) while the plugin is on |
+| `mcp-node`         | Plugin MCP `command` is missing / not a real file     | `pnpm link-plugin` pins `node.exe`; or set an absolute Node path               |
 | `ci-failure-log`   | Last shepherd/export CI failure (informational)       | Open the path or `prgenie shepherd <id> --verbose`                              |
 
 Example FAIL line:
@@ -33,8 +36,30 @@ FAIL  plugin-stale — Installed MCP server (…) differs from repo build (…).
 
 1. From the monorepo: `pnpm build` then `pnpm link-plugin`.
 2. In **Customize → Plugins**, turn PR Genie **off and on** (Developer: Reload Window is not enough for the MCP tool list).
-3. This repo's `.cursor/mcp.json` can point at live `packages/plugin/mcp/server.cjs` — approve it if Cursor prompts.
-4. `link-plugin` pins MCP `server.cjs` to the plugin folder so Cursor does not look for `mcp/server.cjs` in the workspace root.
+3. Workspace MCP is **`prgenie-dev`** (live `packages/plugin/mcp/server.cjs`). The plugin server is **`prgenie`**. Enable **one** of them — same-name dual registration can hang Local on Connecting….
+4. `link-plugin` pins MCP `server.cjs` + `node.exe` in the copied plugin folder (UTF-8, no BOM) so Cursor does not look for `mcp/server.cjs` in the workspace root.
+
+## Sticky Connecting… / 0 tools (Windows)
+
+**Symptoms:** Customize → Plugins → Configure prgenie → **Environments → Local: Connecting…** forever. Background MCPs list shows `prgenie` with **0 tools enabled**. `/loop` cannot see `steward_next` / `bind_steward`. Manual `node packages/plugin/mcp/server.cjs` sits quietly (that only proves the process starts — it is not a handshake).
+
+**What we verified (RAD-82):**
+
+1. **Stdio framing (root cause).** Official MCP stdio is **newline-delimited JSON**. This server used to reply with LSP `Content-Length` headers and **no trailing newline** after the JSON body. Cursor's Windows host reads one JSON line; it never saw a complete `initialize` result, so the UI stayed on Connecting… with 0 tools. Absolute `node.exe` in `.cursor/mcp.json` could not fix that.
+2. **`${PLUGIN_ROOT}` is not expanded** in Cursor. Use `${CURSOR_PLUGIN_ROOT}` in plugin `mcp.json`. `link-plugin` still pins an absolute `server.cjs` path as a fallback.
+3. **Dual same-name `prgenie`.** Plugin MCP + workspace `.cursor/mcp.json` both named `prgenie` merge into one Configure dialog (plugin source + Local environment). This repo's workspace server is now **`prgenie-dev`** so the plugin entry can win.
+4. **UTF-8 BOM.** Windows PowerShell `Set-Content -Encoding utf8` writes a BOM. `JSON.parse` rejects it. `pin-plugin-mcp.mjs` writes UTF-8 without a BOM.
+5. **`node` vs `node.exe`.** Cursor launched from the Start menu may not inherit PATH. `link-plugin` sets `command` to `process.execPath` (`…\nodejs\node.exe`).
+
+**Diagnosis path:**
+
+1. `prgenie doctor` — look at `mcp-config`, `mcp-duplicate`, `mcp-node`, `plugin-stale`.
+2. Output panel → **MCP Logs** (Ctrl+Shift+U). Spawn errors (`ENOENT node`, bad path) vs silence (handshake never completed — upgrade / rebuild).
+3. Confirm only **one** healthy `prgenie` source: plugin **or** workspace, not both with the same name.
+4. `pnpm build && pnpm link-plugin`, then Customize → Plugins → PR Genie **off/on**. Quit Cursor fully if Windows still holds the old `server.cjs`.
+5. If you need live-reload without re-link: enable **`prgenie-dev`** and disable the plugin MCP (or vice versa).
+
+`where.exe node` succeeding and a quiet manual `node …\server.cjs` do **not** prove Cursor completed `initialize` / `tools/list`.
 
 ## Extension not refreshing
 
@@ -97,11 +122,12 @@ If `packages/plugin/hooks/push-gate.mjs` exists, doctor fails `legacy-push-gate`
 
 1. `prgenie doctor`
 2. Stale plugin → build + `link-plugin` + disable/enable
-3. Stale sidebar → `link-extension` + full quit
-4. Orchestration → `/loop` (`prgenie steward <id>`). Listen is gone.
-5. Export halt stuck → archive/missing export id, or create next loop (export resume only)
-6. Wrong GitHub user → `prgenie gh use <login>`
-7. Bad packet → inspect `.git/agent-console/prs/<id>.json`
+3. Sticky Connecting… / 0 tools → `mcp-config` / `mcp-duplicate` / `mcp-node` + Output → MCP Logs (see above)
+4. Stale sidebar → `link-extension` + full quit
+5. Orchestration → `/loop` (`prgenie steward <id>`). Listen is gone.
+6. Export halt stuck → archive/missing export id, or create next loop (export resume only)
+7. Wrong GitHub user → `prgenie gh use <login>`
+8. Bad packet → inspect `.git/agent-console/prs/<id>.json`
 
 ## See also
 

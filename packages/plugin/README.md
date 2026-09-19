@@ -8,7 +8,7 @@ This folder is a Cursor Plugin (`/.cursor-plugin/plugin.json`). After `pnpm buil
 pnpm link-plugin
 ```
 
-`mcp.json` uses `${PLUGIN_ROOT}/mcp/server.cjs`. Cursor currently resolves a relative `./mcp/server.cjs` against the **workspace**, which 404s. `link-plugin` rewrites the installed copy to an absolute path.
+`mcp.json` uses `${CURSOR_PLUGIN_ROOT}/mcp/server.cjs` (Cursor does **not** expand `${PLUGIN_ROOT}`). A relative `./mcp/server.cjs` resolves against the **workspace**, which 404s. `link-plugin` rewrites the installed copy to an absolute `node.exe` + `server.cjs` (UTF-8, no BOM). Workspace `.cursor/mcp.json` is `prgenie-dev` so it does not collide with plugin `prgenie`.
 
 Then **Developer: Reload Window** is not enough for MCP tools (Cursor caches the first tool list). In **Customize → Plugins**, disable and re-enable PR Genie. Confirm:
 

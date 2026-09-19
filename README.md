@@ -20,7 +20,7 @@ When a **subagent** finishes with commits, PR Genie drafts a loop and puts it on
 
 **How to dogfood the agent flywheel** (preferred):
 
-1. **Refresh the plugin** so MCP lists `steward_next` / `bind_steward`: `pnpm build && pnpm link-plugin`, then Customize → Plugins → PR Genie off/on. If those tools are missing, wait/retry — do not implement in the `/loop` chat.
+1. **Refresh the plugin** so MCP lists `steward_next` / `bind_steward`: `pnpm build && pnpm link-plugin`, then Customize → Plugins → PR Genie off/on. If Configure → Local stays on **Connecting…** (0 tools), see [Troubleshooting — sticky Connecting](docs/troubleshooting.md#sticky-connecting--0-tools-windows). Do not implement in the `/loop` chat.
 2. **`/loop`** with a ticket URL or brief. You are talking to the **steward**. It creates the packet, Tasks an implementor, then a reviewer, resumes the same implementor on `changes_requested`, and runs the export gate.
 3. **Push to origin** only when the steward says `handoff_human` (or the loop panel shows Push to origin). Run `/export` or **Open on GitHub**.
 
@@ -62,10 +62,10 @@ pnpm link-extension
 Then:
 
 1. **CLI** — `pnpm cli --help` or `node packages/cli/dist/prgenie.cjs list`
-2. **Cursor Plugin** (rules, `/local-pr`, MCP) — `link-plugin` copies to `%USERPROFILE%\.cursor\plugins\local\prgenie`. A reload often **does not** refresh the MCP tool list. In **Customize → Plugins**, turn PR Genie **off and on**. This repo also has `.cursor/mcp.json` so the workspace MCP is the live `packages/plugin/mcp/server.cjs` (approve it if Cursor prompts).
+2. **Cursor Plugin** (rules, `/local-pr`, MCP) — `link-plugin` copies to `%USERPROFILE%\.cursor\plugins\local\prgenie`. A reload often **does not** refresh the MCP tool list. In **Customize → Plugins**, turn PR Genie **off and on**. Plugin MCP is **`prgenie`**. This repo's `.cursor/mcp.json` is **`prgenie-dev`** (live `packages/plugin/mcp/server.cjs`) — enable **one** name, not both as `prgenie`, or Local can stick on Connecting….
 3. **Sidebar / Local PRs** — that is a **VS Code extension**, not the plugin. `link-plugin` does not update it. Run `pnpm link-extension`, then **quit Cursor fully and reopen** (or F5 `Run PR Genie Extension` for a debug host).
 
-`link-plugin` pins MCP `server.cjs` to the plugin folder so Cursor does not look for `mcp/server.cjs` in the workspace root.
+`link-plugin` pins MCP `command` to this machine's `node.exe` and `server.cjs` to the plugin folder (UTF-8, no BOM) so Cursor does not look for `mcp/server.cjs` in the workspace root.
 
 ## CLI
 
@@ -113,7 +113,7 @@ prgenie gh use <login>
 prgenie mcp
 ```
 
-`prgenie doctor` checks plugin/extension freshness, monorepo/VSIX version alignment, export-halt state, corrupt PR files, orphaned `.loops` worktrees, `gh` bind, legacy hooks, and the last shepherd CI failure log (when present). On CI failure, toast/CLI name the check and a short excerpt; `prgenie shepherd <id> --verbose` prints the capped full log under `.git/agent-console/ci-logs/`. Agent orchestration is `/loop` (`prgenie steward` / MCP `steward_next`): one steward per loop, durable Task ids in `.git/agent-console/stewards.json`, export gate before Push to origin. `prgenie watch start|stop|listen` hard-errors and points at `/loop`. `prgenie claim-review` / MCP `claim_review` is the durable one-reviewer-per-HEAD lock.
+`prgenie doctor` checks plugin/extension freshness, MCP config (BOM / `${PLUGIN_ROOT}` / duplicate `prgenie` name / pinned `node`), monorepo/VSIX version alignment, export-halt state, corrupt PR files, orphaned `.loops` worktrees, `gh` bind, legacy hooks, and the last shepherd CI failure log (when present). On CI failure, toast/CLI name the check and a short excerpt; `prgenie shepherd <id> --verbose` prints the capped full log under `.git/agent-console/ci-logs/`. Agent orchestration is `/loop` (`prgenie steward` / MCP `steward_next`): one steward per loop, durable Task ids in `.git/agent-console/stewards.json`, export gate before Push to origin. `prgenie watch start|stop|listen` hard-errors and points at `/loop`. `prgenie claim-review` / MCP `claim_review` is the durable one-reviewer-per-HEAD lock.
 
 Bind a GitHub login per repo (`prgenie gh use <login>`). Before `git push` / `gh`, PR Genie switches `gh` to that account. `gh auth` is global — only one account is active at a time — so the bind is how this project stays on `radiancelux` instead of `ccc-radiancelux`.
 
