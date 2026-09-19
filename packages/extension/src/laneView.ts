@@ -1,4 +1,4 @@
-import { watch, type FSWatcher } from "node:fs";
+import { existsSync, watch, type FSWatcher } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
 import {
@@ -34,10 +34,14 @@ import {
   shepherdStatus,
   updateLocalPr,
   exportLocalPr,
+  abortExportGate,
+  applyCiProgressEvent,
+  emptyCiProgressSnapshot,
   evaluateAndStoreExportGate,
   displayShepherdStatus,
   formatProgressStep,
   isAbortError,
+  readCiFailureLog,
   HUMAN_EXPORT_COMPOSER_HINT,
   HUMAN_EXPORT_DISMISS_ACTION,
   HUMAN_EXPORT_PRIMARY_ACTION,
@@ -93,6 +97,16 @@ type ClientMessage =
   | { type: "export"; id: string }
   | { type: "cancelProgress" }
   | { type: "retryProgress"; id: string }
+  | { type: "openTerminal"; id: string }
+  | {
+      type: "openCiDetail";
+      check: string;
+      state?: string;
+      excerpt?: string;
+      logPath?: string;
+      elapsedMs?: number;
+      reason?: string;
+    }
   | { type: "showArchived"; value: boolean }
   | { type: "ghBind"; login: string }
   | { type: "ghRefresh" };
@@ -112,6 +126,16 @@ type GhBindSnapshot = {
 
 type SidebarPr = LocalPr & { humanExport: HumanExportUi };
 
+type LiveCheck = {
+  name: string;
+  state: string;
+  elapsedMs?: number;
+  command?: string;
+  message?: string;
+  logPath?: string;
+  reason?: string;
+};
+
 type LiveProgress = {
   id: string;
   kind: "gate" | "export";
@@ -126,6 +150,8 @@ type LiveProgress = {
   cancellable: boolean;
   failed?: boolean;
   cancelled?: boolean;
+  checks?: LiveCheck[];
+  selectionReason?: string;
 };
 
 type Snapshot = {
@@ -146,6 +172,8 @@ type Snapshot = {
   ghBind?: GhBindSnapshot;
   shepherdStatus?: ShepherdResult | null;
   progress?: LiveProgress | null;
+  ciPlan?: { checks: string[]; reason: string } | null;
+  ciChecks?: LiveCheck[] | null;
 };
 
 export class LaneHub implements vscode.Disposable {
@@ -186,6 +214,7 @@ export class LaneHub implements vscode.Disposable {
       }).then(() => undefined),
     onStart: (id) => {
       if (this.exportBusy) return;
+      this.ciSnap = emptyCiProgressSnapshot();
       this.setLiveProgress({
         id,
         kind: "gate",
@@ -223,6 +252,7 @@ export class LaneHub implements vscode.Disposable {
   });
   private exportReadyPromptInFlight = false;
   private liveProgress: LiveProgress | null = null;
+  private ciSnap = emptyCiProgressSnapshot();
   private exportBusy = false;
   private exportAbort: AbortController | null = null;
 
@@ -381,6 +411,7 @@ export class LaneHub implements vscode.Disposable {
   }
 
   private emitProgress(kind: "gate" | "export", id: string, event: ProgressEvent): void {
+    this.ciSnap = applyCiProgressEvent(this.ciSnap, event);
     this.setLiveProgress({
       id,
       kind,
@@ -394,6 +425,8 @@ export class LaneHub implements vscode.Disposable {
       elapsedMs: event.elapsedMs,
       cancellable: true,
       failed: event.state === "fail",
+      checks: this.ciSnap.checks,
+      selectionReason: this.ciSnap.selectionReason,
     });
   }
 
@@ -438,6 +471,7 @@ export class LaneHub implements vscode.Disposable {
       }
       const ac = new AbortController();
       this.exportAbort = ac;
+      this.ciSnap = emptyCiProgressSnapshot();
       this.setLiveProgress({
         id,
         kind: "export",
@@ -546,6 +580,44 @@ export class LaneHub implements vscode.Disposable {
     if (msg.type === "cancelProgress") {
       this.exportAbort?.abort();
       this.exportGate.cancel();
+      const cancelCwd = await this.repoCwd({ warn: false });
+      const cancelId = this.selectedId ?? this.liveProgress?.id;
+      if (cancelCwd && cancelId) abortExportGate(cancelCwd, cancelId);
+      return;
+    }
+    if (msg.type === "openTerminal") {
+      const termCwd = await this.repoCwd();
+      if (!termCwd) return;
+      const termPrs = await listLocalPrs(termCwd);
+      const termPr = termPrs.find((p) => p.id === msg.id);
+      if (!termPr?.worktreePath || !existsSync(termPr.worktreePath)) {
+        void vscode.window.showErrorMessage(
+          `Loop worktree is missing${termPr ? ` (${termPr.id})` : ""}. Switch to this loop to recreate it.`,
+        );
+        return;
+      }
+      const term = vscode.window.createTerminal({ name: termPr.id, cwd: termPr.worktreePath });
+      term.show(true);
+      return;
+    }
+    if (msg.type === "openCiDetail") {
+      const detailCwd = await this.repoCwd({ warn: false });
+      let log = "";
+      if (detailCwd && msg.logPath) {
+        log = (await readCiFailureLog(detailCwd, msg.logPath)) ?? "";
+      }
+      for (const view of this.views.values()) {
+        void view.webview.postMessage({
+          type: "ciDetail",
+          check: msg.check,
+          state: msg.state ?? "",
+          excerpt: msg.excerpt ?? "",
+          log,
+          logPath: msg.logPath ?? "",
+          elapsedMs: msg.elapsedMs,
+          reason: msg.reason ?? "",
+        });
+      }
       return;
     }
     if (msg.type === "retryProgress") {
@@ -753,7 +825,7 @@ export class LaneHub implements vscode.Disposable {
         ].join(" ");
         await vscode.env.clipboard.writeText(prompt);
         void vscode.window.showInformationMessage(
-          "Review prompt copied. Paste it in a new chat or run /review-local-pr.",
+          "Review prompt copied. Paste it in a new chat or run /review.",
         );
       } else if (msg.type === "openFolder") {
         const prs = await listLocalPrs(cwd);
@@ -929,6 +1001,15 @@ export class LaneHub implements vscode.Disposable {
           ghBind,
           shepherdStatus: shepherd,
           progress: this.liveProgress,
+          ciPlan: selected?.exportGate?.ciPlan ?? null,
+          ciChecks: (selected?.exportGate?.ciChecks ?? []).map((c) => ({
+            name: c.name,
+            state: c.skipped ? "skip" : c.passed ? "pass" : "fail",
+            elapsedMs: c.elapsedMs,
+            message: c.excerpt,
+            logPath: c.logPath,
+            reason: c.reason,
+          })),
         },
         force,
       );
@@ -963,6 +1044,8 @@ function snapshotKey(payload: Snapshot | { type: "snapshot"; error: string; prs:
     ghBind: "ghBind" in payload ? payload.ghBind : null,
     shepherdStatus: "shepherdStatus" in payload ? payload.shepherdStatus : null,
     progress: "progress" in payload ? payload.progress : null,
+    ciPlan: "ciPlan" in payload ? payload.ciPlan : null,
+    ciChecks: "ciChecks" in payload ? payload.ciChecks : null,
     prs: payload.prs,
   });
 }
@@ -1007,6 +1090,69 @@ function sharedCss(): string {
       color: var(--vscode-errorForeground);
       outline: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
     }
+    button.success {
+      background: color-mix(in srgb, var(--vscode-charts-green, #2ea043) 22%, transparent);
+      color: var(--vscode-gitDecoration-addedResourceForeground, var(--vscode-charts-green, #2ea043));
+      outline: 1px solid var(--vscode-charts-green, #2ea043);
+    }
+    button.resolve-btn {
+      background: color-mix(in srgb, var(--vscode-textLink-foreground, var(--vscode-focusBorder)) 16%, transparent);
+      color: var(--vscode-textLink-foreground, var(--vscode-focusBorder));
+      outline: 1px solid var(--vscode-focusBorder, var(--vscode-textLink-foreground));
+    }
+    button.needs-action {
+      background: color-mix(in srgb, var(--vscode-editorWarning-foreground, var(--vscode-charts-orange, #e2b203)) 18%, transparent);
+      color: var(--vscode-editorWarning-foreground, var(--vscode-charts-orange, #e2b203));
+      outline: 1px solid var(--vscode-editorWarning-foreground, var(--vscode-charts-orange, #e2b203));
+    }
+    .role.open {
+      background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #e2b203) 22%, var(--vscode-badge-background));
+    }
+    .role.addressed {
+      background: color-mix(in srgb, var(--vscode-charts-green, #2ea043) 22%, var(--vscode-badge-background));
+    }
+    .role.resolved {
+      background: color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff) 18%, var(--vscode-badge-background));
+    }
+    .ci-card {
+      margin: 6px 0;
+      padding: 8px;
+      border: 1px solid var(--vscode-widget-border, rgba(127,127,127,0.35));
+      font-size: 11px;
+    }
+    .ci-card-why { color: var(--vscode-descriptionForeground); margin-bottom: 6px; }
+    .ci-checks { list-style: none; margin: 0; padding: 0; }
+    .ci-check {
+      display: flex; gap: 8px; align-items: baseline;
+      padding: 3px 0; cursor: pointer; background: none; border: none;
+      color: inherit; width: 100%; text-align: left; font: inherit;
+    }
+    .ci-check:hover { background: var(--vscode-list-hoverBackground); }
+    .ci-check .name { text-decoration: underline; text-underline-offset: 2px; }
+    .ci-check.pass .name { color: var(--vscode-charts-green, #2ea043); }
+    .ci-check.fail .name { color: var(--vscode-errorForeground); }
+    .ci-check.running .name, .ci-check.start .name { color: var(--vscode-editorWarning-foreground, #e2b203); }
+    .ci-check .st { text-transform: uppercase; letter-spacing: 0.04em; font-size: 9px; min-width: 52px; }
+    .ci-modal {
+      position: fixed; inset: 0; z-index: 20;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .ci-modal[hidden] { display: none; }
+    .ci-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+    .ci-modal-card {
+      position: relative;
+      width: min(520px, calc(100% - 24px));
+      max-height: min(70vh, 480px);
+      overflow: auto;
+      background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+      color: var(--vscode-foreground);
+      border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+      padding: 12px;
+    }
+    .ci-modal-card header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .ci-modal-card h2 { margin: 0; font-size: 13px; flex: 1; }
+    .ci-modal-body { white-space: pre-wrap; font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; }
+    .ci-empty { color: var(--vscode-descriptionForeground); }
     .status {
       font-size: 10px;
       letter-spacing: 0.06em;
@@ -1036,6 +1182,125 @@ function sharedCss(): string {
     }
     .shepherd-progress { padding-left: 50px; }
     .run-progress .step, .shepherd-progress .step { flex: 1; min-width: 0; }
+  `;
+}
+
+function ciModalHtml(): string {
+  return `<div id="ciModal" class="ci-modal" hidden role="dialog" aria-modal="true" aria-labelledby="ciModalTitle">
+      <div class="ci-modal-backdrop" id="ciModalBackdrop"></div>
+      <div class="ci-modal-card">
+        <header>
+          <h2 id="ciModalTitle">CI check</h2>
+          <button type="button" class="secondary" id="ciModalClose">Close</button>
+        </header>
+        <div id="ciModalBody" class="ci-modal-body"></div>
+      </div>
+    </div>`;
+}
+
+function ciUiScript(): string {
+  return `
+    function escapeHtml(s) {
+      return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+    function formatElapsed(ms) {
+      if (ms < 1000) return Math.round(ms) + "ms";
+      return (ms / 1000).toFixed(1) + "s";
+    }
+    function bindCiModal() {
+      // Query fresh #ciModal nodes on every open/close. Selecting another loop
+      // rebuilds root.innerHTML (new dialog); capturing the first node once
+      // left clicks/Esc writing to a detached element (RAD-77 AC3).
+      const close = () => {
+        const modal = document.getElementById("ciModal");
+        if (modal) modal.hidden = true;
+      };
+      const open = (detail) => {
+        const modal = document.getElementById("ciModal");
+        const title = document.getElementById("ciModalTitle");
+        const body = document.getElementById("ciModalBody");
+        if (!modal || !title || !body) return;
+        const name = detail.check || "CI check";
+        const state = detail.state || "unknown";
+        title.textContent = name + " — " + state;
+        const parts = [];
+        if (detail.reason) parts.push("Why selected: " + detail.reason);
+        if (detail.elapsedMs != null) parts.push("Elapsed: " + formatElapsed(detail.elapsedMs));
+        if (detail.excerpt) parts.push("Excerpt:\\n" + detail.excerpt);
+        if (detail.log) parts.push("Log:\\n" + detail.log);
+        if (detail.logPath && !detail.log) parts.push("Log path: " + detail.logPath);
+        if (!parts.length) {
+          if (state === "start" || state === "running" || state === "queued") {
+            body.innerHTML = '<p class="ci-empty">Still running — no log yet. Wait for a pass/fail, or cancel from the panel.</p>';
+          } else {
+            body.innerHTML = '<p class="ci-empty">No excerpt or log for this check. Cached or skipped runs have no failure output.</p>';
+          }
+        } else {
+          body.textContent = parts.join("\\n\\n");
+        }
+        modal.hidden = false;
+      };
+      document.addEventListener("click", (e) => {
+        const el = e.target && e.target.closest ? e.target.closest("#ciModalClose, #ciModalBackdrop") : null;
+        if (el) close();
+      });
+      document.addEventListener("keydown", (e) => {
+        const modal = document.getElementById("ciModal");
+        if (e.key === "Escape" && modal && !modal.hidden) close();
+      });
+      window.addEventListener("message", (event) => {
+        if (event.data && event.data.type === "ciDetail") open(event.data);
+      });
+      return { open, close };
+    }
+    function renderCiCard(host, progress, plan, stored) {
+      if (!host) return;
+      const reason = (progress && progress.selectionReason) || (plan && plan.reason) || "";
+      const live = (progress && progress.checks) || [];
+      const names = (live.length ? live.map((c) => c.name) : null)
+        || (plan && plan.checks)
+        || (stored && stored.map((c) => c.name))
+        || [];
+      if (!names.length && !reason && !(progress && (progress.state === "start" || progress.phase === "ci"))) {
+        host.hidden = true;
+        host.innerHTML = "";
+        return;
+      }
+      host.hidden = false;
+      const rows = names.length ? names : ["(waiting)"];
+      const byName = {};
+      for (const row of live) byName[row.name] = row;
+      for (const row of stored || []) {
+        if (!byName[row.name]) byName[row.name] = {
+          name: row.name,
+          state: row.skipped ? "skip" : (row.passed ? "pass" : "fail"),
+          elapsedMs: row.elapsedMs,
+          message: row.excerpt,
+          logPath: row.logPath,
+          reason: row.reason,
+        };
+      }
+      let html = '<div class="ci-card-why">' + escapeHtml(reason || "CI checks") + "</div><ul class='ci-checks'>";
+      for (const name of rows) {
+        const row = byName[name] || { name, state: progress && !progress.cancelled ? "queued" : "unknown" };
+        const st = row.state || "queued";
+        const elapsed = row.elapsedMs != null ? " · " + formatElapsed(row.elapsedMs) : "";
+        html += '<li><button type="button" class="ci-check ' + escapeHtml(st) + '" data-check="' + escapeHtml(name) + '" data-state="' + escapeHtml(st) + '" data-excerpt="' + escapeHtml(row.message || "") + '" data-log="' + escapeHtml(row.logPath || "") + '" data-elapsed="' + (row.elapsedMs != null ? row.elapsedMs : "") + '" data-reason="' + escapeHtml(row.reason || reason || "") + '"><span class="st">' + escapeHtml(st) + '</span><span class="name">' + escapeHtml(name) + "</span><span class='muted'>" + elapsed + "</span></button></li>";
+      }
+      html += "</ul>";
+      host.innerHTML = html;
+      for (const btn of host.querySelectorAll(".ci-check[data-check]")) {
+        btn.onclick = () => vscode.postMessage({
+          type: "openCiDetail",
+          check: btn.getAttribute("data-check"),
+          state: btn.getAttribute("data-state"),
+          excerpt: btn.getAttribute("data-excerpt"),
+          logPath: btn.getAttribute("data-log") || undefined,
+          elapsedMs: btn.getAttribute("data-elapsed") ? Number(btn.getAttribute("data-elapsed")) : undefined,
+          reason: btn.getAttribute("data-reason") || undefined,
+        });
+      }
+    }
   `;
 }
 
@@ -1195,12 +1460,16 @@ function laneHtml(webview: vscode.Webview): string {
         <span class="step" id="shepherdStep"></span>
       </div>
       <div class="shepherd-reasons" id="shepherdReasons"></div>
+      <div class="ci-card" id="ciCard" hidden></div>
     </div>
+    ${ciModalHtml()}
     <div class="meta-top"><span class="dot off" id="dot"></span><span class="muted" id="meta">Watching</span><button type="button" class="secondary" id="archivedToggle">Show archived</button></div>
   </div>
   <div id="list"></div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    ${ciUiScript()}
+    bindCiModal();
     const list = document.getElementById("list");
     const toggle = document.getElementById("archivedToggle");
     const watchBox = document.getElementById("watch");
@@ -1408,10 +1677,22 @@ function laneHtml(webview: vscode.Webview): string {
         for (const reason of shepherd.reasons) {
           const reasonEl = document.createElement('div');
           reasonEl.className = 'shepherd-reason';
-          reasonEl.innerHTML = '<span class="check">' + escapeHtml(reason.check) + '</span><span class="message">' + escapeHtml(reason.message) + '</span>';
+          const checkName = (reason.message || "").match(/CI check failed:\\s+([^\\s—]+)/);
+          const label = checkName ? checkName[1] : reason.check;
+          reasonEl.innerHTML = '<button type="button" class="ci-check ' + (reason.check === "ci" ? "fail" : "") + '" data-check="' + escapeHtml(label) + '" data-state="fail" data-excerpt="' + escapeHtml(reason.message) + '"><span class="check">' + escapeHtml(label) + '</span></button><span class="message">' + escapeHtml(reason.message) + '</span>';
           shepherdReasons.appendChild(reasonEl);
+          const btn = reasonEl.querySelector(".ci-check");
+          if (btn) {
+            btn.onclick = () => vscode.postMessage({
+              type: "openCiDetail",
+              check: btn.getAttribute("data-check"),
+              state: "fail",
+              excerpt: reason.message,
+            });
+          }
         }
       }
+      renderCiCard(document.getElementById("ciCard"), progress, msg.ciPlan, msg.ciChecks);
     }
     function prRow(id) {
       const el = document.createElement("div");
@@ -1663,7 +1944,9 @@ function panelHtml(webview: vscode.Webview): string {
   <div id="root"></div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    ${ciUiScript()}
     const root = document.getElementById("root");
+    bindCiModal();
     const COMPOSER_HINT = ${JSON.stringify(HUMAN_EXPORT_COMPOSER_HINT)};
     const EXPORT_PRIMARY = ${JSON.stringify(HUMAN_EXPORT_PRIMARY_ACTION)};
     let layoutId = null;
@@ -1703,6 +1986,8 @@ function panelHtml(webview: vscode.Webview): string {
         btn.onclick = () => vscode.postMessage({ type: "status", id: selected.id, status: btn.getAttribute("data-s") });
       }
       root.querySelector("#openWt").onclick = () => vscode.postMessage({ type: "openFolder", id: selected.id });
+      const openTerm = root.querySelector("#openTerminal");
+      if (openTerm) openTerm.onclick = () => vscode.postMessage({ type: "openTerminal", id: selected.id });
       root.querySelector("#copyReview").onclick = () => vscode.postMessage({ type: "copyReviewPrompt", id: selected.id });
       root.querySelector("#openDiffs").onclick = () => vscode.postMessage({ type: "openDiffs" });
       const exp = root.querySelector("#exportPr");
@@ -1851,6 +2136,12 @@ function panelHtml(webview: vscode.Webview): string {
           runBox.hidden = true;
         }
       }
+      renderCiCard(root.querySelector("#ciCard"), progress, msg.ciPlan, msg.ciChecks);
+      const openTermBtn = root.querySelector("#openTerminal");
+      if (openTermBtn) {
+        openTermBtn.disabled = archived || !selected.worktreePath;
+        openTermBtn.title = selected.worktreePath ? "Open a terminal in this loop worktree" : "Worktree path missing";
+      }
       const complete = root.querySelector("#completeReview");
       if (complete) {
         complete.hidden = !ready;
@@ -1966,19 +2257,19 @@ function panelHtml(webview: vscode.Webview): string {
           ? '<button type="button" class="loc secondary" data-path="' + esc(c.path) + '" data-line="' + (c.line || "") + '">' + esc(c.path) + (c.line ? ":" + c.line : "") + "</button>"
           : "";
         const manage = !archivedView && st === "open" && (c.role === "human" || c.role === "reviewer")
-          ? '<button type="button" class="edit secondary" data-cid="' + esc(c.id) + '">Edit</button><button type="button" class="delete-c secondary" data-cid="' + esc(c.id) + '">Delete</button>'
+          ? '<button type="button" class="edit secondary" data-cid="' + esc(c.id) + '" title="Edit finding">Edit</button><button type="button" class="delete-c danger" data-cid="' + esc(c.id) + '" title="Delete finding">Delete</button>'
           : "";
         const action = archivedView
           ? ""
           : st === "open" && (c.role === "human" || c.role === "reviewer")
-            ? '<button type="button" class="address secondary" data-cid="' + esc(c.id) + '">Addressed</button>'
+            ? '<button type="button" class="address success" data-cid="' + esc(c.id) + '" title="Mark addressed">Addressed</button>'
             : st === "addressed"
-              ? '<button type="button" class="resolve secondary" data-cid="' + esc(c.id) + '">Resolve</button>'
+              ? '<button type="button" class="resolve resolve-btn" data-cid="' + esc(c.id) + '" title="Resolve finding">Resolve</button>'
               : "";
         const replies = (t.replies || []).map((r) =>
           '<div class="reply"><div class="who muted"><span class="role">' + esc(roleLabel(r.role)) + "</span>" + esc(r.author || "agent") + " · " + esc(new Date(r.createdAt).toLocaleString()) + '</div><div class="body">' + esc(r.body) + "</div></div>"
         ).join("");
-        return '<div class="thread ' + esc(st) + '"><div class="who muted"><span class="role">' + esc(roleLabel(c.role)) + '</span><span class="role">' + esc(st) + "</span>" + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + loc + manage + action + '</div><div class="body">' + esc(c.body) + "</div>" + (replies ? '<div class="replies">' + replies + "</div>" : "") + "</div>";
+        return '<div class="thread ' + esc(st) + '"><div class="who muted"><span class="role">' + esc(roleLabel(c.role)) + '</span><span class="role ' + esc(st) + '">' + esc(st === "open" ? "open — needs action" : st) + "</span>" + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + loc + manage + action + '</div><div class="body">' + esc(c.body) + "</div>" + (replies ? '<div class="replies">' + replies + "</div>" : "") + "</div>";
       }).join("") || '<p class="muted empty">No comments yet</p>';
       if (!reuse) {
         paintedFiles = "";
@@ -1994,6 +2285,7 @@ function panelHtml(webview: vscode.Webview): string {
           '<button type="button" class="secondary" id="cancelProgress">Cancel</button>',
           '<button type="button" class="secondary" id="retryProgress" hidden>Retry CI</button>',
           '</div>',
+          '<div class="ci-card" id="ciCard" hidden></div>',
           '<div class="actions">',
           '<button id="exportPr" class="cta">' + EXPORT_PRIMARY + '</button>',
           '<button class="secondary" id="completeReview">Complete review</button>',
@@ -2003,6 +2295,7 @@ function panelHtml(webview: vscode.Webview): string {
           '<button class="secondary" id="archivePr" data-s="approved">Archive locally</button>',
           '<button class="secondary" id="copyReview">Copy review prompt</button>',
           '<button class="secondary" id="openWt"></button>',
+          '<button class="secondary" id="openTerminal">Open terminal</button>',
           '<button class="secondary" id="renamePr">Rename</button>',
           '<button class="secondary" id="reopenPr">Reopen</button>',
           '<span class="spacer"></span>',
@@ -2013,7 +2306,8 @@ function panelHtml(webview: vscode.Webview): string {
           '<div class="body">',
           '<div class="files"><h2>Changes (' + where + ')</h2><div id="flist">' + fileHtml + '</div><p class="muted empty">Click a file to open the VS Code diff — loop base on the left, this worktree on the right.</p></div>',
           '<div class="comments"><h2>Comments</h2><div id="clist">' + commentHtml + '</div><div class="composer"><p class="muted hint" id="hint">' + COMPOSER_HINT + '</p><textarea id="cmt" placeholder="Comment for the agent working this PR"></textarea><div style="margin-top:6px"><button id="send">Comment</button></div></div></div>',
-          "</div>"
+          "</div>",
+          ${JSON.stringify(ciModalHtml())}
         ].join("");
         paintedFiles = fileHtml;
         paintedComments = commentHtml;

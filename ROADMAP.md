@@ -34,10 +34,10 @@ The gaps are not missing lifecycle pieces — they are **operability** (recoveri
 | A2 | ~~`watch.json` unlocked~~ **Done:** writes go through `withFileLock` via `mutateWatch`. | `packages/core/src/watch.ts`. |
 | A3 | Corrupt PR JSON is still skipped by `listLocalPrs`, but `listCorruptLocalPrFiles` + `prgenie doctor` name them. `github-gate` outer catch is fail-closed (`ask`) instead of allow. | `prs.ts`, `doctor.ts`, `github-hook.ts`. |
 | A4 | ~~No `complete_review` drift signal~~ **Done:** `completeLocalPrReview` refreshes HEAD and returns `headDrift` / `reviewedAgainstSha`. Spawn-once-per-HEAD already existed via `shouldSpawnReviewer` / `markReviewRequested` (core + `review-hook.ts`); hooks are not the sole readers. | `prs.ts`; CLI warns; MCP returns the flags. |
-| A5 | ~~MCP ignored core/CLI `--stat`~~ **Done:** MCP `get_diff` accepts `stat` and `paths`. Core `getLocalPrDiff` already had `{ stat }`; CLI had `prgenie diff --stat`. | `mcp.ts`, `review-local-pr` skill. |
+| A5 | ~~MCP ignored core/CLI `--stat`~~ **Done:** MCP `get_diff` accepts `stat` and `paths`. Core `getLocalPrDiff` already had `{ stat }`; CLI had `prgenie diff --stat`. | `mcp.ts`, `review` skill. |
 | A6 | ~~`sessions.jsonl` write-only~~ **Done:** `listSessions` + `prgenie sessions` + MCP `list_sessions`. | `sessions.ts`; CLI/MCP. |
 | A7 | ~~No comment edit/delete.~~ **Done:** Core + CLI + MCP + sidebar Edit/Delete for open findings. | `editLocalPrComment` / `deleteLocalPrComment`. |
-| A8 | ~~Inbox/queue `watch listen` was the only orchestrator.~~ **Done (RAD-70):** one **steward** per local PR (`/steward-loop`, `steward_next` / `prgenie steward`) owns the lifecycle — spawn implementor Task, then reviewer when ready; on `changes_requested` resume the same `implementorTaskId`; after Reviewer clear run the RAD-71 export gate and only then hand off. Durable `{ loopId, implementorTaskId, reviewerTaskId }` in `.git/agent-console/stewards.json`. Listeners stay transitional. | Watch fan-out context: [rca-windows-dogfood-stability.md](docs/rca-windows-dogfood-stability.md) §A / Slice 1. |
+| A8 | ~~Inbox/queue `watch listen` was the only orchestrator.~~ **Done (RAD-70):** one **steward** per local PR (`/loop`, `steward_next` / `prgenie steward`) owns the lifecycle — spawn implementor Task, then reviewer when ready; on `changes_requested` resume the same `implementorTaskId`; after Reviewer clear run the RAD-71 export gate and only then hand off. Durable `{ loopId, implementorTaskId, reviewerTaskId }` in `.git/agent-console/stewards.json`. Listeners stay transitional. | Watch fan-out context: [rca-windows-dogfood-stability.md](docs/rca-windows-dogfood-stability.md) §A / Slice 1. |
 
 ### Platform / quality gaps
 
@@ -89,11 +89,12 @@ The Now items remove the failure modes daily use actually hits: hand-rolled list
 
 18. **Repo pattern memory + ready preflight.** ✅ RAD-6: `learnings` track repo patterns; `preflight` validates loops before `ready`.
 19. **Sessions → learning digest.** ✅ RAD-9: `prgenie sessions` CLI exposes `sessions.jsonl` history for agent reuse.
-20. **Export shepherd gate.** ✅ RAD-11: `shepherd` gate on `/export-local-pr` validates bind/drift/findings before push.
+20. **Export shepherd gate.** ✅ RAD-11: `shepherd` gate on `/export` validates bind/drift/findings before push.
 
 ### Next-Learn — steward-per-loop
 
-21. **Steward-per-local-PR (A8).** ✅ RAD-70: `/steward-loop` + durable `stewards.json` + `steward_next` (export gate before Push to origin). Listeners remain as a transitional two-chat path.
+21. **Steward-per-local-PR (A8).** ✅ RAD-70: `/loop` + durable `stewards.json` + `steward_next` (export gate before Push to origin). Listeners remain as a transitional two-chat path.
+22. **Dogfood polish (RAD-77).** ✅ Comment action colors, short slash names, CI check modal, Open terminal, chat CI progress card, review-cleared copy, implementor preflight + smart/fail-fast CI. See [docs/ci-checks.md](docs/ci-checks.md).
 
 ### Shipped — additional control-plane work
 
@@ -110,6 +111,7 @@ The Now items remove the failure modes daily use actually hits: hand-rolled list
 - **RAD-25**: `learnings` CLI exposes bare learnings (without full sessions).
 - **RAD-71**: Human export / Push to origin gated on shepherd CI green (`exportGate`).
 - **RAD-72**: Export CTA renamed to Push to origin, higher-contrast attention, first-enter popup.
+- **RAD-77**: Dogfood polish — comment colors, short slash names, CI modal + chat card, Open terminal, review-cleared copy, implementor preflight + smart/fail-fast CI.
 
 ### Remaining open
 

@@ -2,6 +2,24 @@ export type ProgressPhase = "review" | "preflight" | "github" | "ci" | "push" | 
 export type ProgressState = "start" | "pass" | "fail" | "skip" | "cached";
 export type ProgressKind = "gate" | "export";
 
+export type CiCheckProgressState = ProgressState | "queued" | "cancelled";
+
+export interface CiCheckProgress {
+  name: string;
+  state: CiCheckProgressState;
+  elapsedMs?: number;
+  command?: string;
+  message?: string;
+  logPath?: string;
+  reason?: string;
+}
+
+export interface CiProgressSnapshot {
+  selectedChecks: string[];
+  selectionReason: string;
+  checks: CiCheckProgress[];
+}
+
 export interface ProgressEvent {
   phase: ProgressPhase;
   /** CI check name (format:check, lint, typecheck, test, build). */
@@ -14,6 +32,9 @@ export interface ProgressEvent {
   message?: string;
   /** Capped full log path when a CI check failed. */
   logPath?: string;
+  /** Smart-CI plan (RAD-77) — which checks and why. */
+  selectedChecks?: string[];
+  selectionReason?: string;
 }
 
 export type ProgressCallback = (event: ProgressEvent) => void;
@@ -104,6 +125,83 @@ export function formatProgressStep(event: ProgressEvent, kind: ProgressKind = "g
   if (event.phase === "github") return "GitHub bind";
   if (event.phase === "push") return "Push";
   return "Create PR";
+}
+
+export function emptyCiProgressSnapshot(): CiProgressSnapshot {
+  return { selectedChecks: [], selectionReason: "", checks: [] };
+}
+
+export function applyCiProgressEvent(
+  current: CiProgressSnapshot,
+  event: ProgressEvent,
+): CiProgressSnapshot {
+  const selectedChecks = event.selectedChecks ?? current.selectedChecks;
+  const selectionReason = event.selectionReason ?? current.selectionReason;
+  const checks = current.checks.map((c) => ({ ...c }));
+  const ensure = (name: string): CiCheckProgress => {
+    const existing = checks.find((c) => c.name === name);
+    if (existing) return existing;
+    const created: CiCheckProgress = { name, state: "queued" };
+    checks.push(created);
+    return created;
+  };
+  if (event.selectedChecks) {
+    for (const name of event.selectedChecks) ensure(name);
+  }
+  if (event.phase === "ci" && event.check) {
+    const row = ensure(event.check);
+    row.state = event.state;
+    if (event.elapsedMs != null) row.elapsedMs = event.elapsedMs;
+    if (event.command) row.command = event.command;
+    if (event.message) row.message = event.message;
+    if (event.logPath) row.logPath = event.logPath;
+  }
+  return { selectedChecks, selectionReason, checks };
+}
+
+/** Agent-chat / CLI card: selected checks, why, running/pass/fail, elapsed. */
+export function createProgressCardSink(write: (line: string) => void): {
+  onProgress: ProgressCallback;
+  snapshot: () => CiProgressSnapshot;
+  card: () => string;
+} {
+  let snap = emptyCiProgressSnapshot();
+  return {
+    onProgress: (event) => {
+      snap = applyCiProgressEvent(snap, event);
+      write(formatProgressLine(event));
+    },
+    snapshot: () => snap,
+    card: () => formatProgressCard(snap),
+  };
+}
+
+export function formatProgressCard(snapshot: CiProgressSnapshot): string {
+  const why = snapshot.selectionReason
+    ? `Why: ${snapshot.selectionReason}`
+    : "Why: configured suite";
+  const lines = ["CI progress", why];
+  const names =
+    snapshot.selectedChecks.length > 0
+      ? snapshot.selectedChecks
+      : snapshot.checks.map((c) => c.name);
+  if (names.length === 0) {
+    lines.push("  (no checks yet — waiting to start)");
+    return lines.join("\n");
+  }
+  for (const name of names) {
+    const row = snapshot.checks.find((c) => c.name === name);
+    const state = row?.state ?? "queued";
+    const elapsed = row?.elapsedMs != null ? ` ${formatElapsed(row.elapsedMs)}` : "";
+    const extra =
+      state === "fail" && row?.message
+        ? ` — ${row.message}`
+        : state === "start" && row?.command
+          ? ` (${row.command})`
+          : "";
+    lines.push(`  ${shortCheckName(name).padEnd(10)} ${state}${elapsed}${extra}`);
+  }
+  return lines.join("\n");
 }
 
 export function formatFailedCheck(

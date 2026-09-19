@@ -242,6 +242,23 @@ test("CLI shepherd persists the same full export gate (no skipCiCheck)", () => {
   assert.equal(/shepherdStatus\(repo, id,\s*\{/.test(src), false);
 });
 
+test("laneView CI modal queries fresh nodes after loop switch (AC3)", () => {
+  const src = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "laneView.ts"),
+    "utf8",
+  );
+  assert.equal(
+    /ciModalBound/.test(src),
+    false,
+    "must not skip rebind after root.innerHTML rebuild",
+  );
+  assert.match(src, /Query fresh #ciModal nodes/);
+  assert.match(src, /getElementById\("ciModal"\)/);
+  assert.match(src, /bindCiModal\(\);/);
+  assert.match(src, /abortExportGate\(cancelCwd, cancelId\)/);
+  assert.match(src, /function formatElapsed/);
+});
+
 test("laneView Push to origin / export CTA use humanExport, not bare reviewed status", () => {
   const src = readFileSync(
     path.join(path.dirname(fileURLToPath(import.meta.url)), "laneView.ts"),

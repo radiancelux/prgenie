@@ -216,13 +216,22 @@ test("address_comment marks a finding addressed; reviewer resolve can hand off t
   assert.equal(addressedReviewComments(done).length, 0);
 });
 
-test("complete_review with no findings is ready for human review", async () => {
+test("complete_review with no findings clears review for the export gate", async () => {
   const pr = await createLocalPr(repo, { title: "Clean", base: "main" });
   await setLocalPrStatus(repo, pr.id, "ready");
   const done = await completeLocalPrReview(repo, pr.id, { body: "LGTM" });
   assert.equal(done.status, "reviewed");
   assert.match(done.comments[0].body, /LGTM/);
   assert.equal(done.comments[0].status, "resolved");
+});
+
+test("complete_review default copy is review-cleared, not ready-for-human", async () => {
+  const pr = await createLocalPr(repo, { title: "Default copy", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready");
+  const done = await completeLocalPrReview(repo, pr.id);
+  assert.equal(done.status, "reviewed");
+  assert.match(done.comments[0].body, /Review cleared\. Steward will run the export gate/);
+  assert.doesNotMatch(done.comments[0].body, /ready for human|Push to origin/i);
 });
 
 test("complete_review with findings hands the loop to the implementor", async () => {

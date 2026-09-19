@@ -42,9 +42,12 @@ import {
   resumeWatchRole,
   runPreflight,
   setLocalPrStatus,
+  abortExportGate,
+  createProgressCardSink,
   evaluateAndStoreExportGate,
   bindSteward,
   listStewardBindings,
+  runLoopCi,
   stewardNext,
   updateLocalPr,
   type CommentRole,
@@ -297,8 +300,41 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
       const pr = await getLocalPr(cwd, String(args.id ?? ""));
       return runPreflight(cwd, pr);
     }
-    case "shepherd_status":
-      return evaluateAndStoreExportGate(cwd, String(args.id ?? ""));
+    case "run_ci": {
+      const failing =
+        typeof args.failingChecks === "string"
+          ? args.failingChecks
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : Array.isArray(args.failingChecks)
+            ? (args.failingChecks as unknown[]).filter((s): s is string => typeof s === "string")
+            : [];
+      const card = createProgressCardSink((line) => process.stderr.write(`${line}\n`));
+      const result = await runLoopCi(cwd, String(args.id ?? ""), {
+        failingChecks: failing,
+        failFast: args.failFast === false ? false : undefined,
+        parallel: args.parallel === false ? false : undefined,
+        skipCache: args.skipCache === true,
+        onProgress: card.onProgress,
+      });
+      return { ...result, progressCard: card.card() };
+    }
+    case "abort_ci": {
+      const aborted = abortExportGate(
+        cwd,
+        String(args.id ?? ""),
+        typeof args.headSha === "string" ? args.headSha : undefined,
+      );
+      return { aborted };
+    }
+    case "shepherd_status": {
+      const card = createProgressCardSink((line) => process.stderr.write(`${line}\n`));
+      const result = await evaluateAndStoreExportGate(cwd, String(args.id ?? ""), {
+        onProgress: card.onProgress,
+      });
+      return { ...result, progressCard: card.card() };
+    }
     case "bind_steward":
       return bindSteward(cwd, String(args.id ?? ""), {
         implementorTaskId:
@@ -310,7 +346,8 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
       });
     case "steward_next": {
       if (!args.id) return listStewardBindings(cwd);
-      return stewardNext(cwd, String(args.id), {
+      const card = createProgressCardSink((line) => process.stderr.write(`${line}\n`));
+      const result = await stewardNext(cwd, String(args.id), {
         implementorTaskId:
           args.implementorTaskId === undefined
             ? undefined
@@ -323,7 +360,9 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
         reviewerMissing: args.reviewerMissing === true,
         reviewerFailed: args.reviewerFailed === true,
         evaluateGate: args.evaluateGate === false ? false : undefined,
+        onProgress: card.onProgress,
       });
+      return { ...result, progressCard: card.snapshot().checks.length ? card.card() : undefined };
     }
     default:
       throw new Error(`Unknown tool: ${name}`);
@@ -491,7 +530,7 @@ export const tools = [
   {
     name: "set_status",
     description:
-      "Set local PR status: draft, ready, changes_requested, reviewed, approved. reviewed means the automated reviewer signed off and the human should look. When setting to ready, a preflight check runs automatically to match learned patterns; pass skipPreflight=true to bypass.",
+      "Set local PR status: draft, ready, changes_requested, reviewed, approved. reviewed means the automated reviewer cleared and the steward will run the export gate — not a human handoff. When setting to ready, a pattern preflight check runs automatically; pass skipPreflight=true to bypass. Before ready, also run MCP run_ci / prgenie ci and fix failures in-worktree.",
     inputSchema: {
       type: "object",
       required: ["id", "status"],
@@ -549,7 +588,7 @@ export const tools = [
   {
     name: "resolve_comment",
     description:
-      "Reviewer or human: mark an addressed finding resolved and attach a reply under it. If nothing open or addressed remains, the loop becomes reviewed (ready for human review). Do not git push.",
+      "Reviewer or human: mark an addressed finding resolved and attach a reply under it. If nothing open or addressed remains, the loop becomes reviewed (review cleared; steward runs the export gate — not a human handoff). Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "commentId", "body"],
@@ -595,7 +634,7 @@ export const tools = [
   {
     name: "complete_review",
     description:
-      "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed for the human. Resolves remaining addressed comments. Refuses when HEAD moved after Review requested unless allowDrift=true — re-diff and file findings first. Archived loops stay archived. Do not git push.",
+      "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed (review cleared; steward runs the export gate). Ready-for-human / Push language only after handoff_human. Resolves remaining addressed comments. Refuses when HEAD moved after Review requested unless allowDrift=true — re-diff and file findings first. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -662,7 +701,7 @@ export const tools = [
   {
     name: "watch_stop",
     description:
-      "Halt listen loops. Omit role to halt both (same as /stop-watch). role=inbox is /stop-loop. role=queue is /stop-review. Does not push or open GitHub.",
+      "Halt listen loops. Omit role to halt both (same as /unwatch). role=inbox is /stop. role=queue is /stop-review. Does not push or open GitHub.",
     inputSchema: {
       type: "object",
       properties: {
@@ -678,7 +717,7 @@ export const tools = [
   {
     name: "watch_start",
     description:
-      "Resume listen loops. Omit role to resume both. role=inbox is /watch-review-inbox re-arm. role=queue is /watch-ready-prs re-arm. Do not use from a review-inbox/review-queue tick. Creating a new loop also resumes export-halted lanes after that id is archived.",
+      "Resume listen loops. Omit role to resume both. role=inbox is /watch-inbox re-arm. role=queue is /watch-ready re-arm. Do not use from an inbox/queue tick. Creating a new loop also resumes export-halted lanes after that id is archived.",
     inputSchema: {
       type: "object",
       properties: {
@@ -809,7 +848,7 @@ export const tools = [
   {
     name: "run_preflight",
     description:
-      "Run preflight check on a local PR to see if any learned patterns would be matched. This is automatically run when set_status ready unless skipPreflight is set. Returns passed boolean and issues array.",
+      "Run pattern-memory preflight on a local PR to see if any learned patterns would be matched. This is automatically run when set_status ready unless skipPreflight is set. Returns passed boolean and issues array. Distinct from run_ci (local format/lint/test).",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -817,9 +856,51 @@ export const tools = [
     },
   },
   {
+    name: "run_ci",
+    description:
+      "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; uncertain → full suite). Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Returns allPassed, checks, selection, and a progressCard for the agent chat. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run — say so; do not skip a flaky failure.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        cwd: { type: "string" },
+        failingChecks: {
+          description: "Checks that must run on CI-resume (names or comma-separated string).",
+        },
+        failFast: {
+          type: "boolean",
+          description: "Stop remaining checks after the first failure. Default true.",
+        },
+        parallel: {
+          type: "boolean",
+          description: "Run independent checks concurrently. Default true.",
+        },
+        skipCache: { type: "boolean" },
+      },
+    },
+  },
+  {
+    name: "abort_ci",
+    description:
+      "Cancel in-flight implementor preflight or export-gate CI for a loop. Same abort as the loop panel Cancel: bumps the shared abort token under .git/agent-console/ci-abort and stops the in-process gate. Steward MCP and the panel share one suite per id+HEAD.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        cwd: { type: "string" },
+        headSha: {
+          type: "string",
+          description: "Optional. Abort only this HEAD's in-process flight.",
+        },
+      },
+    },
+  },
+  {
     name: "shepherd_status",
     description:
-      "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, gh bind, and local CI. Persists the result as the human-export gate. Returns ready or blocked with explicit reasons (CI failures include the check name plus a short excerpt; full log under .git/agent-console/ci-logs/). Fail-closed: any unknown/missing piece returns blocked.",
+      "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, gh bind, and smart local CI (path-selected; uncertain → full suite). Persists the result as the human-export gate. Streams a CI progress card (check names + running/pass/fail) on stderr — cancel is abort_ci / loop panel Cancel (shared abort token; one suite per id+HEAD). Returns ready or blocked with reasons, ciPlan, ciChecks, and progressCard. Fail-closed: any unknown/missing piece returns blocked.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -829,7 +910,7 @@ export const tools = [
   {
     name: "bind_steward",
     description:
-      "Persist this loop's steward Task ids under .git/agent-console/stewards.json ({ loopId, implementorTaskId, reviewerTaskId }). Pass null or empty string to clear a field. Used by /steward-loop so changes_requested resumes the same implementor Task.",
+      "Persist this loop's steward Task ids under .git/agent-console/stewards.json ({ loopId, implementorTaskId, reviewerTaskId }). Pass null or empty string to clear a field. Used by /loop so changes_requested resumes the same implementor Task.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -850,7 +931,7 @@ export const tools = [
   {
     name: "steward_next",
     description:
-      "Steward flywheel next action for one local PR. Persists optional Task ids, runs the full export gate after Reviewer clear, and returns spawn/resume/handoff. Human-exportable / Push to origin only when the gate is ready. On blocked CI, action is resume_implementor with failingCheck — do not hand off. Preferred over /watch-review-inbox + /watch-ready-prs. Omit id to list bindings.",
+      "Steward flywheel next action for one local PR. Persists optional Task ids, runs the full export gate after Reviewer clear, and returns spawn/resume/handoff. Streams a CI progress card while the gate runs. Cancel is abort_ci / loop panel Cancel (shared abort token — one suite per id+HEAD, not a second full run). Human-exportable / Push to origin only when the gate is ready (handoff_human). On blocked CI, action is resume_implementor with failingCheck — then evaluate_export_gate again. Do not auto-spawn a reviewer. Preferred over /watch-inbox + /watch-ready. Omit id to list bindings.",
     inputSchema: {
       type: "object",
       properties: {

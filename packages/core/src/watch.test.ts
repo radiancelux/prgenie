@@ -49,7 +49,7 @@ test("watch halt is visible to both listen loops", async () => {
   assert.equal(resumed.queue.halted, false);
 });
 
-test("stop-loop does not halt the reviewer queue", async () => {
+test("inbox stop does not halt the reviewer queue", async () => {
   await haltWatchRole(repo, "inbox", "stop");
   const state = await getRepoWatch(repo);
   assert.equal(state.halted, false);

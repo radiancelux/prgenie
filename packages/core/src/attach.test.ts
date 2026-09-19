@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
@@ -226,22 +226,25 @@ test("attachLocalPr rejects branch with merged GitHub PR", async () => {
   git(["push", "-u", "origin", "feat/merged-pr-test"]);
   git(["checkout", "main"]);
 
-  // Create a mock gh script that returns MERGED state
+  // Cross-platform mock `gh` (Node script + gh.cmd). No Unix-only chmod binary.
   const mockGhDir = await mkdtemp(path.join(tmpdir(), "mock-gh-"));
   const mockGhPath = path.join(mockGhDir, "gh");
-  const mockGhScript = `#!/bin/bash
-if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "feat/merged-pr-test" ]; then
-  echo '{"title":"Merged PR","body":"This PR was merged","state":"MERGED"}'
-  exit 0
-fi
-exit 1
+  const mockGhScript = `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "pr" && args[1] === "view" && args[2] === "feat/merged-pr-test") {
+  process.stdout.write('{"title":"Merged PR","body":"This PR was merged","state":"MERGED"}');
+  process.exit(0);
+}
+process.exit(1);
 `;
   await writeFile(mockGhPath, mockGhScript);
-  await execFileSync("chmod", ["+x", mockGhPath]);
+  await writeFile(path.join(mockGhDir, "gh.cmd"), `@echo off\r\nnode "%~dp0gh" %*\r\n`);
+  if (process.platform !== "win32") {
+    await chmod(mockGhPath, 0o755);
+  }
 
-  // Temporarily modify PATH to use our mock
   const originalPath = process.env.PATH;
-  process.env.PATH = `${mockGhDir}:${originalPath}`;
+  process.env.PATH = `${mockGhDir}${path.delimiter}${originalPath}`;
 
   try {
     await assert.rejects(

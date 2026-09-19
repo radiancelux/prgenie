@@ -1,5 +1,11 @@
 import type { ShepherdResult } from "./shepherd.js";
-import type { ExportGateReason, ExportGateSnapshot, LocalPr } from "./types.js";
+import type {
+  ExportGateCiCheck,
+  ExportGateCiPlan,
+  ExportGateReason,
+  ExportGateSnapshot,
+  LocalPr,
+} from "./types.js";
 
 export type HumanExportKind = "exportable" | "blocked" | "pending" | "other";
 
@@ -98,12 +104,45 @@ export function normalizeExportGate(raw: unknown): ExportGateSnapshot | null {
       reasons.push({ check, message });
     }
   }
+  const ciPlan = normalizeCiPlan(g.ciPlan);
+  const ciChecks = normalizeCiChecks(g.ciChecks);
   return {
     status: g.status,
     reasons,
     headSha: g.headSha,
     evaluatedAt: typeof g.evaluatedAt === "string" ? g.evaluatedAt : null,
+    ciPlan,
+    ciChecks,
   };
+}
+
+function normalizeCiPlan(raw: unknown): ExportGateCiPlan | null {
+  if (!raw || typeof raw !== "object") return null;
+  const plan = raw as Partial<ExportGateCiPlan>;
+  if (!Array.isArray(plan.checks) || typeof plan.reason !== "string") return null;
+  const checks = plan.checks.filter((c): c is string => typeof c === "string" && c.length > 0);
+  if (checks.length === 0) return null;
+  return { checks, reason: plan.reason, uncertain: plan.uncertain === true };
+}
+
+function normalizeCiChecks(raw: unknown): ExportGateCiCheck[] | null {
+  if (!Array.isArray(raw)) return null;
+  const checks: ExportGateCiCheck[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Partial<ExportGateCiCheck>;
+    if (typeof row.name !== "string" || !row.name) continue;
+    checks.push({
+      name: row.name,
+      passed: row.passed === true,
+      skipped: row.skipped === true ? true : undefined,
+      excerpt: typeof row.excerpt === "string" ? row.excerpt : undefined,
+      logPath: typeof row.logPath === "string" ? row.logPath : undefined,
+      elapsedMs: typeof row.elapsedMs === "number" ? row.elapsedMs : undefined,
+      reason: typeof row.reason === "string" ? row.reason : undefined,
+    });
+  }
+  return checks.length ? checks : null;
 }
 
 /** Snapshot is usable only when it was evaluated for this loop HEAD. */

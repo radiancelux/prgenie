@@ -234,6 +234,23 @@ var init_watchActivity = __esm({
   }
 });
 
+// packages/core/src/progress.ts
+var init_progress = __esm({
+  "packages/core/src/progress.ts"() {
+    "use strict";
+  }
+});
+
+// packages/core/src/ci-abort.ts
+var STALE_LOCK_MS;
+var init_ci_abort = __esm({
+  "packages/core/src/ci-abort.ts"() {
+    "use strict";
+    init_progress();
+    STALE_LOCK_MS = 30 * 60 * 1e3;
+  }
+});
+
 // packages/core/src/github.ts
 function parseGhAuthStatus(text) {
   const accounts = [];
@@ -381,10 +398,23 @@ var init_ci_cache = __esm({
   }
 });
 
-// packages/core/src/progress.ts
-var init_progress = __esm({
-  "packages/core/src/progress.ts"() {
+// packages/core/src/ci-failure.ts
+var CI_LOG_MAX_BYTES, ANSI_RE;
+var init_ci_failure = __esm({
+  "packages/core/src/ci-failure.ts"() {
     "use strict";
+    init_git();
+    CI_LOG_MAX_BYTES = 64 * 1024;
+    ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, "g");
+  }
+});
+
+// packages/core/src/ci-select.ts
+var init_ci_select = __esm({
+  "packages/core/src/ci-select.ts"() {
+    "use strict";
+    init_git();
+    init_prs();
   }
 });
 
@@ -396,6 +426,10 @@ var init_ci_runner = __esm({
     import_node_child_process3 = require("node:child_process");
     import_node_util = require("node:util");
     init_ci_cache();
+    init_ci_failure();
+    init_ci_select();
+    init_ci_abort();
+    init_prs();
     init_progress();
     execAsync = (0, import_node_util.promisify)(import_node_child_process3.exec);
   }
@@ -409,6 +443,7 @@ var init_shepherd = __esm({
     init_learnings();
     init_github_ops();
     init_ci_runner();
+    init_ci_select();
     init_progress();
   }
 });
@@ -417,6 +452,7 @@ var init_shepherd = __esm({
 var init_export_validation = __esm({
   "packages/core/src/export-validation.ts"() {
     "use strict";
+    init_ci_abort();
     init_prs();
     init_shepherd();
     init_progress();
@@ -452,6 +488,7 @@ init_github_ops();
 init_prs();
 init_watch();
 init_worktrees();
+init_ci_failure();
 
 // packages/core/src/export.ts
 init_git();
@@ -463,6 +500,7 @@ init_progress();
 
 // packages/core/src/index.ts
 init_export_validation();
+init_ci_abort();
 init_progress();
 init_export_gate();
 
@@ -481,6 +519,8 @@ init_github_ops();
 init_learnings();
 init_shepherd();
 init_ci_runner();
+init_ci_select();
+init_ci_failure();
 init_ci_cache();
 
 // packages/cli/src/github-hook.ts

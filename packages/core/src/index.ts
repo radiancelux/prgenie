@@ -10,6 +10,8 @@ export type {
   LocalPrSource,
   LocalPrStatus,
   ExportGateCheck,
+  ExportGateCiCheck,
+  ExportGateCiPlan,
   ExportGateReason,
   ExportGateSnapshot,
   ExportGateStatus,
@@ -144,12 +146,24 @@ export {
   exportGateInFlight,
   validateExport,
 } from "./export-validation.js";
+export {
+  acquireCiLock,
+  ciAbortFile,
+  pidAlive,
+  readCiAbortSeq,
+  requestCiAbort,
+  watchCiAbort,
+} from "./ci-abort.js";
 export type { ExportValidationOptions, ExportValidationResult } from "./export-validation.js";
 export {
   abortError,
   ciCheckCommand,
+  applyCiProgressEvent,
+  createProgressCardSink,
+  emptyCiProgressSnapshot,
   formatElapsed,
   formatFailedCheck,
+  formatProgressCard,
   formatProgressLine,
   formatProgressStep,
   isAbortError,
@@ -157,6 +171,9 @@ export {
   throwIfAborted,
 } from "./progress.js";
 export type {
+  CiCheckProgress,
+  CiCheckProgressState,
+  CiProgressSnapshot,
   ProgressCallback,
   ProgressEvent,
   ProgressKind,
@@ -231,8 +248,17 @@ export type {
   ShepherdResult,
   ShepherdStatus,
 } from "./shepherd.js";
-export { runCiChecks } from "./ci-runner.js";
-export type { CiCheckResult, CiRunnerOptions, CiRunnerResult } from "./ci-runner.js";
+export { runCiChecks, runLoopCi } from "./ci-runner.js";
+export type { CiCheckResult, CiRunnerOptions, CiRunnerResult, LoopCiOptions } from "./ci-runner.js";
+export {
+  changedPathsForCi,
+  classifyCiPath,
+  DEFAULT_CI_CHECKS,
+  envFlag,
+  resolveCiCwd,
+  selectCiChecks,
+} from "./ci-select.js";
+export type { CiCheckMapping, CiCheckSelection, CiPathKind } from "./ci-select.js";
 export {
   collectExecOutput,
   formatCiCheckError,

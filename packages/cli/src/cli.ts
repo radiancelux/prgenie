@@ -43,9 +43,11 @@ import {
   runDoctor,
   setLocalPrStatus,
   updateLocalPr,
+  createProgressCardSink,
   evaluateAndStoreExportGate,
   formatProgressLine,
   humanExportUi,
+  runLoopCi,
   isAbortError,
   bindSteward,
   formatStewardBinding,
@@ -87,6 +89,7 @@ Usage:
   prgenie export <id> [--skip-validation] [--verbose]
   prgenie show <id>
   prgenie shepherd <id> [--verbose]
+  prgenie ci <id> [--failing <checks>] [--no-fail-fast] [--no-parallel] [--skip-cache]
   prgenie update <id> [--title <t>] [--body <summary>]
   prgenie diff <id> [--stat] [-- <path>...]
   prgenie delete <id> [--yes]
@@ -468,6 +471,11 @@ export async function run(argv: string[]): Promise<number> {
         signal: ac.signal,
         onProgress: (event) => {
           process.stdout.write(`${formatProgressLine(event)}\n`);
+          if (event.selectedChecks) {
+            process.stdout.write(
+              `CI plan: ${event.selectionReason ?? event.selectedChecks.join(", ")}\n`,
+            );
+          }
           if (exportVerbose && event.state === "fail") {
             printVerboseFailureLog(repo, event.logPath);
           }
@@ -552,15 +560,22 @@ export async function run(argv: string[]): Promise<number> {
       }
       return 0;
     }
+    const card = createProgressCardSink((line) => process.stdout.write(`${line}\n`));
     const result = await stewardNext(repo, stewardId, {
       restart: flag(rest, "--restart"),
       implementorMissing: flag(rest, "--implementor-missing"),
       implementorFailed: flag(rest, "--implementor-failed"),
       reviewerMissing: flag(rest, "--reviewer-missing"),
       reviewerFailed: flag(rest, "--reviewer-failed"),
+      onProgress: card.onProgress,
     });
+    if (card.snapshot().checks.length) {
+      process.stdout.write(`${card.card()}\n`);
+    }
     if (flag(rest, "--json")) {
-      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      process.stdout.write(
+        `${JSON.stringify({ ...result, progressCard: card.card() }, null, 2)}\n`,
+      );
     } else {
       process.stdout.write(`${formatStewardDecision(result)}\n`);
     }
@@ -617,12 +632,13 @@ export async function run(argv: string[]): Promise<number> {
     process.stdout.write("Shepherd: local CI (5 min/check). Ctrl+C to cancel.\n");
     const ac = new AbortController();
     const detach = attachInterrupt(ac);
+    const card = createProgressCardSink((line) => process.stdout.write(`${line}\n`));
     let result: Awaited<ReturnType<typeof evaluateAndStoreExportGate>>;
     try {
       result = await evaluateAndStoreExportGate(repo, id, {
         signal: ac.signal,
         onProgress: (event) => {
-          process.stdout.write(`${formatProgressLine(event)}\n`);
+          card.onProgress(event);
           if (verbose && event.state === "fail") printVerboseFailureLog(repo, event.logPath);
         },
       });
@@ -635,7 +651,11 @@ export async function run(argv: string[]): Promise<number> {
     } finally {
       detach();
     }
+    process.stdout.write(`${card.card()}\n`);
     process.stdout.write(`Shepherd status: ${result.status}\n`);
+    if (result.ciPlan) {
+      process.stdout.write(`CI plan: ${result.ciPlan.reason}\n`);
+    }
     if (result.reasons.length > 0) {
       process.stdout.write("\nBlocking reasons:\n");
       for (const reason of result.reasons) {
@@ -643,6 +663,30 @@ export async function run(argv: string[]): Promise<number> {
       }
     }
     return result.status === "ready" ? 0 : 1;
+  }
+  if (sub === "ci") {
+    if (flag(rest, "-h") || flag(rest, "--help")) {
+      process.stdout.write(
+        "prgenie ci <id> [--failing <checks>] [--no-fail-fast] [--no-parallel] [--skip-cache]\n\nRun the same smart local CI shepherd will run (implementor preflight / CI-resume). Fix failures in the worktree before ready or returning from a gate resume.\n",
+      );
+      return 0;
+    }
+    const failing = (arg(rest, "--failing") ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const card = createProgressCardSink((line) => process.stdout.write(`${line}\n`));
+    const result = await runLoopCi(repo, id, {
+      failingChecks: failing,
+      failFast: flag(rest, "--no-fail-fast") ? false : undefined,
+      parallel: flag(rest, "--no-parallel") ? false : undefined,
+      skipCache: flag(rest, "--skip-cache"),
+      onProgress: card.onProgress,
+    });
+    process.stdout.write(`${card.card()}\n`);
+    if (result.selection) process.stdout.write(`CI plan: ${result.selection.reason}\n`);
+    process.stdout.write(result.allPassed ? "CI preflight passed.\n" : "CI preflight failed.\n");
+    return result.allPassed ? 0 : 1;
   }
   if (sub === "update") {
     const title = arg(rest, "--title");
