@@ -18,14 +18,17 @@ if ($LASTEXITCODE -ge 8) {
   exit 1
 }
 
-# Cursor resolves plugin mcp.json relative paths against the workspace, not the plugin
-# folder. Pin the copied config to this install so Local MCP can spawn.
-$server = (Join-Path $dest "mcp\server.cjs").Replace("\", "/")
-$mcpPath = Join-Path $dest "mcp.json"
-$mcp = Get-Content -LiteralPath $mcpPath -Raw
-$mcp = $mcp -replace '\$\{PLUGIN_ROOT\}/mcp/server\.cjs', $server
-Set-Content -LiteralPath $mcpPath -Value $mcp.TrimEnd() -Encoding utf8
+# Cursor does not expand ${PLUGIN_ROOT}. pin-plugin-mcp.mjs writes UTF-8 (no BOM),
+# sets type=stdio, and pins command to this node.exe + absolute server.cjs.
+# PowerShell Set-Content -Encoding utf8 writes a BOM that Cursor may fail to parse.
+$pin = Join-Path $PSScriptRoot "pin-plugin-mcp.mjs"
+& node $pin $dest
+if ($LASTEXITCODE -ne 0) {
+  Write-Error "pin-plugin-mcp.mjs failed with exit $LASTEXITCODE"
+  exit 1
+}
 
 Write-Host "Installed Cursor plugin (real copy, not a junction):"
 Write-Host "  $dest"
 Write-Host "Reload is often not enough for MCP tools. In Customize → Plugins, disable and re-enable PR Genie."
+Write-Host "Canonical MCP is this plugin (prgenie). Delete leftover .cursor/mcp.json if Connected MCPs shows two prgenie rows. See docs/troubleshooting.md."

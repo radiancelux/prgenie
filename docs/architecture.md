@@ -109,7 +109,7 @@ Skills (one slash name each — do not also add duplicate `commands/*.md`):
 
 `/loop`, `/start`, `/local-pr`, `/review`, `/export`
 
-MCP server name: `prgenie` (tools such as `list_local_prs`, `create_local_pr`, `set_status`, `complete_review`, `claim_review`, `steward_next`, `bind_steward`, `export_local_pr`, `watch_status`, `gh_use`, …). `watch_start` / `watch_stop` remain listed only to hard-error and point at `/loop`.
+MCP server name: `prgenie` (tools such as `list_local_prs`, `create_local_pr`, `set_status`, `complete_review`, `claim_review`, `steward_next`, `bind_steward`, `export_local_pr`, `watch_status`, `gh_use`, …). `watch_start` / `watch_stop` remain listed only to hard-error and point at `/loop`. Stdio is official **NDJSON** (one JSON-RPC line per message). The plugin is the only shipped registration — do not add a workspace `.cursor/mcp.json` with the same server id.
 
 Hooks registered in `hooks.json`:
 

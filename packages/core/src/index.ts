@@ -123,6 +123,18 @@ export type {
 export { formatDoctorReport, runDoctor } from "./doctor.js";
 export type { DoctorReport, DoctorCheck } from "./doctor.js";
 export {
+  PRGENIE_MCP_NAME,
+  argHasUnresolvedPluginRoot,
+  bufferHasUtf8Bom,
+  inspectMcpJson,
+  parseMcpJson,
+  pinPluginMcpJson,
+  sameNameCollision,
+  stripBom,
+  windowsStdioSpawn,
+} from "./plugin-mcp.js";
+export type { McpFile, McpJsonInspection, McpServerEntry } from "./plugin-mcp.js";
+export {
   exportLocalPr,
   exportPushRefspec,
   archiveLoopsMergedOnGithub,

@@ -1,8 +1,9 @@
 {
   "mcpServers": {
     "prgenie": {
+      "type": "stdio",
       "command": "node",
-      "args": ["${PLUGIN_ROOT}/mcp/server.cjs"]
+      "args": ["${CURSOR_PLUGIN_ROOT}/mcp/server.cjs"]
     }
   }
 }

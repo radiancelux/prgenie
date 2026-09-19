@@ -68,6 +68,14 @@ test("cli version prints version and exits 0", () => {
   assert.match(result.stdout, /^\d+\.\d+\.\d+\n$/);
 });
 
+test("cli mcp --smoke lists steward tools and exits 0 (RAD-82)", () => {
+  const result = prgenie(["mcp", "--smoke"]);
+  assert.equal(result.code, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /steward_next: true/);
+  assert.match(result.stdout, /bind_steward: true/);
+  assert.match(result.stdout, /ready-on-stderr: true/);
+});
+
 test("cli attach --help prints attach usage and exits 0", () => {
   const result = prgenie(["attach", "--help"]);
   assert.equal(result.code, 0);

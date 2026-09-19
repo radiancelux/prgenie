@@ -15,6 +15,12 @@ import {
 } from "./worktrees.js";
 import { checkReleaseVersions, findPackageRoot } from "./versions.js";
 import { latestCiFailure } from "./ci-failure.js";
+import {
+  PRGENIE_MCP_NAME,
+  commandLooksRunnable,
+  inspectMcpJson,
+  sameNameCollision,
+} from "./plugin-mcp.js";
 
 export interface DoctorCheck {
   id: string;
@@ -40,7 +46,7 @@ async function hashFile(file: string): Promise<string | null> {
   }
 }
 
-export async function runDoctor(cwd: string): Promise<DoctorReport> {
+export async function runDoctor(cwd: string, options?: { home?: string }): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
   const root = await findGitRoot(cwd);
   if (!root) {
@@ -59,7 +65,7 @@ export async function runDoctor(cwd: string): Promise<DoctorReport> {
   await requireGitRoot(root);
 
   const packageRoot = findPackageRoot(root);
-  const home = os.homedir();
+  const home = options?.home ?? os.homedir();
   const installedPlugin = path.join(home, ".cursor", "plugins", "local", "prgenie");
   const installedMcp = path.join(installedPlugin, "mcp", "server.cjs");
   const sourceMcp = packageRoot
@@ -96,6 +102,116 @@ export async function runDoctor(cwd: string): Promise<DoctorReport> {
         ? "Plugin MCP server is installed (repo build hash unavailable — run doctor from the monorepo)."
         : "Plugin folder exists but mcp/server.cjs is missing — run pnpm build && pnpm link-plugin.",
       fix: existsSync(installedMcp) ? undefined : "pnpm build && pnpm link-plugin",
+    });
+  }
+
+  const workspaceMcpPath = path.join(root, ".cursor", "mcp.json");
+  const installedMcpJson = path.join(installedPlugin, "mcp.json");
+  const sourceMcpJson = packageRoot
+    ? path.join(packageRoot, "packages", "plugin", "mcp.json")
+    : null;
+
+  const workspaceInspect = existsSync(workspaceMcpPath)
+    ? inspectMcpJson(await readFile(workspaceMcpPath))
+    : null;
+  const installedInspect = existsSync(installedMcpJson)
+    ? inspectMcpJson(await readFile(installedMcpJson))
+    : null;
+  const sourceInspect =
+    sourceMcpJson && existsSync(sourceMcpJson)
+      ? inspectMcpJson(await readFile(sourceMcpJson))
+      : null;
+
+  if (installedInspect?.parseError) {
+    checks.push({
+      id: "mcp-config",
+      ok: false,
+      summary: `Installed plugin mcp.json is not valid JSON (${installedInspect.parseError}).`,
+      fix: "Re-run pnpm link-plugin (it rewrites mcp.json as UTF-8 without a BOM). Then Customize → Plugins → disable/enable PR Genie. Prove handshake with prgenie mcp --smoke; check Output → MCP Logs for [prgenie] mcp stdio ready.",
+    });
+  } else if (installedInspect?.hasBom) {
+    checks.push({
+      id: "mcp-config",
+      ok: false,
+      summary: "Installed plugin mcp.json has a UTF-8 BOM. Cursor may never leave Connecting….",
+      fix: "Re-run pnpm link-plugin (pin-plugin-mcp.mjs writes UTF-8 without BOM). Then disable/enable PR Genie.",
+    });
+  } else if (installedInspect?.unresolvedPluginRoot) {
+    checks.push({
+      id: "mcp-config",
+      ok: false,
+      summary:
+        "Installed plugin mcp.json still has ${PLUGIN_ROOT}. Cursor does not expand that variable — Local stays on Connecting… with 0 tools.",
+      fix: "pnpm build && pnpm link-plugin (pins an absolute server.cjs path), or use ${CURSOR_PLUGIN_ROOT}. Then disable/enable PR Genie.",
+    });
+  } else if (installedInspect) {
+    const cmd = installedInspect.command ?? "(missing)";
+    checks.push({
+      id: "mcp-config",
+      ok: true,
+      summary: `Installed plugin MCP ${installedInspect.names.join(", ") || PRGENIE_MCP_NAME} command=${cmd}.`,
+    });
+  } else if (sourceInspect && !sourceInspect.parseError) {
+    checks.push({
+      id: "mcp-config",
+      ok: true,
+      summary: `Plugin mcp.json in repo uses ${sourceInspect.args[0] ?? "no args"} (install with pnpm link-plugin).`,
+    });
+  } else {
+    checks.push({
+      id: "mcp-config",
+      ok: true,
+      summary: "No installed plugin mcp.json to inspect.",
+    });
+  }
+
+  const pluginNames = installedInspect?.names?.length
+    ? installedInspect.names
+    : (sourceInspect?.names ?? []);
+  const workspaceNames = workspaceInspect?.names ?? [];
+  if (sameNameCollision(workspaceNames, pluginNames) || workspaceNames.includes(PRGENIE_MCP_NAME)) {
+    checks.push({
+      id: "mcp-duplicate",
+      ok: false,
+      summary: `Workspace .cursor/mcp.json registers "${PRGENIE_MCP_NAME}" (same name as the plugin). Connected MCPs shows two disabled/enabled prgenie rows (tag Plugin + tag <folder, e.g. pr-genie>). Dual same-name can leave Local on Connecting… (0 tools).`,
+      fix: "Dogfood path is the plugin only. Delete .cursor/mcp.json (do not ship it) or rename the workspace server. Then disable/enable PR Genie — enable only one prgenie entry.",
+    });
+  } else if (workspaceNames.length) {
+    checks.push({
+      id: "mcp-duplicate",
+      ok: true,
+      summary: `Workspace MCP ${workspaceNames.join(", ")} is extra (Cursor tags it with the folder name). Dogfood: enable only plugin prgenie.`,
+    });
+  } else {
+    checks.push({
+      id: "mcp-duplicate",
+      ok: true,
+      summary: "Plugin prgenie is the only shipped MCP (no workspace .cursor/mcp.json).",
+    });
+  }
+
+  const installedCommand = installedInspect?.command;
+  if (installedCommand && path.isAbsolute(installedCommand) && existsSync(installedCommand)) {
+    checks.push({
+      id: "mcp-node",
+      ok: true,
+      summary: `Plugin MCP command is pinned to ${installedCommand}.`,
+    });
+  } else if (installedCommand && !commandLooksRunnable(installedCommand)) {
+    checks.push({
+      id: "mcp-node",
+      ok: false,
+      summary: `Plugin MCP command "${installedCommand}" is not an existing file.`,
+      fix: "pnpm link-plugin pins process.execPath (node.exe). Or set command to the absolute node path in the installed mcp.json.",
+    });
+  } else {
+    const resolved = process.execPath;
+    checks.push({
+      id: "mcp-node",
+      ok: Boolean(resolved && existsSync(resolved)),
+      summary: installedCommand
+        ? `Plugin MCP command is "${installedCommand}" (link-plugin pins an absolute node.exe for Windows Cursor).`
+        : `This process is ${resolved}. Cursor launched from the Start menu may not see node on PATH — run pnpm link-plugin.`,
     });
   }
 

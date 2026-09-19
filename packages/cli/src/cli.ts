@@ -99,7 +99,7 @@ Usage:
   prgenie gh list
   prgenie gh status
   prgenie gh use <login>
-  prgenie mcp
+  prgenie mcp [--smoke]
 
 Run from any worktree. Loops are stored in the repo's .git/agent-console/.
 `;
@@ -207,6 +207,23 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (args[0] === "mcp") {
+    if (flag(args.slice(1), "--smoke")) {
+      const { bundledMcpServerPath, formatMcpSmoke, smokeMcpHandshake } =
+        await import("./mcp-smoke.js");
+      try {
+        const result = await smokeMcpHandshake(bundledMcpServerPath(), 4000);
+        process.stdout.write(formatMcpSmoke(result));
+        const okSmoke =
+          result.ready &&
+          result.tools.includes("steward_next") &&
+          result.tools.includes("bind_steward") &&
+          result.elapsedMs < 4000;
+        return okSmoke ? 0 : 1;
+      } catch (err) {
+        process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+        return 1;
+      }
+    }
     const { startMcp } = await import("./mcp.js");
     await startMcp();
     return 0;
