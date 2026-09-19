@@ -245,9 +245,6 @@ async function prsDir(cwd) {
   await (0, import_promises.mkdir)(dir, { recursive: true });
   return dir;
 }
-function prFile(dir, id) {
-  return import_node_path3.default.join(dir, `${id}.json`);
-}
 function firstJsonObject(raw) {
   const start = raw.indexOf("{");
   if (start < 0) return null;
@@ -288,55 +285,6 @@ function parseJsonObject(raw) {
     if (!slice) throw new SyntaxError("No JSON object in file");
     return JSON.parse(slice);
   }
-}
-async function writeJsonFile(file, value) {
-  const body = `${JSON.stringify(value, null, 2)}
-`;
-  const tmp = `${file}.${process.pid}.tmp`;
-  const tmpHandle = await (0, import_promises.open)(tmp, "w");
-  try {
-    await tmpHandle.writeFile(body, "utf8");
-    await tmpHandle.sync();
-  } finally {
-    await tmpHandle.close();
-  }
-  try {
-    await (0, import_promises.rename)(tmp, file);
-    return;
-  } catch {
-  }
-  const dest = await (0, import_promises.open)(file, "w");
-  try {
-    const buf = Buffer.from(body, "utf8");
-    await dest.write(buf, 0, buf.length, 0);
-    await dest.truncate(buf.length);
-    await dest.sync();
-  } finally {
-    await dest.close();
-  }
-  await (0, import_promises.unlink)(tmp).catch(() => void 0);
-}
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-async function withFileLock(file, fn) {
-  const lock = `${file}.lock`;
-  let lastErr;
-  for (let i = 0; i < 50; i++) {
-    try {
-      const handle = await (0, import_promises.open)(lock, "wx");
-      try {
-        return await fn();
-      } finally {
-        await handle.close();
-        await (0, import_promises.unlink)(lock).catch(() => void 0);
-      }
-    } catch (err) {
-      lastErr = err;
-      await delay(20);
-    }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error(`Timed out locking ${file}`);
 }
 var import_promises, import_node_path3;
 var init_store = __esm({
@@ -430,55 +378,6 @@ var init_export_gate = __esm({
 });
 
 // packages/core/src/prs.ts
-function nowIso() {
-  return (/* @__PURE__ */ new Date()).toISOString();
-}
-async function writePr(cwd, pr) {
-  const dir = await prsDir(cwd);
-  await writeJsonFile(prFile(dir, pr.id), pr);
-  await git(cwd, ["update-ref", `refs/local-pr/${pr.id}/head`, pr.headSha]);
-  await git(cwd, ["update-ref", `refs/local-pr/${pr.id}/base`, pr.baseSha]);
-  const note = JSON.stringify({
-    id: pr.id,
-    title: pr.title,
-    status: pr.status,
-    headRef: pr.headRef,
-    baseRef: pr.baseRef
-  });
-  await git(cwd, ["notes", "--ref=local-pr", "add", "-f", "-m", note, pr.headSha], {
-    allowFail: true
-  });
-}
-async function readPrFile(file) {
-  const pr = parseJsonObject(await (0, import_promises2.readFile)(file, "utf8"));
-  pr.source = pr.source ?? null;
-  pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
-  pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
-  pr.exportGate = normalizeExportGate(pr.exportGate);
-  pr.comments = (pr.comments ?? []).map(normalizeComment);
-  return pr;
-}
-async function withPrLock(cwd, id, fn) {
-  const resolved = await getLocalPr(cwd, id);
-  const dir = await prsDir(cwd);
-  const file = prFile(dir, resolved.id);
-  return withFileLock(file, async () => {
-    const pr = await readPrFile(file);
-    await fn(pr);
-    await writePr(cwd, pr);
-    pr.worktreePath = resolved.worktreePath;
-    return pr;
-  });
-}
-async function applyHeadRefresh(cwd, pr) {
-  const named = await git(cwd, ["rev-parse", "--verify", pr.headRef], { allowFail: true });
-  if (named.code !== 0) {
-    const branch = await currentBranch(cwd);
-    if (branch) pr.headRef = branch;
-  }
-  pr.headSha = await gitText(cwd, ["rev-parse", named.code === 0 ? pr.headRef : "HEAD"]);
-  pr.updatedAt = nowIso();
-}
 function isArchivedPr(pr) {
   return pr.status === "approved";
 }
@@ -567,12 +466,6 @@ async function listLocalPrs(cwd, options = {}) {
   }
   return matched;
 }
-async function getLocalPr(cwd, id) {
-  const prs = await listLocalPrs(cwd);
-  const pr = prs.find((p) => p.id === id || p.id.startsWith(id));
-  if (!pr) throw new Error(`Local PR not found: ${id}`);
-  return pr;
-}
 function inferCommentStatus(comment, role) {
   if (comment.status && COMMENT_STATUSES.includes(comment.status)) return comment.status;
   if (comment.resolvedAt) return "resolved";
@@ -615,31 +508,6 @@ function formatReviewInbox(pr) {
   }
   return lines.join("\n").trimEnd();
 }
-function shouldSpawnReviewer(pr) {
-  return pr.status === "ready" && (pr.reviewerNotifiedSha ?? null) !== pr.headSha;
-}
-function formatSpawnReviewer(pr) {
-  return [
-    `PR Genie: local PR ${pr.id} ("${pr.title}") on ${pr.headRef} is ready.`,
-    'That is the review request. add_comment role=agent "Review requested." if you have not already. Do not git push.',
-    "You are the implementor. Do not review this loop yourself. The reviewer chat should claim_review (or prgenie claim-review) then Task a generalPurpose subagent per unclaimed loop. Do not await those Tasks in the listen loop.",
-    "If you are covering review in this conversation because no reviewer chat exists, claim_review / prgenie claim-review for this id+headSha first \u2014 skip if already_claimed (one in-flight reviewer per HEAD). Then Task one generalPurpose reviewer for this id. If several loops are ready, claim then Task one reviewer subagent each, in parallel. Do not sit waiting on them."
-  ].join("\n");
-}
-async function markReviewRequested(cwd, id) {
-  return withPrLock(cwd, id, async (pr) => {
-    await applyHeadRefresh(cwd, pr);
-    pr.reviewRequestedSha = pr.headSha;
-    pr.updatedAt = nowIso();
-  });
-}
-async function markReviewerNotified(cwd, id) {
-  return withPrLock(cwd, id, async (pr) => {
-    await applyHeadRefresh(cwd, pr);
-    pr.reviewerNotifiedSha = pr.headSha;
-    pr.updatedAt = nowIso();
-  });
-}
 async function findLocalPrForCurrentBranch(cwd) {
   const branch = await currentBranch(cwd);
   if (!branch) return null;
@@ -659,9 +527,6 @@ async function findLocalPrForCurrentWorktree(cwd) {
   const live = (await listLocalPrs(cwd)).filter((pr) => !isArchivedPr(pr) && pr.worktreePath);
   return live.find((pr) => sameFsPath(pr.worktreePath ?? "", root)) ?? null;
 }
-async function refreshLocalPrHead(cwd, id) {
-  return withPrLock(cwd, id, (pr) => applyHeadRefresh(cwd, pr));
-}
 var import_promises2, import_node_path4, ALL_SEARCH_FIELDS;
 var init_prs = __esm({
   "packages/core/src/prs.ts"() {
@@ -676,14 +541,6 @@ var init_prs = __esm({
     init_learnings();
     init_export_gate();
     ALL_SEARCH_FIELDS = ["title", "body", "comment", "file"];
-  }
-});
-
-// packages/core/src/watchActivity.ts
-var init_watchActivity = __esm({
-  "packages/core/src/watchActivity.ts"() {
-    "use strict";
-    init_prs();
   }
 });
 
@@ -799,193 +656,18 @@ init_git();
 init_worktrees();
 init_prs();
 init_watch();
-init_watchActivity();
 
 // packages/core/src/review-claim.ts
-var import_promises3 = require("node:fs/promises");
-var import_node_path5 = __toESM(require("node:path"), 1);
 init_git();
 init_prs();
 init_store();
-function claimsFile(dir) {
-  return import_node_path5.default.join(dir, "review-claims.json");
-}
-function reviewClaimKey(id, headSha) {
-  return `${id}:${headSha}`;
-}
-var emptyClaims = () => ({
-  updatedAt: (/* @__PURE__ */ new Date(0)).toISOString(),
-  claims: {}
-});
-function parseClaims(raw) {
-  const parsed = parseJsonObject(raw);
-  const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : emptyClaims().updatedAt;
-  const claims = {};
-  const rawClaims = parsed.claims;
-  if (rawClaims && typeof rawClaims === "object" && !Array.isArray(rawClaims)) {
-    for (const [key, value] of Object.entries(rawClaims)) {
-      const claim = parseClaim(value);
-      if (claim) claims[key] = claim;
-    }
-  }
-  return { updatedAt, claims };
-}
-function parseClaim(raw) {
-  if (!raw || typeof raw !== "object") return null;
-  const parsed = raw;
-  if (typeof parsed.id !== "string" || typeof parsed.headSha !== "string") return null;
-  return {
-    id: parsed.id,
-    headSha: parsed.headSha,
-    claimedAt: typeof parsed.claimedAt === "string" ? parsed.claimedAt : (/* @__PURE__ */ new Date(0)).toISOString(),
-    source: typeof parsed.source === "string" ? parsed.source : "cli"
-  };
-}
-async function pruneStale(cwd, state) {
-  const live = (await listLocalPrs(cwd)).filter((pr) => !isArchivedPr(pr));
-  const byId = new Map(live.map((pr) => [pr.id, pr]));
-  const claims = {};
-  for (const claim of Object.values(state.claims)) {
-    const pr = byId.get(claim.id);
-    if (!pr || pr.status !== "ready" || pr.headSha !== claim.headSha) continue;
-    claims[reviewClaimKey(claim.id, claim.headSha)] = claim;
-  }
-  return { updatedAt: state.updatedAt, claims };
-}
-async function loadClaims(file) {
-  try {
-    return parseClaims(await (0, import_promises3.readFile)(file, "utf8"));
-  } catch {
-    return emptyClaims();
-  }
-}
-async function claimReview(cwd, id, options = {}) {
-  const root = await requireGitRoot(cwd);
-  const file = claimsFile(await consoleDir(root));
-  return withFileLock(file, async () => {
-    const pr = await getLocalPr(root, id);
-    if (pr.status !== "ready") {
-      return {
-        claimed: false,
-        id: pr.id,
-        claim: null,
-        reason: "not_ready",
-        status: pr.status
-      };
-    }
-    if (options.headSha && options.headSha !== pr.headSha) {
-      return {
-        claimed: false,
-        id: pr.id,
-        claim: null,
-        reason: "head_mismatch",
-        status: pr.status
-      };
-    }
-    const headSha = options.headSha ?? pr.headSha;
-    const current = await pruneStale(root, await loadClaims(file));
-    const existing = current.claims[reviewClaimKey(pr.id, headSha)];
-    if (existing) {
-      await writeJsonFile(file, current);
-      return {
-        claimed: false,
-        id: pr.id,
-        claim: existing,
-        reason: "already_claimed",
-        status: pr.status
-      };
-    }
-    const claim = {
-      id: pr.id,
-      headSha,
-      claimedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      source: options.source ?? "cli"
-    };
-    current.claims[reviewClaimKey(pr.id, headSha)] = claim;
-    current.updatedAt = claim.claimedAt;
-    await writeJsonFile(file, current);
-    return { claimed: true, id: pr.id, claim, status: pr.status };
-  });
-}
 
 // packages/core/src/steward.ts
-var import_promises4 = require("node:fs/promises");
-var import_node_path6 = __toESM(require("node:path"), 1);
 init_export_gate();
 init_export_validation();
 init_git();
 init_prs();
 init_store();
-function stewardsFile(dir) {
-  return import_node_path6.default.join(dir, "stewards.json");
-}
-var emptyMap = () => ({
-  updatedAt: (/* @__PURE__ */ new Date(0)).toISOString(),
-  bindings: {}
-});
-function parseTaskId(raw) {
-  if (typeof raw !== "string") return null;
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-function parseBinding(raw) {
-  if (!raw || typeof raw !== "object") return null;
-  const parsed = raw;
-  if (typeof parsed.loopId !== "string" || !parsed.loopId) return null;
-  return {
-    loopId: parsed.loopId,
-    implementorTaskId: parseTaskId(parsed.implementorTaskId),
-    reviewerTaskId: parseTaskId(parsed.reviewerTaskId),
-    updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : (/* @__PURE__ */ new Date(0)).toISOString()
-  };
-}
-function parseMap(raw) {
-  const parsed = parseJsonObject(raw);
-  const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : emptyMap().updatedAt;
-  const bindings = {};
-  const rawBindings = parsed.bindings;
-  if (rawBindings && typeof rawBindings === "object" && !Array.isArray(rawBindings)) {
-    for (const value of Object.values(rawBindings)) {
-      const binding = parseBinding(value);
-      if (binding) bindings[binding.loopId] = binding;
-    }
-  }
-  return { updatedAt, bindings };
-}
-async function loadMap(file) {
-  try {
-    return parseMap(await (0, import_promises4.readFile)(file, "utf8"));
-  } catch {
-    return emptyMap();
-  }
-}
-async function pruneStale2(cwd, state) {
-  const live = (await listLocalPrs(cwd)).filter((pr) => !isArchivedPr(pr));
-  const liveIds = new Set(live.map((pr) => pr.id));
-  const bindings = {};
-  for (const binding of Object.values(state.bindings)) {
-    if (!liveIds.has(binding.loopId)) continue;
-    bindings[binding.loopId] = binding;
-  }
-  return { updatedAt: state.updatedAt, bindings };
-}
-function isStewardOwned(binding) {
-  return Boolean(binding);
-}
-function shouldEmitLegacyReviewerHandoff(pr, binding) {
-  if (isStewardOwned(binding)) return false;
-  return shouldSpawnReviewer(pr);
-}
-async function getStewardBinding(cwd, id) {
-  const root = await requireGitRoot(cwd);
-  const pr = await getLocalPr(root, id);
-  const file = stewardsFile(await consoleDir(root));
-  return withFileLock(file, async () => {
-    const current = await pruneStale2(root, await loadMap(file));
-    await writeJsonFile(file, current);
-    return current.bindings[pr.id] ?? null;
-  });
-}
 
 // packages/core/src/doctor.ts
 init_git();
@@ -1041,22 +723,6 @@ function eventName(input) {
 function silent() {
   process.stdout.write("{}\n");
 }
-async function runStopReviewerHandoff(cwd, id) {
-  const fresh = await refreshLocalPrHead(cwd, id);
-  if (fresh.status !== "ready") return null;
-  if ((fresh.reviewRequestedSha ?? null) !== fresh.headSha) {
-    await markReviewRequested(cwd, fresh.id);
-  }
-  const binding = await getStewardBinding(cwd, fresh.id);
-  if (!shouldEmitLegacyReviewerHandoff(fresh, binding)) return null;
-  const claimed = await claimReview(cwd, fresh.id, {
-    headSha: fresh.headSha,
-    source: "hook"
-  });
-  if (!claimed.claimed) return null;
-  await markReviewerNotified(cwd, fresh.id);
-  return formatSpawnReviewer(fresh);
-}
 async function main() {
   let input;
   try {
@@ -1105,13 +771,6 @@ async function main() {
     if (newest?.role === "human" && inbox) {
       process.stdout.write(JSON.stringify({ followup_message: inbox }) + "\n");
       return;
-    }
-    if (pr.status === "ready") {
-      const followup = await runStopReviewerHandoff(root, pr.id);
-      if (followup) {
-        process.stdout.write(JSON.stringify({ followup_message: followup }) + "\n");
-        return;
-      }
     }
     silent();
     return;

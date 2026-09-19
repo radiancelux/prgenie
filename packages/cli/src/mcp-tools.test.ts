@@ -133,6 +133,11 @@ test("handleTool watch_status and unknown tool", async () => {
   await assert.rejects(() => handleTool("not_a_real_tool", { cwd: repo }), /Unknown tool/);
 });
 
+test("handleTool watch_start and watch_stop hard-error pointing at /loop", async () => {
+  await assert.rejects(() => handleTool("watch_start", { cwd: repo }), /Listen flywheel removed/);
+  await assert.rejects(() => handleTool("watch_stop", { cwd: repo, role: "inbox" }), /\/loop/);
+});
+
 test("handleTool list_local_prs status filter and complete_review path", async () => {
   const created = (await handleTool("create_local_pr", {
     cwd: repo,

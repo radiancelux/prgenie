@@ -5,29 +5,38 @@ alwaysApply: true
 
 PR Genie owns unpublished review. GitHub is an explicit later step.
 
-Never run `git push`, `gh pr create`, or `gh pr merge` unless the developer clearly asks to export — `/export`, MCP `export_local_pr`, or `prgenie export`. That command also **halts** listen loops.
+Never run `git push`, `gh pr create`, or `gh pr merge` unless the developer clearly asks to export — `/export`, MCP `export_local_pr`, or `prgenie export`.
 
 Slash workflows live in `packages/plugin/skills/*/SKILL.md` only. Do not add a matching `commands/*.md` — Cursor lists both, so the user sees two `/start` entries.
 
-`/unwatch` halts **both** listen loops. `/stop` is `prgenie watch stop inbox` (implementor only). `/stop-review` is `prgenie watch stop queue` (reviewer only). None of them push.
+## Roles (do not blur)
 
-Each `/queue` tick checks **`prgenie watch queue`**. Each `/inbox` tick checks **`prgenie watch inbox`**. MCP `watch_status` if listed (read that role's lane, not the combined `halted` flag). Cursor's plugin MCP is often stale and omits `watch_status` — do not stall looking for it. Inbox `halted reason=stop` → kill the implementor listen only. Queue `halted reason=stop` → kill the reviewer listen only. `halted reason=export` (that lane) → that packet shipped or export is in flight; do not keep working it. Ticks must **not** `prgenie watch start` (no role or any role). `/watch-inbox` may `prgenie watch start inbox` only. `/watch-ready` may `prgenie watch start queue` only. Never a two-sided `watch start` after `/stop` / `/stop-review` / `/unwatch`. `create_local_pr` resumes export-halted lanes after that id is archived or missing; it does not clear a stop halt.
+| Skill     | Role in this chat                         | Does not                                                             |
+| --------- | ----------------------------------------- | -------------------------------------------------------------------- |
+| `/loop`   | **Steward only** — Task implementor, then reviewer; persist Task ids; export gate; `handoff_human` when green | Write product code; become implementor; review; arm listen           |
+| `/start`  | **Implementor only** — create packet, implement, `ready` + Review requested, stop | Become steward; review this loop; start listen                       |
+| `/review` | **Reviewer leaf** — file findings, `complete_review` | Implement; push                                                      |
+| `/export` | Human publish                             | Review or implement                                                  |
 
-Listen loops use `prgenie watch listen inbox|queue` (**idle 30m** default, **max 8h** wall ceiling; optional `--ticks`). Activity on that lane resets the idle timer. Then the matching one-sided stop (`/stop` or `/stop-review`) — never `/unwatch` from an idle/max DONE, or one chat's timeout would halt the other. Tell the developer to re-run `/watch-inbox` or `/watch-ready`. Do not arm `while ($true)` forever or paste hand-rolled sleep loops into skills.
+`/loop` is the only orchestrator. There is no inbox/queue listen flywheel. Do not run `/watch-inbox`, `/watch-ready`, `/inbox`, `/queue`, `/unwatch`, `prgenie watch start`, `prgenie watch listen`, or any listen tick. If those names appear in an old brief, ignore them and stay on `/loop`.
 
-This repo may be bound to a GitHub login. If unbound and the user needs GitHub, ask which `gh` account to use, then `prgenie gh use <login>` or MCP `gh_use`. Do not guess. Do not `gh auth switch` to a different account than the bind.
+If PR Genie MCP / `steward_next` / `bind_steward` are unavailable during `/loop`: **stop and tell the user to wait/retry**. Never CLI DIY (`prgenie create` + code + ready + listen).
+
+## Implementor (this worktree, `/start` or a steward Task)
 
 When work on this branch is ready for review:
 
 1. Commit on the current branch if needed (do not switch branches).
 2. Create or update a local PR with `create_local_pr` / `update_local_pr`. Always set `body` to a reviewer summary: why, what changed, how to test. Title is not enough.
 3. Run MCP `run_ci` / `prgenie ci <id>` (same smart checks as shepherd; see `docs/ci-checks.md`) and fix failures in-worktree. Skip only if the toolchain cannot run.
-4. `set_status` ready and `add_comment` with `role=agent` saying review is requested. That is the handoff to the **reviewer chat**. Do not review this loop yourself. Do not open a GitHub pull request.
+4. `set_status` ready and `add_comment` with `role=agent` saying review is requested. Stop. Do not review this loop yourself. Do not open a GitHub pull request.
 
 If this branch already has a local PR in `changes_requested`, call `get_local_pr` and treat `pendingComments` as the brief. Address each with `address_comment` (reply required). Addressing the last open finding sets `ready` and posts **Review requested.** Do not `resolve_comment` (reviewer). Do not push. If the loop is still `ready`, the reviewer has not finished — wait for `complete_review` / `changes_requested`. Do not address comments on a `ready` loop.
 
-Preferred orchestration is **`/loop`**: one steward per loop Tasks an implementor, then a reviewer; on `changes_requested` it **resumes the same implementor Task id**; after Reviewer clear it runs the export gate and only then hands off to the human. After a blocked CI gate, resume the implementor then `evaluate_export_gate` again — do not auto-spawn a reviewer. Inbox/queue listen (`/watch-inbox`, `/watch-ready`) is transitional.
+## Steward (`/loop`)
 
-When not using a steward: the reviewer chat runs **`/watch-ready`** and Tasks **subagents** to review — one Task per ready loop. It must not await those Tasks. You are the implementor on this worktree; run **`/watch-inbox`** so reviewer comments reach you. You do not spawn review Tasks unless there is no reviewer chat.
+One steward per loop Tasks an implementor, then a reviewer; on `changes_requested` it **resumes the same implementor Task id**; after Reviewer clear it runs the export gate and only then hands off to the human. After a blocked CI gate, resume the implementor then `evaluate_export_gate` again — do not auto-spawn a reviewer.
+
+This repo may be bound to a GitHub login. If unbound and the user needs GitHub, ask which `gh` account to use, then `prgenie gh use <login>` or MCP `gh_use`. Do not guess. Do not `gh auth switch` to a different account than the bind.
 
 Each loop has a git worktree so the developer can Switch this window onto the implementor's files. PR Genie creates that checkout when needed (`../<repo>.loops/<id>` if the branch is free). Do not delete worktrees unless asked. Do not create extra ones.

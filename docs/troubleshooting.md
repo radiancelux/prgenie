@@ -10,7 +10,7 @@ Start with `prgenie doctor` from any worktree of the repo. It reports the checks
 | `plugin-install`   | No Cursor plugin at `~/.cursor/plugins/local/prgenie` | `pnpm build && pnpm link-plugin`, then disable/enable the plugin                |
 | `plugin-stale`     | Installed `mcp/server.cjs` hash ≠ repo build          | Same as above — **reload alone often keeps a stale MCP tool list**              |
 | `extension`        | Local PRs extension missing or wrong version          | `pnpm build && pnpm link-extension`, then **quit Cursor fully and reopen**      |
-| `watch`            | Inbox/queue listening or halted                       | Informational — see [Watch listen DONE / idle](#watch-listen-done--idle)        |
+| `watch`            | Export-halt record in `watch.json`                    | Informational — export halt only; listen is removed                             |
 | `corrupt-prs`      | Unparsable JSON under `.git/agent-console/prs/`       | Inspect or delete listed files; `listLocalPrs` skips them silently              |
 | `orphan-worktrees` | `.loops/<id>` worktree with no live local PR          | `git worktree remove <path>` (or reopen/delete the matching loop)               |
 | `gh-bind`          | Repo unbound (or no `gh` accounts)                    | `gh auth login`, then `prgenie gh use <login>`                                  |
@@ -45,28 +45,15 @@ The **Local PRs** sidebar is a VS Code extension, not the Cursor plugin. `link-p
 
 Doctor `extension` fails when the installed version ≠ `packages/extension/package.json`.
 
-## Watch listen DONE / idle
+## Listen flywheel removed
 
-`prgenie watch listen` (used by `/watch-inbox` and `/watch-ready`) still polls on an interval, but prints `AGENT_LOOP_TICK_*` **only when that lane's fingerprint changes**. Unchanged queues do not re-wake the parent agent. It eventually prints `AGENT_LOOP_DONE_*` with a reason:
+`prgenie watch start|stop|listen` and MCP `watch_start` / `watch_stop` hard-error and tell you to use `/loop`. There is no inbox/queue listen path.
 
-| reason   | Meaning                                                | What to do                                                                                                                                              |
-| -------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `idle`   | No activity for ~30m (default)                         | Re-run the watch skill for that lane                                                                                                                    |
-| `max`    | Hit ~8h wall clock                                     | Re-run the watch skill                                                                                                                                  |
-| `ticks`  | Hit `--ticks` ceiling                                  | Re-run or raise ticks                                                                                                                                   |
-| `stop`   | Lane halted via `/stop`, `/stop-review`, or `/unwatch` | `prgenie watch start inbox\|queue` or re-run the skill (skills call start)                                                                              |
-| `export` | Halted because a loop was exported                     | Resume only after that export id is **archived or missing** (creating a new loop does this for export halts). A `stop` halt is never cleared by create. |
+If `/loop` cannot see `steward_next` / `bind_steward`, MCP is still loading — wait, toggle the plugin, retry. Do not implement in the steward chat and do not arm listen.
 
-Lane cheat sheet:
+`prgenie watch` / MCP `watch_status` still show the export-halt record. Creating a new loop resumes an **export** halt after that id is archived or missing.
 
-- `/stop` → stops **inbox** only
-- `/stop-review` → stops **queue** only
-- `/unwatch` → stops both
-- Export → halts **both** with reason `export` and the exported id
-
-Check with `prgenie watch` / MCP `watch_status`.
-
-Do **not** start another `watch listen` on TICK — the existing process is still running. Reviewer dispatch uses `claim_review` / `prgenie claim-review` so a second pass cannot Task another reviewer for the same `id`+`headSha`.
+Reviewer dispatch uses `claim_review` / `prgenie claim-review` so a second pass cannot Task another reviewer for the same `id`+`headSha`.
 
 ## Head drift
 
@@ -111,7 +98,7 @@ If `packages/plugin/hooks/push-gate.mjs` exists, doctor fails `legacy-push-gate`
 1. `prgenie doctor`
 2. Stale plugin → build + `link-plugin` + disable/enable
 3. Stale sidebar → `link-extension` + full quit
-4. Watch quiet → prefer `/loop` (`prgenie steward <id>`); listen is transitional (`/watch-inbox` / `/watch-ready`)
+4. Orchestration → `/loop` (`prgenie steward <id>`). Listen is gone.
 5. Export halt stuck → archive/missing export id, or create next loop (export resume only)
 6. Wrong GitHub user → `prgenie gh use <login>`
 7. Bad packet → inspect `.git/agent-console/prs/<id>.json`

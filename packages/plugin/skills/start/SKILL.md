@@ -1,15 +1,17 @@
 ---
 name: start
-description: Kick off implementor work from a ClickUp, Jira, Linear, or GitHub ticket or a chat brief. Creates a feature branch and a local PR. Use when the user runs /start, pastes a ticket, or asks to start a loop with no local PR yet.
+description: Kick off implementor work from a ClickUp, Jira, Linear, or GitHub ticket or a chat brief. Creates a feature branch and a local PR. Use when the user runs /start, pastes a ticket, or asks to start implementor work with no local PR yet.
 ---
 
-# Start a loop
+# Start implementor work
 
 You are the **implementor**. Do not review your own loop. Do not `git push` unless `/export`.
 
-Prefer **`/loop`** when the user wants **one** agent to own implement ↔ review until Push to origin. This skill is the implementor-only entry (you implement here; listen is transitional).
+This skill is **implementor-only**. It is not `/loop`. Do not become the steward. Do not Task a reviewer. Do not arm inbox/queue listen (`/watch-inbox`, `/watch-ready`, `prgenie watch start|listen` — those are gone).
 
-This is how work _enters_ the two-chat flywheel. A ticket MCP or a message in this chat is enough. Do not wait for a local PR that does not exist yet.
+Prefer **`/loop`** when the user wants **one** agent to own implement ↔ review until Push to origin. If they ran `/start`, you implement here and stop when ready.
+
+This is how work _enters_ a loop as the worktree agent. A ticket MCP or a message in this chat is enough. Do not wait for a local PR that does not exist yet.
 
 ## Brief
 
@@ -28,10 +30,10 @@ Write the brief down as:
 
 ## Branch and packet
 
-Stay off the repo base (`main`/`master`). `create_local_pr` checks out `lp-<id>` when this window is on the base, and peels a branched worktree when it must — never detached, never a PR whose head is the base. Creating the loop **resumes export-halted lanes** only when that export id is **archived or missing**. It does **not** resume a stop halt (`/unwatch`, `/stop`, `/stop-review`), and it does **not** resume while the export id is still live. Never `prgenie watch start` with no role from this skill.
+Stay off the repo base (`main`/`master`). `create_local_pr` checks out `lp-<id>` when this window is on the base, and peels a branched worktree when it must — never detached, never a PR whose head is the base. Creating the loop **resumes export-halted lanes** only when that export id is **archived or missing**. It does **not** resume while the export id is still live.
 
-1. If this branch already has a live (not archived) local PR, use it (`update_local_pr` to put the brief in `body` if empty). Do not open a second loop on the same branch. Leave watch alone — `/watch-inbox` later starts the **inbox** lane only.
-2. Otherwise MCP `create_local_pr` with `title` and `body` (the brief). That creates the feature branch and the draft loop. Export halt on a lane clears only if that exported id is archived or gone.
+1. If this branch already has a live (not archived) local PR, use it (`update_local_pr` to put the brief in `body` if empty). Do not open a second loop on the same branch.
+2. Otherwise MCP `create_local_pr` with `title` and `body` (the brief). That creates the feature branch and the draft loop.
 3. Show the id, `head → base`, and the brief. Then implement against it.
 
 ## After the work
@@ -40,4 +42,4 @@ Stay off the repo base (`main`/`master`). `create_local_pr` checks out `lp-<id>`
 2. Refresh `body` to a reviewer summary: why, what changed, how to test (keep the ticket link).
 3. Run MCP `run_ci` / `prgenie ci <id>` (same smart checks shepherd will run). Fix failures in this worktree. Skip only if the toolchain cannot run — say so.
 4. `set_status` `ready` and `add_comment` `role=agent` **Review requested.**
-5. If a **steward** is driving this loop, stop — the steward will Task the reviewer. Otherwise start **`/watch-inbox`** in this chat if it is not already listening (transitional). That listen **stops after 30m of inactivity** (or 8h max). Re-run `/watch-inbox` to continue. The reviewer chat should be on **`/watch-ready`**. It claims then Tasks reviewers (one in-flight per HEAD) and must not await them. Do not re-arm listen on TICK.
+5. **Stop.** If a steward (`/loop`) is driving this loop, it will Task the reviewer. If the user used `/start` alone, tell them to run `/loop` on this packet (or `/review`) — do not review it yourself and do not start listen.

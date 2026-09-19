@@ -27,8 +27,7 @@ import {
   getLocalPrNameStatus,
   getRepoGithubBind,
   getRepoWatch,
-  haltWatch,
-  haltWatchRole,
+  LISTEN_REMOVED_MESSAGE,
   listGhAccounts,
   listLearnings,
   listLocalPrs,
@@ -38,8 +37,6 @@ import {
   isArchivedPr,
   reopenLocalPr,
   resolveLocalPrComment,
-  resumeWatch,
-  resumeWatchRole,
   runPreflight,
   setLocalPrStatus,
   abortExportGate,
@@ -256,14 +253,9 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
       return reopenLocalPr(cwd, String(args.id ?? ""));
     case "watch_status":
       return getRepoWatch(cwd);
-    case "watch_stop": {
-      const role = args.role === "inbox" || args.role === "queue" ? args.role : undefined;
-      return role ? haltWatchRole(cwd, role, "stop") : haltWatch(cwd, "stop");
-    }
-    case "watch_start": {
-      const role = args.role === "inbox" || args.role === "queue" ? args.role : undefined;
-      return role ? resumeWatchRole(cwd, role) : resumeWatch(cwd);
-    }
+    case "watch_stop":
+    case "watch_start":
+      throw new Error(LISTEN_REMOVED_MESSAGE);
     case "claim_review":
       return claimReview(cwd, String(args.id ?? ""), {
         headSha: typeof args.headSha === "string" ? args.headSha : undefined,
@@ -695,13 +687,13 @@ export const tools = [
   {
     name: "watch_status",
     description:
-      "Show listen-loop halt state. inbox is the implementor watch; queue is the reviewer watch. halted is true only when both are halted. Export halt sets both.",
+      "Show export-halt state under .git/agent-console/watch.json. Inbox/queue listen is removed — use /loop. Export halt still sets both lanes.",
     inputSchema: { type: "object", properties: { cwd: { type: "string" } } },
   },
   {
     name: "watch_stop",
     description:
-      "Halt listen loops. Omit role to halt both (same as /unwatch). role=inbox is /stop. role=queue is /stop-review. Does not push or open GitHub.",
+      "Removed. Listen flywheel is gone. Use /loop (steward_next / bind_steward). This tool always errors.",
     inputSchema: {
       type: "object",
       properties: {
@@ -709,7 +701,6 @@ export const tools = [
         role: {
           type: "string",
           enum: ["inbox", "queue"],
-          description: "inbox = implementor listen, queue = reviewer listen. Omit to halt both.",
         },
       },
     },
@@ -717,7 +708,7 @@ export const tools = [
   {
     name: "watch_start",
     description:
-      "Resume listen loops. Omit role to resume both. role=inbox is /watch-inbox re-arm. role=queue is /watch-ready re-arm. Do not use from an inbox/queue tick. Creating a new loop also resumes export-halted lanes after that id is archived.",
+      "Removed. Listen flywheel is gone. Use /loop (steward_next / bind_steward). This tool always errors.",
     inputSchema: {
       type: "object",
       properties: {
@@ -725,7 +716,6 @@ export const tools = [
         role: {
           type: "string",
           enum: ["inbox", "queue"],
-          description: "inbox = implementor listen, queue = reviewer listen. Omit to resume both.",
         },
       },
     },
@@ -754,7 +744,7 @@ export const tools = [
   {
     name: "export_local_pr",
     description:
-      "Developer command: validate review status and preflight, then halt listen loops, git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export. Export is blocked unless shepherd is ready (review complete, preflight clean, gh bound, local CI green). Use skipValidation only for emergency export.",
+      "Developer command: validate review status and preflight, then git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export. Export is blocked unless shepherd is ready (review complete, preflight clean, gh bound, local CI green). Use skipValidation only for emergency export.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -931,7 +921,7 @@ export const tools = [
   {
     name: "steward_next",
     description:
-      "Steward flywheel next action for one local PR. Persists optional Task ids, runs the full export gate after Reviewer clear, and returns spawn/resume/handoff. Streams a CI progress card while the gate runs. Cancel is abort_ci / loop panel Cancel (shared abort token — one suite per id+HEAD, not a second full run). Human-exportable / Push to origin only when the gate is ready (handoff_human). On blocked CI, action is resume_implementor with failingCheck — then evaluate_export_gate again. Do not auto-spawn a reviewer. Preferred over /watch-inbox + /watch-ready. Omit id to list bindings.",
+      "Steward flywheel next action for one local PR. Persists optional Task ids, runs the full export gate after Reviewer clear, and returns spawn/resume/handoff. Streams a CI progress card while the gate runs. Cancel is abort_ci / loop panel Cancel (shared abort token — one suite per id+HEAD, not a second full run). Human-exportable / Push to origin only when the gate is ready (handoff_human). On blocked CI, action is resume_implementor with failingCheck — then evaluate_export_gate again. Do not auto-spawn a reviewer. This is the only orchestrator — do not arm listen. Omit id to list bindings.",
     inputSchema: {
       type: "object",
       properties: {

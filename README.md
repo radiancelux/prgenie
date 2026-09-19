@@ -6,7 +6,7 @@ PR Genie is a **pre-GitHub review lane** for Cursor (and any git checkout, inclu
 
 A local PR is a git-native review loop: branch, base, diff, comments, and status. It never leaves the machine until you export it. Agents are steered — and hooked — away from `git push` / `gh pr create`.
 
-When a **subagent** finishes with commits, PR Genie drafts a loop and puts it on the developer's watch list. Cursor still manages the subagents. The sidebar is the spectator GUI. Hand **one steward** a ticket with `/loop`: it Tasks an implementor, then a reviewer, resumes the same implementor on `changes_requested`, and only hands off to you for Push to origin after the export gate (shepherd CI) is green. `/start` remains the implementor-only entry. Inbox/queue listen (`/watch-inbox`, `/watch-ready`) is transitional.
+When a **subagent** finishes with commits, PR Genie drafts a loop and puts it on the developer's watch list. Cursor still manages the subagents. The sidebar is the spectator GUI. Hand **one steward** a ticket with `/loop`: it Tasks an implementor, then a reviewer, resumes the same implementor on `changes_requested`, and only hands off to you for Push to origin after the export gate (shepherd CI) is green. `/start` remains the implementor-only entry. There is no inbox/queue listen flywheel.
 
 ## What it is
 
@@ -18,20 +18,26 @@ When a **subagent** finishes with commits, PR Genie drafts a loop and puts it on
 
 ## What you can do today
 
-Follow this path to dogfood the control plane (attach a CloudAgent or GitHub PR, then shepherd it to merge-ready):
+**How to dogfood the agent flywheel** (preferred):
 
-1. **Bind GitHub** (if needed): `prgenie gh use <your-login>` — per-repo binding so this project stays on the right account
-2. **Attach an open PR**: `prgenie attach <pr-url|branch>` — imports an existing GitHub PR or branch as a local loop
-3. **Shepherd to ready**: `prgenie shepherd <id>` — checks all gates (review, preflight, bind, CI)
-   - **ready** = all gates pass, safe to merge
-   - **blocked** = shows which gates failed (review incomplete, preflight pattern match, bind missing, CI failure)
-4. **After plugin changes merge**: `pnpm link-plugin` then `prgenie doctor` — ensures plugin is fresh and all checks pass
+1. **Refresh the plugin** so MCP lists `steward_next` / `bind_steward`: `pnpm build && pnpm link-plugin`, then Customize → Plugins → PR Genie off/on. If those tools are missing, wait/retry — do not implement in the `/loop` chat.
+2. **`/loop`** with a ticket URL or brief. You are talking to the **steward**. It creates the packet, Tasks an implementor, then a reviewer, resumes the same implementor on `changes_requested`, and runs the export gate.
+3. **Push to origin** only when the steward says `handoff_human` (or the loop panel shows Push to origin). Run `/export` or **Open on GitHub**.
+
+`/start` is implementor-only (you code here; you do not orchestrate). Do not run `/watch-inbox`, `/watch-ready`, or `prgenie watch start|listen` — those are gone.
+
+**Control plane** (attach an existing CloudAgent or GitHub PR, then shepherd):
+
+1. **Bind GitHub** (if needed): `prgenie gh use <your-login>`
+2. **Attach**: `prgenie attach <pr-url|branch>`
+3. **Shepherd**: `prgenie shepherd <id>` — **ready** = gates pass; **blocked** = which gate failed
+4. After plugin changes: `pnpm link-plugin` then `prgenie doctor`
 
 Run `prgenie attach --help` and `prgenie --help` for full command reference.
 
 ## Docs
 
-- [Architecture](docs/architecture.md) — packages, lifecycle, watch lanes, storage, worktrees, `gh` bind
+- [Architecture](docs/architecture.md) — packages, lifecycle, steward flywheel, storage, worktrees, `gh` bind
 - [Troubleshooting](docs/troubleshooting.md) — `prgenie doctor` checks and common failure modes
 - [Release](docs/release.md) — version alignment, `check-versions`, `pack:extension`
 
@@ -69,8 +75,7 @@ prgenie create [--title t] [--body "summary"] [--base main] [--head branch]
 prgenie attach <pr-url|pr-number|branch> [--title t] [--body b] [--base ref]
 prgenie queue
 prgenie inbox
-prgenie watch / watch inbox|queue / watch stop [inbox|queue] / watch start [inbox|queue]
-prgenie watch listen inbox|queue [--idle 30m] [--max 8h] [--interval 60] [--ticks N]
+prgenie watch
 prgenie claim-review <id> [--head sha] [--source name]
 prgenie steward
 prgenie steward <id> [--restart] [--implementor-missing] [--implementor-failed] [--json]
@@ -108,7 +113,7 @@ prgenie gh use <login>
 prgenie mcp
 ```
 
-`prgenie doctor` checks plugin/extension freshness, monorepo/VSIX version alignment, watch lanes, corrupt PR files, orphaned `.loops` worktrees, `gh` bind, legacy hooks, and the last shepherd CI failure log (when present). On CI failure, toast/CLI name the check and a short excerpt; `prgenie shepherd <id> --verbose` prints the capped full log under `.git/agent-console/ci-logs/`. Preferred agent orchestration is `/loop` (`prgenie steward` / MCP `steward_next`): one steward per loop, durable Task ids in `.git/agent-console/stewards.json`, export gate before Push to origin. `prgenie watch listen` is the transitional implementor/reviewer wake process. It prints `AGENT_LOOP_TICK_*` only when the lane fingerprint changes, so an unchanged queue does not re-wake the parent every interval. `prgenie claim-review` / MCP `claim_review` is the durable one-reviewer-per-HEAD lock.
+`prgenie doctor` checks plugin/extension freshness, monorepo/VSIX version alignment, export-halt state, corrupt PR files, orphaned `.loops` worktrees, `gh` bind, legacy hooks, and the last shepherd CI failure log (when present). On CI failure, toast/CLI name the check and a short excerpt; `prgenie shepherd <id> --verbose` prints the capped full log under `.git/agent-console/ci-logs/`. Agent orchestration is `/loop` (`prgenie steward` / MCP `steward_next`): one steward per loop, durable Task ids in `.git/agent-console/stewards.json`, export gate before Push to origin. `prgenie watch start|stop|listen` hard-errors and points at `/loop`. `prgenie claim-review` / MCP `claim_review` is the durable one-reviewer-per-HEAD lock.
 
 Bind a GitHub login per repo (`prgenie gh use <login>`). Before `git push` / `gh`, PR Genie switches `gh` to that account. `gh auth` is global — only one account is active at a time — so the bind is how this project stays on `radiancelux` instead of `ccc-radiancelux`.
 
@@ -126,7 +131,7 @@ Cursor may auto-clean worktrees. The loop remains.
 
 `draft` → `ready` (reviewer may file comments) → `complete_review` → `changes_requested` or `reviewed` → `approved`
 
-Reviewer comments stay on `ready` until **`complete_review`**. That flip is what wakes the implementor (`changes_requested`) or marks **review cleared** (`reviewed`) so the steward can run the export gate. Ready-for-human / Push language only after `handoff_human`. Human comments still request changes immediately. The implementor **addresses** each open finding with a reply under that comment (`address_comment`). Addressing the **last** open finding sets `ready` and posts Review requested so the reviewer queue can run again. The reviewer **resolves** addressed comments, then **always** `complete_review`. Preferred: **`/loop`** drives implement ↔ review via Tasks and only shows Push to origin after the export gate is ready. Transitional: the **reviewer chat** runs `/watch-ready`. The **implementor chat** runs `/watch-inbox` and must not act while the loop is still `ready`. Listen loops stop after **30 minutes of inactivity** (or an **8h** wall ceiling) — re-run `/watch-inbox` or `/watch-ready` to `watch start` that lane only. `/stop` stops the implementor listen only (`prgenie watch stop inbox`). `/stop-review` stops the reviewer listen only. `/unwatch` stops both. `/export` opens the GitHub PR at origin, **archives** the loop (`approved`), and **halts** listen loops until `create_local_pr` runs after that export id is archived (or missing). Archived packets stay on disk (`prgenie show <id>`, `refs/local-pr/*`, Local PRs **Show archived**) but drop off `prgenie list` and MCP `list_local_prs` unless you pass `--all` / `all=true`. Export checks the **main workspace** off the loop branch (onto the loop base) and removes a sibling `../<repo>.loops/<id>` checkout. If this window is still on that extra worktree, PR Genie reopens the primary folder and then clears it. Every loop should have a **summary** (`body`): why, what changed, how to test.
+Reviewer comments stay on `ready` until **`complete_review`**. That flip is what wakes the implementor (`changes_requested`) or marks **review cleared** (`reviewed`) so the steward can run the export gate. Ready-for-human / Push language only after `handoff_human`. Human comments still request changes immediately. The implementor **addresses** each open finding with a reply under that comment (`address_comment`). Addressing the **last** open finding sets `ready` and posts Review requested so the steward can Task the reviewer again. The reviewer **resolves** addressed comments, then **always** `complete_review`. **`/loop`** drives implement ↔ review via Tasks and only shows Push to origin after the export gate is ready. `/export` opens the GitHub PR at origin and **archives** the loop (`approved`). Archived packets stay on disk (`prgenie show <id>`, `refs/local-pr/*`, Local PRs **Show archived**) but drop off `prgenie list` and MCP `list_local_prs` unless you pass `--all` / `all=true`. Export checks the **main workspace** off the loop branch (onto the loop base) and removes a sibling `../<repo>.loops/<id>` checkout. If this window is still on that extra worktree, PR Genie reopens the primary folder and then clears it. Every loop should have a **summary** (`body`): why, what changed, how to test.
 
 ## Roadmap
 

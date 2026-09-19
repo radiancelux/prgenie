@@ -70,7 +70,7 @@ If the current branch's local PR is `changes_requested`:
 
 1. `get_local_pr` and read `pendingComments` (open human/reviewer notes; each has an `id`).
 2. Fix on the current branch. Commit if needed **before** addressing.
-3. For **each** open comment, MCP `address_comment` (or `prgenie address`) with that `commentId` and a reply (what you changed). Mid-inbox status stays `changes_requested`. The last open finding sets the loop to `ready`, refreshes HEAD, and posts **Review requested.** so a steward or `/watch-ready` can dispatch the next review. Run `prgenie ci <id>` / MCP `run_ci` before that last address when you can, so ready is not a surprise-fail for the export gate.
+3. For **each** open comment, MCP `address_comment` (or `prgenie address`) with that `commentId` and a reply (what you changed). Mid-inbox status stays `changes_requested`. The last open finding sets the loop to `ready`, refreshes HEAD, and posts **Review requested.** so the steward can Task the next review. Run `prgenie ci <id>` / MCP `run_ci` before that last address when you can, so ready is not a surprise-fail for the export gate.
 4. Confirm status is `ready`. Do not `git push`. Do not review your own loop. Do not `resolve_comment` — that is the reviewer's job.
 5. If status is still `ready` with a review in progress (open findings, no `complete_review` yet), wait. Do not address comments until `complete_review` flips the loop to `changes_requested`.
 
@@ -83,12 +83,10 @@ You are the agent **on the worktree** (implementor). On completion:
 3. On CI-resume (export gate blocked): re-run at least the failing check(s) (`prgenie ci <id> --failing lint,test`) and only return when they pass.
 4. `set_status` `ready`.
 5. `add_comment` `role=agent`: `Review requested.`
-6. Stop. If a **steward** is driving this loop, it will Task the reviewer. Otherwise start **`/watch-inbox`** (transitional) if it is not already listening (30m idle / 8h max). The **reviewer chat** should be on **`/watch-ready`**. It `claim_review`s then Tasks subagents — one in-flight reviewer per `ready` HEAD — and must not await them. Do not re-arm listen on TICK.
-7. When review is done, status is `changes_requested` (findings) or `reviewed` (review cleared — steward runs the export gate). `/inbox` (or the watch loop) only treats `pendingComments` as the brief after `changes_requested`. Do not wait for a DM; the loop is the channel. Do not start on comments while the loop is still `ready`. Do not say ready-for-human until `handoff_human`.
+6. **Stop.** If a **steward** (`/loop`) is driving this loop, it will Task the reviewer. Do not start listen. Do not review this loop yourself.
+7. When review is done, status is `changes_requested` (findings) or `reviewed` (review cleared — steward runs the export gate). Treat `pendingComments` as the brief only after `changes_requested`. Do not wait for a DM; the loop is the channel. Do not start on comments while the loop is still `ready`. Do not say ready-for-human until `handoff_human`.
 
-If there is **no** reviewer chat, `claim_review` / `prgenie claim-review` for this id+headSha first (skip if already claimed), then Task one reviewer subagent yourself for this id only. Do not wait on it.
-
-`/stop` ends the implementor listen. `/stop-review` ends the reviewer listen. `/unwatch` ends both. None of those push. `/export` is the developer cutting the GitHub PR at origin.
+`/export` is the developer cutting the GitHub PR at origin.
 
 ## Worktrees
 

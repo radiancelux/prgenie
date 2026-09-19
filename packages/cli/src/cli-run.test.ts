@@ -105,16 +105,19 @@ test("cli list rejects invalid --in fields", () => {
   assert.match(result.stderr, /--in fields must be/);
 });
 
-test("cli watch listen rejects unknown role", () => {
-  const result = prgenie(["watch", "listen", "neither"]);
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /watch listen inbox\|queue/);
-});
-
-test("cli watch listen rejects bad --interval", () => {
-  const result = prgenie(["watch", "listen", "inbox", "--interval", "0"]);
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /--interval must be/);
+test("cli watch start|stop|listen hard-error pointing at /loop", () => {
+  for (const args of [
+    ["watch", "start"],
+    ["watch", "start", "inbox"],
+    ["watch", "stop"],
+    ["watch", "stop", "queue"],
+    ["watch", "listen", "inbox"],
+  ]) {
+    const result = prgenie(args);
+    assert.equal(result.code, 1, args.join(" "));
+    assert.match(result.stderr, /Listen flywheel removed/);
+    assert.match(result.stderr, /\/loop/);
+  }
 });
 
 test("cli steward --help prints usage and exits 0", () => {

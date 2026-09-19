@@ -16,11 +16,8 @@ import {
   editLocalPrComment,
   ensureWorktreeForLoop,
   findGitRoot,
-  formatWatchLane,
   getLocalPrNameStatus,
   getRepoGithubBind,
-  getRepoWatch,
-  haltWatchRole,
   isArchivedPr,
   listGhAccounts,
   listLocalPrs,
@@ -28,7 +25,6 @@ import {
   pruneArchivedLoopWorktree,
   reopenLocalPr,
   resolveLocalPrComment,
-  resumeWatchRole,
   sameFsPath,
   setLocalPrStatus,
   shepherdStatus,
@@ -54,7 +50,6 @@ import {
   type HumanExportUi,
   type ProgressEvent,
   type ShepherdResult,
-  type WatchRole,
   type GhAccount,
   type RepoGithubBind,
 } from "@prgenie/core";
@@ -91,8 +86,6 @@ type ClientMessage =
   | { type: "deletePr"; id: string }
   | { type: "reopenPr"; id: string }
   | { type: "renamePr"; id: string }
-  | { type: "watchStart"; role: WatchRole }
-  | { type: "watchStop"; role: WatchRole }
   | { type: "openDiffs" }
   | { type: "export"; id: string }
   | { type: "cancelProgress" }
@@ -110,13 +103,6 @@ type ClientMessage =
   | { type: "showArchived"; value: boolean }
   | { type: "ghBind"; login: string }
   | { type: "ghRefresh" };
-
-type WatchLaneSnapshot = {
-  halted: boolean;
-  reason: string | null;
-  exportId: string | null;
-  label: string;
-};
 
 type GhBindSnapshot = {
   accounts: GhAccount[];
@@ -168,7 +154,6 @@ type Snapshot = {
   archivedCount?: number;
   showArchived?: boolean;
   titleSaveInFlightId?: string | null;
-  watch?: { inbox: WatchLaneSnapshot; queue: WatchLaneSnapshot };
   ghBind?: GhBindSnapshot;
   shepherdStatus?: ShepherdResult | null;
   progress?: LiveProgress | null;
@@ -630,18 +615,6 @@ export class LaneHub implements vscode.Disposable {
       this.exportGate.retry(retryCwd, retryPr);
       return;
     }
-    if (msg.type === "watchStart" || msg.type === "watchStop") {
-      const cwd = await this.repoCwd();
-      if (!cwd) return;
-      try {
-        if (msg.type === "watchStart") await resumeWatchRole(cwd, msg.role);
-        else await haltWatchRole(cwd, msg.role, "stop");
-        await this.pushSnapshot(true);
-      } catch (err) {
-        void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
-      }
-      return;
-    }
     if (msg.type === "create") {
       await this.createPr();
       return;
@@ -960,13 +933,6 @@ export class LaneHub implements vscode.Disposable {
       const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
       const hereId =
         prs.find((p) => p.worktreePath && sameFsPath(p.worktreePath, folder))?.id ?? null;
-      const watchState = await getRepoWatch(root);
-      const laneSnap = (role: WatchRole): WatchLaneSnapshot => ({
-        halted: watchState[role].halted,
-        reason: watchState[role].reason,
-        exportId: watchState[role].exportId,
-        label: formatWatchLane(watchState, role),
-      });
       let ghBind: GhBindSnapshot | undefined;
       try {
         const [accounts, bound] = await Promise.all([listGhAccounts(), getRepoGithubBind(root)]);
@@ -997,7 +963,6 @@ export class LaneHub implements vscode.Disposable {
           archivedCount,
           showArchived: this.showArchived,
           titleSaveInFlightId: this.titleSaveInFlightId ?? null,
-          watch: { inbox: laneSnap("inbox"), queue: laneSnap("queue") },
           ghBind,
           shepherdStatus: shepherd,
           progress: this.liveProgress,
@@ -1040,7 +1005,6 @@ function snapshotKey(payload: Snapshot | { type: "snapshot"; error: string; prs:
     repo: "repo" in payload ? payload.repo : "",
     files: "files" in payload ? payload.files : [],
     threads: "threads" in payload ? payload.threads : [],
-    watch: "watch" in payload ? payload.watch : null,
     ghBind: "ghBind" in payload ? payload.ghBind : null,
     shepherdStatus: "shepherdStatus" in payload ? payload.shepherdStatus : null,
     progress: "progress" in payload ? payload.progress : null,
@@ -1320,20 +1284,6 @@ function laneHtml(webview: vscode.Webview): string {
       font-size: 11px;
     }
     .meta-top { display: flex; align-items: center; gap: 6px; }
-    .watch {
-      display: flex; flex-direction: column; gap: 4px;
-      padding: 6px 8px;
-      border: 1px solid var(--vscode-widget-border, rgba(127,127,127,0.35));
-    }
-    .watch-row {
-      display: flex; align-items: center; gap: 8px;
-    }
-    .watch-row .role {
-      width: 42px; flex: none; text-transform: uppercase; letter-spacing: 0.04em;
-      font-size: 10px; color: var(--vscode-descriptionForeground);
-    }
-    .watch-row .state { flex: 1; min-width: 0; }
-    .watch-row button { flex: none; font-size: 11px; }
     .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--vscode-charts-green, #3fb950); flex: none; }
     .dot.off { background: var(--vscode-descriptionForeground); }
     .gh-bind {
@@ -1423,18 +1373,6 @@ function laneHtml(webview: vscode.Webview): string {
 </head>
 <body>
   <div class="meta">
-    <div class="watch" id="watch" hidden>
-      <div class="watch-row" data-role="inbox">
-        <span class="role">inbox</span>
-        <span class="state muted" id="inboxState">—</span>
-        <button type="button" class="secondary" id="inboxBtn" disabled>Start</button>
-      </div>
-      <div class="watch-row" data-role="queue">
-        <span class="role">queue</span>
-        <span class="state muted" id="queueState">—</span>
-        <button type="button" class="secondary" id="queueBtn" disabled>Start</button>
-      </div>
-    </div>
     <div class="gh-bind" id="ghBind" hidden>
       <div class="gh-bind-row">
         <span class="label">gh bind</span>
@@ -1472,17 +1410,7 @@ function laneHtml(webview: vscode.Webview): string {
     bindCiModal();
     const list = document.getElementById("list");
     const toggle = document.getElementById("archivedToggle");
-    const watchBox = document.getElementById("watch");
     toggle.onclick = () => vscode.postMessage({ type: "showArchived", value: !toggle.classList.contains("on") });
-    function bindWatchBtn(role, btn) {
-      btn.onclick = () => {
-        if (btn.disabled) return;
-        const halted = btn.dataset.halted === "1";
-        vscode.postMessage({ type: halted ? "watchStart" : "watchStop", role });
-      };
-    }
-    bindWatchBtn("inbox", document.getElementById("inboxBtn"));
-    bindWatchBtn("queue", document.getElementById("queueBtn"));
     const ghRefreshBtn = document.getElementById("ghRefreshBtn");
     const ghBindBtn = document.getElementById("ghBindBtn");
     const ghAccountSelect = document.getElementById("ghAccountSelect");
@@ -1511,37 +1439,9 @@ function laneHtml(webview: vscode.Webview): string {
         }
       };
     }
-    function paintLane(role, lane) {
-      const state = document.getElementById(role + "State");
-      const btn = document.getElementById(role + "Btn");
-      if (!state || !btn) return;
-      if (!lane) {
-        state.textContent = "—";
-        btn.dataset.halted = "1";
-        btn.textContent = "Start";
-        btn.disabled = true;
-        return;
-      }
-      const halted = !!lane.halted;
-      state.textContent = lane.label || (halted ? "halted" : "listening");
-      btn.dataset.halted = halted ? "1" : "0";
-      btn.textContent = halted ? "Start" : "Stop";
-      btn.disabled = false;
-    }
-    function paintWatch(msg) {
+    function paintDot(msg) {
       const dot = document.getElementById("dot");
-      const hasWatch = !!(msg.watch && msg.watch.inbox && msg.watch.queue) && !msg.error;
-      if (watchBox) watchBox.hidden = !hasWatch;
-      if (!hasWatch) {
-        paintLane("inbox", null);
-        paintLane("queue", null);
-        if (dot) dot.classList.add("off");
-        return;
-      }
-      paintLane("inbox", msg.watch.inbox);
-      paintLane("queue", msg.watch.queue);
-      const anyListening = !msg.watch.inbox.halted || !msg.watch.queue.halted;
-      if (dot) dot.classList.toggle("off", !anyListening);
+      if (dot) dot.classList.toggle("off", !!msg.error);
     }
     function paintGhBind(msg) {
       const ghBindBox = document.getElementById("ghBind");
@@ -1724,7 +1624,7 @@ function laneHtml(webview: vscode.Webview): string {
       lastSnapshot = msg;
       if (Object.prototype.hasOwnProperty.call(msg, "progress")) liveProgress = msg.progress || null;
       const meta = document.getElementById("meta");
-      paintWatch(msg);
+      paintDot(msg);
       paintGhBind(msg);
       paintShepherd(msg);
       if (bindInProgress) {

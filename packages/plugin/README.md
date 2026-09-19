@@ -13,14 +13,14 @@ pnpm link-plugin
 Then **Developer: Reload Window** is not enough for MCP tools (Cursor caches the first tool list). In **Customize → Plugins**, disable and re-enable PR Genie. Confirm:
 
 - Rule: do not push / open GitHub PRs
-- Command (skills, one slash name each): `/loop`, `/start`, `/local-pr`, `/review`, `/watch-ready`, `/watch-inbox`, `/queue`, `/inbox`, `/stop`, `/stop-review`, `/unwatch`, `/export`
+- Command (skills, one slash name each): `/loop`, `/start`, `/local-pr`, `/review`, `/export`
 - Do not add `commands/*.md` that duplicate a skill name — Cursor lists both and the user sees two `/start` entries.
 - MCP server: `prgenie`
-- Hooks: github-gate, session log, **review loop** (`sessionStart` injects comments only when status is `changes_requested`; `stop` prompts a reviewer Task when the loop is `ready` **and** `claim_review` succeeds for that HEAD; `subagentStop` returns those comments to this chat), **subagentStop capture**
+- Hooks: github-gate, session log, **review loop** (`sessionStart` / `subagentStop` inject pending comments when status is `changes_requested`; no stop-hook reviewer spawn), **subagentStop capture**
 
 Each loop has a feature branch for export and a git worktree. **Switch** in Local PRs replaces this window with that checkout. When a loop is **reviewed**, **Export to GitHub** on the loop panel publishes it. Exported (`approved`) loops are archived: they stay on disk. **Show archived** in Local PRs lists them. A merged GitHub PR archives the matching local packet. Export also checks the main workspace off the loop branch and drops a sibling `.loops` checkout. The plugin still asks before `git push` / `gh pr create`.
 
-Preferred orchestration is **`/loop`** (one steward, durable Task ids, export gate before Push to origin). Listen loops are transitional: **idle timeout** (default **30m** quiet, **8h** wall max), then halt that chat's lane only (`/stop` or `/stop-review`). Re-run `/watch-inbox` or `/watch-ready` to start that lane again. `/unwatch` stops both. TICK is fingerprint-change only — do not re-arm listen on TICK. Reviewer Tasks require a durable `claim_review` for that `id`+`headSha`.
+Orchestration is **`/loop`** (one steward, durable Task ids, export gate before Push to origin). There is no inbox/queue listen flywheel. Reviewer Tasks require a durable `claim_review` for that `id`+`headSha`.
 
 ## Docs
 

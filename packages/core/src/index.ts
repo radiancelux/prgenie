@@ -85,24 +85,14 @@ export {
   haltWatch,
   haltWatchRole,
   getRepoWatch,
-  listenSentinel,
-  listenWatchLane,
-  parseDurationMs,
   resumeWatch,
   resumeWatchRole,
   formatWatchLane,
   formatWatchStatus,
   watchLane,
+  LISTEN_REMOVED_MESSAGE,
 } from "./watch.js";
-export type {
-  ListenDoneReason,
-  RepoWatchState,
-  WatchHaltReason,
-  WatchLaneState,
-  WatchListenSentinel,
-  WatchRole,
-} from "./watch.js";
-export { listenActivityFingerprint } from "./watchActivity.js";
+export type { RepoWatchState, WatchHaltReason, WatchLaneState, WatchRole } from "./watch.js";
 export {
   claimReview,
   formatClaimReview,
@@ -120,7 +110,6 @@ export {
   getStewardBinding,
   isStewardOwned,
   listStewardBindings,
-  shouldEmitLegacyReviewerHandoff,
   stewardNext,
 } from "./steward.js";
 export type {
