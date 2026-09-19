@@ -1,7 +1,13 @@
 import { getLocalPr, isArchivedPr, pendingReviewComments } from "./prs.js";
 import { runPreflight } from "./learnings.js";
 import { ensureRepoGithub } from "./github-ops.js";
-import { runCiChecks } from "./ci-runner.js";
+import { runCiChecks, type CiCheckResult } from "./ci-runner.js";
+import {
+  changedPathsForCi,
+  resolveCiCwd,
+  selectCiChecks,
+  type CiCheckSelection,
+} from "./ci-select.js";
 import { isAbortError, throwIfAborted, type ProgressCallback } from "./progress.js";
 
 export type ShepherdStatus = "ready" | "blocked";
@@ -14,6 +20,8 @@ export interface ShepherdBlockReason {
 export interface ShepherdResult {
   status: ShepherdStatus;
   reasons: ShepherdBlockReason[];
+  ciPlan?: CiCheckSelection;
+  ciChecks?: CiCheckResult[];
 }
 
 export interface ShepherdOptions {
@@ -24,6 +32,10 @@ export interface ShepherdOptions {
   /** Live progress for CLI / sidebar (RAD-73). */
   onProgress?: ProgressCallback;
   signal?: AbortSignal;
+  /** Override smart-CI path list (tests). */
+  changedPaths?: string[];
+  failFast?: boolean;
+  parallel?: boolean;
 }
 
 /**
@@ -38,6 +50,8 @@ export async function shepherdStatus(
   const reasons: ShepherdBlockReason[] = [];
   const onProgress = options.onProgress;
   const signal = options.signal;
+  let ciPlan: CiCheckSelection | undefined;
+  let ciChecks: CiCheckResult[] | undefined;
 
   try {
     throwIfAborted(signal);
@@ -132,12 +146,24 @@ export async function shepherdStatus(
     }
 
     throwIfAborted(signal);
-    // 4. Check local CI passes (format, lint, typecheck, test, build)
+    // 4. Check local CI passes (smart-selected format/lint/typecheck/test/build)
     if (!options.skipCiCheck) {
-      const ciResult = await runCiChecks(cwd, { onProgress, signal });
+      const paths = options.changedPaths ?? (await changedPathsForCi(cwd, id));
+      const selection = selectCiChecks(paths);
+      const ciCwd = resolveCiCwd(cwd, pr.worktreePath);
+      const ciResult = await runCiChecks(ciCwd, {
+        checks: selection.checks,
+        selection,
+        onProgress,
+        signal,
+        failFast: options.failFast,
+        parallel: options.parallel,
+      });
+      ciPlan = selection;
+      ciChecks = ciResult.checks;
       if (!ciResult.allPassed) {
         for (const check of ciResult.checks) {
-          if (!check.passed) {
+          if (!check.passed && !check.skipped) {
             reasons.push({
               check: "ci",
               message: `CI check failed: ${check.name}${check.error ? ` — ${check.error}` : ""}`,
@@ -160,5 +186,7 @@ export async function shepherdStatus(
   return {
     status: reasons.length === 0 ? "ready" : "blocked",
     reasons,
+    ciPlan,
+    ciChecks,
   };
 }

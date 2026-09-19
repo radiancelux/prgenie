@@ -8,9 +8,18 @@ import {
   writeCiFailureLog,
 } from "./ci-failure.js";
 import {
+  changedPathsForCi,
+  envFlag,
+  resolveCiCwd,
+  selectCiChecks,
+  type CiCheckSelection,
+} from "./ci-select.js";
+import { getLocalPr } from "./prs.js";
+import {
   abortError,
   ciCheckCommand,
   isAbortError,
+  onAbort,
   throwIfAborted,
   type ProgressCallback,
 } from "./progress.js";
@@ -20,16 +29,20 @@ const execAsync = promisify(exec);
 export interface CiCheckResult {
   name: string;
   passed: boolean;
+  skipped?: boolean;
   error?: string;
   /** Short toast/CLI excerpt (first failing test or last N lines). */
   excerpt?: string;
   /** Relative or absolute path to the capped full log. */
   logPath?: string;
+  elapsedMs?: number;
+  reason?: string;
 }
 
 export interface CiRunnerResult {
   allPassed: boolean;
   checks: CiCheckResult[];
+  selection?: CiCheckSelection;
 }
 
 export interface CiRunnerOptions {
@@ -43,6 +56,20 @@ export interface CiRunnerOptions {
   onProgress?: ProgressCallback;
   /** Cancel in-flight checks (kills the child process). */
   signal?: AbortSignal;
+  /**
+   * Stop remaining checks after the first failure (RAD-77).
+   * Default true, or PRGENIE_CI_FAIL_FAST=0 to disable.
+   */
+  failFast?: boolean;
+  /**
+   * Run independent checks concurrently (RAD-77).
+   * Default true, or PRGENIE_CI_PARALLEL=0 to disable.
+   */
+  parallel?: boolean;
+  /** Smart-CI plan already computed by the caller. */
+  selection?: CiCheckSelection;
+  /** Changed paths used when the caller wants selection recorded. */
+  changedPaths?: string[];
 }
 
 /**
@@ -155,6 +182,89 @@ async function checkFormatFromBlobs(
   }
 }
 
+function skippedResult(check: string, reason?: string): CiCheckResult {
+  return { name: check, passed: true, skipped: true, reason };
+}
+
+async function runOneCheck(
+  cwd: string,
+  check: string,
+  options: {
+    timeout: number;
+    skipCache: boolean;
+    onProgress?: ProgressCallback;
+    signal?: AbortSignal;
+    reason?: string;
+  },
+): Promise<CiCheckResult> {
+  const { timeout, skipCache, onProgress, signal, reason } = options;
+  const command = ciCheckCommand(check);
+
+  if (!skipCache) {
+    const cached = await getCachedResult(cwd, check);
+    if (cached) {
+      onProgress?.({ phase: "ci", check, state: "cached", command, elapsedMs: 0 });
+      return { name: check, passed: true, elapsedMs: 0, reason };
+    }
+  }
+
+  throwIfAborted(signal);
+  onProgress?.({ phase: "ci", check, state: "start", command });
+  const started = Date.now();
+
+  try {
+    if (check === "format:check") {
+      const tracked = await getTrackedFiles(cwd);
+      if (tracked.length > 0) {
+        await checkFormatFromBlobs(cwd, tracked, signal);
+        const elapsedMs = Date.now() - started;
+        onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
+        try {
+          await recordCheckPass(cwd, check);
+        } catch {
+          // Check passed; cache write failed — ignore and continue without cache
+        }
+        return { name: check, passed: true, elapsedMs, reason };
+      }
+    }
+
+    await execAsync(command, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });
+    const elapsedMs = Date.now() - started;
+    onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
+    try {
+      await recordCheckPass(cwd, check);
+    } catch {
+      // Check passed; cache write failed — ignore and continue without cache
+    }
+    return { name: check, passed: true, elapsedMs, reason };
+  } catch (err) {
+    if (isAbortError(err) || signal?.aborted) throw abortError();
+    const output = collectExecOutput(err);
+    const excerpt = formatFailureExcerpt(check, output);
+    const logPath = await writeCiFailureLog(cwd, check, command, output, excerpt);
+    const elapsedMs = Date.now() - started;
+    const error = formatCiCheckError({ command, excerpt, logPath });
+    onProgress?.({
+      phase: "ci",
+      check,
+      state: "fail",
+      command,
+      elapsedMs,
+      message: excerpt,
+      logPath: logPath ?? undefined,
+    });
+    return {
+      name: check,
+      passed: false,
+      error,
+      excerpt,
+      logPath: logPath ?? undefined,
+      elapsedMs,
+      reason,
+    };
+  }
+}
+
 /**
  * Run local CI checks. Discovers checks from package.json/CI workflow.
  * For prgenie: format:check, lint, typecheck, test, build
@@ -162,102 +272,125 @@ async function checkFormatFromBlobs(
  * RAD-35: Implements cache/incremental CI - skips checks when inputs unchanged.
  * RAD-36: format:check runs over git-tracked files only (matching remote CI clean checkout).
  * RAD-46: format:check checks git blob (LF-normalized) content, not CRLF working tree.
- * This ensures Windows autocrlf repos pass when blob content is properly formatted.
+ * RAD-77: fail-fast (default), parallel independent checks, smart selection via caller.
  */
 export async function runCiChecks(
   cwd: string,
   options: CiRunnerOptions = {},
 ): Promise<CiRunnerResult> {
-  // Default checks match CI workflow order (skip check-versions - version checks are not PR-blocking)
   const checks = options.checks ?? ["format:check", "lint", "typecheck", "test", "build"];
-  // RAD-46: Raise default timeout from 60s to 5min - healthy test suite can exceed 215s
   const timeout = options.timeout ?? 300000;
   const skipCache = options.skipCache ?? false;
   const onProgress = options.onProgress;
   const signal = options.signal;
+  const failFast = options.failFast ?? envFlag("PRGENIE_CI_FAIL_FAST", true);
+  const parallel = options.parallel ?? envFlag("PRGENIE_CI_PARALLEL", true);
+  const selection = options.selection;
+  const reasonFor = (name: string): string | undefined =>
+    selection?.mapping.find((m) => m.check === name)?.reason ?? selection?.reason;
+
+  if (selection) {
+    onProgress?.({
+      phase: "ci",
+      state: "start",
+      selectedChecks: selection.checks,
+      selectionReason: selection.reason,
+    });
+  } else {
+    onProgress?.({
+      phase: "ci",
+      state: "start",
+      selectedChecks: checks,
+      selectionReason: options.changedPaths
+        ? "caller-provided check list"
+        : "configured suite",
+    });
+  }
 
   const results: CiCheckResult[] = [];
 
-  for (const check of checks) {
-    throwIfAborted(signal);
-    const command = ciCheckCommand(check);
-
-    // RAD-35: Check cache first (fail-closed: cache miss on any uncertainty)
-    if (!skipCache) {
-      const cached = await getCachedResult(cwd, check);
-      if (cached) {
-        // Cache hit - check passed previously with same inputs
-        results.push({ name: check, passed: true });
-        onProgress?.({ phase: "ci", check, state: "cached", command, elapsedMs: 0 });
+  if (parallel && checks.length > 1) {
+    const child = new AbortController();
+    const detach = onAbort(signal, () => child.abort());
+    try {
+      const pending = checks.map((check) =>
+        runOneCheck(cwd, check, {
+          timeout,
+          skipCache,
+          onProgress,
+          signal: child.signal,
+          reason: reasonFor(check),
+        }).then((result) => {
+          if (!result.passed && failFast) child.abort();
+          return result;
+        }),
+      );
+      const settled = await Promise.allSettled(pending);
+      for (let i = 0; i < settled.length; i++) {
+        const item = settled[i];
+        const check = checks[i];
+        if (item.status === "fulfilled") {
+          results.push(item.value);
+        } else if (isAbortError(item.reason) || child.signal.aborted) {
+          onProgress?.({ phase: "ci", check, state: "skip" });
+          results.push(skippedResult(check, "fail-fast — not started or cancelled"));
+        } else {
+          throw item.reason;
+        }
+      }
+    } finally {
+      detach();
+    }
+  } else {
+    for (const check of checks) {
+      throwIfAborted(signal);
+      if (failFast && results.some((r) => !r.passed && !r.skipped)) {
+        onProgress?.({ phase: "ci", check, state: "skip" });
+        results.push(skippedResult(check, "fail-fast — earlier check failed"));
         continue;
       }
-    }
-
-    onProgress?.({ phase: "ci", check, state: "start", command });
-    const started = Date.now();
-
-    // Cache miss or skipCache - run the check
-    try {
-      // RAD-36/RAD-46: format:check runs over tracked files only, checking git blob content
-      if (check === "format:check") {
-        const tracked = await getTrackedFiles(cwd);
-        // Only override command if we have a git repo with tracked files
-        if (tracked.length > 0) {
-          // RAD-46: Check git blob content (LF-normalized) to match remote CI on Windows autocrlf
-          await checkFormatFromBlobs(cwd, tracked, signal);
-          const elapsedMs = Date.now() - started;
-          results.push({ name: check, passed: true });
-          onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
-          // RAD-35: Record successful check in cache (ignore cache-write failures)
-          try {
-            await recordCheckPass(cwd, check);
-          } catch {
-            // Check passed; cache write failed — ignore and continue without cache
-          }
-          continue;
-        }
-        // If no tracked files (not a git repo or empty repo), fall back to default pnpm format:check
-      }
-
-      await execAsync(command, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });
-      const elapsedMs = Date.now() - started;
-      results.push({ name: check, passed: true });
-      onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
-      // RAD-35: Record successful check in cache (ignore cache-write failures)
       try {
-        await recordCheckPass(cwd, check);
-      } catch {
-        // Check passed; cache write failed — ignore and continue without cache
+        results.push(
+          await runOneCheck(cwd, check, {
+            timeout,
+            skipCache,
+            onProgress,
+            signal,
+            reason: reasonFor(check),
+          }),
+        );
+      } catch (err) {
+        if (isAbortError(err) || signal?.aborted) throw abortError();
+        throw err;
       }
-    } catch (err) {
-      if (isAbortError(err) || signal?.aborted) throw abortError();
-      const output = collectExecOutput(err);
-      const excerpt = formatFailureExcerpt(check, output);
-      const logPath = await writeCiFailureLog(cwd, check, command, output, excerpt);
-      const elapsedMs = Date.now() - started;
-      const error = formatCiCheckError({ command, excerpt, logPath });
-      results.push({
-        name: check,
-        passed: false,
-        error,
-        excerpt,
-        logPath: logPath ?? undefined,
-      });
-      onProgress?.({
-        phase: "ci",
-        check,
-        state: "fail",
-        command,
-        elapsedMs,
-        message: excerpt,
-        logPath: logPath ?? undefined,
-      });
-      // RAD-35: Don't cache failures - next run will try again
     }
   }
 
   return {
     allPassed: results.every((r) => r.passed),
     checks: results,
+    selection,
   };
+}
+
+export interface LoopCiOptions extends CiRunnerOptions {
+  /** Extra checks that must run (CI-resume failing names). */
+  failingChecks?: string[];
+}
+
+/**
+ * Implementor preflight / CI-resume: smart-select from the loop diff, run in the worktree.
+ */
+export async function runLoopCi(
+  cwd: string,
+  id: string,
+  options: LoopCiOptions = {},
+): Promise<CiRunnerResult> {
+  const pr = await getLocalPr(cwd, id);
+  const ciCwd = resolveCiCwd(cwd, pr.worktreePath);
+  const paths = options.changedPaths ?? (await changedPathsForCi(ciCwd, id));
+  const selection = options.selection ?? selectCiChecks(paths);
+  const extra = (options.failingChecks ?? []).map((name) => name.trim()).filter(Boolean);
+  const checks = options.checks ?? [...new Set([...selection.checks, ...extra])];
+  return runCiChecks(ciCwd, { ...options, checks, selection, changedPaths: paths });
 }

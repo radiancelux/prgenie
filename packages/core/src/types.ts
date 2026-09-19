@@ -66,12 +66,32 @@ export interface ExportGateReason {
   message: string;
 }
 
+export interface ExportGateCiCheck {
+  name: string;
+  passed: boolean;
+  skipped?: boolean;
+  excerpt?: string;
+  logPath?: string;
+  elapsedMs?: number;
+  reason?: string;
+}
+
+export interface ExportGateCiPlan {
+  checks: string[];
+  reason: string;
+  uncertain?: boolean;
+}
+
 /** Persisted shepherd result used to gate Push to origin / export. */
 export interface ExportGateSnapshot {
   status: ExportGateStatus;
   reasons: ExportGateReason[];
   headSha: string;
   evaluatedAt: string | null;
+  /** Smart-CI selection shown in the panel + chat card. */
+  ciPlan?: ExportGateCiPlan | null;
+  /** Per-check results for the breakout modal (RAD-74 excerpt/log). */
+  ciChecks?: ExportGateCiCheck[] | null;
 }
 
 export interface WorktreeInfo {

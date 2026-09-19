@@ -79,7 +79,7 @@ describe("runCiChecks", () => {
         }),
       );
 
-      const result = await runCiChecks(repo, { timeout: 5000 });
+      const result = await runCiChecks(repo, { timeout: 5000, failFast: false, parallel: false });
 
       assert.equal(result.allPassed, false);
       const lintCheck = result.checks.find((c) => c.name === "lint");
@@ -87,7 +87,7 @@ describe("runCiChecks", () => {
       assert.equal(lintCheck.passed, false);
       assert.ok(lintCheck.error);
 
-      // Other checks should still pass
+      // Other checks should still pass when fail-fast is off
       const passedChecks = result.checks.filter((c) => c.name !== "lint");
       assert.ok(passedChecks.every((c) => c.passed));
     } finally {
@@ -112,11 +112,11 @@ describe("runCiChecks", () => {
         }),
       );
 
-      const result = await runCiChecks(repo, { timeout: 5000 });
+      const result = await runCiChecks(repo, { timeout: 5000, failFast: false, parallel: false });
 
       assert.equal(result.allPassed, false);
 
-      const failedChecks = result.checks.filter((c) => !c.passed);
+      const failedChecks = result.checks.filter((c) => !c.passed && !c.skipped);
       assert.equal(failedChecks.length, 3);
 
       const failedNames = failedChecks.map((c) => c.name);
@@ -818,7 +818,10 @@ describe("runCiChecks", () => {
         checks: ["lint", "test"],
         timeout: 5000,
         skipCache: true,
+        failFast: true,
+        parallel: false,
         onProgress: (event) => {
+          if (!event.check) return;
           events.push(`${event.check}:${event.state}:${event.command ?? ""}`);
         },
       });
@@ -914,6 +917,8 @@ describe("runCiChecks", () => {
         checks: ["lint", "typecheck", "build"],
         timeout: 5000,
         skipCache: true,
+        failFast: false,
+        parallel: false,
       });
       assert.equal(result.allPassed, false);
       const lint = result.checks.find((c) => c.name === "lint");
@@ -950,11 +955,63 @@ describe("runCiChecks", () => {
             checks: ["lint", "test"],
             timeout: 30000,
             skipCache: true,
+            parallel: false,
             signal: ac.signal,
           }),
         (err: unknown) => isAbortError(err),
       );
       assert.ok(Date.now() - started < 8000, "abort should not wait out the check");
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-77: fail-fast skips remaining checks after the first failure", async () => {
+    const repo = await initTestRepo();
+    try {
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: "exit 1",
+            test: "exit 0",
+            build: "exit 0",
+          },
+        }),
+      );
+      const result = await runCiChecks(repo, {
+        checks: ["lint", "test", "build"],
+        timeout: 5000,
+        skipCache: true,
+        failFast: true,
+        parallel: false,
+      });
+      assert.equal(result.allPassed, false);
+      assert.equal(result.checks.find((c) => c.name === "lint")?.passed, false);
+      assert.equal(result.checks.find((c) => c.name === "test")?.skipped, true);
+      assert.equal(result.checks.find((c) => c.name === "build")?.skipped, true);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-77: parallel runs independent checks", async () => {
+    const repo = await initTestRepo();
+    try {
+      const started: string[] = [];
+      const result = await runCiChecks(repo, {
+        checks: ["lint", "test"],
+        timeout: 5000,
+        skipCache: true,
+        failFast: false,
+        parallel: true,
+        onProgress: (event) => {
+          if (event.check && event.state === "start") started.push(event.check);
+        },
+      });
+      assert.equal(result.allPassed, true);
+      assert.deepEqual(new Set(started), new Set(["lint", "test"]));
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

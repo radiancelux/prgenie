@@ -836,7 +836,7 @@ export async function completeLocalPrReview(
         options.body?.trim() ||
         (handedToImplementor
           ? "Review complete. Findings are ready for the implementor."
-          : "Review complete. Ready for human review.")
+          : "Review cleared. Steward will run the export gate.")
       ).trim(),
       createdAt: now,
       author,

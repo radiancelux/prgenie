@@ -6,7 +6,7 @@
 `C:\Users\BrettHumphreys\Documents\GitHub\pr-genie` (loops `lp-9ff837d2`, draft `lp-15976a74`).
 **CLI used:** `node packages\cli\dist\prgenie.cjs` (not on PATH).
 
-Flows 1–4 passed (install/doctor, gh bind, `/start-loop` create, review flywheel via CLI).
+Flows 1–4 passed (install/doctor, gh bind, `/start` create, review flywheel via CLI).
 Flow 5 shepherd stopped (appeared hung). Flows 6–8 not run.
 
 ---
@@ -17,7 +17,7 @@ Flow 5 shepherd stopped (appeared hung). Flows 6–8 not run.
 Install friction (PATH, VSIX vs folder copy, plugin file locks)
         │
         ▼
-/watch-ready-prs (+ optional inbox) starts `watch listen`
+/watch-ready (+ optional inbox) starts `watch listen`
         │  TICK every 60s, no code-level cap
         ▼
 Each TICK wakes the parent agent → new shells / Task subagents
@@ -39,9 +39,9 @@ Machine lag + many cmd.exe + "Extension host became UNRESPONSIVE"
 | T   | What happens                                                                                                                                                                                                   | Why it looks like the next symptom                                                       |
 | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | T0  | `pnpm link-extension` / plugin copy while Cursor is open; CLI never lands on PATH                                                                                                                              | Doctor can still be green (filesystem checks only)                                       |
-| T1  | `/watch-ready-prs` arms `watch listen queue --interval 60` with Cursor **Notify on** `AGENT_LOOP_TICK_review-queue`                                                                                            | One cheap Node sleeper; expensive part is the agent wake                                 |
+| T1  | `/watch-ready` arms `watch listen queue --interval 60` with Cursor **Notify on** `AGENT_LOOP_TICK_review-queue`                                                                                            | One cheap Node sleeper; expensive part is the agent wake                                 |
 | T2  | Every 60s the listen process prints a TICK **even if the queue did not change**                                                                                                                                | Parent chat gets a new turn every minute                                                 |
-| T3  | Each turn may spawn `watch queue`, `/review-queue`, and a `generalPurpose` Task. Prompt says "don't duplicate"; nothing enforces it. Implementor `stop` hook can spawn a **second** reviewer for the same HEAD | ~27 background tasks ≈ ~27 minutes of listen                                             |
+| T3  | Each turn may spawn `watch queue`, `/queue`, and a `generalPurpose` Task. Prompt says "don't duplicate"; nothing enforces it. Implementor `stop` hook can spawn a **second** reviewer for the same HEAD | ~27 background tasks ≈ ~27 minutes of listen                                             |
 | T4  | Local PRs webview activates. `LaneHub` polls every 2s and, for a selected loop, calls `shepherdStatus()` which runs **full local CI** (format/lint/typecheck/test/build) unless cache hits                     | First snapshot is blocked for minutes; overlapping polls stack more `pnpm` / `cmd.exe`   |
 | T5  | `checkFormatFromBlobs` shells `git show \| pnpm exec prettier` **once per tracked file** (~102 prettier-eligible files in this repo)                                                                           | "Many cmd.exe children" without any watch skill                                          |
 | T6  | CI cache write under `.git/agent-console/` fires recursive `fs.watch` → another `pushSnapshot` with no single-flight                                                                                           | Feedback loop while the first CI is still running                                        |
@@ -56,10 +56,10 @@ Machine lag + many cmd.exe + "Extension host became UNRESPONSIVE"
 
 | #   | Finding                                                                                                                                                                                                                                                                                                                                                                                                       | Class                                                                                                                       | Confidence                                                         | Evidence                                                                                                                                                                                                                                                                                                                                       |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R1  | Watch **TICK wakes are uncapped**. Listen itself is one process; Cursor + skills treat every 60s TICK as a new agent turn that may spawn shells/Tasks. Dedup is prompt-only ("remember `id`+`headSha` this session").                                                                                                                                                                                         | **Root** (lag / 27 tasks)                                                                                                   | High                                                               | `listenWatchLane` always `write(TICK)` after each interval (`packages/core/src/watch.ts`). Skills: `watch-ready-prs`, `review-queue`. CLI `--interval` is **seconds** (`packages/cli/src/cli.ts`).                                                                                                                                             |
+| R1  | Watch **TICK wakes are uncapped**. Listen itself is one process; Cursor + skills treat every 60s TICK as a new agent turn that may spawn shells/Tasks. Dedup is prompt-only ("remember `id`+`headSha` this session").                                                                                                                                                                                         | **Root** (lag / 27 tasks)                                                                                                   | High                                                               | `listenWatchLane` always `write(TICK)` after each interval (`packages/core/src/watch.ts`). Skills: `watch-ready`, `queue`. CLI `--interval` is **seconds** (`packages/cli/src/cli.ts`).                                                                                                                                             |
 | R2  | **Implementor `stop` hook also Tasks a reviewer** for the same ready HEAD (`shouldSpawnReviewer` / `formatSpawnReviewer`), independent of the reviewer chat queue.                                                                                                                                                                                                                                            | **Root** (duplicate reviewers)                                                                                              | High                                                               | `packages/cli/src/review-hook.ts` `event === "stop"`; `hooks.json` `stop` + `subagentStop`.                                                                                                                                                                                                                                                    |
 | R3  | Sidebar `pushSnapshot` **blocks first paint on `shepherdStatus` → `runCiChecks`**, every 2s, **no in-flight guard**. Cache writes re-enter via `fs.watch`.                                                                                                                                                                                                                                                    | **Root** (host death, empty UI, stacked CI, shepherd "hang")                                                                | High                                                               | `LaneHub` constructor `setInterval(..., 2000)`; `pushSnapshot` awaits `shepherdStatus` before `post()` (`packages/extension/src/laneView.ts`). `shepherdStatus` always runs CI unless `skipCiCheck` (`packages/core/src/shepherd.ts`). `runCiChecks` default timeout **300s per check**, per-file prettier (`packages/core/src/ci-runner.ts`). |
-| R4  | Review complete is **prompt-gated, not state-gated**. Leaf may lack MCP; Windows fallback is `prgenie` which is **not on PATH**. Parent is told not to wait and not to `complete_review`. Head-drift **throws** before status flip. "Review complete" text is also the default comment body _inside_ a successful `completeLocalPrReview` — agents can mimic it via `add_comment` while status stays `ready`. | **Root** (flaky review)                                                                                                     | High                                                               | Skills `review-local-pr` / `review-queue`; `completeLocalPrReview` (`packages/core/src/prs.ts`); CLI `bin` only in `packages/cli/package.json`, never globally linked.                                                                                                                                                                         |
+| R4  | Review complete is **prompt-gated, not state-gated**. Leaf may lack MCP; Windows fallback is `prgenie` which is **not on PATH**. Parent is told not to wait and not to `complete_review`. Head-drift **throws** before status flip. "Review complete" text is also the default comment body _inside_ a successful `completeLocalPrReview` — agents can mimic it via `add_comment` while status stays `ready`. | **Root** (flaky review)                                                                                                     | High                                                               | Skills `review` / `queue`; `completeLocalPrReview` (`packages/core/src/prs.ts`); CLI `bin` only in `packages/cli/package.json`, never globally linked.                                                                                                                                                                         |
 | R5  | Windows install/docs assume **folder copy + Unix PATH**. `link-extension` is a copy into `~\.cursor\extensions`; doctor only checks **disk version**, not that Cursor loaded the extension. Plugin uninstall wiping `~\.cursor\plugins\local\prgenie` is expected Cursor behavior; relink while Cursor holds `server.cjs` needs a full quit on Windows.                                                       | **Root** (install friction)                                                                                                 | High (docs/process); Medium (why VSIX was required)                | `scripts/link-extension.ps1`, `scripts/link-plugin.ps1`, `docs/release.md` ("You do **not** need a VSIX"), `doctor.ts` extension check.                                                                                                                                                                                                        |
 | R6  | Test harness still has **Unix-only** bits after RAD-49. CI is `ubuntu-latest` only.                                                                                                                                                                                                                                                                                                                           | **Root** (4 Windows test fails)                                                                                             | High                                                               | `attach.test.ts` `chmod` + bash `gh` stub; `ci-runner.test.ts` RAD-46 uses `ln -s` and `sleep N` (cmd.exe has no `sleep`).                                                                                                                                                                                                                     |
 | S1  | ~27 Cursor background tasks + many `cmd.exe`                                                                                                                                                                                                                                                                                                                                                                  | **Symptom** of R1 (and R3 prettier/pnpm children)                                                                           | High                                                               | Matches 60s ticks × ~27 min; plus ~102 prettier shells on a CI miss.                                                                                                                                                                                                                                                                           |
@@ -113,7 +113,7 @@ Ship **in this order**. Each slice is independently mergeable. Do not combine R1
 **Change:**
 
 - Emit TICK only when **queue/inbox fingerprint changed** or halt/idle/max, **or** add `--notify-on-change` default for skills.
-- Persist dispatched `id`+`headSha` in `.git/agent-console/` (not chat memory). `review-queue` / MCP skip if already dispatched and still `ready`.
+- Persist dispatched `id`+`headSha` in `.git/agent-console/` (not chat memory). `queue` / MCP skip if already dispatched and still `ready`.
 - Hard cap: at most **one** in-flight reviewer Task per loop HEAD (core or MCP `claim_review`).
 - Skills: one background listen shell; TICK handler must **not** start another listen; must **not** Task if a claim exists.
 - Optional: raise default interval for agent-wake (e.g. 3–5 min) if TICK still wakes the model.
@@ -121,7 +121,7 @@ Ship **in this order**. Each slice is independently mergeable. Do not combine R1
 **Acceptance criteria:**
 
 - [ ] A 30-minute idle listen on an unchanged queue produces **0** reviewer Tasks and **1** listen process.
-- [ ] Two ready loops → at most two reviewer claims; a second `/review-queue` pass does not spawn duplicates.
+- [ ] Two ready loops → at most two reviewer claims; a second `/queue` pass does not spawn duplicates.
 - [ ] Windows dogfood: Cursor Background Agents panel does not accumulate ~1 task/minute.
 - [ ] `/stop-review` still kills the lane; idle/max DONE still halt as today.
 
@@ -133,7 +133,7 @@ Ship **in this order**. Each slice is independently mergeable. Do not combine R1
 
 - Leaf skill: after `complete_review`, **must** `get_local_pr` / `prgenie show` and confirm `status` is `changes_requested` or `reviewed`. If still `ready`, report failure (include stderr / drift message). Do not say "Review complete" as a free `add_comment`.
 - Windows-safe CLI in every reviewer skill: `node packages/cli/dist/prgenie.cjs complete-review <id>` (same pattern as listen).
-- Parent `/review-queue`: do not wait, but on later TICK if `id`+`headSha` still `ready` after claim TTL (e.g. 15 min), surface "reviewer did not flip packet" instead of spawning a duplicate by default (or spawn **one** retry, claimed).
+- Parent `/queue`: do not wait, but on later TICK if `id`+`headSha` still `ready` after claim TTL (e.g. 15 min), surface "reviewer did not flip packet" instead of spawning a duplicate by default (or spawn **one** retry, claimed).
 - Keep head-drift as a hard fail (good); make the error the Task's last line.
 
 **Acceptance criteria:**
@@ -154,7 +154,7 @@ Ship **in this order**. Each slice is independently mergeable. Do not combine R1
 
 **Acceptance criteria:**
 
-- [ ] Marking a loop `ready` with `/watch-ready-prs` already running spawns **exactly one** reviewer claim, not hook+queue.
+- [ ] Marking a loop `ready` with `/watch-ready` already running spawns **exactly one** reviewer claim, not hook+queue.
 - [ ] No reviewer chat still gets a single spawn from the hook (document which).
 
 ### Slice 4 — P1: Windows install is VSIX + explicit CLI, doctor tells the truth
@@ -226,9 +226,9 @@ Environment: Windows, Cursor, repo at `…\GitHub\pr-genie`, Node 20+, `pnpm bui
 ### A. Watch fan-out (R1)
 
 1. `node packages\cli\dist\prgenie.cjs watch start queue`
-2. In a reviewer chat: `/watch-ready-prs` (skill starts listen with `--interval 60` and Notify on `AGENT_LOOP_TICK_review-queue`).
+2. In a reviewer chat: `/watch-ready` (skill starts listen with `--interval 60` and Notify on `AGENT_LOOP_TICK_review-queue`).
 3. Do **not** create new ready loops. Wait ~10–15 minutes.
-4. **Expect today:** a TICK line every 60s; parent chat wakes; extra `cmd.exe` / agent tasks accumulate if the model runs `/review-queue` or re-arms listen.
+4. **Expect today:** a TICK line every 60s; parent chat wakes; extra `cmd.exe` / agent tasks accumulate if the model runs `/queue` or re-arms listen.
 5. **Expect after Slice 1:** one listen PID; no new reviewer Tasks.
 
 ### B. Sidebar CI / empty UI (R3)
@@ -242,7 +242,7 @@ Environment: Windows, Cursor, repo at `…\GitHub\pr-genie`, Node 20+, `pnpm bui
 ### C. Review complete (R4)
 
 1. Mark a loop `ready` (`prgenie ready <id>`).
-2. Run a reviewer **Task** (not the parent chat) with `/review-local-pr` on a machine where `prgenie` is not on PATH and MCP is not in the Task.
+2. Run a reviewer **Task** (not the parent chat) with `/review` on a machine where `prgenie` is not on PATH and MCP is not in the Task.
 3. **Expect today:** Task text "reviewed" / "Review complete"; `prgenie show <id>` still `ready`.
 4. Manual recovery (what Brett did): `node packages\cli\dist\prgenie.cjs complete-review <id>`.
 

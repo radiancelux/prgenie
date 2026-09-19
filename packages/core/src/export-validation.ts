@@ -101,6 +101,14 @@ export async function evaluateAndStoreExportGate(
       reasons: result.reasons,
       headSha: pr.headSha,
       evaluatedAt: new Date().toISOString(),
+      ciPlan: result.ciPlan
+        ? {
+            checks: result.ciPlan.checks,
+            reason: result.ciPlan.reason,
+            uncertain: result.ciPlan.uncertain,
+          }
+        : null,
+      ciChecks: result.ciChecks ?? null,
     });
     return result;
   })();

@@ -4,6 +4,7 @@ import { formatExportBlockLabel, needsExportGateEvaluation } from "./export-gate
 import { evaluateAndStoreExportGate } from "./export-validation.js";
 import { requireGitRoot } from "./git.js";
 import { getLocalPr, isArchivedPr, listLocalPrs, shouldSpawnReviewer } from "./prs.js";
+import type { ProgressCallback } from "./progress.js";
 import { consoleDir, parseJsonObject, withFileLock, writeJsonFile } from "./store.js";
 import type { ExportGateSnapshot, ExportGateStatus, LocalPr } from "./types.js";
 
@@ -46,6 +47,9 @@ export interface StewardNextOptions {
   reviewerFailed?: boolean;
   /** When reviewed and the stored gate is pending/stale, run the full export gate. Default true. */
   evaluateGate?: boolean;
+  /** Live CI progress for agent-chat card + panel (same abort as the sidebar). */
+  onProgress?: ProgressCallback;
+  signal?: AbortSignal;
 }
 
 export interface BindStewardInput {
@@ -258,7 +262,7 @@ export function decideStewardAction(
           yourTurn: false,
           failingCheck,
           gateStatus,
-          reason: `Export gate blocked (${failingCheck}). Resume the same implementor Task — do not show Push to origin.`,
+          reason: `Export gate blocked (${failingCheck}). Resume the same implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer. Do not show Push to origin.`,
         };
       }
       return {
@@ -271,7 +275,7 @@ export function decideStewardAction(
         yourTurn: false,
         failingCheck,
         gateStatus,
-        reason: `Export gate blocked (${failingCheck}). Spawn an implementor Task — do not show Push to origin.`,
+        reason: `Export gate blocked (${failingCheck}). Spawn an implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer. Do not show Push to origin.`,
       };
     }
     return {
@@ -405,7 +409,10 @@ export async function stewardNext(
   });
 
   if (pr.status === "reviewed" && options.evaluateGate !== false && needsExportGateEvaluation(pr)) {
-    await evaluateAndStoreExportGate(root, pr.id);
+    await evaluateAndStoreExportGate(root, pr.id, {
+      onProgress: options.onProgress,
+      signal: options.signal,
+    });
     pr = await getLocalPr(root, pr.id);
   }
 

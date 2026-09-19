@@ -216,7 +216,7 @@ test("address_comment marks a finding addressed; reviewer resolve can hand off t
   assert.equal(addressedReviewComments(done).length, 0);
 });
 
-test("complete_review with no findings is ready for human review", async () => {
+test("complete_review with no findings clears review for the export gate", async () => {
   const pr = await createLocalPr(repo, { title: "Clean", base: "main" });
   await setLocalPrStatus(repo, pr.id, "ready");
   const done = await completeLocalPrReview(repo, pr.id, { body: "LGTM" });

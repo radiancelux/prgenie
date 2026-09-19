@@ -47,21 +47,21 @@ Doctor `extension` fails when the installed version ≠ `packages/extension/pack
 
 ## Watch listen DONE / idle
 
-`prgenie watch listen` (used by `/watch-review-inbox` and `/watch-ready-prs`) still polls on an interval, but prints `AGENT_LOOP_TICK_*` **only when that lane's fingerprint changes**. Unchanged queues do not re-wake the parent agent. It eventually prints `AGENT_LOOP_DONE_*` with a reason:
+`prgenie watch listen` (used by `/watch-inbox` and `/watch-ready`) still polls on an interval, but prints `AGENT_LOOP_TICK_*` **only when that lane's fingerprint changes**. Unchanged queues do not re-wake the parent agent. It eventually prints `AGENT_LOOP_DONE_*` with a reason:
 
 | reason   | Meaning                                                        | What to do                                                                                                                                              |
 | -------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `idle`   | No activity for ~30m (default)                                 | Re-run the watch skill for that lane                                                                                                                    |
 | `max`    | Hit ~8h wall clock                                             | Re-run the watch skill                                                                                                                                  |
 | `ticks`  | Hit `--ticks` ceiling                                          | Re-run or raise ticks                                                                                                                                   |
-| `stop`   | Lane halted via `/stop-loop`, `/stop-review`, or `/stop-watch` | `prgenie watch start inbox\|queue` or re-run the skill (skills call start)                                                                              |
+| `stop`   | Lane halted via `/stop`, `/stop-review`, or `/unwatch` | `prgenie watch start inbox\|queue` or re-run the skill (skills call start)                                                                              |
 | `export` | Halted because a loop was exported                             | Resume only after that export id is **archived or missing** (creating a new loop does this for export halts). A `stop` halt is never cleared by create. |
 
 Lane cheat sheet:
 
-- `/stop-loop` → stops **inbox** only
+- `/stop` → stops **inbox** only
 - `/stop-review` → stops **queue** only
-- `/stop-watch` → stops both
+- `/unwatch` → stops both
 - Export → halts **both** with reason `export` and the exported id
 
 Check with `prgenie watch` / MCP `watch_status`.
@@ -76,7 +76,7 @@ When status becomes `ready` with Review requested, core stores `reviewRequestedS
 
 ## Export / `gh` bind
 
-- There is **no push / `gh pr create` without** `/export-local-pr` (or the panel **Open on GitHub** path that calls the same export). Agents are steered and hooked away from ad-hoc push.
+- There is **no push / `gh pr create` without** `/export` (or the panel **Open on GitHub** path that calls the same export). Agents are steered and hooked away from ad-hoc push.
 - Repo must be bound: `prgenie gh list`, then `prgenie gh use <login>`. Wrong account → push/PR lands under the wrong GitHub user (`gh auth` is global).
 - Export archives the loop (`approved`), removes `../<repo>.loops/<id>` when safe, and checks the primary workspace off the loop branch onto the loop base.
 - If export fails late on auth, fix bind and retry — do not hand-roll `git push`.
@@ -111,7 +111,7 @@ If `packages/plugin/hooks/push-gate.mjs` exists, doctor fails `legacy-push-gate`
 1. `prgenie doctor`
 2. Stale plugin → build + `link-plugin` + disable/enable
 3. Stale sidebar → `link-extension` + full quit
-4. Watch quiet → prefer `/steward-loop` (`prgenie steward <id>`); listen is transitional (`/watch-review-inbox` / `/watch-ready-prs`)
+4. Watch quiet → prefer `/loop` (`prgenie steward <id>`); listen is transitional (`/watch-inbox` / `/watch-ready`)
 5. Export halt stuck → archive/missing export id, or create next loop (export resume only)
 6. Wrong GitHub user → `prgenie gh use <login>`
 7. Bad packet → inspect `.git/agent-console/prs/<id>.json`

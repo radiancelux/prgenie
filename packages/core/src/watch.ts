@@ -162,14 +162,14 @@ export function listenSentinel(role: WatchRole): WatchListenSentinel {
     return {
       tick: "AGENT_LOOP_TICK_review-inbox",
       done: "AGENT_LOOP_DONE_review-inbox",
-      prompt: "/review-inbox",
-      donePrompt: "/stop-loop",
+      prompt: "/inbox",
+      donePrompt: "/stop",
     };
   }
   return {
     tick: "AGENT_LOOP_TICK_review-queue",
     done: "AGENT_LOOP_DONE_review-queue",
-    prompt: "/review-queue",
+    prompt: "/queue",
     donePrompt: "/stop-review",
   };
 }

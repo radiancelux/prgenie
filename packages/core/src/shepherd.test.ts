@@ -342,7 +342,11 @@ describe("shepherdStatus", () => {
 
       await setLocalPrStatus(repo, pr.id, "reviewed");
 
-      const result = await shepherdStatus(repo, pr.id, { skipGithubCheck: true });
+      const result = await shepherdStatus(repo, pr.id, {
+        skipGithubCheck: true,
+        failFast: false,
+        parallel: false,
+      });
 
       assert.equal(result.status, "blocked");
       const ciReasons = result.reasons.filter((r) => r.check === "ci");
