@@ -10,13 +10,13 @@ PR Genie selects local checks from the loop diff (implementor preflight **and** 
 
 Changed paths = committed `baseSha...headSha` plus dirty/untracked files in the CI cwd (loop worktree when it exists).
 
-| Changed paths | Checks | Why |
-| --- | --- | --- |
-| Empty / unclassifiable (binaries, unknown extensions) | Full suite | Uncertain — never silent skip |
-| Config / CI (`package.json`, lockfiles, `tsconfig*`, eslint, prettier config, `.github/**`, `scripts/**`) | Full suite | Broader blast radius |
-| Docs / markdown only (`*.md`, `docs/**`, LICENSE, README, `*.txt`) | `format:check` only | No unit tests / lint / build |
-| Docs + style (`*.css`, `*.json` that is not config) | `format:check` only | Format, skip lint/test/build |
-| `packages/cli/**`, `packages/core/**`, `packages/extension/**` source or tests | Full suite | Code packages need lint + typecheck + test + build |
+| Changed paths                                                                                             | Checks              | Why                                                |
+| --------------------------------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------- |
+| Empty / unclassifiable (binaries, unknown extensions)                                                     | Full suite          | Uncertain — never silent skip                      |
+| Config / CI (`package.json`, lockfiles, `tsconfig*`, eslint, prettier config, `.github/**`, `scripts/**`) | Full suite          | Broader blast radius                               |
+| Docs / markdown only (`*.md`, `docs/**`, LICENSE, README, `*.txt`)                                        | `format:check` only | No unit tests / lint / build                       |
+| Docs + style (`*.css`, `*.json` that is not config)                                                       | `format:check` only | Format, skip lint/test/build                       |
+| `packages/cli/**`, `packages/core/**`, `packages/extension/**` source or tests                            | Full suite          | Code packages need lint + typecheck + test + build |
 
 Uncertain mapping **always** runs the full configured suite.
 
@@ -29,12 +29,12 @@ Uncertain mapping **always** runs the full configured suite.
 
 ## Who runs what
 
-| Actor | Command | When |
-| --- | --- | --- |
-| Implementor | `prgenie ci <id>` / MCP `run_ci` | Before `set_status ready` / Review requested |
-| Implementor (CI-resume) | `prgenie ci <id> --failing lint,test` | After export-gate CI failure; return only when green |
-| Steward / shepherd | `prgenie shepherd` / `steward_next` / `shepherd_status` | After review clear; again after CI-resume |
-| Human export | panel Push / `prgenie export` | Same gate; cancel is shared |
+| Actor                   | Command                                                 | When                                                 |
+| ----------------------- | ------------------------------------------------------- | ---------------------------------------------------- |
+| Implementor             | `prgenie ci <id>` / MCP `run_ci`                        | Before `set_status ready` / Review requested         |
+| Implementor (CI-resume) | `prgenie ci <id> --failing lint,test`                   | After export-gate CI failure; return only when green |
+| Steward / shepherd      | `prgenie shepherd` / `steward_next` / `shepherd_status` | After review clear; again after CI-resume            |
+| Human export            | panel Push / `prgenie export`                           | Same gate; cancel is shared                          |
 
 Skip implementor preflight only when the toolchain cannot run (say so). Do not skip a red check.
 

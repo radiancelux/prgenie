@@ -301,9 +301,7 @@ export async function runCiChecks(
       phase: "ci",
       state: "start",
       selectedChecks: checks,
-      selectionReason: options.changedPaths
-        ? "caller-provided check list"
-        : "configured suite",
+      selectionReason: options.changedPaths ? "caller-provided check list" : "configured suite",
     });
   }
 

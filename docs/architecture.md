@@ -4,12 +4,12 @@ PR Genie is a local review lane that sits in front of GitHub. The product flywhe
 
 ## Packages
 
-| Package                    | Path                 | Role                                                                                                                                                                       |
-| -------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@prgenie/core`            | `packages/core`      | Local PR CRUD, status transitions, watch state, worktrees, export helpers, `doctor`, `gh` bind                                                                             |
-| `prgenie` CLI              | `packages/cli`       | Thin CLI + MCP stdio server over core (`prgenie`, `prgenie doctor`, `watch listen`, hooks)                                                                                 |
+| Package                    | Path                 | Role                                                                                                                                                 |
+| -------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@prgenie/core`            | `packages/core`      | Local PR CRUD, status transitions, watch state, worktrees, export helpers, `doctor`, `gh` bind                                                       |
+| `prgenie` CLI              | `packages/cli`       | Thin CLI + MCP stdio server over core (`prgenie`, `prgenie doctor`, `watch listen`, hooks)                                                           |
 | Cursor plugin              | `packages/plugin`    | Rules, skills (`/loop`, `/start`, `/export`, …), MCP entry, hooks (`github-gate.cjs`, `review-inbox.cjs`, `capture-subagent.cjs`, `session-log.mjs`) |
-| VS Code / Cursor extension | `packages/extension` | **Local PRs** sidebar: watch list, Switch to worktree, Complete review, Open on GitHub                                                                                     |
+| VS Code / Cursor extension | `packages/extension` | **Local PRs** sidebar: watch list, Switch to worktree, Complete review, Open on GitHub                                                               |
 
 Build at the monorepo root (`pnpm build`). Dev install copies the plugin and extension into Cursor via `pnpm link-plugin` and `pnpm link-extension`.
 
@@ -65,10 +65,10 @@ CLI: `prgenie steward <id>`, `prgenie steward bind <id> --implementor <taskId>`.
 
 Two independent lanes under `.git/agent-console/watch.json`:
 
-| Lane    | Skill                 | Who                                        |
-| ------- | --------------------- | ------------------------------------------ |
+| Lane    | Skill          | Who                                        |
+| ------- | -------------- | ------------------------------------------ |
 | `inbox` | `/watch-inbox` | Implementor — wakes on `changes_requested` |
-| `queue` | `/watch-ready`    | Reviewer — wakes on `ready`                |
+| `queue` | `/watch-ready` | Reviewer — wakes on `ready`                |
 
 - `prgenie watch listen inbox|queue` is the capped wake process (default **30m** idle quiet, **8h** wall max). It still polls on `--interval` (default 60s) but prints `AGENT_LOOP_TICK_*` **only when that lane's fingerprint changes** — unchanged queues do not re-wake the parent agent. Skills should use it instead of hand-rolled sleep loops. **Never re-arm listen on TICK**; the process is still running. Inbox/queue listen is the **transitional** wake path. Preferred orchestration is **one steward per local PR** (`/loop`, `prgenie steward` / MCP `steward_next`).
 - One in-flight reviewer per loop HEAD: `claim_review` / `prgenie claim-review` writes `.git/agent-console/review-claims.json` keyed by `id`+`headSha`. A second claim for the same HEAD returns `already_claimed`. Stale rows drop when the packet leaves `ready` or HEAD moves.

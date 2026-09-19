@@ -302,7 +302,10 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
     case "run_ci": {
       const failing =
         typeof args.failingChecks === "string"
-          ? args.failingChecks.split(",").map((s) => s.trim()).filter(Boolean)
+          ? args.failingChecks
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean)
           : Array.isArray(args.failingChecks)
             ? (args.failingChecks as unknown[]).filter((s): s is string => typeof s === "string")
             : [];

@@ -472,7 +472,9 @@ export async function run(argv: string[]): Promise<number> {
         onProgress: (event) => {
           process.stdout.write(`${formatProgressLine(event)}\n`);
           if (event.selectedChecks) {
-            process.stdout.write(`CI plan: ${event.selectionReason ?? event.selectedChecks.join(", ")}\n`);
+            process.stdout.write(
+              `CI plan: ${event.selectionReason ?? event.selectedChecks.join(", ")}\n`,
+            );
           }
           if (exportVerbose && event.state === "fail") {
             printVerboseFailureLog(repo, event.logPath);
@@ -571,7 +573,9 @@ export async function run(argv: string[]): Promise<number> {
       process.stdout.write(`${card.card()}\n`);
     }
     if (flag(rest, "--json")) {
-      process.stdout.write(`${JSON.stringify({ ...result, progressCard: card.card() }, null, 2)}\n`);
+      process.stdout.write(
+        `${JSON.stringify({ ...result, progressCard: card.card() }, null, 2)}\n`,
+      );
     } else {
       process.stdout.write(`${formatStewardDecision(result)}\n`);
     }

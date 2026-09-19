@@ -262,7 +262,7 @@ export function decideStewardAction(
           yourTurn: false,
           failingCheck,
           gateStatus,
-          reason: `Export gate blocked (${failingCheck}). Resume the same implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer. Do not show Push to origin.`,
+          reason: `Export gate blocked (${failingCheck}). Resume the same implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer — do not show Push to origin.`,
         };
       }
       return {
@@ -275,7 +275,7 @@ export function decideStewardAction(
         yourTurn: false,
         failingCheck,
         gateStatus,
-        reason: `Export gate blocked (${failingCheck}). Spawn an implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer. Do not show Push to origin.`,
+        reason: `Export gate blocked (${failingCheck}). Spawn an implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer — do not show Push to origin.`,
       };
     }
     return {

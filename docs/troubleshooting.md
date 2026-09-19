@@ -49,13 +49,13 @@ Doctor `extension` fails when the installed version ≠ `packages/extension/pack
 
 `prgenie watch listen` (used by `/watch-inbox` and `/watch-ready`) still polls on an interval, but prints `AGENT_LOOP_TICK_*` **only when that lane's fingerprint changes**. Unchanged queues do not re-wake the parent agent. It eventually prints `AGENT_LOOP_DONE_*` with a reason:
 
-| reason   | Meaning                                                        | What to do                                                                                                                                              |
-| -------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `idle`   | No activity for ~30m (default)                                 | Re-run the watch skill for that lane                                                                                                                    |
-| `max`    | Hit ~8h wall clock                                             | Re-run the watch skill                                                                                                                                  |
-| `ticks`  | Hit `--ticks` ceiling                                          | Re-run or raise ticks                                                                                                                                   |
+| reason   | Meaning                                                | What to do                                                                                                                                              |
+| -------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `idle`   | No activity for ~30m (default)                         | Re-run the watch skill for that lane                                                                                                                    |
+| `max`    | Hit ~8h wall clock                                     | Re-run the watch skill                                                                                                                                  |
+| `ticks`  | Hit `--ticks` ceiling                                  | Re-run or raise ticks                                                                                                                                   |
 | `stop`   | Lane halted via `/stop`, `/stop-review`, or `/unwatch` | `prgenie watch start inbox\|queue` or re-run the skill (skills call start)                                                                              |
-| `export` | Halted because a loop was exported                             | Resume only after that export id is **archived or missing** (creating a new loop does this for export halts). A `stop` halt is never cleared by create. |
+| `export` | Halted because a loop was exported                     | Resume only after that export id is **archived or missing** (creating a new loop does this for export halts). A `stop` halt is never cleared by create. |
 
 Lane cheat sheet:
 

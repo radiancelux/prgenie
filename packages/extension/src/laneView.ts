@@ -97,7 +97,15 @@ type ClientMessage =
   | { type: "cancelProgress" }
   | { type: "retryProgress"; id: string }
   | { type: "openTerminal"; id: string }
-  | { type: "openCiDetail"; check: string; state?: string; excerpt?: string; logPath?: string; elapsedMs?: number; reason?: string }
+  | {
+      type: "openCiDetail";
+      check: string;
+      state?: string;
+      excerpt?: string;
+      logPath?: string;
+      elapsedMs?: number;
+      reason?: string;
+    }
   | { type: "showArchived"; value: boolean }
   | { type: "ghBind"; login: string }
   | { type: "ghRefresh" };

@@ -869,12 +869,43 @@ function normalizeExportGate(raw) {
       reasons.push({ check, message });
     }
   }
+  const ciPlan = normalizeCiPlan(g.ciPlan);
+  const ciChecks = normalizeCiChecks(g.ciChecks);
   return {
     status: g.status,
     reasons,
     headSha: g.headSha,
-    evaluatedAt: typeof g.evaluatedAt === "string" ? g.evaluatedAt : null
+    evaluatedAt: typeof g.evaluatedAt === "string" ? g.evaluatedAt : null,
+    ciPlan,
+    ciChecks
   };
+}
+function normalizeCiPlan(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const plan = raw;
+  if (!Array.isArray(plan.checks) || typeof plan.reason !== "string") return null;
+  const checks = plan.checks.filter((c) => typeof c === "string" && c.length > 0);
+  if (checks.length === 0) return null;
+  return { checks, reason: plan.reason, uncertain: plan.uncertain === true };
+}
+function normalizeCiChecks(raw) {
+  if (!Array.isArray(raw)) return null;
+  const checks = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const row = item;
+    if (typeof row.name !== "string" || !row.name) continue;
+    checks.push({
+      name: row.name,
+      passed: row.passed === true,
+      skipped: row.skipped === true ? true : void 0,
+      excerpt: typeof row.excerpt === "string" ? row.excerpt : void 0,
+      logPath: typeof row.logPath === "string" ? row.logPath : void 0,
+      elapsedMs: typeof row.elapsedMs === "number" ? row.elapsedMs : void 0,
+      reason: typeof row.reason === "string" ? row.reason : void 0
+    });
+  }
+  return checks.length ? checks : null;
 }
 function exportGateForHead(pr) {
   const gate = normalizeExportGate(pr.exportGate);
@@ -1640,7 +1671,7 @@ async function completeLocalPrReview(cwd, id, options = {}) {
     const handedToImplementor = open2.length > 0;
     pr.comments.push({
       id: newId2("c"),
-      body: (options.body?.trim() || (handedToImplementor ? "Review complete. Findings are ready for the implementor." : "Review complete. Ready for human review.")).trim(),
+      body: (options.body?.trim() || (handedToImplementor ? "Review complete. Findings are ready for the implementor." : "Review cleared. Steward will run the export gate.")).trim(),
       createdAt: now,
       author,
       role: "reviewer",
@@ -1957,6 +1988,313 @@ var init_ci_cache = __esm({
   }
 });
 
+// packages/core/src/ci-failure.ts
+function stripAnsi(text) {
+  return text.replace(ANSI_RE, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+function collectExecOutput(err) {
+  const e = err;
+  const stdout = typeof e.stdout === "string" ? e.stdout : "";
+  const stderr = typeof e.stderr === "string" ? e.stderr : "";
+  const message = err instanceof Error ? err.message : String(err);
+  const firstLine = (message.split("\n")[0] || message).trim() || "Command failed";
+  let combined = [stderr, stdout].filter((s) => s.trim()).join("\n");
+  if (!combined.trim()) {
+    const rest = message.split("\n").slice(1).join("\n").trim();
+    combined = rest;
+  }
+  return { firstLine, stdout, stderr, combined };
+}
+function lastNonEmptyLines(text, n) {
+  const lines = stripAnsi(text).split("\n").map((line) => line.trimEnd()).filter((line) => line.trim().length > 0 && !NOISE_LINE.test(line.trim()));
+  return lines.slice(-n).join("\n");
+}
+function truncateChars(text, max = CI_EXCERPT_MAX_CHARS) {
+  const collapsed = text.replace(/\s+\n/g, "\n").trim();
+  if (collapsed.length <= max) return collapsed;
+  return `${collapsed.slice(0, Math.max(0, max - 1)).trimEnd()}\u2026`;
+}
+function flattenExcerpt(text) {
+  return truncateChars(text.replace(/\n+/g, " \xB7 "));
+}
+function parseFirstFailingTest(text) {
+  const clean = stripAnsi(text);
+  const tap = clean.match(/^not ok\s+\d+\s+-\s+(.+)$/m);
+  if (tap?.[1]) return tap[0].trim();
+  const spec = clean.match(/^[✖×]\s+(.+?)(?:\s+\([\d.]+m?s\))?\s*$/m);
+  if (spec?.[1]) return spec[0].trim();
+  const jest = clean.match(/^●\s+(.+)$/m);
+  if (jest?.[1]) return `\u25CF ${jest[1].trim()}`;
+  const mocha = clean.match(/^\s*(\d+)\)\s+(.+)$/m);
+  if (mocha?.[2]) return `${mocha[1]}) ${mocha[2].trim()}`;
+  const failFile = clean.match(/^FAIL\s+(\S+)/m);
+  if (failFile?.[1]) return `FAIL ${failFile[1]}`;
+  return null;
+}
+function parseLintExcerpt(text) {
+  const clean = stripAnsi(text);
+  const file = clean.match(/^(?:[\w./\\-]+\.(?:js|jsx|ts|tsx|mjs|cjs|json))\b.*$/m);
+  const err = clean.match(/^\s+\d+:\d+\s+error\s+.+$/m);
+  if (file && err) {
+    const base = import_node_path10.default.basename(file[0].trim().split(/\s+/)[0] ?? file[0]);
+    return `${base} ${err[0].trim()}`;
+  }
+  if (err) return err[0].trim();
+  const summary = clean.match(/^✖\s+.+$/m);
+  return summary?.[0]?.trim() ?? null;
+}
+function parseTypecheckExcerpt(text) {
+  const clean = stripAnsi(text);
+  const ts = clean.match(/^[^\n]*error TS\d+:[^\n]+$/m);
+  if (ts) return ts[0].trim();
+  const generic = clean.match(/^[^\n]*error TS[^\n]+$/m);
+  return generic?.[0]?.trim() ?? null;
+}
+function parseFormatExcerpt(text) {
+  const clean = stripAnsi(text);
+  if (/Prettier format check failed/i.test(clean)) {
+    const line = clean.split("\n").find((l) => /Prettier format check failed/i.test(l));
+    return line?.trim() ?? null;
+  }
+  const warn = clean.match(/^\[warn\]\s+.+$/m);
+  return warn?.[0]?.trim() ?? null;
+}
+function parseBuildExcerpt(text) {
+  const clean = stripAnsi(text);
+  const err = clean.match(/^[^\n]*(?:error|Error|ERROR)[^\n]*$/m);
+  return err?.[0]?.trim() ?? null;
+}
+function parseGateExcerpt(check, text) {
+  const name = check === "format:check" || check === "format" ? "format" : check;
+  if (name === "test") return parseFirstFailingTest(text);
+  if (name === "lint") return parseLintExcerpt(text);
+  if (name === "typecheck") return parseTypecheckExcerpt(text);
+  if (name === "format") return parseFormatExcerpt(text);
+  if (name === "build") return parseBuildExcerpt(text);
+  return parseFirstFailingTest(text);
+}
+function formatFailureExcerpt(check, output) {
+  const source = output.combined.trim() ? output.combined : output.firstLine;
+  const parsed = parseGateExcerpt(check, source);
+  if (parsed) return flattenExcerpt(parsed);
+  const tail = lastNonEmptyLines(source, CI_EXCERPT_LINES);
+  if (tail) return flattenExcerpt(tail);
+  return flattenExcerpt(output.firstLine);
+}
+function formatCiCheckError(input) {
+  const parts = [input.command];
+  if (input.excerpt && input.excerpt !== input.command) parts.push(input.excerpt);
+  if (input.logPath) parts.push(`full log: ${input.logPath}`);
+  return parts.join(" \u2014 ");
+}
+function displayLogPath(cwd, absPath) {
+  const rel = import_node_path10.default.relative(cwd, absPath);
+  return rel && !rel.startsWith("..") ? rel : absPath;
+}
+async function ciLogsDir(cwd, create = true) {
+  const common = await gitCommonDir(cwd);
+  const dir = import_node_path10.default.join(common, "agent-console", "ci-logs");
+  if (create) await (0, import_promises9.mkdir)(dir, { recursive: true });
+  return dir;
+}
+function safeCheckFile(check) {
+  return check.replace(/[^a-zA-Z0-9._-]+/g, "_") || "check";
+}
+function truncateBytes(text, max) {
+  const buf = Buffer.from(text, "utf8");
+  if (buf.length <= max) return text;
+  const slice = buf.subarray(buf.length - max);
+  return `\u2026(truncated to last ${max} bytes)
+${slice.toString("utf8")}`;
+}
+async function writeCiFailureLog(cwd, check, command, output, excerpt) {
+  try {
+    const dir = await ciLogsDir(cwd);
+    const logPath = import_node_path10.default.join(dir, `${safeCheckFile(check)}.log`);
+    const header = `# ${check} (${command}) failed ${(/* @__PURE__ */ new Date()).toISOString()}
+
+`;
+    const body = truncateBytes(
+      `${header}${output.combined.trim() || output.firstLine}
+`,
+      CI_LOG_MAX_BYTES
+    );
+    await (0, import_promises9.writeFile)(logPath, body, "utf8");
+    const meta = {
+      check,
+      command,
+      excerpt,
+      logPath,
+      writtenAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    await (0, import_promises9.writeFile)(import_node_path10.default.join(dir, "latest.json"), `${JSON.stringify(meta, null, 2)}
+`, "utf8");
+    return displayLogPath(cwd, logPath);
+  } catch {
+    return null;
+  }
+}
+var import_promises9, import_node_path10, CI_EXCERPT_LINES, CI_EXCERPT_MAX_CHARS, CI_LOG_MAX_BYTES, ANSI_RE, NOISE_LINE;
+var init_ci_failure = __esm({
+  "packages/core/src/ci-failure.ts"() {
+    "use strict";
+    import_promises9 = require("node:fs/promises");
+    import_node_path10 = __toESM(require("node:path"), 1);
+    init_git();
+    CI_EXCERPT_LINES = 8;
+    CI_EXCERPT_MAX_CHARS = 480;
+    CI_LOG_MAX_BYTES = 64 * 1024;
+    ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, "g");
+    NOISE_LINE = /^(?:npm ERR!|pnpm ERR!|ELIFECYCLE|Command failed:|ERROR: command failed|error Command failed)/i;
+  }
+});
+
+// packages/core/src/ci-select.ts
+function normalizeCiPath(filePath) {
+  return filePath.replace(/\\/g, "/").replace(/^\.\//, "");
+}
+function basename(filePath) {
+  const parts = normalizeCiPath(filePath).split("/");
+  return parts[parts.length - 1] ?? filePath;
+}
+function classifyCiPath(filePath) {
+  const p = normalizeCiPath(filePath);
+  const base = basename(p);
+  const lower = p.toLowerCase();
+  if (CONFIG_BASENAMES.has(base) || p.startsWith(".github/") || p.startsWith("scripts/") || /(^|\/)tsconfig(\.[\w-]+)?\.json$/.test(p) || /(^|\/)eslint\.config\./.test(p) || /(^|\/)\.eslintrc/.test(p) || p.endsWith("mcp.json") || p.endsWith("hooks.json") || p.endsWith("plugin.json") || p.includes(".cursor/")) {
+    return "config";
+  }
+  if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(lower) || /(^|\/)__tests__\//.test(p) || /(^|\/)tests?\//.test(p)) {
+    return "test";
+  }
+  if (/\.([cm]?[jt]sx?)$/.test(lower)) return "source";
+  if (/\.(md|txt)$/.test(lower) || p.startsWith("docs/") || /^(readme|license|changelog|authors|roadmap)(\.|$)/i.test(base)) {
+    return "docs";
+  }
+  if (/\.(css|scss|less|html|xml|json|ya?ml)$/.test(lower)) return "style";
+  return "unknown";
+}
+function fullSuite(reason, paths, uncertain) {
+  const mapping = DEFAULT_CI_CHECKS.map((check) => ({ check, reason }));
+  return {
+    checks: [...DEFAULT_CI_CHECKS],
+    reason,
+    mapping,
+    uncertain,
+    changedPaths: paths
+  };
+}
+function selectCiChecks(changedPaths) {
+  const paths = [...new Set(changedPaths.map(normalizeCiPath).filter(Boolean))];
+  if (paths.length === 0) {
+    return fullSuite("no changed paths; running full suite", paths, true);
+  }
+  const kinds = paths.map(classifyCiPath);
+  if (kinds.some((kind) => kind === "unknown")) {
+    return fullSuite("uncertain path mapping; running full suite", paths, true);
+  }
+  if (kinds.some((kind) => kind === "config")) {
+    return fullSuite("config/CI scripts changed; running full suite", paths, false);
+  }
+  const onlyDocsOrStyle = kinds.every((kind) => kind === "docs" || kind === "style");
+  if (onlyDocsOrStyle) {
+    const reason2 = kinds.every((kind) => kind === "docs") ? "docs/markdown-only \u2014 format only, skip lint/test/build" : "docs/style-only \u2014 format only, skip lint/test/build";
+    return {
+      checks: ["format:check"],
+      reason: reason2,
+      mapping: [{ check: "format:check", reason: reason2 }],
+      uncertain: false,
+      changedPaths: paths
+    };
+  }
+  const hasCli = paths.some((p) => p.startsWith("packages/cli/"));
+  const hasCore = paths.some((p) => p.startsWith("packages/core/"));
+  const hasExtension = paths.some((p) => p.startsWith("packages/extension/"));
+  const scope = [hasCli && "cli", hasCore && "core", hasExtension && "extension"].filter(Boolean).join("+") || "source";
+  const reason = `${scope} source/test changed \u2014 format, lint, typecheck, test, build`;
+  return {
+    checks: [...DEFAULT_CI_CHECKS],
+    reason,
+    mapping: DEFAULT_CI_CHECKS.map((check) => ({ check, reason })),
+    uncertain: false,
+    changedPaths: paths
+  };
+}
+function resolveCiCwd(cwd, worktreePath) {
+  if (worktreePath && (0, import_node_fs2.existsSync)(worktreePath)) return worktreePath;
+  return cwd;
+}
+function addSplitPaths(set, raw) {
+  const parts = raw.split("	").filter(Boolean);
+  const file = parts[parts.length - 1];
+  if (file) set.add(normalizeCiPath(file));
+}
+async function changedPathsForCi(cwd, id) {
+  const paths = /* @__PURE__ */ new Set();
+  if (id) {
+    try {
+      for (const file of await getLocalPrNameStatus(cwd, id)) {
+        addSplitPaths(paths, file.path);
+      }
+    } catch {
+    }
+  }
+  try {
+    for (const args of [
+      ["diff", "--name-only", "HEAD"],
+      ["diff", "--name-only", "--cached"],
+      ["ls-files", "-o", "--exclude-standard"]
+    ]) {
+      const result = await git(cwd, args, { allowFail: true });
+      if (result.code !== 0) continue;
+      for (const line of result.stdout.split("\n")) {
+        if (line.trim()) addSplitPaths(paths, line.trim());
+      }
+    }
+  } catch {
+  }
+  return [...paths];
+}
+function envFlag(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || raw === "") return fallback;
+  if (raw === "0" || raw.toLowerCase() === "false") return false;
+  if (raw === "1" || raw.toLowerCase() === "true") return true;
+  return fallback;
+}
+var import_node_fs2, DEFAULT_CI_CHECKS, CONFIG_BASENAMES;
+var init_ci_select = __esm({
+  "packages/core/src/ci-select.ts"() {
+    "use strict";
+    import_node_fs2 = require("node:fs");
+    init_git();
+    init_prs();
+    DEFAULT_CI_CHECKS = ["format:check", "lint", "typecheck", "test", "build"];
+    CONFIG_BASENAMES = /* @__PURE__ */ new Set([
+      "package.json",
+      "pnpm-lock.yaml",
+      "package-lock.json",
+      "yarn.lock",
+      "pnpm-workspace.yaml",
+      "tsconfig.json",
+      "tsconfig.base.json",
+      "eslint.config.mjs",
+      "eslint.config.js",
+      "eslint.config.cjs",
+      ".eslintrc",
+      ".eslintrc.js",
+      ".eslintrc.cjs",
+      ".eslintrc.json",
+      ".prettierrc",
+      ".prettierrc.json",
+      ".prettierignore",
+      "Dockerfile",
+      "docker-compose.yml",
+      "docker-compose.yaml"
+    ]);
+  }
+});
+
 // packages/core/src/progress.ts
 function ciCheckCommand(check) {
   return `pnpm ${check}`;
@@ -1983,6 +2321,88 @@ function onAbort(signal, fn) {
   signal.addEventListener("abort", fn, { once: true });
   return () => signal.removeEventListener("abort", fn);
 }
+function shortCheckName(check) {
+  return check === "format:check" ? "format" : check;
+}
+function formatElapsed(ms) {
+  if (ms < 1e3) return `${Math.round(ms)}ms`;
+  return `${(ms / 1e3).toFixed(1)}s`;
+}
+function formatProgressLine(event) {
+  const label = event.check ? `${event.phase}:${event.check}` : event.phase;
+  if (event.state === "start") {
+    const cmd = event.command ? ` (${event.command})` : "";
+    return `[${label}] running${cmd}...`;
+  }
+  if (event.state === "skip") {
+    return `[${label}] skip`;
+  }
+  const elapsed = event.elapsedMs != null ? ` (${formatElapsed(event.elapsedMs)})` : "";
+  if (event.state === "cached") {
+    return `[${label}] cached${elapsed}`;
+  }
+  if (event.state === "fail") {
+    const cmd = event.command ? ` \u2014 ${event.command}` : "";
+    const msg = event.message && event.message !== event.command ? ` \u2014 ${event.message}` : "";
+    return `[${label}] fail${elapsed}${cmd}${msg}`;
+  }
+  return `[${label}] pass${elapsed}`;
+}
+function emptyCiProgressSnapshot() {
+  return { selectedChecks: [], selectionReason: "", checks: [] };
+}
+function applyCiProgressEvent(current, event) {
+  const selectedChecks = event.selectedChecks ?? current.selectedChecks;
+  const selectionReason = event.selectionReason ?? current.selectionReason;
+  const checks = current.checks.map((c) => ({ ...c }));
+  const ensure = (name) => {
+    const existing = checks.find((c) => c.name === name);
+    if (existing) return existing;
+    const created = { name, state: "queued" };
+    checks.push(created);
+    return created;
+  };
+  if (event.selectedChecks) {
+    for (const name of event.selectedChecks) ensure(name);
+  }
+  if (event.phase === "ci" && event.check) {
+    const row = ensure(event.check);
+    row.state = event.state;
+    if (event.elapsedMs != null) row.elapsedMs = event.elapsedMs;
+    if (event.command) row.command = event.command;
+    if (event.message) row.message = event.message;
+    if (event.logPath) row.logPath = event.logPath;
+  }
+  return { selectedChecks, selectionReason, checks };
+}
+function createProgressCardSink(write) {
+  let snap = emptyCiProgressSnapshot();
+  return {
+    onProgress: (event) => {
+      snap = applyCiProgressEvent(snap, event);
+      write(formatProgressLine(event));
+    },
+    snapshot: () => snap,
+    card: () => formatProgressCard(snap)
+  };
+}
+function formatProgressCard(snapshot) {
+  const why = snapshot.selectionReason ? `Why: ${snapshot.selectionReason}` : "Why: configured suite";
+  const lines = ["CI progress", why];
+  const names = snapshot.selectedChecks.length > 0 ? snapshot.selectedChecks : snapshot.checks.map((c) => c.name);
+  if (names.length === 0) {
+    lines.push("  (no checks yet \u2014 waiting to start)");
+    return lines.join("\n");
+  }
+  for (const name of names) {
+    const row = snapshot.checks.find((c) => c.name === name);
+    const state = row?.state ?? "queued";
+    const elapsed = row?.elapsedMs != null ? ` ${formatElapsed(row.elapsedMs)}` : "";
+    const extra = state === "fail" && row?.message ? ` \u2014 ${row.message}` : state === "start" && row?.command ? ` (${row.command})` : "";
+    lines.push(`  ${shortCheckName(name).padEnd(10)} ${state}${elapsed}${extra}`);
+  }
+  return lines.join("\n");
+}
 var init_progress = __esm({
   "packages/core/src/progress.ts"() {
     "use strict";
@@ -1995,7 +2415,7 @@ async function getTrackedFiles(cwd) {
     const { stdout } = await execAsync("git ls-files --exclude-standard", { cwd });
     const files = stdout.trim().split("\n").filter(Boolean);
     const fs = await import("node:fs/promises");
-    const path11 = await import("node:path");
+    const path12 = await import("node:path");
     const validFiles = [];
     const skipFiles = /* @__PURE__ */ new Set([
       ".gitignore",
@@ -2024,16 +2444,16 @@ async function getTrackedFiles(cwd) {
       ".xml"
     ]);
     for (const file of files) {
-      const basename = path11.basename(file);
-      const ext = path11.extname(file).toLowerCase();
-      if (skipFiles.has(basename)) {
+      const basename2 = path12.basename(file);
+      const ext = path12.extname(file).toLowerCase();
+      if (skipFiles.has(basename2)) {
         continue;
       }
       if (!prettierExts.has(ext)) {
         continue;
       }
       try {
-        const fullPath = path11.join(cwd, file);
+        const fullPath = path12.join(cwd, file);
         const stats = await fs.stat(fullPath);
         if (stats.isFile()) {
           validFiles.push(file);
@@ -2064,73 +2484,167 @@ async function checkFormatFromBlobs(cwd, files, signal) {
     );
   }
 }
+function skippedResult(check, reason) {
+  return { name: check, passed: true, skipped: true, reason };
+}
+async function runOneCheck(cwd, check, options) {
+  const { timeout, skipCache, onProgress, signal, reason } = options;
+  const command = ciCheckCommand(check);
+  if (!skipCache) {
+    const cached = await getCachedResult(cwd, check);
+    if (cached) {
+      onProgress?.({ phase: "ci", check, state: "cached", command, elapsedMs: 0 });
+      return { name: check, passed: true, elapsedMs: 0, reason };
+    }
+  }
+  throwIfAborted(signal);
+  onProgress?.({ phase: "ci", check, state: "start", command });
+  const started = Date.now();
+  try {
+    if (check === "format:check") {
+      const tracked = await getTrackedFiles(cwd);
+      if (tracked.length > 0) {
+        await checkFormatFromBlobs(cwd, tracked, signal);
+        const elapsedMs2 = Date.now() - started;
+        onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs: elapsedMs2 });
+        try {
+          await recordCheckPass(cwd, check);
+        } catch {
+        }
+        return { name: check, passed: true, elapsedMs: elapsedMs2, reason };
+      }
+    }
+    await execAsync(command, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });
+    const elapsedMs = Date.now() - started;
+    onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
+    try {
+      await recordCheckPass(cwd, check);
+    } catch {
+    }
+    return { name: check, passed: true, elapsedMs, reason };
+  } catch (err) {
+    if (isAbortError(err) || signal?.aborted) throw abortError();
+    const output = collectExecOutput(err);
+    const excerpt = formatFailureExcerpt(check, output);
+    const logPath = await writeCiFailureLog(cwd, check, command, output, excerpt);
+    const elapsedMs = Date.now() - started;
+    const error = formatCiCheckError({ command, excerpt, logPath });
+    onProgress?.({
+      phase: "ci",
+      check,
+      state: "fail",
+      command,
+      elapsedMs,
+      message: excerpt,
+      logPath: logPath ?? void 0
+    });
+    return {
+      name: check,
+      passed: false,
+      error,
+      excerpt,
+      logPath: logPath ?? void 0,
+      elapsedMs,
+      reason
+    };
+  }
+}
 async function runCiChecks(cwd, options = {}) {
   const checks = options.checks ?? ["format:check", "lint", "typecheck", "test", "build"];
   const timeout = options.timeout ?? 3e5;
   const skipCache = options.skipCache ?? false;
   const onProgress = options.onProgress;
   const signal = options.signal;
+  const failFast = options.failFast ?? envFlag("PRGENIE_CI_FAIL_FAST", true);
+  const parallel = options.parallel ?? envFlag("PRGENIE_CI_PARALLEL", true);
+  const selection = options.selection;
+  const reasonFor = (name) => selection?.mapping.find((m) => m.check === name)?.reason ?? selection?.reason;
+  if (selection) {
+    onProgress?.({
+      phase: "ci",
+      state: "start",
+      selectedChecks: selection.checks,
+      selectionReason: selection.reason
+    });
+  } else {
+    onProgress?.({
+      phase: "ci",
+      state: "start",
+      selectedChecks: checks,
+      selectionReason: options.changedPaths ? "caller-provided check list" : "configured suite"
+    });
+  }
   const results = [];
-  for (const check of checks) {
-    throwIfAborted(signal);
-    const command = ciCheckCommand(check);
-    if (!skipCache) {
-      const cached = await getCachedResult(cwd, check);
-      if (cached) {
-        results.push({ name: check, passed: true });
-        onProgress?.({ phase: "ci", check, state: "cached", command, elapsedMs: 0 });
-        continue;
-      }
-    }
-    onProgress?.({ phase: "ci", check, state: "start", command });
-    const started = Date.now();
+  if (parallel && checks.length > 1) {
+    const child = new AbortController();
+    const detach = onAbort(signal, () => child.abort());
     try {
-      if (check === "format:check") {
-        const tracked = await getTrackedFiles(cwd);
-        if (tracked.length > 0) {
-          await checkFormatFromBlobs(cwd, tracked, signal);
-          const elapsedMs2 = Date.now() - started;
-          results.push({ name: check, passed: true });
-          onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs: elapsedMs2 });
-          try {
-            await recordCheckPass(cwd, check);
-          } catch {
-          }
-          continue;
+      const pending = checks.map(
+        (check) => runOneCheck(cwd, check, {
+          timeout,
+          skipCache,
+          onProgress,
+          signal: child.signal,
+          reason: reasonFor(check)
+        }).then((result) => {
+          if (!result.passed && failFast) child.abort();
+          return result;
+        })
+      );
+      const settled = await Promise.allSettled(pending);
+      for (let i = 0; i < settled.length; i++) {
+        const item = settled[i];
+        const check = checks[i];
+        if (item.status === "fulfilled") {
+          results.push(item.value);
+        } else if (isAbortError(item.reason) || child.signal.aborted) {
+          onProgress?.({ phase: "ci", check, state: "skip" });
+          results.push(skippedResult(check, "fail-fast \u2014 not started or cancelled"));
+        } else {
+          throw item.reason;
         }
       }
-      await execAsync(command, { cwd, timeout, signal });
-      const elapsedMs = Date.now() - started;
-      results.push({ name: check, passed: true });
-      onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
-      try {
-        await recordCheckPass(cwd, check);
-      } catch {
+    } finally {
+      detach();
+    }
+  } else {
+    for (const check of checks) {
+      throwIfAborted(signal);
+      if (failFast && results.some((r) => !r.passed && !r.skipped)) {
+        onProgress?.({ phase: "ci", check, state: "skip" });
+        results.push(skippedResult(check, "fail-fast \u2014 earlier check failed"));
+        continue;
       }
-    } catch (err) {
-      if (isAbortError(err) || signal?.aborted) throw abortError();
-      const message = err instanceof Error ? err.message : String(err);
-      const first = message.split("\n")[0] || `Check '${check}' failed`;
-      const elapsedMs = Date.now() - started;
-      results.push({
-        name: check,
-        passed: false,
-        error: first.includes(command) ? first : `${command} \u2014 ${first}`
-      });
-      onProgress?.({
-        phase: "ci",
-        check,
-        state: "fail",
-        command,
-        elapsedMs,
-        message: first
-      });
+      try {
+        results.push(
+          await runOneCheck(cwd, check, {
+            timeout,
+            skipCache,
+            onProgress,
+            signal,
+            reason: reasonFor(check)
+          })
+        );
+      } catch (err) {
+        if (isAbortError(err) || signal?.aborted) throw abortError();
+        throw err;
+      }
     }
   }
   return {
     allPassed: results.every((r) => r.passed),
-    checks: results
+    checks: results,
+    selection
   };
+}
+async function runLoopCi(cwd, id, options = {}) {
+  const pr = await getLocalPr(cwd, id);
+  const ciCwd = resolveCiCwd(cwd, pr.worktreePath);
+  const paths = options.changedPaths ?? await changedPathsForCi(ciCwd, id);
+  const selection = options.selection ?? selectCiChecks(paths);
+  const extra = (options.failingChecks ?? []).map((name) => name.trim()).filter(Boolean);
+  const checks = options.checks ?? [.../* @__PURE__ */ new Set([...selection.checks, ...extra])];
+  return runCiChecks(ciCwd, { ...options, checks, selection, changedPaths: paths });
 }
 var import_node_child_process3, import_node_util, execAsync;
 var init_ci_runner = __esm({
@@ -2139,6 +2653,9 @@ var init_ci_runner = __esm({
     import_node_child_process3 = require("node:child_process");
     import_node_util = require("node:util");
     init_ci_cache();
+    init_ci_failure();
+    init_ci_select();
+    init_prs();
     init_progress();
     execAsync = (0, import_node_util.promisify)(import_node_child_process3.exec);
   }
@@ -2149,6 +2666,8 @@ async function shepherdStatus(cwd, id, options = {}) {
   const reasons = [];
   const onProgress = options.onProgress;
   const signal = options.signal;
+  let ciPlan;
+  let ciChecks;
   try {
     throwIfAborted(signal);
     const reviewStarted = Date.now();
@@ -2236,10 +2755,22 @@ async function shepherdStatus(cwd, id, options = {}) {
     }
     throwIfAborted(signal);
     if (!options.skipCiCheck) {
-      const ciResult = await runCiChecks(cwd, { onProgress, signal });
+      const paths = options.changedPaths ?? await changedPathsForCi(cwd, id);
+      const selection = selectCiChecks(paths);
+      const ciCwd = resolveCiCwd(cwd, pr.worktreePath);
+      const ciResult = await runCiChecks(ciCwd, {
+        checks: selection.checks,
+        selection,
+        onProgress,
+        signal,
+        failFast: options.failFast,
+        parallel: options.parallel
+      });
+      ciPlan = selection;
+      ciChecks = ciResult.checks;
       if (!ciResult.allPassed) {
         for (const check of ciResult.checks) {
-          if (!check.passed) {
+          if (!check.passed && !check.skipped) {
             reasons.push({
               check: "ci",
               message: `CI check failed: ${check.name}${check.error ? ` \u2014 ${check.error}` : ""}`
@@ -2259,7 +2790,9 @@ async function shepherdStatus(cwd, id, options = {}) {
   }
   return {
     status: reasons.length === 0 ? "ready" : "blocked",
-    reasons
+    reasons,
+    ciPlan,
+    ciChecks
   };
 }
 var init_shepherd = __esm({
@@ -2269,6 +2802,7 @@ var init_shepherd = __esm({
     init_learnings();
     init_github_ops();
     init_ci_runner();
+    init_ci_select();
     init_progress();
   }
 });
@@ -2339,7 +2873,13 @@ async function evaluateAndStoreExportGate(cwd, id, options = {}) {
       status: result.status,
       reasons: result.reasons,
       headSha: pr.headSha,
-      evaluatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      evaluatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      ciPlan: result.ciPlan ? {
+        checks: result.ciPlan.checks,
+        reason: result.ciPlan.reason,
+        uncertain: result.ciPlan.uncertain
+      } : null,
+      ciChecks: result.ciChecks ?? null
     });
     return result;
   })();
@@ -2507,15 +3047,15 @@ async function claimReview(cwd, id, options = {}) {
 }
 
 // packages/core/src/steward.ts
-var import_promises9 = require("node:fs/promises");
-var import_node_path10 = __toESM(require("node:path"), 1);
+var import_promises10 = require("node:fs/promises");
+var import_node_path11 = __toESM(require("node:path"), 1);
 init_export_gate();
 init_export_validation();
 init_git();
 init_prs();
 init_store();
 function stewardsFile(dir) {
-  return import_node_path10.default.join(dir, "stewards.json");
+  return import_node_path11.default.join(dir, "stewards.json");
 }
 var emptyMap = () => ({
   updatedAt: (/* @__PURE__ */ new Date(0)).toISOString(),
@@ -2552,7 +3092,7 @@ function parseMap(raw) {
 }
 async function loadMap(file) {
   try {
-    return parseMap(await (0, import_promises9.readFile)(file, "utf8"));
+    return parseMap(await (0, import_promises10.readFile)(file, "utf8"));
   } catch {
     return emptyMap();
   }
@@ -2666,7 +3206,7 @@ function decideStewardAction(pr, binding, options = {}) {
           yourTurn: false,
           failingCheck,
           gateStatus,
-          reason: `Export gate blocked (${failingCheck}). Resume the same implementor Task \u2014 do not show Push to origin.`
+          reason: `Export gate blocked (${failingCheck}). Resume the same implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer \u2014 do not show Push to origin.`
         };
       }
       return {
@@ -2679,7 +3219,7 @@ function decideStewardAction(pr, binding, options = {}) {
         yourTurn: false,
         failingCheck,
         gateStatus,
-        reason: `Export gate blocked (${failingCheck}). Spawn an implementor Task \u2014 do not show Push to origin.`
+        reason: `Export gate blocked (${failingCheck}). Spawn an implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer \u2014 do not show Push to origin.`
       };
     }
     return {
@@ -2758,7 +3298,10 @@ async function stewardNext(cwd, id, options = {}) {
     reviewerTaskId: options.reviewerTaskId
   });
   if (pr.status === "reviewed" && options.evaluateGate !== false && needsExportGateEvaluation(pr)) {
-    await evaluateAndStoreExportGate(root, pr.id);
+    await evaluateAndStoreExportGate(root, pr.id, {
+      onProgress: options.onProgress,
+      signal: options.signal
+    });
     pr = await getLocalPr(root, pr.id);
   }
   return {
@@ -2775,6 +3318,7 @@ init_github_ops();
 init_prs();
 init_watch();
 init_worktrees();
+init_ci_failure();
 
 // packages/core/src/export.ts
 init_git();
@@ -2936,7 +3480,7 @@ init_progress();
 init_export_gate();
 
 // packages/core/src/sessions.ts
-var import_promises10 = require("node:fs/promises");
+var import_promises11 = require("node:fs/promises");
 init_git();
 init_store();
 async function listSessions(cwd, options = {}) {
@@ -2945,7 +3489,7 @@ async function listSessions(cwd, options = {}) {
   const file = await sessionsFile(root);
   let raw;
   try {
-    raw = await (0, import_promises10.readFile)(file, "utf8");
+    raw = await (0, import_promises11.readFile)(file, "utf8");
   } catch (err) {
     const code = err && typeof err === "object" && "code" in err ? err.code : void 0;
     if (code === "ENOENT") return [];
@@ -3154,7 +3698,7 @@ async function generateLearningDigest(cwd, options = {}) {
     }
   }
   const topKeywords = Array.from(keywordCounts.entries()).filter(([, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([keyword, count]) => ({ keyword, count }));
-  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path11, count]) => ({ path: path11, count }));
+  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path12, count]) => ({ path: path12, count }));
   const patterns = Array.from(patternCounts.entries()).filter(([, data]) => data.count >= 2).sort((a, b) => b[1].count - a[1].count).slice(0, 10).map(([pattern, data]) => ({
     pattern,
     examples: data.examples,
@@ -3194,8 +3738,8 @@ function formatLearningDigest(summary) {
   if (summary.topFiles.length > 0) {
     lines.push("## Most Commented Files");
     lines.push("");
-    for (const { path: path11, count } of summary.topFiles) {
-      lines.push(`- \`${path11}\` \u2014 ${count} comment(s)`);
+    for (const { path: path12, count } of summary.topFiles) {
+      lines.push(`- \`${path12}\` \u2014 ${count} comment(s)`);
     }
     lines.push("");
   }
@@ -3230,6 +3774,8 @@ init_github_ops();
 init_learnings();
 init_shepherd();
 init_ci_runner();
+init_ci_select();
+init_ci_failure();
 init_ci_cache();
 
 // packages/cli/src/mcp-stdio.ts
@@ -3514,8 +4060,27 @@ async function handleTool(name, args) {
       const pr = await getLocalPr(cwd, String(args.id ?? ""));
       return runPreflight(cwd, pr);
     }
-    case "shepherd_status":
-      return evaluateAndStoreExportGate(cwd, String(args.id ?? ""));
+    case "run_ci": {
+      const failing = typeof args.failingChecks === "string" ? args.failingChecks.split(",").map((s) => s.trim()).filter(Boolean) : Array.isArray(args.failingChecks) ? args.failingChecks.filter((s) => typeof s === "string") : [];
+      const card = createProgressCardSink((line) => process.stderr.write(`${line}
+`));
+      const result = await runLoopCi(cwd, String(args.id ?? ""), {
+        failingChecks: failing,
+        failFast: args.failFast === false ? false : void 0,
+        parallel: args.parallel === false ? false : void 0,
+        skipCache: args.skipCache === true,
+        onProgress: card.onProgress
+      });
+      return { ...result, progressCard: card.card() };
+    }
+    case "shepherd_status": {
+      const card = createProgressCardSink((line) => process.stderr.write(`${line}
+`));
+      const result = await evaluateAndStoreExportGate(cwd, String(args.id ?? ""), {
+        onProgress: card.onProgress
+      });
+      return { ...result, progressCard: card.card() };
+    }
     case "bind_steward":
       return bindSteward(cwd, String(args.id ?? ""), {
         implementorTaskId: args.implementorTaskId === void 0 ? void 0 : args.implementorTaskId,
@@ -3523,7 +4088,9 @@ async function handleTool(name, args) {
       });
     case "steward_next": {
       if (!args.id) return listStewardBindings(cwd);
-      return stewardNext(cwd, String(args.id), {
+      const card = createProgressCardSink((line) => process.stderr.write(`${line}
+`));
+      const result = await stewardNext(cwd, String(args.id), {
         implementorTaskId: args.implementorTaskId === void 0 ? void 0 : args.implementorTaskId,
         reviewerTaskId: args.reviewerTaskId === void 0 ? void 0 : args.reviewerTaskId,
         restart: args.restart === true,
@@ -3531,8 +4098,10 @@ async function handleTool(name, args) {
         implementorFailed: args.implementorFailed === true,
         reviewerMissing: args.reviewerMissing === true,
         reviewerFailed: args.reviewerFailed === true,
-        evaluateGate: args.evaluateGate === false ? false : void 0
+        evaluateGate: args.evaluateGate === false ? false : void 0,
+        onProgress: card.onProgress
       });
+      return { ...result, progressCard: card.snapshot().checks.length ? card.card() : void 0 };
     }
     default:
       throw new Error(`Unknown tool: ${name}`);
@@ -3686,7 +4255,7 @@ var tools = [
   },
   {
     name: "set_status",
-    description: "Set local PR status: draft, ready, changes_requested, reviewed, approved. reviewed means the automated reviewer signed off and the human should look. When setting to ready, a preflight check runs automatically to match learned patterns; pass skipPreflight=true to bypass.",
+    description: "Set local PR status: draft, ready, changes_requested, reviewed, approved. reviewed means the automated reviewer cleared and the steward will run the export gate \u2014 not a human handoff. When setting to ready, a pattern preflight check runs automatically; pass skipPreflight=true to bypass. Before ready, also run MCP run_ci / prgenie ci and fix failures in-worktree.",
     inputSchema: {
       type: "object",
       required: ["id", "status"],
@@ -3740,7 +4309,7 @@ var tools = [
   },
   {
     name: "resolve_comment",
-    description: "Reviewer or human: mark an addressed finding resolved and attach a reply under it. If nothing open or addressed remains, the loop becomes reviewed (ready for human review). Do not git push.",
+    description: "Reviewer or human: mark an addressed finding resolved and attach a reply under it. If nothing open or addressed remains, the loop becomes reviewed (review cleared; steward runs the export gate \u2014 not a human handoff). Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id", "commentId", "body"],
@@ -3783,7 +4352,7 @@ var tools = [
   },
   {
     name: "complete_review",
-    description: "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed for the human. Resolves remaining addressed comments. Refuses when HEAD moved after Review requested unless allowDrift=true \u2014 re-diff and file findings first. Archived loops stay archived. Do not git push.",
+    description: "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed (review cleared; steward runs the export gate). Ready-for-human / Push language only after handoff_human. Resolves remaining addressed comments. Refuses when HEAD moved after Review requested unless allowDrift=true \u2014 re-diff and file findings first. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -3845,7 +4414,7 @@ var tools = [
   },
   {
     name: "watch_stop",
-    description: "Halt listen loops. Omit role to halt both (same as /stop-watch). role=inbox is /stop-loop. role=queue is /stop-review. Does not push or open GitHub.",
+    description: "Halt listen loops. Omit role to halt both (same as /unwatch). role=inbox is /stop. role=queue is /stop-review. Does not push or open GitHub.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3860,7 +4429,7 @@ var tools = [
   },
   {
     name: "watch_start",
-    description: "Resume listen loops. Omit role to resume both. role=inbox is /watch-review-inbox re-arm. role=queue is /watch-ready-prs re-arm. Do not use from a review-inbox/review-queue tick. Creating a new loop also resumes export-halted lanes after that id is archived.",
+    description: "Resume listen loops. Omit role to resume both. role=inbox is /watch-inbox re-arm. role=queue is /watch-ready re-arm. Do not use from an inbox/queue tick. Creating a new loop also resumes export-halted lanes after that id is archived.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3984,7 +4553,7 @@ var tools = [
   },
   {
     name: "run_preflight",
-    description: "Run preflight check on a local PR to see if any learned patterns would be matched. This is automatically run when set_status ready unless skipPreflight is set. Returns passed boolean and issues array.",
+    description: "Run pattern-memory preflight on a local PR to see if any learned patterns would be matched. This is automatically run when set_status ready unless skipPreflight is set. Returns passed boolean and issues array. Distinct from run_ci (local format/lint/test).",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -3992,8 +4561,32 @@ var tools = [
     }
   },
   {
+    name: "run_ci",
+    description: "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; uncertain \u2192 full suite). Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Returns allPassed, checks, selection, and a progressCard for the agent chat. Skip only when the toolchain cannot run \u2014 say so; do not skip a flaky failure.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        cwd: { type: "string" },
+        failingChecks: {
+          description: "Checks that must run on CI-resume (names or comma-separated string)."
+        },
+        failFast: {
+          type: "boolean",
+          description: "Stop remaining checks after the first failure. Default true."
+        },
+        parallel: {
+          type: "boolean",
+          description: "Run independent checks concurrently. Default true."
+        },
+        skipCache: { type: "boolean" }
+      }
+    }
+  },
+  {
     name: "shepherd_status",
-    description: "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, gh bind, and local CI. Persists the result as the human-export gate. Returns ready or blocked with explicit reasons. Fail-closed: any unknown/missing piece returns blocked.",
+    description: "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, gh bind, and smart local CI (path-selected; uncertain \u2192 full suite). Persists the result as the human-export gate. Streams a CI progress card (check names + running/pass/fail) on stderr \u2014 cancel is the same abort as the loop panel. Returns ready or blocked with reasons, ciPlan, ciChecks, and progressCard. Fail-closed: any unknown/missing piece returns blocked.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -4002,7 +4595,7 @@ var tools = [
   },
   {
     name: "bind_steward",
-    description: "Persist this loop's steward Task ids under .git/agent-console/stewards.json ({ loopId, implementorTaskId, reviewerTaskId }). Pass null or empty string to clear a field. Used by /steward-loop so changes_requested resumes the same implementor Task.",
+    description: "Persist this loop's steward Task ids under .git/agent-console/stewards.json ({ loopId, implementorTaskId, reviewerTaskId }). Pass null or empty string to clear a field. Used by /loop so changes_requested resumes the same implementor Task.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -4022,7 +4615,7 @@ var tools = [
   },
   {
     name: "steward_next",
-    description: "Steward flywheel next action for one local PR. Persists optional Task ids, runs the full export gate after Reviewer clear, and returns spawn/resume/handoff. Human-exportable / Push to origin only when the gate is ready. On blocked CI, action is resume_implementor with failingCheck \u2014 do not hand off. Preferred over /watch-review-inbox + /watch-ready-prs. Omit id to list bindings.",
+    description: "Steward flywheel next action for one local PR. Persists optional Task ids, runs the full export gate after Reviewer clear, and returns spawn/resume/handoff. Streams a CI progress card while the gate runs (same abort as the loop panel Cancel). Human-exportable / Push to origin only when the gate is ready (handoff_human). On blocked CI, action is resume_implementor with failingCheck \u2014 then evaluate_export_gate again. Do not auto-spawn a reviewer. Preferred over /watch-inbox + /watch-ready. Omit id to list bindings.",
     inputSchema: {
       type: "object",
       properties: {

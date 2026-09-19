@@ -11,16 +11,16 @@ Follow [agentskills.io](https://agentskills.io/specification) and Cursor's skill
 
 ## One job per skill
 
-| Skill                            | Who                        | Auto-invoke?                          |
-| -------------------------------- | -------------------------- | ------------------------------------- |
-| `loop`                           | One steward per loop       | Yes (ticket / full flywheel)          |
-| `start`                          | Implementor-only entry     | Yes (ticket paste)                    |
-| `local-pr`                       | Create/update packets      | Yes                                   |
-| `review`                         | Leaf + orchestrator review | Yes                                   |
-| `watch-inbox` / `watch-ready`    | Listen (transitional)      | No (`disable-model-invocation: true`) |
-| `inbox` / `queue`                | One tick                   | No                                    |
-| `stop` / `stop-review` / `unwatch` | Halt listen              | No                                    |
-| `export`                         | Publish                    | No                                    |
+| Skill                              | Who                        | Auto-invoke?                          |
+| ---------------------------------- | -------------------------- | ------------------------------------- |
+| `loop`                             | One steward per loop       | Yes (ticket / full flywheel)          |
+| `start`                            | Implementor-only entry     | Yes (ticket paste)                    |
+| `local-pr`                         | Create/update packets      | Yes                                   |
+| `review`                           | Leaf + orchestrator review | Yes                                   |
+| `watch-inbox` / `watch-ready`      | Listen (transitional)      | No (`disable-model-invocation: true`) |
+| `inbox` / `queue`                  | One tick                   | No                                    |
+| `stop` / `stop-review` / `unwatch` | Halt listen                | No                                    |
+| `export`                           | Publish                    | No                                    |
 
 Prefer **`/loop`** for agent orchestration (one steward, implementor/reviewer Tasks, export gate before human handoff). Inbox/queue listen skills stay for the transitional two-chat path.
 
