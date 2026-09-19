@@ -143,7 +143,6 @@ export function isStewardOwned(binding: StewardBinding | null | undefined): bool
   return Boolean(binding);
 }
 
-
 function canResumeTask(
   taskId: string | null,
   missing?: boolean,
