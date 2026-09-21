@@ -11,13 +11,13 @@ Follow [agentskills.io](https://agentskills.io/specification) and Cursor's skill
 
 ## One job per skill
 
-| Skill      | Who                    | Auto-invoke?                                      |
-| ---------- | ---------------------- | ------------------------------------------------- |
-| `steward`  | One steward per loop   | Yes (explicit `/steward` / full-flywheel ask)     |
-| `start`    | Implementor-only entry | **No** — opt-in slash / explicit loop ask only    |
+| Skill      | Who                    | Auto-invoke?                                       |
+| ---------- | ---------------------- | -------------------------------------------------- |
+| `steward`  | One steward per loop   | Yes (explicit `/steward` / full-flywheel ask)      |
+| `start`    | Implementor-only entry | **No** — opt-in slash / explicit loop ask only     |
 | `local-pr` | Create/update packets  | **No** — opt-in slash / explicit local-PR ask only |
-| `review`   | Leaf reviewer          | Yes                                               |
-| `export`   | Publish                | No                                                |
+| `review`   | Leaf reviewer          | Yes                                                |
+| `export`   | Publish                | No                                                 |
 
 `/steward` is the only orchestrator (one steward, implementor/reviewer Tasks, export gate before human handoff). Do not add inbox/queue listen skills. `/start` stays implementor-only — do not blur it with `/steward`.
 
