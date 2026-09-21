@@ -29,7 +29,9 @@ export function mcpCwdCandidates(): string[] {
 function expectedWorkspaceRoot(candidates: string[]): string {
   return (
     process.env.CURSOR_PROJECT_DIR?.trim() ||
-    process.env.WORKSPACE_FOLDER_PATHS?.split(path.delimiter).find((p) => p.trim())?.trim() ||
+    process.env.WORKSPACE_FOLDER_PATHS?.split(path.delimiter)
+      .find((p) => p.trim())
+      ?.trim() ||
     candidates[0] ||
     "workspace git root"
   );

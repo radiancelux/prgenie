@@ -69,15 +69,18 @@ test("resolveMcpGitRoot error names expected workspace root", async () => {
   process.env.CURSOR_PLUGIN_ROOT = outside;
   process.chdir(outside);
 
-  await assert.rejects(() => resolveMcpGitRoot(), (err: Error) => {
-    assert.match(
-      err.message,
-      new RegExp(`Expected workspace git root at ${outside.replace(/\\/g, "[\\\\/]")}`),
-    );
-    assert.match(err.message, /plugin install/);
-    assert.match(err.message, /Tried:/);
-    return true;
-  });
+  await assert.rejects(
+    () => resolveMcpGitRoot(),
+    (err: Error) => {
+      assert.match(
+        err.message,
+        new RegExp(`Expected workspace git root at ${outside.replace(/\\/g, "[\\\\/]")}`),
+      );
+      assert.match(err.message, /plugin install/);
+      assert.match(err.message, /Tried:/);
+      return true;
+    },
+  );
 });
 
 test("resolveMcpGitRoot honors explicit cwd", async () => {
