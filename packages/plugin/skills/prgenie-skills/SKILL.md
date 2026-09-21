@@ -29,6 +29,7 @@ Keep terminology fixed: **loop** (local PR packet), **address** (implementor) vs
 
 - `/loop` is steward only. If MCP / `steward_next` / `bind_steward` are unavailable, stop and tell the user to wait/retry — never CLI DIY.
 - `/start` implements and stops at ready. It does not review and does not arm listen.
+- `/review` applies `skills/review/process-bar.md` (and `.prgenie/review.md` when present). Steward Tasks point at those paths — do not paste external review skills into every Task.
 - Implementor acts only on **this worktree** when `changes_requested`.
 - Implementor runs `prgenie ci` / MCP `run_ci` before ready and on CI-resume (`docs/ci-checks.md`). CI-resume is implementor → export gate again — no automatic re-review.
 

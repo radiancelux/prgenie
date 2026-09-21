@@ -38,6 +38,7 @@ Run `prgenie attach --help` and `prgenie --help` for full command reference.
 ## Docs
 
 - [Architecture](docs/architecture.md) — packages, lifecycle, steward flywheel, storage, worktrees, `gh` bind
+- [Default review bar](docs/review-bar.md) — `/review` process bar + authoring `.prgenie/review.md`
 - [Troubleshooting](docs/troubleshooting.md) — `prgenie doctor` checks and common failure modes
 - [Release](docs/release.md) — version alignment, `check-versions`, `pack:extension`
 

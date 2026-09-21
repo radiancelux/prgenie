@@ -27,4 +27,5 @@ Orchestration is **`/loop`** (one steward, durable Task ids, export gate before 
 Repo docs (from monorepo root):
 
 - [Architecture](../../docs/architecture.md)
+- [Default review bar](../../docs/review-bar.md) — `/review` process bar + `.prgenie/review.md`
 - [Troubleshooting](../../docs/troubleshooting.md) — stale MCP, extension refresh, watch halt/idle, export/bind

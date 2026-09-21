@@ -69,7 +69,7 @@ Prompt on resume:
 
 ### `spawn_reviewer` / `resume_reviewer`
 
-Task a reviewer (`/review` leaf). One id only. `claim_review` first if you want the exclusive HEAD lock. File findings, resolve fixed threads, **always `complete_review`**. Persist `reviewerTaskId` via `bind_steward`. Await this Task.
+Task a reviewer (`/review` leaf). One id only. Prompt stays **token-thin**: loop id + “follow `/review` and `skills/review/process-bar.md`” (plus `.prgenie/review.md` when present). Do **not** paste the process bar, Copilot, or `review-open-prs` skills into the Task. `claim_review` first if you want the exclusive HEAD lock. File findings, resolve fixed threads, **always `complete_review`**. Persist `reviewerTaskId` via `bind_steward`. Await this Task.
 
 On `changes_requested` after complete, `steward_next` will resume the **same** implementor Task.
 

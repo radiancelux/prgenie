@@ -15,7 +15,7 @@ Slash workflows live in `packages/plugin/skills/*/SKILL.md` only. Do not add a m
 | --------- | ----------------------------------------- | -------------------------------------------------------------------- |
 | `/loop`   | **Steward only** — Task implementor, then reviewer; persist Task ids; export gate; `handoff_human` when green | Write product code; become implementor; review; arm listen           |
 | `/start`  | **Implementor only** — create packet, implement, `ready` + Review requested, stop | Become steward; review this loop; start listen                       |
-| `/review` | **Reviewer leaf** — file findings, `complete_review` | Implement; push                                                      |
+| `/review` | **Reviewer leaf** — process bar in `skills/review/process-bar.md`; file findings; `complete_review` | Implement; push                                                      |
 | `/export` | Human publish                             | Review or implement                                                  |
 
 `/loop` is the only orchestrator. There is no inbox/queue listen flywheel. Do not run `/watch-inbox`, `/watch-ready`, `/inbox`, `/queue`, `/unwatch`, `prgenie watch start`, `prgenie watch listen`, or any listen tick. If those names appear in an old brief, ignore them and stay on `/loop`.

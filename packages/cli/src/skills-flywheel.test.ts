@@ -63,3 +63,24 @@ test("no-remote-pr.mdc distinguishes steward vs implementor and bans listen", ()
   assert.match(rule, /Never CLI DIY/);
   assert.doesNotMatch(rule, /Inbox\/queue listen \(`\/watch-inbox`/);
 });
+
+test("/review skill points at stack-agnostic process bar (RAD-103)", () => {
+  const body = skillBody("review");
+  const barPath = path.join(skillsRoot, "review", "process-bar.md");
+  assert.equal(existsSync(barPath), true);
+  const bar = readFileSync(barPath, "utf8");
+  assert.match(body, /process-bar\.md/);
+  assert.match(body, /\.prgenie\/review\.md/);
+  assert.doesNotMatch(body, /Parler|Foundry/);
+  assert.match(bar, /VERDICT: CLEAN \| ISSUES_FOUND/);
+  assert.match(bar, /SYSTEM IMPACT/);
+  assert.match(bar, /REGRESSIONS/);
+  assert.match(bar, /HIGH[\s\S]*MEDIUM/);
+  assert.match(bar, /package\.json/);
+  assert.match(bar, /\.prgenie\/review\.md/);
+  assert.doesNotMatch(bar, /Parler|Foundry/);
+  const loop = skillBody("loop");
+  assert.match(loop, /token-thin/);
+  assert.match(loop, /process-bar\.md/);
+  assert.match(loop, /Do \*\*not\*\* paste the process bar/);
+});
