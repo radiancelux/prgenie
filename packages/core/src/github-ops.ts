@@ -16,9 +16,12 @@ function gh(
       reject(err);
       return;
     }
+    // On Windows, spawn without shell resolves gh.exe and skips gh.cmd shims
+    // (PATH mocks in tests, and some install layouts). shell:true uses PATHEXT.
     const child = spawn("gh", args, {
       cwd: options.cwd,
       windowsHide: true,
+      shell: process.platform === "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
