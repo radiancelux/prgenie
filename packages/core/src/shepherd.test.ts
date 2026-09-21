@@ -263,9 +263,17 @@ describe("shepherdStatus", () => {
       await git(repo, ["add", "."]);
       await git(repo, ["commit", "-m", "Add test"]);
 
-      // Create a package.json with a failing lint check
+      const pr = await createLocalPr(repo, {
+        title: "PR with CI failure",
+        body: "Body",
+        base: "main",
+        head: "feature",
+      });
+      assert.ok(pr.worktreePath);
+
+      // Create a package.json with a failing lint check in the exclusive worktree
       await writeFile(
-        join(repo, "package.json"),
+        join(pr.worktreePath, "package.json"),
         JSON.stringify({
           name: "test-repo",
           scripts: {
@@ -277,13 +285,6 @@ describe("shepherdStatus", () => {
           },
         }),
       );
-
-      const pr = await createLocalPr(repo, {
-        title: "PR with CI failure",
-        body: "Body",
-        base: "main",
-        head: "feature",
-      });
 
       await setLocalPrStatus(repo, pr.id, "reviewed");
 
@@ -310,18 +311,24 @@ describe("shepherdStatus", () => {
       // Create .gitignore before linking node_modules to prevent git from indexing through junction on Windows
       await writeFile(join(repo, ".gitignore"), "node_modules\n");
 
-      // Link node_modules for prettier access
-      await linkNodeModules(repo, join(process.cwd(), "node_modules"));
-
       // Create a badly formatted JS file that will fail format:check
       await writeFile(join(repo, "bad.js"), 'const x = "bad"\n');
       await writeFile(join(repo, "test.txt"), "test\n");
       await git(repo, ["add", "."]);
       await git(repo, ["commit", "-m", "Add test"]);
 
+      const pr = await createLocalPr(repo, {
+        title: "PR with multiple CI failures",
+        body: "Body",
+        base: "main",
+        head: "feature",
+      });
+      assert.ok(pr.worktreePath);
+      await linkNodeModules(pr.worktreePath, join(process.cwd(), "node_modules"));
+
       // Create a package.json with multiple failing checks
       await writeFile(
-        join(repo, "package.json"),
+        join(pr.worktreePath, "package.json"),
         JSON.stringify({
           name: "test-repo",
           scripts: {
@@ -332,13 +339,6 @@ describe("shepherdStatus", () => {
           },
         }),
       );
-
-      const pr = await createLocalPr(repo, {
-        title: "PR with multiple CI failures",
-        body: "Body",
-        base: "main",
-        head: "feature",
-      });
 
       await setLocalPrStatus(repo, pr.id, "reviewed");
 
@@ -369,9 +369,17 @@ describe("shepherdStatus", () => {
       await git(repo, ["add", "."]);
       await git(repo, ["commit", "-m", "Add test"]);
 
+      const pr = await createLocalPr(repo, {
+        title: "PR with passing CI",
+        body: "Body",
+        base: "main",
+        head: "feature",
+      });
+      assert.ok(pr.worktreePath);
+
       // Create a package.json with all passing checks
       await writeFile(
-        join(repo, "package.json"),
+        join(pr.worktreePath, "package.json"),
         JSON.stringify({
           name: "test-repo",
           scripts: {
@@ -383,13 +391,6 @@ describe("shepherdStatus", () => {
           },
         }),
       );
-
-      const pr = await createLocalPr(repo, {
-        title: "PR with passing CI",
-        body: "Body",
-        base: "main",
-        head: "feature",
-      });
 
       await setLocalPrStatus(repo, pr.id, "reviewed");
 
@@ -411,8 +412,16 @@ describe("shepherdStatus", () => {
       await git(repo, ["add", "."]);
       await git(repo, ["commit", "-m", "Add test"]);
 
+      const pr = await createLocalPr(repo, {
+        title: "PR with CI failure",
+        body: "Body",
+        base: "main",
+        head: "feature",
+      });
+      assert.ok(pr.worktreePath);
+
       await writeFile(
-        join(repo, "package.json"),
+        join(pr.worktreePath, "package.json"),
         JSON.stringify({
           name: "test-repo",
           scripts: {
@@ -424,13 +433,6 @@ describe("shepherdStatus", () => {
           },
         }),
       );
-
-      const pr = await createLocalPr(repo, {
-        title: "PR with CI failure",
-        body: "Body",
-        base: "main",
-        head: "feature",
-      });
 
       await setLocalPrStatus(repo, pr.id, "reviewed");
 
@@ -460,8 +462,15 @@ describe("shepherdStatus", () => {
       await writeFile(join(repo, "test.txt"), "test content\n");
       await git(repo, ["add", "."]);
       await git(repo, ["commit", "-m", "Add test"]);
+      const pr = await createLocalPr(repo, {
+        title: "Progress PR",
+        body: "Body",
+        base: "main",
+        head: "feature",
+      });
+      assert.ok(pr.worktreePath);
       await writeFile(
-        join(repo, "package.json"),
+        join(pr.worktreePath, "package.json"),
         JSON.stringify({
           name: "test-repo",
           scripts: {
@@ -473,12 +482,6 @@ describe("shepherdStatus", () => {
           },
         }),
       );
-      const pr = await createLocalPr(repo, {
-        title: "Progress PR",
-        body: "Body",
-        base: "main",
-        head: "feature",
-      });
       await setLocalPrStatus(repo, pr.id, "reviewed");
       const events: ProgressEvent[] = [];
       const result = await shepherdStatus(repo, pr.id, {
@@ -511,13 +514,20 @@ describe("shepherdStatus", () => {
       await writeFile(join(repo, "test.txt"), "test content\n");
       await git(repo, ["add", "."]);
       await git(repo, ["commit", "-m", "Add failing test"]);
-      // Untracked helpers: format:check ignores them so this case isolates the test gate.
+      const pr = await createLocalPr(repo, {
+        title: "Excerpt PR",
+        body: "Body",
+        base: "main",
+        head: "feature",
+      });
+      assert.ok(pr.worktreePath);
+      // Untracked helpers in the exclusive worktree: format:check ignores them.
       await writeFile(
-        join(repo, "fail-test.mjs"),
+        join(pr.worktreePath, "fail-test.mjs"),
         "process.stderr.write('not ok 1 - widget renders\\n'); process.exit(1);\n",
       );
       await writeFile(
-        join(repo, "package.json"),
+        join(pr.worktreePath, "package.json"),
         JSON.stringify({
           name: "test-repo",
           scripts: {
@@ -529,12 +539,6 @@ describe("shepherdStatus", () => {
           },
         }),
       );
-      const pr = await createLocalPr(repo, {
-        title: "Excerpt PR",
-        body: "Body",
-        base: "main",
-        head: "feature",
-      });
       await setLocalPrStatus(repo, pr.id, "reviewed");
       const events: ProgressEvent[] = [];
       const result = await shepherdStatus(repo, pr.id, {

@@ -151,12 +151,12 @@ test("export validation blocks when Learn #18 preflight pattern matches", async 
     base: "main",
   });
   await setLocalPrStatus(repo, pr.id, "reviewed");
+  assert.ok(pr.worktreePath);
 
-  // Add a file with console.log
-  git(["checkout", pr.headRef]);
-  await writeFile(path.join(repo, "debug.js"), "console.log('debug');\n");
-  git(["add", "."]);
-  git(["commit", "-m", "add debug"]);
+  // Add a file with console.log on the exclusive loop worktree
+  await writeFile(path.join(pr.worktreePath, "debug.js"), "console.log('debug');\n");
+  git(["add", "."], pr.worktreePath);
+  git(["commit", "-m", "add debug"], pr.worktreePath);
 
   const result = await validateExport(repo, pr.id);
   assert.equal(result.ok, false);

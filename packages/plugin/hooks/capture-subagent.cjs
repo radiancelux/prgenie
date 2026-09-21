@@ -186,13 +186,19 @@ function worktreeForLoop(trees, loop) {
     if (own) return own.path;
   }
   const onBranch = trees.filter((t) => t.branch === loop.headRef);
-  const onPrimary = onBranch.find((t) => primary && sameFsPath(t.path, primary));
-  if (onPrimary) return onPrimary.path;
   const ownLoops = onBranch.find((t) => {
     const ident = loopWorktreeIdentity(t.path);
     return ident && ident.id.toLowerCase() === loop.id.toLowerCase();
   });
   return ownLoops?.path ?? null;
+}
+function refusePrimaryWorktreeIfParallel(worktreePath, primary, loopId, liveLoopIds) {
+  const others = [...liveLoopIds].map((id) => id.toLowerCase()).filter((id) => id !== loopId.toLowerCase());
+  if (others.length === 0) return;
+  if (!sameFsPath(worktreePath, primary)) return;
+  throw new Error(
+    `Refusing to bind loop ${loopId} to the primary checkout while other live loops exist (${others.join(", ")}). Every live loop must use an exclusive ../<repo>.loops/<id> worktree.`
+  );
 }
 function sameFsPath(a, b) {
   try {
@@ -274,16 +280,11 @@ async function ensureLoopFeatureBranch(cwd, options) {
   }
   const headRef = options.id;
   if (here && isBaseBranch(current, options.baseRef)) {
-    const created2 = await git(cwd, ["checkout", "-b", headRef], { allowFail: true });
-    if (created2.code !== 0) {
-      const switched = await git(cwd, ["checkout", headRef], { allowFail: true });
-      if (switched.code !== 0) {
-        throw new Error(
-          `Could not create loop branch ${headRef}: ${(created2.stderr || switched.stderr).trim()}`
-        );
-      }
+    const created2 = await git(cwd, ["branch", headRef], { allowFail: true });
+    if (created2.code !== 0 && !await branchExists(cwd, headRef)) {
+      throw new Error(`Could not create loop branch ${headRef}: ${created2.stderr.trim()}`);
     }
-    return { headRef, headSha: await gitText(cwd, ["rev-parse", "HEAD"]) };
+    return { headRef, headSha: await gitText(cwd, ["rev-parse", headRef]) };
   }
   const created = await git(cwd, ["branch", headRef], { allowFail: true });
   if (created.code !== 0 && !await branchExists(cwd, headRef)) {
@@ -303,6 +304,53 @@ async function freeStaleLoopWorktree(cwd, treePath) {
   }
   await git(cwd, ["worktree", "remove", treePath], { allowFail: true });
   await git(cwd, ["worktree", "prune"], { allowFail: true });
+}
+function peelStashMessage(loopId) {
+  return `prgenie-exclusive-peel-${loopId}`;
+}
+async function findPeelStashRef(cwd, loopId) {
+  const list = await git(cwd, ["stash", "list"], { allowFail: true });
+  if (list.code !== 0) return null;
+  const needle = peelStashMessage(loopId);
+  for (const line of list.stdout.split("\n")) {
+    const text = line.replace(/\r$/, "").trim();
+    if (!text.includes(needle)) continue;
+    const match = text.match(/^(stash@\{\d+\})/);
+    if (match) return match[1];
+  }
+  return null;
+}
+async function freePrimaryFromLoopBranch(primary, loop) {
+  const branch = await currentBranch(primary);
+  if (branch !== loop.headRef) return false;
+  let stashed = false;
+  const status = await git(primary, ["status", "--porcelain"], { allowFail: true });
+  if (status.stdout.trim()) {
+    const stash = await git(primary, ["stash", "push", "-u", "-m", peelStashMessage(loop.id)], {
+      allowFail: true
+    });
+    if (stash.code !== 0) {
+      throw new Error(
+        `Cannot free primary checkout from branch ${loop.headRef} to create an exclusive loop worktree: ${stash.stderr.trim() || "stash failed"}. Commit or stash changes in the primary folder, then retry.`
+      );
+    }
+    stashed = true;
+  }
+  const base = loop.baseRef ? localBaseRef(loop.baseRef) : null;
+  if (base && base !== loop.headRef) {
+    const switched = await git(primary, ["checkout", base], { allowFail: true });
+    if (switched.code === 0) return stashed;
+  }
+  const detached = await git(primary, ["checkout", "--detach"], { allowFail: true });
+  if (detached.code === 0) return stashed;
+  throw new Error(
+    `Cannot free primary checkout from branch ${loop.headRef} to create an exclusive loop worktree. Commit or stash changes in the primary folder, then retry.`
+  );
+}
+async function restorePeelStash(dest, loopId) {
+  const ref = await findPeelStashRef(dest, loopId);
+  if (!ref) return;
+  await git(dest, ["stash", "pop", ref], { allowFail: true });
 }
 async function addLoopWorktree(cwd, dest, loop) {
   if ((0, import_node_fs.existsSync)(dest)) {
@@ -339,31 +387,55 @@ async function ensureWorktreeForLoop(cwd, loop, options = {}) {
   if (!primary) throw new Error("No git worktree to attach a loop to.");
   const dest = loopWorktreeDir(primary, loop.id);
   const own = trees.find((t) => sameFsPath(t.path, dest));
-  if (own) return own.path;
-  const holders = trees.filter((t) => t.branch === loop.headRef);
-  for (const holder of holders) {
-    if (sameFsPath(holder.path, dest)) return holder.path;
-    if (sameFsPath(holder.path, primary)) return holder.path;
-    const ident = loopWorktreeIdentity(holder.path);
-    if (ident && ident.id.toLowerCase() === loop.id.toLowerCase()) return holder.path;
-    if (ident) {
-      const otherId = ident.id.toLowerCase();
-      if (live.has(otherId) && !stale.has(otherId)) continue;
-      await freeStaleLoopWorktree(cwd, holder.path);
+  if (own) {
+    refusePrimaryWorktreeIfParallel(own.path, primary, loop.id, live);
+    return own.path;
+  }
+  let peelStashed = false;
+  let stashRestored = false;
+  try {
+    const holders = trees.filter((t) => t.branch === loop.headRef);
+    for (const holder of holders) {
+      if (sameFsPath(holder.path, dest)) {
+        refusePrimaryWorktreeIfParallel(holder.path, primary, loop.id, live);
+        return holder.path;
+      }
+      if (sameFsPath(holder.path, primary)) {
+        peelStashed = await freePrimaryFromLoopBranch(primary, loop) || peelStashed;
+        continue;
+      }
+      const ident = loopWorktreeIdentity(holder.path);
+      if (ident && ident.id.toLowerCase() === loop.id.toLowerCase()) {
+        refusePrimaryWorktreeIfParallel(holder.path, primary, loop.id, live);
+        return holder.path;
+      }
+      if (ident) {
+        const otherId = ident.id.toLowerCase();
+        if (live.has(otherId) && !stale.has(otherId)) continue;
+        await freeStaleLoopWorktree(cwd, holder.path);
+      }
+    }
+    trees = await listWorktrees(cwd);
+    const stillOwn = trees.find((t) => sameFsPath(t.path, dest));
+    if (stillOwn) {
+      refusePrimaryWorktreeIfParallel(stillOwn.path, primary, loop.id, live);
+      return stillOwn.path;
+    }
+    if (trees.some((t) => t.branch === loop.headRef && sameFsPath(t.path, primary))) {
+      peelStashed = await freePrimaryFromLoopBranch(primary, loop) || peelStashed;
+    }
+    const exclusive = await addLoopWorktree(cwd, dest, loop);
+    if (peelStashed) {
+      await restorePeelStash(exclusive, loop.id);
+      stashRestored = true;
+    }
+    refusePrimaryWorktreeIfParallel(exclusive, primary, loop.id, live);
+    return exclusive;
+  } finally {
+    if (peelStashed && !stashRestored) {
+      await restorePeelStash(primary, loop.id);
     }
   }
-  const here = await findGitRoot(cwd);
-  const current = await currentBranch(cwd);
-  if (current === loop.headRef && here && !loopWorktreeIdentity(here)) {
-    return here;
-  }
-  trees = await listWorktrees(cwd);
-  const stillOwn = trees.find((t) => sameFsPath(t.path, dest));
-  if (stillOwn) return stillOwn.path;
-  if (trees.some((t) => t.branch === loop.headRef && sameFsPath(t.path, primary))) {
-    return primary;
-  }
-  return addLoopWorktree(cwd, dest, loop);
 }
 async function shortLogSubject(cwd, rev = "HEAD") {
   return gitText(cwd, ["log", "-1", "--format=%s", rev]);

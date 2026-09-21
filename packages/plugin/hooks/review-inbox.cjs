@@ -171,8 +171,6 @@ function worktreeForLoop(trees, loop) {
     if (own) return own.path;
   }
   const onBranch = trees.filter((t) => t.branch === loop.headRef);
-  const onPrimary = onBranch.find((t) => primary && sameFsPath(t.path, primary));
-  if (onPrimary) return onPrimary.path;
   const ownLoops = onBranch.find((t) => {
     const ident = loopWorktreeIdentity(t.path);
     return ident && ident.id.toLowerCase() === loop.id.toLowerCase();

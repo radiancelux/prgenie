@@ -401,7 +401,7 @@ export const tools = [
   {
     name: "ensure_worktree",
     description:
-      "Ensure this loop has a git worktree and return its path. Creates a sibling <repo>.loops/<id> checkout when the branch is not already checked out.",
+      "Ensure this loop has a git worktree and return its path. Creates a sibling <repo>.loops/<id> checkout (exclusive; never the primary folder).",
     inputSchema: {
       type: "object",
       required: ["id"],

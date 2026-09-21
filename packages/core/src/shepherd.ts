@@ -148,9 +148,9 @@ export async function shepherdStatus(
     throwIfAborted(signal);
     // 4. Check local CI passes (smart-selected format/lint/typecheck/test/build)
     if (!options.skipCiCheck) {
-      const paths = options.changedPaths ?? (await changedPathsForCi(cwd, id));
-      const selection = selectCiChecks(paths);
       const ciCwd = resolveCiCwd(cwd, pr.worktreePath);
+      const paths = options.changedPaths ?? (await changedPathsForCi(ciCwd, id));
+      const selection = selectCiChecks(paths);
       const ciResult = await runCiChecks(ciCwd, {
         checks: selection.checks,
         selection,

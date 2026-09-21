@@ -29,9 +29,12 @@ export {
   worktreeForBranch,
   ensureWorktreeForLoop,
   ensureLoopFeatureBranch,
+  findPeelStashRef,
   isBaseBranch,
   loopWorktreeIdentity,
+  peelStashMessage,
   pruneArchivedLoopWorktree,
+  refusePrimaryWorktreeIfParallel,
   releaseArchivedLoop,
   sameFsPath,
 } from "./worktrees.js";
