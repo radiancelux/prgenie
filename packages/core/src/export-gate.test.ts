@@ -325,7 +325,7 @@ describe("evaluateAndStoreExportGate", () => {
       const pr = await createLocalPr(repo, { title: "File abort", body: "Body", base: "main" });
       await setLocalPrStatus(repo, pr.id, "reviewed");
       const started = Date.now();
-      setTimeout(() => abortExportGate(repo, pr.id, pr.headSha), 80);
+      setTimeout(() => abortExportGate(repo, pr.id, pr.headSha), 500);
       await assert.rejects(
         () => evaluateAndStoreExportGate(repo, pr.id),
         (err: unknown) => isAbortError(err),
@@ -334,7 +334,7 @@ describe("evaluateAndStoreExportGate", () => {
       const stored = await getLocalPr(repo, pr.id);
       assert.notEqual(stored.exportGate?.status, "ready");
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 

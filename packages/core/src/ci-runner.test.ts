@@ -965,7 +965,7 @@ describe("runCiChecks", () => {
       );
       assert.ok(Date.now() - started < 8000, "abort should not wait out the check");
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
