@@ -962,9 +962,7 @@ export class LaneHub implements vscode.Disposable {
       // Draft/ready/changes_requested cheap results (e.g. "Status is draft…") must not
       // paint BLOCKED in the left-menu EXPORT box (RAD-83).
       const shepherd =
-        selected && selected.status === "reviewed"
-          ? displayShepherdStatus(cheap, selected)
-          : null;
+        selected && selected.status === "reviewed" ? displayShepherdStatus(cheap, selected) : null;
       const sidebarPrs = prs.map((pr) => ({ ...pr, humanExport: humanExportUi(pr) }));
       void this.promptExportReadyEnter(sidebarPrs);
       this.post(

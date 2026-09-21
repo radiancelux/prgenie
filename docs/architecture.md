@@ -4,12 +4,12 @@ PR Genie is a local review lane that sits in front of GitHub. The product flywhe
 
 ## Packages
 
-| Package                    | Path                 | Role                                                                                                                                                 |
-| -------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@prgenie/core`            | `packages/core`      | Local PR CRUD, status transitions, watch state, worktrees, export helpers, `doctor`, `gh` bind                                                       |
-| `prgenie` CLI              | `packages/cli`       | Thin CLI + MCP stdio server over core (`prgenie`, `prgenie doctor`, steward, hooks)                                                                  |
+| Package                    | Path                 | Role                                                                                                                                                    |
+| -------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@prgenie/core`            | `packages/core`      | Local PR CRUD, status transitions, watch state, worktrees, export helpers, `doctor`, `gh` bind                                                          |
+| `prgenie` CLI              | `packages/cli`       | Thin CLI + MCP stdio server over core (`prgenie`, `prgenie doctor`, steward, hooks)                                                                     |
 | Cursor plugin              | `packages/plugin`    | Rules, skills (`/steward`, `/start`, `/export`, …), MCP entry, hooks (`github-gate.cjs`, `review-inbox.cjs`, `capture-subagent.cjs`, `session-log.mjs`) |
-| VS Code / Cursor extension | `packages/extension` | **Local PRs** sidebar: watch list, Switch to worktree, Complete review, Open on GitHub                                                               |
+| VS Code / Cursor extension | `packages/extension` | **Local PRs** sidebar: watch list, Switch to worktree, Complete review, Open on GitHub                                                                  |
 
 Build at the monorepo root (`pnpm build`). Dev install copies the plugin and extension into Cursor via `pnpm link-plugin` and `pnpm link-extension`.
 
