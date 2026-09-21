@@ -368,7 +368,7 @@ test("reviewer Task is requested once per loop HEAD", async () => {
   assert.equal(shouldSpawnReviewer(notified), false);
   assert.equal(notified.reviewerNotifiedSha, notified.headSha);
   const spawnCopy = formatSpawnReviewer(ready);
-  assert.match(spawnCopy, /\/loop/);
+  assert.match(spawnCopy, /\/steward/);
   assert.match(spawnCopy, /Do not claim_review/);
   assert.match(spawnCopy, /Do not Task a reviewer/);
   assert.doesNotMatch(spawnCopy, /Then Task one generalPurpose reviewer/);

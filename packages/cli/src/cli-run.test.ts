@@ -113,7 +113,7 @@ test("cli list rejects invalid --in fields", () => {
   assert.match(result.stderr, /--in fields must be/);
 });
 
-test("cli watch start|stop|listen hard-error pointing at /loop", () => {
+test("cli watch start|stop|listen hard-error pointing at /steward", () => {
   for (const args of [
     ["watch", "start"],
     ["watch", "start", "inbox"],
@@ -124,7 +124,7 @@ test("cli watch start|stop|listen hard-error pointing at /loop", () => {
     const result = prgenie(args);
     assert.equal(result.code, 1, args.join(" "));
     assert.match(result.stderr, /Listen flywheel removed/);
-    assert.match(result.stderr, /\/loop/);
+    assert.match(result.stderr, /\/steward/);
   }
 });
 

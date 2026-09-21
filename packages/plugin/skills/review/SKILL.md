@@ -11,7 +11,7 @@ The loop is the handoff. `ready` means the worktree agent requested a review. Fi
 
 `reviewed` means you found nothing else. It is **not** a human handoff and not Push to origin. Do not say “ready for human review.” The steward runs the export gate next. **Ready for human** / Push language only after `handoff_human` (gate green). Do not `approved` unless the user is signing off.
 
-`/loop` owns one loop and **awaits** its reviewer Task. You are that leaf. Do not start listen. Do not spawn further reviewers.
+`/steward` owns one loop and **awaits** its reviewer Task. You are that leaf. Do not start listen. Do not spawn further reviewers.
 
 ## Process bar (defaults)
 

@@ -1,6 +1,6 @@
 ---
-name: loop
-description: One steward agent owns a local PR lifecycle. Spawns an implementor Task, then a reviewer when ready; resumes the same implementor Task on changes_requested; runs the export gate before handing off to the human. Use when the user runs /loop, hands you a ticket, or wants one agent to drive implement↔review until Push to origin.
+name: steward
+description: One steward agent owns a local PR lifecycle. Spawns an implementor Task, then a reviewer when ready; resumes the same implementor Task on changes_requested; runs the export gate before handing off to the human. Use when the user runs /steward, hands you a ticket, or wants one agent to drive implement↔review until Push to origin.
 ---
 
 # Steward a local PR
@@ -14,7 +14,7 @@ Hard rules — read these before any tool call:
 3. Do **not** `set_status ready`, do not review, do not `complete_review` in this chat.
 4. Do **not** start `/watch-inbox`, `/watch-ready`, `/inbox`, `/queue`, listen ticks, or `prgenie watch start|listen`. Those skills are gone. There is no listen flywheel.
 5. Do **not** `create_local_pr` yourself unless you are creating the **steward packet** (title + body only). After create, bind and Task — never implement.
-6. If PR Genie MCP is missing, or `steward_next` / `bind_steward` are not listed: **STOP**. Tell the user MCP is still loading — wait, toggle the plugin off/on, retry `/loop`. On Windows, Configure → Local stuck on **Connecting…** (0 tools) is a host/config issue (stdio handshake, duplicate `prgenie` name, PATH/`node`) — point them at `docs/troubleshooting.md` (sticky Connecting). Never fall through to a CLI DIY flywheel (`prgenie create` + code + ready + listen).
+6. If PR Genie MCP is missing, or `steward_next` / `bind_steward` are not listed: **STOP**. Tell the user MCP is still loading — wait, toggle the plugin off/on, retry `/steward`. On Windows, Configure → Local stuck on **Connecting…** (0 tools) is a host/config issue (stdio handshake, duplicate `prgenie` name, PATH/`node`) — point them at `docs/troubleshooting.md` (sticky Connecting). Never fall through to a CLI DIY flywheel (`prgenie create` + code + ready + listen).
 
 `prgenie steward` / MCP `steward_next` is the source of truth for the next action. Packet status (`prgenie show` / `get_local_pr`) is the source of truth for the loop. Do not `git push` unless `/export`.
 
@@ -23,7 +23,7 @@ Hard rules — read these before any tool call:
 ## MCP gate (do this first)
 
 1. Discover PR Genie MCP (`GetDynamicTools` / listed tools). You need `steward_next` and `bind_steward`.
-2. If they are unavailable: stop. Say the steward tools are not loaded yet. Ask the user to wait or retry `/loop` after Customize → Plugins → PR Genie off/on. **Do not** implement. **Do not** `prgenie create` + code. **Do not** arm listen.
+2. If they are unavailable: stop. Say the steward tools are not loaded yet. Ask the user to wait or retry `/steward` after Customize → Plugins → PR Genie off/on. **Do not** implement. **Do not** `prgenie create` + code. **Do not** arm listen.
 3. Only when those tools are listed, continue.
 
 ## Brief and packet

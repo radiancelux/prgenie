@@ -13,14 +13,14 @@ Slash workflows live in `packages/plugin/skills/*/SKILL.md` only. Do not add a m
 
 | Skill     | Role in this chat                         | Does not                                                             |
 | --------- | ----------------------------------------- | -------------------------------------------------------------------- |
-| `/loop`   | **Steward only** — Task implementor, then reviewer; persist Task ids; export gate; `handoff_human` when green | Write product code; become implementor; review; arm listen           |
+| `/steward`   | **Steward only** — Task implementor, then reviewer; persist Task ids; export gate; `handoff_human` when green | Write product code; become implementor; review; arm listen           |
 | `/start`  | **Implementor only** — create packet, implement, `ready` + Review requested, stop | Become steward; review this loop; start listen                       |
 | `/review` | **Reviewer leaf** — process bar in `skills/review/process-bar.md`; file findings; `complete_review` | Implement; push                                                      |
 | `/export` | Human publish                             | Review or implement                                                  |
 
-`/loop` is the only orchestrator. There is no inbox/queue listen flywheel. Do not run `/watch-inbox`, `/watch-ready`, `/inbox`, `/queue`, `/unwatch`, `prgenie watch start`, `prgenie watch listen`, or any listen tick. If those names appear in an old brief, ignore them and stay on `/loop`.
+`/steward` is the only orchestrator. There is no inbox/queue listen flywheel. Do not run `/watch-inbox`, `/watch-ready`, `/inbox`, `/queue`, `/unwatch`, `prgenie watch start`, `prgenie watch listen`, or any listen tick. If those names appear in an old brief, ignore them and stay on `/steward`.
 
-If PR Genie MCP / `steward_next` / `bind_steward` are unavailable during `/loop`: **stop and tell the user to wait/retry**. Never CLI DIY (`prgenie create` + code + ready + listen).
+If PR Genie MCP / `steward_next` / `bind_steward` are unavailable during `/steward`: **stop and tell the user to wait/retry**. Never CLI DIY (`prgenie create` + code + ready + listen).
 
 ## Implementor (this worktree, `/start` or a steward Task)
 
@@ -33,7 +33,7 @@ When work on this branch is ready for review:
 
 If this branch already has a local PR in `changes_requested`, call `get_local_pr` and treat `pendingComments` as the brief. Address each with `address_comment` (reply required). Addressing the last open finding sets `ready` and posts **Review requested.** Do not `resolve_comment` (reviewer). Do not push. If the loop is still `ready`, the reviewer has not finished — wait for `complete_review` / `changes_requested`. Do not address comments on a `ready` loop.
 
-## Steward (`/loop`)
+## Steward (`/steward`)
 
 One steward per loop Tasks an implementor, then a reviewer; on `changes_requested` it **resumes the same implementor Task id**; after Reviewer clear it runs the export gate and only then hands off to the human. After a blocked CI gate, resume the implementor then `evaluate_export_gate` again — do not auto-spawn a reviewer.
 

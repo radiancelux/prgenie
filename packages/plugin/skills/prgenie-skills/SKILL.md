@@ -13,13 +13,13 @@ Follow [agentskills.io](https://agentskills.io/specification) and Cursor's skill
 
 | Skill      | Who                    | Auto-invoke?                 |
 | ---------- | ---------------------- | ---------------------------- |
-| `loop`     | One steward per loop   | Yes (ticket / full flywheel) |
+| `steward`  | One steward per loop   | Yes (ticket / full flywheel) |
 | `start`    | Implementor-only entry | Yes (ticket paste)           |
 | `local-pr` | Create/update packets  | Yes                          |
 | `review`   | Leaf reviewer          | Yes                          |
 | `export`   | Publish                | No                           |
 
-`/loop` is the only orchestrator (one steward, implementor/reviewer Tasks, export gate before human handoff). Do not add inbox/queue listen skills. `/start` stays implementor-only — do not blur it with `/loop`.
+`/steward` is the only orchestrator (one steward, implementor/reviewer Tasks, export gate before human handoff). Do not add inbox/queue listen skills. `/start` stays implementor-only — do not blur it with `/steward`.
 
 User-only skills set `disable-model-invocation: true` so the agent does not export from ambient context.
 
@@ -27,7 +27,7 @@ User-only skills set `disable-model-invocation: true` so the agent does not expo
 
 Keep terminology fixed: **loop** (local PR packet), **address** (implementor) vs **resolve** (reviewer) vs **complete_review** (end of review). Do not push unless `/export`.
 
-- `/loop` is steward only. If MCP / `steward_next` / `bind_steward` are unavailable, stop and tell the user to wait/retry — never CLI DIY.
+- `/steward` is steward only. If MCP / `steward_next` / `bind_steward` are unavailable, stop and tell the user to wait/retry — never CLI DIY.
 - `/start` implements and stops at ready. It does not review and does not arm listen.
 - `/review` applies `skills/review/process-bar.md` (and `.prgenie/review.md` when present). Steward Tasks point at those paths — do not paste external review skills into every Task.
 - Implementor acts only on **this worktree** when `changes_requested`.

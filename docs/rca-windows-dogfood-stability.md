@@ -1,6 +1,6 @@
 # RCA: Windows dogfood stability (Brett Humphreys)
 
-**Status:** Historical analysis. Inbox/queue listen was **removed in RAD-81** — `/loop` is the only orchestrator. Keep this page as RCA, not as a dogfood path.
+**Status:** Historical analysis. Inbox/queue listen was **removed in RAD-81** — `/steward` is the only orchestrator. Keep this page as RCA, not as a dogfood path.
 
 **Audience:** PM + next CloudAgent implement slices.
 **Scope:** Windows MVP dogfood against `radiancelux/prgenie` checkout

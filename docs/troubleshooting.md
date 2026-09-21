@@ -60,7 +60,7 @@ Not inside a git repository. Expected workspace git root at C:\Users\you\repo. M
 
 ## Sticky Connecting… / 0 tools (Windows)
 
-**Symptoms:** Customize → Plugins → Configure prgenie → **Environments → Local: Connecting…** forever. Connected MCPs shows `prgenie` with **0 tools**. `/loop` cannot see `steward_next` / `bind_steward`. Manual `node packages/plugin/mcp/server.cjs` sits quietly (that only proves the process starts — it is not a handshake).
+**Symptoms:** Customize → Plugins → Configure prgenie → **Environments → Local: Connecting…** forever. Connected MCPs shows `prgenie` with **0 tools**. `/steward` cannot see `steward_next` / `bind_steward`. Manual `node packages/plugin/mcp/server.cjs` sits quietly (that only proves the process starts — it is not a handshake).
 
 **Two `prgenie` rows (enable only one):**
 
@@ -104,9 +104,9 @@ Doctor `extension` fails when the installed version ≠ `packages/extension/pack
 
 ## Listen flywheel removed
 
-`prgenie watch start|stop|listen` and MCP `watch_start` / `watch_stop` hard-error and tell you to use `/loop`. There is no inbox/queue listen path.
+`prgenie watch start|stop|listen` and MCP `watch_start` / `watch_stop` hard-error and tell you to use `/steward`. There is no inbox/queue listen path.
 
-If `/loop` cannot see `steward_next` / `bind_steward`, MCP is still loading — wait, toggle the plugin, retry. Do not implement in the steward chat and do not arm listen.
+If `/steward` cannot see `steward_next` / `bind_steward`, MCP is still loading — wait, toggle the plugin, retry. Do not implement in the steward chat and do not arm listen.
 
 `prgenie watch` / MCP `watch_status` still show the export-halt record. Creating a new loop resumes an **export** halt after that id is archived or missing.
 
@@ -156,7 +156,7 @@ If `packages/plugin/hooks/push-gate.mjs` exists, doctor fails `legacy-push-gate`
 2. Stale plugin → build + `link-plugin` + disable/enable
 3. Sticky Connecting… / 0 tools → `mcp-config` / `mcp-duplicate` / `mcp-node` + Output → MCP Logs (see above)
 4. Stale sidebar → `link-extension` + full quit
-5. Orchestration → `/loop` (`prgenie steward <id>`). Listen is gone.
+5. Orchestration → `/steward` (`prgenie steward <id>`). Listen is gone.
 6. Export halt stuck → archive/missing export id, or create next loop (export resume only)
 7. Wrong GitHub user → `prgenie gh use <login>`
 8. Bad packet → inspect `.git/agent-console/prs/<id>.json`

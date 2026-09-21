@@ -39,7 +39,7 @@ test("export halt is visible on both lanes; idle lanes format as idle", async ()
   const idle = await getRepoWatch(repo);
   assert.equal(idle.halted, false);
   assert.equal(formatWatchLane(idle, "inbox"), "idle");
-  assert.match(LISTEN_REMOVED_MESSAGE, /Use \/loop/);
+  assert.match(LISTEN_REMOVED_MESSAGE, /Use \/steward/);
 
   const shipped = await haltWatch(repo, "export", "lp-deadbeef");
   assert.equal(shipped.halted, true);
