@@ -85,8 +85,8 @@ test("/review skill points at stack-agnostic process bar (RAD-103)", () => {
   assert.match(bar, /package\.json/);
   assert.match(bar, /\.prgenie\/review\.md/);
   assert.doesNotMatch(bar, /Parler|Foundry/);
-  const loop = skillBody("loop");
-  assert.match(loop, /token-thin/);
-  assert.match(loop, /process-bar\.md/);
-  assert.match(loop, /Do \*\*not\*\* paste the process bar/);
+  const steward = skillBody("steward");
+  assert.match(steward, /token-thin/);
+  assert.match(steward, /process-bar\.md/);
+  assert.match(steward, /Do \*\*not\*\* paste the process bar/);
 });
