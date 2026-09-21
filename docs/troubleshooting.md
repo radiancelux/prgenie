@@ -38,6 +38,7 @@ FAIL  plugin-stale — Installed MCP server (…) differs from repo build (…).
 2. In **Customize → Plugins**, turn PR Genie **off and on** (Developer: Reload Window is not enough for the MCP tool list).
 3. **Canonical MCP is the plugin** (`prgenie` after `pnpm link-plugin`). This repo does **not** ship `.cursor/mcp.json`. Enable **only that one** entry.
 4. `link-plugin` pins MCP `server.cjs` + `node.exe` in the copied plugin folder (UTF-8, no BOM; `cmd /c` when the node path has spaces).
+5. **Windows folder lock:** If `Remove-Item` fails because another process still holds `~\.cursor\plugins\local\prgenie` (often MCP `node … server.cjs`), `link-plugin` stops matching node/cmd processes (not all `node.exe`), retries, then renames the folder to `prgenie.old-<timestamp>` and installs into a fresh `prgenie`. Delete old folders later after a full Cursor quit. Optional (aggressive): `powershell -ExecutionPolicy Bypass -File scripts/link-plugin.ps1 -ForceQuitCursor`.
 
 ## MCP "not inside a git repository" (Windows / plugin cwd)
 
@@ -88,7 +89,7 @@ A single Plugin row can still hang — dual registration is necessary to clean u
 2. `prgenie mcp --smoke` (or `node packages/cli/dist/prgenie.cjs mcp --smoke`) — must print `steward_next: true` in under a few seconds. That is the same `initialize` / `tools/list` Cursor needs. If smoke passes and Cursor still shows 0 tools, Cursor did not complete stdio (spawn/sandbox), not a hang inside our tool catalog.
 3. Output → **MCP Logs**. Look for `[prgenie] mcp stdio ready` on stderr after toggle. Only `supported=false` with **no** ready line → process never started. `server was not started` / `unsupported_platform` → sandbox policy. `ENOENT` → PATH/`node`. Ready + still Connecting → framing (rebuild this branch).
 4. Connected MCPs: **one** `prgenie` row, tag **Plugin**. If you also see tag **pr-genie**, delete `.cursor/mcp.json`.
-5. `pnpm build && pnpm link-plugin`, then Customize → Plugins → PR Genie **off/on**. Quit Cursor fully if Windows still holds the old `server.cjs`.
+5. `pnpm build && pnpm link-plugin` (unlocks or renames a locked plugin folder — see Stale MCP above), then Customize → Plugins → PR Genie **off/on**.
 6. Do not add a workspace `prgenie` for live-reload. If you must, use a **different** server id and keep the plugin off.
 
 `where.exe node` succeeding and a quiet manual `node …\server.cjs` do **not** prove Cursor completed `initialize` / `tools/list`.
