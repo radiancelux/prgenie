@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
@@ -19,6 +19,7 @@ import {
   exportPushRefspec,
   findLocalPrForCurrentBranch,
   findLocalPrForCurrentWorktree,
+  findPeelStashRef,
   formatReviewInbox,
   formatSpawnReviewer,
   getLocalPr,
@@ -29,6 +30,7 @@ import {
   localPrMatchesSearch,
   listWorktrees,
   loopWorktreeIdentity,
+  peelStashMessage,
   pruneArchivedLoopWorktree,
   refusePrimaryWorktreeIfParallel,
   releaseArchivedLoop,
@@ -606,6 +608,34 @@ test("every live loop gets an exclusive .loops worktree even when the branch is 
   const trees = await listWorktrees(repo);
   const exclusive = trees.find((t) => sameFsPath(t.path, pr.worktreePath ?? ""));
   assert.equal(exclusive?.branch, "feat/widget");
+});
+
+test("dirty primary peel stashes by message and restores into the exclusive worktree", async () => {
+  git(["checkout", "feat/widget"]);
+  // Unrelated stash stays at stash@{0} so a naive pop would steal the wrong entry.
+  await writeFile(path.join(repo, "unrelated-stash.txt"), "keep me\n");
+  git(["add", "unrelated-stash.txt"]);
+  git(["stash", "push", "-m", "unrelated-other-work"]);
+  await writeFile(path.join(repo, "peel-dirty.txt"), "carry into exclusive\n");
+
+  const pr = await createLocalPr(repo, { title: "Dirty peel", base: "main" });
+  assert.ok(pr.worktreePath);
+  assert.match(pr.worktreePath.replace(/\\/g, "/"), /\.loops\//);
+  assert.equal(git(["branch", "--show-current"]), "main");
+  assert.match(
+    (await readFile(path.join(pr.worktreePath, "peel-dirty.txt"), "utf8")).replace(/\r\n/g, "\n"),
+    /^carry into exclusive\n$/,
+  );
+  // Peel stash consumed; unrelated stash still present.
+  assert.equal(await findPeelStashRef(repo, pr.id), null);
+  const stashList = git(["stash", "list"]);
+  assert.match(stashList, /unrelated-other-work/);
+  assert.doesNotMatch(
+    stashList,
+    new RegExp(peelStashMessage(pr.id).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+  );
+  assert.equal(git(["status", "--porcelain", "--", "peel-dirty.txt"], repo).trim(), "");
+  git(["stash", "drop"]);
 });
 
 test("refusePrimaryWorktreeIfParallel errors when primary bind would share with another live loop", () => {
