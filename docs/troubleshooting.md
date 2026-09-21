@@ -39,6 +39,25 @@ FAIL  plugin-stale — Installed MCP server (…) differs from repo build (…).
 3. **Canonical MCP is the plugin** (`prgenie` after `pnpm link-plugin`). This repo does **not** ship `.cursor/mcp.json`. Enable **only that one** entry.
 4. `link-plugin` pins MCP `server.cjs` + `node.exe` in the copied plugin folder (UTF-8, no BOM; `cmd /c` when the node path has spaces).
 
+## MCP "not inside a git repository" (Windows / plugin cwd)
+
+**Symptoms:** MCP tools (`list_local_prs`, `create_local_pr`, `steward_next`, …) fail with `Not inside a git repository` until you pass an explicit `cwd` argument. Common when PR Genie runs as a **Cursor plugin** MCP server.
+
+**Cause:** Plugin MCP starts with `process.cwd()` at the **plugin install** (`~/.cursor/plugins/local/prgenie` or `${CURSOR_PLUGIN_ROOT}`), not your open workspace. That directory is not a git repo. Hooks get `workspace_roots` / `$CURSOR_PROJECT_DIR`; MCP tools must resolve the workspace the same way.
+
+**Fix / expectations:**
+
+1. Rebuild and relink after upgrading: `pnpm build && pnpm link-plugin`, then disable/enable PR Genie.
+2. In the happy path, omit `cwd` — tools resolve the workspace git root from `$CURSOR_PROJECT_DIR` or `$WORKSPACE_FOLDER_PATHS` (first folder).
+3. When implementing in a **loop worktree** (`../<repo>.loops/<id>`), pass `cwd` to that worktree path (same as before).
+4. If the error names an expected root but you are outside any repo, open the project folder in Cursor or pass `cwd` explicitly.
+
+Example error (outside repo):
+
+```text
+Not inside a git repository. Expected workspace git root at C:\Users\you\repo. MCP server cwd is the plugin install (…), not the workspace. Tried: …
+```
+
 ## Sticky Connecting… / 0 tools (Windows)
 
 **Symptoms:** Customize → Plugins → Configure prgenie → **Environments → Local: Connecting…** forever. Connected MCPs shows `prgenie` with **0 tools**. `/loop` cannot see `steward_next` / `bind_steward`. Manual `node packages/plugin/mcp/server.cjs` sits quietly (that only proves the process starts — it is not a handshake).

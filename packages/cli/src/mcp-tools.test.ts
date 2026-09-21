@@ -8,6 +8,12 @@ import { handleTool, tools } from "./mcp.js";
 import type { LocalPr } from "@prgenie/core";
 
 let repo = "";
+let outside = "";
+const envSnapshot = {
+  CURSOR_PROJECT_DIR: process.env.CURSOR_PROJECT_DIR,
+  WORKSPACE_FOLDER_PATHS: process.env.WORKSPACE_FOLDER_PATHS,
+  CURSOR_PLUGIN_ROOT: process.env.CURSOR_PLUGIN_ROOT,
+};
 
 function git(args: string[], cwd = repo): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -15,6 +21,7 @@ function git(args: string[], cwd = repo): string {
 
 before(async () => {
   repo = await mkdtemp(path.join(tmpdir(), "prgenie-mcp-"));
+  outside = await mkdtemp(path.join(tmpdir(), "prgenie-mcp-outside-"));
   git(["init", "-b", "main"]);
   git(["config", "user.email", "test@prgenie.ai"]);
   git(["config", "user.name", "PR Genie Test"]);
@@ -28,7 +35,13 @@ before(async () => {
 });
 
 after(async () => {
+  process.chdir(tmpdir());
   if (repo) await rm(repo, { recursive: true, force: true });
+  if (outside) await rm(outside, { recursive: true, force: true });
+  for (const [key, value] of Object.entries(envSnapshot)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 });
 
 test("tools catalog exposes core flywheel tools", () => {
@@ -52,6 +65,16 @@ test("tools catalog exposes core flywheel tools", () => {
     assert.ok(names.has(required), `missing tool ${required}`);
   }
   assert.ok(tools.every((t) => t.inputSchema && typeof t.inputSchema === "object"));
+});
+
+test("handleTool list_local_prs without cwd uses workspace env (RAD-86)", async () => {
+  delete process.env.WORKSPACE_FOLDER_PATHS;
+  delete process.env.CURSOR_PLUGIN_ROOT;
+  process.env.CURSOR_PROJECT_DIR = repo;
+  process.chdir(outside);
+
+  const listed = (await handleTool("list_local_prs", {})) as LocalPr[];
+  assert.ok(Array.isArray(listed));
 });
 
 test("handleTool create/list/get/set_status/add_comment/get_diff", async () => {

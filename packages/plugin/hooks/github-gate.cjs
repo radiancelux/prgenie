@@ -457,6 +457,11 @@ var import_node_fs = require("node:fs");
 // packages/core/src/index.ts
 init_types();
 init_git();
+
+// packages/core/src/mcp-cwd.ts
+init_git();
+
+// packages/core/src/index.ts
 init_worktrees();
 init_prs();
 init_watch();

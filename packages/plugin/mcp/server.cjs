@@ -216,7 +216,7 @@ function sameFsPath(a, b) {
   } catch {
   }
   const canon = (p) => {
-    const normalized = import_node_path2.default.resolve(p);
+    const normalized = import_node_path3.default.resolve(p);
     try {
       return import_node_fs.realpathSync.native(normalized);
     } catch {
@@ -232,17 +232,17 @@ function sameFsPath(a, b) {
   return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 function loopWorktreeDir(mainPath, id) {
-  return import_node_path2.default.join(import_node_path2.default.dirname(mainPath), `${import_node_path2.default.basename(mainPath)}.loops`, id);
+  return import_node_path3.default.join(import_node_path3.default.dirname(mainPath), `${import_node_path3.default.basename(mainPath)}.loops`, id);
 }
 function loopWorktreeIdentity(absPath) {
-  const resolved = import_node_path2.default.resolve(absPath);
-  const parent = import_node_path2.default.dirname(resolved);
-  const loopsDir = import_node_path2.default.basename(parent);
+  const resolved = import_node_path3.default.resolve(absPath);
+  const parent = import_node_path3.default.dirname(resolved);
+  const loopsDir = import_node_path3.default.basename(parent);
   if (!loopsDir.endsWith(".loops")) return null;
-  const id = import_node_path2.default.basename(resolved);
+  const id = import_node_path3.default.basename(resolved);
   if (!/^lp-[0-9a-f]{8}$/i.test(id)) return null;
   return {
-    primaryPath: import_node_path2.default.join(import_node_path2.default.dirname(parent), loopsDir.slice(0, -".loops".length)),
+    primaryPath: import_node_path3.default.join(import_node_path3.default.dirname(parent), loopsDir.slice(0, -".loops".length)),
     id
   };
 }
@@ -368,7 +368,7 @@ async function addLoopWorktree(cwd, dest, loop) {
     const already = await findGitRoot(dest);
     if (already) return dest;
   }
-  await (0, import_promises.mkdir)(import_node_path2.default.dirname(dest), { recursive: true });
+  await (0, import_promises.mkdir)(import_node_path3.default.dirname(dest), { recursive: true });
   await git(cwd, ["worktree", "prune"], { allowFail: true });
   const trees = await listWorktrees(cwd);
   const held = trees.some((t) => t.branch === loop.headRef);
@@ -431,13 +431,13 @@ async function userName(cwd) {
 async function shortLogSubject(cwd, rev = "HEAD") {
   return gitText(cwd, ["log", "-1", "--format=%s", rev]);
 }
-var import_node_fs, import_promises, import_node_path2;
+var import_node_fs, import_promises, import_node_path3;
 var init_worktrees = __esm({
   "packages/core/src/worktrees.ts"() {
     "use strict";
     import_node_fs = require("node:fs");
     import_promises = require("node:fs/promises");
-    import_node_path2 = __toESM(require("node:path"), 1);
+    import_node_path3 = __toESM(require("node:path"), 1);
     init_git();
   }
 });
@@ -445,22 +445,22 @@ var init_worktrees = __esm({
 // packages/core/src/store.ts
 async function consoleDir(cwd) {
   const common = await gitCommonDir(cwd);
-  const dir = import_node_path3.default.join(common, "agent-console");
+  const dir = import_node_path4.default.join(common, "agent-console");
   await (0, import_promises2.mkdir)(dir, { recursive: true });
   return dir;
 }
 async function prsDir(cwd) {
-  const dir = import_node_path3.default.join(await consoleDir(cwd), "prs");
+  const dir = import_node_path4.default.join(await consoleDir(cwd), "prs");
   await (0, import_promises2.mkdir)(dir, { recursive: true });
   return dir;
 }
 function prFile(dir, id) {
-  return import_node_path3.default.join(dir, `${id}.json`);
+  return import_node_path4.default.join(dir, `${id}.json`);
 }
 async function sessionsFile(cwd) {
   const dir = await consoleDir(cwd);
   await (0, import_promises2.mkdir)(dir, { recursive: true });
-  return import_node_path3.default.join(dir, "sessions.jsonl");
+  return import_node_path4.default.join(dir, "sessions.jsonl");
 }
 function firstJsonObject(raw) {
   const start = raw.indexOf("{");
@@ -552,19 +552,19 @@ async function withFileLock(file, fn) {
   }
   throw lastErr instanceof Error ? lastErr : new Error(`Timed out locking ${file}`);
 }
-var import_promises2, import_node_path3;
+var import_promises2, import_node_path4;
 var init_store = __esm({
   "packages/core/src/store.ts"() {
     "use strict";
     import_promises2 = require("node:fs/promises");
-    import_node_path3 = __toESM(require("node:path"), 1);
+    import_node_path4 = __toESM(require("node:path"), 1);
     init_git();
   }
 });
 
 // packages/core/src/watch.ts
 function watchFile(dir) {
-  return import_node_path4.default.join(dir, "watch.json");
+  return import_node_path5.default.join(dir, "watch.json");
 }
 function derive(inbox, queue, updatedAt) {
   const halted = inbox.halted && queue.halted;
@@ -634,12 +634,12 @@ async function resumeWatchRole(cwd, role) {
 async function resumeWatch(cwd) {
   return mutateWatch(cwd, () => derive(idleLane(), idleLane(), (/* @__PURE__ */ new Date()).toISOString()));
 }
-var import_promises3, import_node_path4, idleLane, idle, LISTEN_REMOVED_MESSAGE;
+var import_promises3, import_node_path5, idleLane, idle, LISTEN_REMOVED_MESSAGE;
 var init_watch = __esm({
   "packages/core/src/watch.ts"() {
     "use strict";
     import_promises3 = require("node:fs/promises");
-    import_node_path4 = __toESM(require("node:path"), 1);
+    import_node_path5 = __toESM(require("node:path"), 1);
     init_git();
     init_store();
     idleLane = () => ({
@@ -661,7 +661,7 @@ function newId(prefix) {
 }
 async function learningsFile(cwd) {
   const dir = await consoleDir(cwd);
-  return import_node_path5.default.join(dir, "learnings.json");
+  return import_node_path6.default.join(dir, "learnings.json");
 }
 async function readLearnings(cwd) {
   const file = await learningsFile(cwd);
@@ -825,13 +825,13 @@ async function runPreflight(cwd, pr) {
     issues
   };
 }
-var import_node_crypto, import_promises4, import_node_path5;
+var import_node_crypto, import_promises4, import_node_path6;
 var init_learnings = __esm({
   "packages/core/src/learnings.ts"() {
     "use strict";
     import_node_crypto = require("node:crypto");
     import_promises4 = require("node:fs/promises");
-    import_node_path5 = __toESM(require("node:path"), 1);
+    import_node_path6 = __toESM(require("node:path"), 1);
     init_store();
     init_prs();
     init_prs();
@@ -1041,7 +1041,7 @@ async function switchGhUser(login, host = "github.com") {
   }
 }
 function bindFile(dir) {
-  return import_node_path6.default.join(dir, "github.json");
+  return import_node_path7.default.join(dir, "github.json");
 }
 async function getRepoGithubBind(cwd) {
   const root = await findGitRoot(cwd);
@@ -1077,13 +1077,13 @@ async function ensureRepoGithub(cwd) {
   await switchGhUser(bind.login, bind.host);
   return { login: bind.login, switched: true, bound: true };
 }
-var import_node_child_process2, import_promises5, import_node_path6;
+var import_node_child_process2, import_promises5, import_node_path7;
 var init_github_ops = __esm({
   "packages/core/src/github-ops.ts"() {
     "use strict";
     import_node_child_process2 = require("node:child_process");
     import_promises5 = require("node:fs/promises");
-    import_node_path6 = __toESM(require("node:path"), 1);
+    import_node_path7 = __toESM(require("node:path"), 1);
     init_git();
     init_store();
     init_github();
@@ -1191,7 +1191,7 @@ async function listLocalPrs(cwd, options = {}) {
   const prs = [];
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
-    const raw = await (0, import_promises6.readFile)(import_node_path7.default.join(dir, name), "utf8");
+    const raw = await (0, import_promises6.readFile)(import_node_path8.default.join(dir, name), "utf8");
     let pr;
     try {
       pr = parseJsonObject(raw);
@@ -1858,13 +1858,13 @@ async function attachLocalPr(cwd, input) {
   await resumeWatchForNextLoop(root);
   return pr;
 }
-var import_node_crypto2, import_promises6, import_node_path7, ALL_SEARCH_FIELDS;
+var import_node_crypto2, import_promises6, import_node_path8, ALL_SEARCH_FIELDS;
 var init_prs = __esm({
   "packages/core/src/prs.ts"() {
     "use strict";
     import_node_crypto2 = require("node:crypto");
     import_promises6 = require("node:fs/promises");
-    import_node_path7 = __toESM(require("node:path"), 1);
+    import_node_path8 = __toESM(require("node:path"), 1);
     init_git();
     init_store();
     init_worktrees();
@@ -2000,14 +2000,14 @@ function gitCommonDirSync(cwd) {
     encoding: "utf8",
     windowsHide: true
   }).trim();
-  return import_node_path9.default.isAbsolute(dir) ? import_node_path9.default.normalize(dir) : import_node_path9.default.resolve(cwd, dir);
+  return import_node_path10.default.isAbsolute(dir) ? import_node_path10.default.normalize(dir) : import_node_path10.default.resolve(cwd, dir);
 }
 function ciAbortFile(cwd, id) {
-  return import_node_path9.default.join(gitCommonDirSync(cwd), "agent-console", "ci-abort", `${safeId(id)}.json`);
+  return import_node_path10.default.join(gitCommonDirSync(cwd), "agent-console", "ci-abort", `${safeId(id)}.json`);
 }
 function ciLockFile(cwd, id, headSha) {
   const short = headSha.replace(/[^A-Za-z0-9]/g, "").slice(0, 16) || "head";
-  return import_node_path9.default.join(
+  return import_node_path10.default.join(
     gitCommonDirSync(cwd),
     "agent-console",
     "ci-lock",
@@ -2027,7 +2027,7 @@ function readCiAbortSeq(cwd, id) {
 }
 function requestCiAbort(cwd, id) {
   const file = ciAbortFile(cwd, id);
-  (0, import_node_fs2.mkdirSync)(import_node_path9.default.dirname(file), { recursive: true });
+  (0, import_node_fs2.mkdirSync)(import_node_path10.default.dirname(file), { recursive: true });
   const next = readCiAbortSeq(cwd, id) + 1;
   const token = {
     id,
@@ -2064,7 +2064,7 @@ function lockStale(lock) {
 }
 async function acquireCiLock(cwd, id, headSha, signal) {
   const file = ciLockFile(cwd, id, headSha);
-  (0, import_node_fs2.mkdirSync)(import_node_path9.default.dirname(file), { recursive: true });
+  (0, import_node_fs2.mkdirSync)(import_node_path10.default.dirname(file), { recursive: true });
   const record = {
     pid: process.pid,
     id,
@@ -2127,13 +2127,13 @@ async function acquireCiLock(cwd, id, headSha, signal) {
     }
   }
 }
-var import_node_child_process3, import_node_fs2, import_node_path9, POLL_MS, STALE_LOCK_MS;
+var import_node_child_process3, import_node_fs2, import_node_path10, POLL_MS, STALE_LOCK_MS;
 var init_ci_abort = __esm({
   "packages/core/src/ci-abort.ts"() {
     "use strict";
     import_node_child_process3 = require("node:child_process");
     import_node_fs2 = require("node:fs");
-    import_node_path9 = __toESM(require("node:path"), 1);
+    import_node_path10 = __toESM(require("node:path"), 1);
     init_progress();
     POLL_MS = 150;
     STALE_LOCK_MS = 30 * 60 * 1e3;
@@ -2143,13 +2143,13 @@ var init_ci_abort = __esm({
 // packages/core/src/ci-cache.ts
 async function ciCacheDir(cwd) {
   const common = await gitCommonDir(cwd);
-  const dir = import_node_path10.default.join(common, "agent-console", "ci-cache");
+  const dir = import_node_path11.default.join(common, "agent-console", "ci-cache");
   await (0, import_promises8.mkdir)(dir, { recursive: true });
   return dir;
 }
 async function ciCacheFile(cwd) {
   const dir = await ciCacheDir(cwd);
-  return import_node_path10.default.join(dir, "cache.json");
+  return import_node_path11.default.join(dir, "cache.json");
 }
 async function loadCiCache(cwd) {
   try {
@@ -2226,13 +2226,13 @@ async function recordCheckPass(cwd, check) {
   };
   await saveCiCache(cwd, cache);
 }
-var import_node_crypto3, import_promises8, import_node_path10;
+var import_node_crypto3, import_promises8, import_node_path11;
 var init_ci_cache = __esm({
   "packages/core/src/ci-cache.ts"() {
     "use strict";
     import_node_crypto3 = require("node:crypto");
     import_promises8 = require("node:fs/promises");
-    import_node_path10 = __toESM(require("node:path"), 1);
+    import_node_path11 = __toESM(require("node:path"), 1);
     init_git();
   }
 });
@@ -2285,7 +2285,7 @@ function parseLintExcerpt(text) {
   const file = clean.match(/^(?:[\w./\\-]+\.(?:js|jsx|ts|tsx|mjs|cjs|json))\b.*$/m);
   const err = clean.match(/^\s+\d+:\d+\s+error\s+.+$/m);
   if (file && err) {
-    const base = import_node_path11.default.basename(file[0].trim().split(/\s+/)[0] ?? file[0]);
+    const base = import_node_path12.default.basename(file[0].trim().split(/\s+/)[0] ?? file[0]);
     return `${base} ${err[0].trim()}`;
   }
   if (err) return err[0].trim();
@@ -2337,12 +2337,12 @@ function formatCiCheckError(input) {
   return parts.join(" \u2014 ");
 }
 function displayLogPath(cwd, absPath) {
-  const rel = import_node_path11.default.relative(cwd, absPath);
+  const rel = import_node_path12.default.relative(cwd, absPath);
   return rel && !rel.startsWith("..") ? rel : absPath;
 }
 async function ciLogsDir(cwd, create = true) {
   const common = await gitCommonDir(cwd);
-  const dir = import_node_path11.default.join(common, "agent-console", "ci-logs");
+  const dir = import_node_path12.default.join(common, "agent-console", "ci-logs");
   if (create) await (0, import_promises9.mkdir)(dir, { recursive: true });
   return dir;
 }
@@ -2359,7 +2359,7 @@ ${slice.toString("utf8")}`;
 async function writeCiFailureLog(cwd, check, command, output, excerpt) {
   try {
     const dir = await ciLogsDir(cwd);
-    const logPath = import_node_path11.default.join(dir, `${safeCheckFile(check)}.log`);
+    const logPath = import_node_path12.default.join(dir, `${safeCheckFile(check)}.log`);
     const header = `# ${check} (${command}) failed ${(/* @__PURE__ */ new Date()).toISOString()}
 
 `;
@@ -2376,19 +2376,19 @@ async function writeCiFailureLog(cwd, check, command, output, excerpt) {
       logPath,
       writtenAt: (/* @__PURE__ */ new Date()).toISOString()
     };
-    await (0, import_promises9.writeFile)(import_node_path11.default.join(dir, "latest.json"), `${JSON.stringify(meta, null, 2)}
+    await (0, import_promises9.writeFile)(import_node_path12.default.join(dir, "latest.json"), `${JSON.stringify(meta, null, 2)}
 `, "utf8");
     return displayLogPath(cwd, logPath);
   } catch {
     return null;
   }
 }
-var import_promises9, import_node_path11, CI_EXCERPT_LINES, CI_EXCERPT_MAX_CHARS, CI_LOG_MAX_BYTES, ANSI_RE, NOISE_LINE;
+var import_promises9, import_node_path12, CI_EXCERPT_LINES, CI_EXCERPT_MAX_CHARS, CI_LOG_MAX_BYTES, ANSI_RE, NOISE_LINE;
 var init_ci_failure = __esm({
   "packages/core/src/ci-failure.ts"() {
     "use strict";
     import_promises9 = require("node:fs/promises");
-    import_node_path11 = __toESM(require("node:path"), 1);
+    import_node_path12 = __toESM(require("node:path"), 1);
     init_git();
     CI_EXCERPT_LINES = 8;
     CI_EXCERPT_MAX_CHARS = 480;
@@ -2550,7 +2550,7 @@ async function getTrackedFiles(cwd) {
     const { stdout } = await execAsync("git ls-files --exclude-standard", { cwd });
     const files = stdout.trim().split("\n").filter(Boolean);
     const fs = await import("node:fs/promises");
-    const path13 = await import("node:path");
+    const path14 = await import("node:path");
     const validFiles = [];
     const skipFiles = /* @__PURE__ */ new Set([
       ".gitignore",
@@ -2579,8 +2579,8 @@ async function getTrackedFiles(cwd) {
       ".xml"
     ]);
     for (const file of files) {
-      const basename2 = path13.basename(file);
-      const ext = path13.extname(file).toLowerCase();
+      const basename2 = path14.basename(file);
+      const ext = path14.extname(file).toLowerCase();
       if (skipFiles.has(basename2)) {
         continue;
       }
@@ -2588,7 +2588,7 @@ async function getTrackedFiles(cwd) {
         continue;
       }
       try {
-        const fullPath = path13.join(cwd, file);
+        const fullPath = path14.join(cwd, file);
         const stats = await fs.stat(fullPath);
         if (stats.isFile()) {
           validFiles.push(file);
@@ -3161,18 +3161,71 @@ var init_export_validation = __esm({
 // packages/core/src/index.ts
 init_types();
 init_git();
+
+// packages/core/src/mcp-cwd.ts
+var import_node_path2 = __toESM(require("node:path"), 1);
+init_git();
+function mcpCwdCandidates() {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  const add = (value) => {
+    const trimmed = value?.trim();
+    if (!trimmed) return;
+    const normalized = import_node_path2.default.normalize(trimmed);
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push(normalized);
+  };
+  add(process.env.CURSOR_PROJECT_DIR);
+  const workspacePaths = process.env.WORKSPACE_FOLDER_PATHS;
+  if (workspacePaths) {
+    for (const part of workspacePaths.split(import_node_path2.default.delimiter)) {
+      add(part);
+    }
+  }
+  add(process.cwd());
+  return out;
+}
+function expectedWorkspaceRoot(candidates) {
+  return process.env.CURSOR_PROJECT_DIR?.trim() || process.env.WORKSPACE_FOLDER_PATHS?.split(import_node_path2.default.delimiter).find((p) => p.trim())?.trim() || candidates[0] || "workspace git root";
+}
+function formatNotGitRepoError(candidates) {
+  const expected = expectedWorkspaceRoot(candidates);
+  const pluginRoot = process.env.CURSOR_PLUGIN_ROOT?.trim();
+  const serverCwd = import_node_path2.default.normalize(process.cwd());
+  const pluginNote = pluginRoot && import_node_path2.default.normalize(pluginRoot) === serverCwd ? ` MCP server cwd is the plugin install (${pluginRoot}), not the workspace.` : "";
+  const tried = candidates.length ? candidates.join(", ") : serverCwd;
+  return `Not inside a git repository. Expected workspace git root at ${expected}.${pluginNote} Tried: ${tried}`;
+}
+async function resolveMcpGitRoot(explicitCwd) {
+  if (explicitCwd?.trim()) {
+    const root = await findGitRoot(explicitCwd.trim());
+    if (!root) {
+      throw new Error(formatNotGitRepoError([import_node_path2.default.normalize(explicitCwd.trim())]));
+    }
+    return root;
+  }
+  const candidates = mcpCwdCandidates();
+  for (const candidate of candidates) {
+    const root = await findGitRoot(candidate);
+    if (root) return root;
+  }
+  throw new Error(formatNotGitRepoError(candidates));
+}
+
+// packages/core/src/index.ts
 init_worktrees();
 init_prs();
 init_watch();
 
 // packages/core/src/review-claim.ts
 var import_promises7 = require("node:fs/promises");
-var import_node_path8 = __toESM(require("node:path"), 1);
+var import_node_path9 = __toESM(require("node:path"), 1);
 init_git();
 init_prs();
 init_store();
 function claimsFile(dir) {
-  return import_node_path8.default.join(dir, "review-claims.json");
+  return import_node_path9.default.join(dir, "review-claims.json");
 }
 function reviewClaimKey(id, headSha) {
   return `${id}:${headSha}`;
@@ -3274,14 +3327,14 @@ async function claimReview(cwd, id, options = {}) {
 
 // packages/core/src/steward.ts
 var import_promises10 = require("node:fs/promises");
-var import_node_path12 = __toESM(require("node:path"), 1);
+var import_node_path13 = __toESM(require("node:path"), 1);
 init_export_gate();
 init_export_validation();
 init_git();
 init_prs();
 init_store();
 function stewardsFile(dir) {
-  return import_node_path12.default.join(dir, "stewards.json");
+  return import_node_path13.default.join(dir, "stewards.json");
 }
 var emptyMap = () => ({
   updatedAt: (/* @__PURE__ */ new Date(0)).toISOString(),
@@ -3925,7 +3978,7 @@ async function generateLearningDigest(cwd, options = {}) {
     }
   }
   const topKeywords = Array.from(keywordCounts.entries()).filter(([, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([keyword, count]) => ({ keyword, count }));
-  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path13, count]) => ({ path: path13, count }));
+  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path14, count]) => ({ path: path14, count }));
   const patterns = Array.from(patternCounts.entries()).filter(([, data]) => data.count >= 2).sort((a, b) => b[1].count - a[1].count).slice(0, 10).map(([pattern, data]) => ({
     pattern,
     examples: data.examples,
@@ -3965,8 +4018,8 @@ function formatLearningDigest(summary) {
   if (summary.topFiles.length > 0) {
     lines.push("## Most Commented Files");
     lines.push("");
-    for (const { path: path13, count } of summary.topFiles) {
-      lines.push(`- \`${path13}\` \u2014 ${count} comment(s)`);
+    for (const { path: path14, count } of summary.topFiles) {
+      lines.push(`- \`${path14}\` \u2014 ${count} comment(s)`);
     }
     lines.push("");
   }
@@ -4142,17 +4195,11 @@ function withCommentViews(pr) {
     threads: commentThreads(pr.comments)
   };
 }
-async function repoCwd() {
-  const cwd = process.cwd();
-  const root = await findGitRoot(cwd);
-  if (!root) throw new Error("Not inside a git repository.");
-  return cwd;
-}
 async function handleTool(name, args) {
   if (name === "gh_list" || name === "github_list") {
     return listGhAccounts();
   }
-  const cwd = typeof args.cwd === "string" ? args.cwd : await repoCwd();
+  const cwd = typeof args.cwd === "string" && args.cwd.trim() ? await resolveMcpGitRoot(args.cwd) : await resolveMcpGitRoot();
   switch (name) {
     case "gh_status":
     case "github_status":

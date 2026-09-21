@@ -21,6 +21,7 @@ export type {
 } from "./types.js";
 export { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
 export { GitError, findGitRoot, git, gitCommonDir, gitText, requireGitRoot } from "./git.js";
+export { mcpCwdCandidates, resolveMcpGitRoot } from "./mcp-cwd.js";
 export {
   currentBranch,
   detectDefaultBase,

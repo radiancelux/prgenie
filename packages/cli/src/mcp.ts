@@ -17,8 +17,8 @@ import {
   enableLearning,
   exportLocalPr,
   ensureWorktreeForLoop,
-  findGitRoot,
   findLocalPrForCurrentWorktree,
+  resolveMcpGitRoot,
   formatLearningDigest,
   generateLearningDigest,
   getLearning,
@@ -83,18 +83,14 @@ function withCommentViews(pr: LocalPr) {
   };
 }
 
-async function repoCwd(): Promise<string> {
-  const cwd = process.cwd();
-  const root = await findGitRoot(cwd);
-  if (!root) throw new Error("Not inside a git repository.");
-  return cwd;
-}
-
 export async function handleTool(name: string, args: Json): Promise<unknown> {
   if (name === "gh_list" || name === "github_list") {
     return listGhAccounts();
   }
-  const cwd = typeof args.cwd === "string" ? args.cwd : await repoCwd();
+  const cwd =
+    typeof args.cwd === "string" && args.cwd.trim()
+      ? await resolveMcpGitRoot(args.cwd)
+      : await resolveMcpGitRoot();
   switch (name) {
     case "gh_status":
     case "github_status":
