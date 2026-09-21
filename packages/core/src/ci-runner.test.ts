@@ -417,8 +417,7 @@ describe("runCiChecks", () => {
   });
 
   // Cross-platform delay for package.json scripts (Windows has no `sleep`).
-  const nodeSleep = (ms: number) =>
-    `node -e "setTimeout(() => process.exit(0), ${ms})"`;
+  const nodeSleep = (ms: number) => `node -e "setTimeout(() => process.exit(0), ${ms})"`;
 
   // RAD-46: Verify timeout configuration works
   it("RAD-46: timeout configuration is respected", async () => {
