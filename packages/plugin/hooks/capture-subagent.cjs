@@ -473,7 +473,7 @@ function delay(ms) {
 async function withFileLock(file, fn) {
   const lock = `${file}.lock`;
   let lastErr;
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 100; i++) {
     try {
       const handle = await (0, import_promises2.open)(lock, "wx");
       try {
@@ -484,7 +484,7 @@ async function withFileLock(file, fn) {
       }
     } catch (err) {
       lastErr = err;
-      await delay(20);
+      await delay(50);
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(`Timed out locking ${file}`);
