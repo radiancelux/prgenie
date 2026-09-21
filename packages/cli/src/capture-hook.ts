@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { appendSession, captureAgentWork, findGitRoot } from "@prgenie/core";
+import { appendSession, captureAgentWork, envFlag, findGitRoot } from "@prgenie/core";
 
 type HookInput = Record<string, unknown>;
 
@@ -12,6 +12,11 @@ export function inferCwd(input: HookInput): string {
 
 function silent(): void {
   process.stdout.write("{}\n");
+}
+
+/** Opt-in ambient create. Default OFF — set PRGENIE_CAPTURE_SUBAGENT=1 to enable. */
+export function captureSubagentEnabled(): boolean {
+  return envFlag("PRGENIE_CAPTURE_SUBAGENT", false);
 }
 
 export async function main(): Promise<void> {
@@ -39,6 +44,12 @@ export async function main(): Promise<void> {
       task,
       modified_files: modified,
     });
+  }
+
+  // RAD-108: no silent ambient create unless the host opts in.
+  if (!captureSubagentEnabled()) {
+    silent();
+    return;
   }
 
   if (status === "aborted") {

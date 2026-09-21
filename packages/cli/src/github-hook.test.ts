@@ -58,7 +58,7 @@ test("built github-gate.cjs runs main and fail-closes push", () => {
   assert.ok(result.stdout.trim().length > 0, "gate must write JSON (not silent fail-open)");
   const parsed = JSON.parse(result.stdout);
   assert.equal(parsed.permission, "ask");
-  assert.match(String(parsed.agent_message ?? ""), /Do not git push|local PR/i);
+  assert.match(String(parsed.agent_message ?? ""), /Do not git push|Ask whether|opt in/i);
 });
 
 test("built github-gate.cjs allows non-publish commands", () => {

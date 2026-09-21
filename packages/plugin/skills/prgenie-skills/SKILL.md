@@ -11,17 +11,17 @@ Follow [agentskills.io](https://agentskills.io/specification) and Cursor's skill
 
 ## One job per skill
 
-| Skill      | Who                    | Auto-invoke?                 |
-| ---------- | ---------------------- | ---------------------------- |
-| `steward`  | One steward per loop   | Yes (ticket / full flywheel) |
-| `start`    | Implementor-only entry | Yes (ticket paste)           |
-| `local-pr` | Create/update packets  | Yes                          |
-| `review`   | Leaf reviewer          | Yes                          |
-| `export`   | Publish                | No                           |
+| Skill      | Who                    | Auto-invoke?                                      |
+| ---------- | ---------------------- | ------------------------------------------------- |
+| `steward`  | One steward per loop   | Yes (explicit `/steward` / full-flywheel ask)     |
+| `start`    | Implementor-only entry | **No** — opt-in slash / explicit loop ask only    |
+| `local-pr` | Create/update packets  | **No** — opt-in slash / explicit local-PR ask only |
+| `review`   | Leaf reviewer          | Yes                                               |
+| `export`   | Publish                | No                                                |
 
 `/steward` is the only orchestrator (one steward, implementor/reviewer Tasks, export gate before human handoff). Do not add inbox/queue listen skills. `/start` stays implementor-only — do not blur it with `/steward`.
 
-User-only skills set `disable-model-invocation: true` so the agent does not export from ambient context.
+Create-path skills (`start`, `local-pr`) and `export` set `disable-model-invocation: true` so the agent does not ambient-create or export. Opt-in: `/start`, `/steward`, `/local-pr`, or an explicit “use PR Genie” / “start a loop”.
 
 ## Product rules to copy, not invent
 
