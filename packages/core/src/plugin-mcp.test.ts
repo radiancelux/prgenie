@@ -102,10 +102,18 @@ test("pinPluginMcpJson writes stdio + absolute node + absolute server (no BOM)",
     mcpServers: { prgenie: { type: string; command: string; args: string[] } };
   };
   assert.equal(parsed.mcpServers.prgenie.type, "stdio");
-  assert.equal(parsed.mcpServers.prgenie.command, process.execPath);
-  assert.equal(
-    parsed.mcpServers.prgenie.args[0],
-    path.join(pluginRoot, "mcp", "server.cjs").split(path.sep).join("/"),
+  const expectCmd = process.platform === "win32" && /\s/.test(process.execPath);
+  if (expectCmd) {
+    assert.equal(parsed.mcpServers.prgenie.command, "cmd");
+    assert.equal(parsed.mcpServers.prgenie.args[0], "/c");
+    assert.equal(parsed.mcpServers.prgenie.args[1], process.execPath);
+  } else {
+    assert.equal(parsed.mcpServers.prgenie.command, process.execPath);
+  }
+  assert.ok(
+    parsed.mcpServers.prgenie.args.some((a) =>
+      a.split(path.sep).join("/").endsWith("mcp/server.cjs"),
+    ),
   );
   const inspect = inspectMcpJson(Buffer.from(pinned, "utf8"));
   assert.equal(inspect.hasBom, false);
@@ -150,7 +158,14 @@ test("pin-plugin-mcp.mjs writes UTF-8 without BOM and pins execPath", async () =
   const pinned = JSON.parse(bytes.toString("utf8")) as {
     mcpServers: { prgenie: { command: string; type: string; args: string[] } };
   };
-  assert.equal(pinned.mcpServers.prgenie.command, process.execPath);
   assert.equal(pinned.mcpServers.prgenie.type, "stdio");
-  assert.ok(pinned.mcpServers.prgenie.args[0]?.endsWith("mcp/server.cjs"));
+  const expectCmd = process.platform === "win32" && /\s/.test(process.execPath);
+  if (expectCmd) {
+    assert.equal(pinned.mcpServers.prgenie.command, "cmd");
+    assert.equal(pinned.mcpServers.prgenie.args[0], "/c");
+    assert.equal(pinned.mcpServers.prgenie.args[1], process.execPath);
+  } else {
+    assert.equal(pinned.mcpServers.prgenie.command, process.execPath);
+  }
+  assert.ok(pinned.mcpServers.prgenie.args.some((a) => a.endsWith("mcp/server.cjs")));
 });
