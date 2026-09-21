@@ -602,7 +602,7 @@ export async function run(argv: string[]): Promise<number> {
     process.stdout.write(`${card.card()}\n`);
     process.stdout.write(`Shepherd status: ${result.status}\n`);
     if (result.ciPlan) {
-      process.stdout.write(`CI plan: ${result.ciPlan.reason}\n`);
+      process.stdout.write(`CI plan: ${result.ciPlan.reason.join("; ")}\n`);
     }
     if (result.reasons.length > 0) {
       process.stdout.write("\nBlocking reasons:\n");
@@ -632,7 +632,10 @@ export async function run(argv: string[]): Promise<number> {
       onProgress: card.onProgress,
     });
     process.stdout.write(`${card.card()}\n`);
-    if (result.selection) process.stdout.write(`CI plan: ${result.selection.reason}\n`);
+    if (result.selection) {
+      process.stdout.write(`CI plan checks: ${result.selection.checks.join(", ")}\n`);
+      process.stdout.write(`CI plan reason: ${result.selection.reason.join("; ")}\n`);
+    }
     process.stdout.write(result.allPassed ? "CI preflight passed.\n" : "CI preflight failed.\n");
     return result.allPassed ? 0 : 1;
   }

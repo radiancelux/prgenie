@@ -78,7 +78,8 @@ export interface ExportGateCiCheck {
 
 export interface ExportGateCiPlan {
   checks: string[];
-  reason: string;
+  /** Selection reasons (RAD-105); may be a legacy single string when read from disk. */
+  reason: string[];
   uncertain?: boolean;
 }
 

@@ -44,7 +44,21 @@ export interface RunProgressOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * Map a smart-CI check name to a shell command.
+ * Package-scoped names (`lint:core`, `test:cli`, …) never expand to root `pnpm test`.
+ */
 export function ciCheckCommand(check: string): string {
+  const scoped = check.match(/^(lint|typecheck|test|build):(core|cli|extension)$/);
+  if (scoped) {
+    const [, kind, pkg] = scoped;
+    const dir = `packages/${pkg}`;
+    if (kind === "lint") return `pnpm exec eslint ${dir}/src`;
+    if (kind === "typecheck") return `pnpm exec tsc -p ${dir} --noEmit`;
+    // Directory form: Node test runner recursively finds *.test.ts (no shell glob).
+    if (kind === "test") return `pnpm exec tsx --test ${dir}/src`;
+    if (kind === "build") return `pnpm exec node scripts/build.mjs`;
+  }
   return `pnpm ${check}`;
 }
 

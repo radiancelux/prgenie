@@ -158,7 +158,7 @@ type Snapshot = {
   ghBind?: GhBindSnapshot;
   shepherdStatus?: ShepherdResult | null;
   progress?: LiveProgress | null;
-  ciPlan?: { checks: string[]; reason: string } | null;
+  ciPlan?: { checks: string[]; reason: string | string[] } | null;
   ciChecks?: LiveCheck[] | null;
   searchQuery?: string;
 };
@@ -1237,7 +1237,10 @@ function ciUiScript(): string {
     }
     function renderCiCard(host, progress, plan, stored) {
       if (!host) return;
-      const reason = (progress && progress.selectionReason) || (plan && plan.reason) || "";
+      const planReason = plan && plan.reason
+        ? (Array.isArray(plan.reason) ? plan.reason.join("; ") : plan.reason)
+        : "";
+      const reason = (progress && progress.selectionReason) || planReason || "";
       const live = (progress && progress.checks) || [];
       const names = (live.length ? live.map((c) => c.name) : null)
         || (plan && plan.checks)

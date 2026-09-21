@@ -40,6 +40,6 @@ Stay off the repo base (`main`/`master`). `create_local_pr` checks out `lp-<id>`
 
 1. Commit on this branch if needed. Do not push.
 2. Refresh `body` to a reviewer summary: why, what changed, how to test (keep the ticket link).
-3. Run MCP `run_ci` / `prgenie ci <id>` (same smart checks shepherd will run). Fix failures in this worktree. Skip only if the toolchain cannot run — say so.
+3. Run MCP `run_ci` / `prgenie ci <id>` (path-scoped checks from changed files vs base — see `docs/ci-checks.md`). **Print** the returned `{ checks, reason }` plan in chat. Fix failures in this worktree. When mapping is confident (`packageScoped` / reasons say so), do **not** run whole-repo `pnpm test` as a substitute. Fail-fast stops after the first package suite fail — do not keep running later packages. Skip only if the toolchain cannot run — say so.
 4. `set_status` `ready` and `add_comment` `role=agent` **Review requested.**
 5. **Stop.** If a steward (`/steward`) is driving this loop, it will Task the reviewer. If the user used `/start` alone, tell them to run `/steward` on this packet (or `/review`) — do not review it yourself and do not start listen.

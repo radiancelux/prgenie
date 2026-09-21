@@ -690,13 +690,23 @@ function normalizeExportGate(raw) {
     ciChecks
   };
 }
+function normalizeCiPlanReason(raw) {
+  if (Array.isArray(raw)) {
+    const reasons = raw.filter((r) => typeof r === "string" && r.length > 0);
+    return reasons.length ? reasons : null;
+  }
+  if (typeof raw === "string" && raw.length > 0) return [raw];
+  return null;
+}
 function normalizeCiPlan(raw) {
   if (!raw || typeof raw !== "object") return null;
   const plan = raw;
-  if (!Array.isArray(plan.checks) || typeof plan.reason !== "string") return null;
+  if (!Array.isArray(plan.checks)) return null;
+  const reason = normalizeCiPlanReason(plan.reason);
+  if (!reason) return null;
   const checks = plan.checks.filter((c) => typeof c === "string" && c.length > 0);
   if (checks.length === 0) return null;
-  return { checks, reason: plan.reason, uncertain: plan.uncertain === true };
+  return { checks, reason, uncertain: plan.uncertain === true };
 }
 function normalizeCiChecks(raw) {
   if (!Array.isArray(raw)) return null;
@@ -1061,11 +1071,14 @@ var init_ci_failure = __esm({
 });
 
 // packages/core/src/ci-select.ts
+var SCOPABLE_PACKAGES, SCOPABLE_SET;
 var init_ci_select = __esm({
   "packages/core/src/ci-select.ts"() {
     "use strict";
     init_git();
     init_prs();
+    SCOPABLE_PACKAGES = ["core", "cli", "extension"];
+    SCOPABLE_SET = new Set(SCOPABLE_PACKAGES);
   }
 });
 

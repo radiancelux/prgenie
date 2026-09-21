@@ -10,6 +10,7 @@ import {
 import {
   changedPathsForCi,
   envFlag,
+  formatCiSelectionReason,
   resolveCiCwd,
   selectCiChecks,
   type CiCheckSelection,
@@ -305,17 +306,25 @@ export async function runCiChecks(
   const onProgress = options.onProgress;
   const signal = options.signal;
   const failFast = options.failFast ?? envFlag("PRGENIE_CI_FAIL_FAST", true);
-  const parallel = options.parallel ?? envFlag("PRGENIE_CI_PARALLEL", true);
   const selection = options.selection;
-  const reasonFor = (name: string): string | undefined =>
-    selection?.mapping.find((m) => m.check === name)?.reason ?? selection?.reason;
+  // Package-scoped suites run sequentially so fail-fast stops after the first package fail.
+  const parallel =
+    selection?.packageScoped === true
+      ? false
+      : (options.parallel ?? envFlag("PRGENIE_CI_PARALLEL", true));
+  const reasonFor = (name: string): string | undefined => {
+    const mapped = selection?.mapping.find((m) => m.check === name)?.reason;
+    if (mapped) return mapped;
+    const joined = formatCiSelectionReason(selection?.reason);
+    return joined || undefined;
+  };
 
   if (selection) {
     onProgress?.({
       phase: "ci",
       state: "start",
       selectedChecks: selection.checks,
-      selectionReason: selection.reason,
+      selectionReason: formatCiSelectionReason(selection.reason),
     });
   } else {
     onProgress?.({

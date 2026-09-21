@@ -945,13 +945,23 @@ function normalizeExportGate(raw) {
     ciChecks
   };
 }
+function normalizeCiPlanReason(raw) {
+  if (Array.isArray(raw)) {
+    const reasons = raw.filter((r5) => typeof r5 === "string" && r5.length > 0);
+    return reasons.length ? reasons : null;
+  }
+  if (typeof raw === "string" && raw.length > 0) return [raw];
+  return null;
+}
 function normalizeCiPlan(raw) {
   if (!raw || typeof raw !== "object") return null;
   const plan = raw;
-  if (!Array.isArray(plan.checks) || typeof plan.reason !== "string") return null;
+  if (!Array.isArray(plan.checks)) return null;
+  const reason = normalizeCiPlanReason(plan.reason);
+  if (!reason) return null;
   const checks = plan.checks.filter((c5) => typeof c5 === "string" && c5.length > 0);
   if (checks.length === 0) return null;
-  return { checks, reason: plan.reason, uncertain: plan.uncertain === true };
+  return { checks, reason, uncertain: plan.uncertain === true };
 }
 function normalizeCiChecks(raw) {
   if (!Array.isArray(raw)) return null;
@@ -1951,6 +1961,15 @@ var init_prs = __esm({
 
 // packages/core/src/progress.ts
 function ciCheckCommand(check2) {
+  const scoped = check2.match(/^(lint|typecheck|test|build):(core|cli|extension)$/);
+  if (scoped) {
+    const [, kind, pkg] = scoped;
+    const dir = `packages/${pkg}`;
+    if (kind === "lint") return `pnpm exec eslint ${dir}/src`;
+    if (kind === "typecheck") return `pnpm exec tsc -p ${dir} --noEmit`;
+    if (kind === "test") return `pnpm exec tsx --test ${dir}/src`;
+    if (kind === "build") return `pnpm exec node scripts/build.mjs`;
+  }
   return `pnpm ${check2}`;
 }
 function abortError(message = "Cancelled") {
@@ -2496,50 +2515,124 @@ function classifyCiPath(filePath) {
   if (/\.(css|scss|less|html|xml|json|ya?ml)$/.test(lower)) return "style";
   return "unknown";
 }
-function fullSuite(reason, paths, uncertain) {
-  const mapping = DEFAULT_CI_CHECKS.map((check2) => ({ check: check2, reason }));
+function packageFromCiPath(filePath) {
+  const m7 = normalizeCiPath(filePath).match(/^packages\/([^/]+)\//);
+  return m7?.[1] ?? null;
+}
+function isScopablePackage(name) {
+  return SCOPABLE_SET.has(name);
+}
+function packageFromScopedCheck(check2) {
+  const m7 = check2.match(/^(?:lint|typecheck|test|build):(core|cli|extension)$/);
+  return m7 ? m7[1] : null;
+}
+function formatCiSelectionReason(reason) {
+  if (reason == null) return "";
+  if (Array.isArray(reason)) return reason.filter(Boolean).join("; ");
+  return reason;
+}
+function fullSuite(reasons, paths, uncertain) {
+  const reason = reasons.length ? reasons : ["uncertain \u2192 full suite"];
+  const mapping = DEFAULT_CI_CHECKS.map((check2) => ({
+    check: check2,
+    reason: reason.join("; ")
+  }));
   return {
     checks: [...DEFAULT_CI_CHECKS],
     reason,
     mapping,
     uncertain,
-    changedPaths: paths
+    changedPaths: paths,
+    packageScoped: false
   };
+}
+function packageSuiteChecks(pkgs) {
+  const checks = ["format:check"];
+  for (const pkg of pkgs) {
+    checks.push(`lint:${pkg}`, `typecheck:${pkg}`, `test:${pkg}`);
+  }
+  return checks;
 }
 function selectCiChecks(changedPaths) {
   const paths = [...new Set(changedPaths.map(normalizeCiPath).filter(Boolean))];
   if (paths.length === 0) {
-    return fullSuite("no changed paths; running full suite", paths, true);
+    return fullSuite(["no changed paths", "uncertain \u2192 full suite"], paths, true);
   }
   const kinds = paths.map(classifyCiPath);
   if (kinds.some((kind) => kind === "unknown")) {
-    return fullSuite("uncertain path mapping; running full suite", paths, true);
+    return fullSuite(["uncertain path mapping", "uncertain \u2192 full suite"], paths, true);
   }
   if (kinds.some((kind) => kind === "config")) {
-    return fullSuite("config/CI scripts changed; running full suite", paths, false);
+    return fullSuite(
+      ["config/CI scripts changed; running full suite"],
+      paths,
+      false
+    );
   }
   const onlyDocsOrStyle = kinds.every((kind) => kind === "docs" || kind === "style");
   if (onlyDocsOrStyle) {
-    const reason2 = kinds.every((kind) => kind === "docs") ? "docs/markdown-only \u2014 format only, skip lint/test/build" : "docs/style-only \u2014 format only, skip lint/test/build";
+    const reason2 = kinds.every((kind) => kind === "docs") ? [
+      "docs/markdown-only \u2192 format:check",
+      "skip units/lint/typecheck/build (confident)"
+    ] : [
+      "docs/style-only \u2192 format:check",
+      "skip units/lint/typecheck/build (confident)"
+    ];
     return {
       checks: ["format:check"],
       reason: reason2,
-      mapping: [{ check: "format:check", reason: reason2 }],
+      mapping: [{ check: "format:check", reason: reason2.join("; ") }],
       uncertain: false,
-      changedPaths: paths
+      changedPaths: paths,
+      packageScoped: false
     };
   }
-  const hasCli = paths.some((p5) => p5.startsWith("packages/cli/"));
-  const hasCore = paths.some((p5) => p5.startsWith("packages/core/"));
-  const hasExtension = paths.some((p5) => p5.startsWith("packages/extension/"));
-  const scope = [hasCli && "cli", hasCore && "core", hasExtension && "extension"].filter(Boolean).join("+") || "source";
-  const reason = `${scope} source/test changed \u2014 format, lint, typecheck, test, build`;
+  const codePaths = paths.filter((_8, i) => kinds[i] === "source" || kinds[i] === "test");
+  const pkgs = /* @__PURE__ */ new Set();
+  let unscoping = false;
+  for (const p5 of codePaths) {
+    const name = packageFromCiPath(p5);
+    if (name && isScopablePackage(name)) {
+      pkgs.add(name);
+    } else {
+      unscoping = true;
+    }
+  }
+  if (unscoping || pkgs.size === 0) {
+    return fullSuite(
+      [
+        "changed paths outside scopable packages/core|cli|extension",
+        "uncertain \u2192 full suite"
+      ],
+      paths,
+      true
+    );
+  }
+  const ordered = SCOPABLE_PACKAGES.filter((p5) => pkgs.has(p5));
+  const checks = packageSuiteChecks(ordered);
+  const pkgList = ordered.map((p5) => `packages/${p5}/**`).join(" + ");
+  const reason = [
+    `${pkgList} \u2192 per-package format + lint + typecheck + unit tests`,
+    "confident mapping \u2014 not full monorepo pnpm test",
+    "fail-fast: stop after first package suite fail"
+  ];
+  const mapping = checks.map((check2) => {
+    if (check2 === "format:check") {
+      return { check: check2, reason: "shared format check before package suites" };
+    }
+    const pkg = packageFromScopedCheck(check2);
+    return {
+      check: check2,
+      reason: pkg ? `packages/${pkg}/** scoped ${check2.split(":")[0]}` : reason.join("; ")
+    };
+  });
   return {
-    checks: [...DEFAULT_CI_CHECKS],
+    checks,
     reason,
-    mapping: DEFAULT_CI_CHECKS.map((check2) => ({ check: check2, reason })),
+    mapping,
     uncertain: false,
-    changedPaths: paths
+    changedPaths: paths,
+    packageScoped: true
   };
 }
 function resolveCiCwd(cwd, worktreePath) {
@@ -2584,7 +2677,7 @@ function envFlag(name, fallback) {
   if (raw === "1" || raw.toLowerCase() === "true") return true;
   return fallback;
 }
-var import_node_fs3, DEFAULT_CI_CHECKS, CONFIG_BASENAMES;
+var import_node_fs3, DEFAULT_CI_CHECKS, SCOPABLE_PACKAGES, CONFIG_BASENAMES, SCOPABLE_SET;
 var init_ci_select = __esm({
   "packages/core/src/ci-select.ts"() {
     "use strict";
@@ -2592,6 +2685,7 @@ var init_ci_select = __esm({
     init_git();
     init_prs();
     DEFAULT_CI_CHECKS = ["format:check", "lint", "typecheck", "test", "build"];
+    SCOPABLE_PACKAGES = ["core", "cli", "extension"];
     CONFIG_BASENAMES = /* @__PURE__ */ new Set([
       "package.json",
       "pnpm-lock.yaml",
@@ -2614,6 +2708,7 @@ var init_ci_select = __esm({
       "docker-compose.yml",
       "docker-compose.yaml"
     ]);
+    SCOPABLE_SET = new Set(SCOPABLE_PACKAGES);
   }
 });
 
@@ -87245,15 +87340,20 @@ async function runCiChecks(cwd, options7 = {}) {
   const onProgress = options7.onProgress;
   const signal = options7.signal;
   const failFast = options7.failFast ?? envFlag("PRGENIE_CI_FAIL_FAST", true);
-  const parallel = options7.parallel ?? envFlag("PRGENIE_CI_PARALLEL", true);
   const selection = options7.selection;
-  const reasonFor = (name) => selection?.mapping.find((m7) => m7.check === name)?.reason ?? selection?.reason;
+  const parallel = selection?.packageScoped === true ? false : options7.parallel ?? envFlag("PRGENIE_CI_PARALLEL", true);
+  const reasonFor = (name) => {
+    const mapped = selection?.mapping.find((m7) => m7.check === name)?.reason;
+    if (mapped) return mapped;
+    const joined = formatCiSelectionReason(selection?.reason);
+    return joined || void 0;
+  };
   if (selection) {
     onProgress?.({
       phase: "ci",
       state: "start",
       selectedChecks: selection.checks,
-      selectionReason: selection.reason
+      selectionReason: formatCiSelectionReason(selection.reason)
     });
   } else {
     onProgress?.({
@@ -87552,7 +87652,7 @@ function shepherdFromSnapshot(snap) {
       reason: snap.ciPlan.reason,
       mapping: snap.ciPlan.checks.map((check2) => ({
         check: check2,
-        reason: snap.ciPlan?.reason ?? ""
+        reason: snap.ciPlan?.reason.join("; ") ?? ""
       })),
       uncertain: snap.ciPlan.uncertain ?? false,
       changedPaths: []
@@ -89449,7 +89549,7 @@ var tools = [
   },
   {
     name: "run_ci",
-    description: "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; uncertain \u2192 full suite). Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Returns allPassed, checks, selection, and a progressCard for the agent chat. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run \u2014 say so; do not skip a flaky failure.",
+    description: "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; confident package paths \u2192 scoped lint/typecheck/unit; uncertain \u2192 full suite). Returns allPassed, checks, selection `{ checks[], reason[] }` (print both), and a progressCard. When selection is confident/packageScoped, do not substitute whole-repo pnpm test. Fail-fast stops after the first package suite fail. Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run \u2014 say so; do not skip a flaky failure.",
     inputSchema: {
       type: "object",
       required: ["id"],

@@ -87,6 +87,7 @@ describe("progress helpers", () => {
 
   it("names the check command and abort errors", () => {
     assert.equal(ciCheckCommand("test"), "pnpm test");
+    assert.equal(ciCheckCommand("test:core"), "pnpm exec tsx --test packages/core/src");
     assert.equal(shortCheckName("format:check"), "format");
     assert.equal(formatElapsed(40), "40ms");
     assert.equal(
