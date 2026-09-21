@@ -155,21 +155,41 @@ async function getTrackedFiles(cwd: string): Promise<string[]> {
  * Check format for tracked files using git blob content (LF-normalized).
  * RAD-46: This ensures Windows autocrlf repos pass when blob content is properly formatted,
  * even when working tree files have CRLF line endings.
+ *
+ * Uses the Prettier API (not per-file `pnpm exec`) so Windows CI does not pay
+ * ~100× process startup costs.
  */
 async function checkFormatFromBlobs(
   cwd: string,
   files: string[],
   signal?: AbortSignal,
 ): Promise<void> {
+  const prettier = await import("prettier");
+  const path = await import("node:path");
   const failures: string[] = [];
 
   for (const file of files) {
     throwIfAborted(signal);
     try {
-      // Use git show :file to get the index/blob version (LF-normalized)
-      // Pipe to prettier --stdin-filepath to check formatting
-      const command = `git show ":${file.replace(/"/g, '\\"')}" | pnpm exec prettier --stdin-filepath "${file.replace(/"/g, '\\"')}" --check`;
-      await execAsync(command, { cwd, signal });
+      const filepath = path.join(cwd, file);
+      const info = await prettier.getFileInfo(filepath, {
+        ignorePath: path.join(cwd, ".prettierignore"),
+      });
+      if (info.ignored || info.inferredParser == null) continue;
+
+      const shown = await execAsync(`git show ":${file.replace(/"/g, '\\"')}"`, {
+        cwd,
+        encoding: "utf8",
+        maxBuffer: 8 * 1024 * 1024,
+        signal,
+      });
+      const source = typeof shown.stdout === "string" ? shown.stdout : String(shown.stdout);
+      const config = await prettier.resolveConfig(filepath);
+      const ok = await prettier.check(source, {
+        ...(config ?? {}),
+        filepath,
+      });
+      if (!ok) failures.push(file);
     } catch (err) {
       if (isAbortError(err) || signal?.aborted) throw abortError();
       failures.push(file);
