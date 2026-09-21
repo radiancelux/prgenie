@@ -32,6 +32,7 @@ export {
   isBaseBranch,
   loopWorktreeIdentity,
   pruneArchivedLoopWorktree,
+  refusePrimaryWorktreeIfParallel,
   releaseArchivedLoop,
   sameFsPath,
 } from "./worktrees.js";

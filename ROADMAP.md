@@ -12,7 +12,7 @@ The lifecycle is complete: create → review loop (comments, address, resolve, `
 
 The gaps are not missing lifecycle pieces — they are **parallel-loop hardening** (exclusive worktrees, worktree CI toolchain, baseRef, export reliability), **dogfood UX**, and **token/context hygiene**. See Remaining open (Linear-backed).
 
-**Pending architecture invariant:** exclusive loop worktrees ([RAD-99](https://linear.app/radiancelux/issue/RAD-99/exclusive-loop-worktrees-refuse-primary-when-another-loop-live)) — refuse binding/creating on the primary checkout when another non-archived loop is live. Today primary reuse is still allowed when the loop branch is already checked out; that is the gap.
+**Architecture invariant:** exclusive loop worktrees ([RAD-99](https://linear.app/radiancelux/issue/RAD-99/exclusive-loop-worktrees-refuse-primary-when-another-loop-live)) — every live loop uses `../<repo>.loops/<id>`; create/bind refuses primary when another non-archived loop is live. Remaining RAD-91 work: CI junction (RAD-92), baseRef (RAD-94).
 
 ---
 

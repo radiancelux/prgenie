@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { after, before, test } from "node:test";
+import { after, before, beforeEach, test } from "node:test";
 import {
   addLocalPrComment,
   addressLocalPrComment,
@@ -28,7 +28,9 @@ import {
   listLocalPrs,
   localPrMatchesSearch,
   listWorktrees,
+  loopWorktreeIdentity,
   pruneArchivedLoopWorktree,
+  refusePrimaryWorktreeIfParallel,
   releaseArchivedLoop,
   reopenLocalPr,
   sameFsPath,
@@ -53,6 +55,19 @@ function git(args: string[], cwd = repo): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
+async function pruneLoopWorktrees(): Promise<void> {
+  const trees = await listWorktrees(repo);
+  for (const t of trees) {
+    if (!loopWorktreeIdentity(t.path)) continue;
+    try {
+      git(["worktree", "remove", "--force", "--", t.path]);
+    } catch {
+      // already gone
+    }
+  }
+  git(["worktree", "prune"]);
+}
+
 before(async () => {
   repo = await mkdtemp(path.join(tmpdir(), "prgenie-"));
   git(["init", "-b", "main"]);
@@ -65,6 +80,19 @@ before(async () => {
   await writeFile(path.join(repo, "widget.txt"), "n=1\n");
   git(["add", "."]);
   git(["commit", "-m", "add widget"]);
+});
+
+beforeEach(async () => {
+  if (!repo) return;
+  const trees = await listWorktrees(repo);
+  if (trees.some((t) => loopWorktreeIdentity(t.path))) {
+    await pruneLoopWorktrees();
+  }
+  try {
+    git(["checkout", "feat/widget"]);
+  } catch {
+    git(["checkout", "-B", "feat/widget"]);
+  }
 });
 
 after(async () => {
@@ -89,7 +117,8 @@ test("creates, lists, and approves a local PR", async () => {
   assert.equal(created.baseRef, "main");
   assert.match(created.body, /widget\.txt/);
   assert.ok(created.worktreePath);
-  assert.equal(path.basename(created.worktreePath), path.basename(repo));
+  assert.match(created.worktreePath.replace(/\\/g, "/"), /\.loops\//);
+  assert.match(created.worktreePath.replace(/\\/g, "/"), new RegExp(`${created.id}$`));
 
   const listed = await listLocalPrs(repo);
   assert.equal(listed.length, 1);
@@ -283,14 +312,14 @@ test("findLocalPrForCurrentWorktree does not grab another loop's inbox", async (
   const here = await createLocalPr(repo, { title: "This checkout", base: "main" });
   await setLocalPrStatus(repo, here.id, "ready");
   assert.equal(here.headRef, "feat/widget");
+  assert.ok(here.worktreePath);
   git(["checkout", "-b", "feat/other-inbox"]);
   const other = await createLocalPr(repo, { title: "Other inbox", base: "main" });
   await setLocalPrStatus(repo, other.id, "ready");
   await addLocalPrComment(repo, other.id, "Fix other.", { role: "reviewer" });
   await completeLocalPrReview(repo, other.id);
   assert.equal((await getLocalPr(repo, other.id)).status, "changes_requested");
-  git(["checkout", "feat/widget"]);
-  const found = await findLocalPrForCurrentWorktree(repo);
+  const found = await findLocalPrForCurrentWorktree(here.worktreePath!);
   assert.ok(found);
   assert.equal(found.headRef, "feat/widget");
   assert.notEqual(found.id, other.id);
@@ -344,12 +373,14 @@ test("captureAgentWork creates then updates a loop for the same branch", async (
   });
   assert.equal(first.action, "created");
   assert.equal(first.pr?.source?.kind, "subagent");
+  assert.ok(first.pr?.worktreePath);
 
-  await writeFile(path.join(repo, "capture.txt"), "two\n");
-  git(["add", "."]);
-  git(["commit", "-m", "capture two"]);
+  const work = first.pr.worktreePath;
+  await writeFile(path.join(work, "capture.txt"), "two\n");
+  git(["add", "."], work);
+  git(["commit", "-m", "capture two"], work);
 
-  const second = await captureAgentWork(repo, {
+  const second = await captureAgentWork(work, {
     title: "From subagent",
     source: { kind: "subagent", subagentType: "generalPurpose", task: "add capture" },
   });
@@ -405,6 +436,10 @@ test("approved loops stay readable but are not the current-branch loop", async (
   assert.ok((await listLocalPrs(repo)).some((p) => p.id === pr.id));
   const found = await findLocalPrForCurrentBranch(repo);
   assert.equal(found, null);
+  git(["checkout", "-b", "feat/after-archive"]);
+  await writeFile(path.join(repo, "next.txt"), "next\n");
+  git(["add", "."]);
+  git(["commit", "-m", "next loop work"]);
   const captured = await captureAgentWork(repo, { title: "Next loop" });
   assert.equal(captured.action, "created");
   assert.ok(captured.pr);
@@ -431,22 +466,35 @@ test("pruneArchivedLoopWorktree removes a sibling .loops checkout", async () => 
   assert.equal(still.id, pr.id);
 });
 
-test("pruneArchivedLoopWorktree keeps the primary checkout", async () => {
+test("pruneArchivedLoopWorktree never removes the primary checkout", async () => {
   git(["checkout", "feat/widget"]);
   const pr = await createLocalPr(repo, { title: "Stay put", base: "main" });
   assert.ok(pr.worktreePath);
-  assert.equal(path.basename(pr.worktreePath), path.basename(repo));
+  assert.match(pr.worktreePath.replace(/\\/g, "/"), /\.loops\//);
   const pruned = await pruneArchivedLoopWorktree(repo, pr);
-  assert.equal(pruned, false);
+  assert.equal(pruned, true);
+  const trees = await listWorktrees(repo);
+  assert.ok(trees.some((t) => sameFsPath(t.path, repo)));
+  assert.equal(
+    trees.some((t) => sameFsPath(t.path, pr.worktreePath ?? "")),
+    false,
+  );
   const still = await getLocalPr(repo, pr.id);
   assert.equal(still.id, pr.id);
 });
 
 test("releaseArchivedLoop checks the main workspace off the loop branch", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, {
+    title: "Leave main",
+    base: "main",
+    head: "feat/widget",
+  });
+  assert.ok(pr.worktreePath);
+  assert.match(pr.worktreePath.replace(/\\/g, "/"), /\.loops\//);
+  git(["worktree", "remove", "--force", "--", pr.worktreePath]);
   git(["checkout", "feat/widget"]);
-  const pr = await createLocalPr(repo, { title: "Leave main", base: "main" });
-  assert.equal(path.basename(pr.worktreePath ?? ""), path.basename(repo));
-  const released = await releaseArchivedLoop(repo, pr);
+  const released = await releaseArchivedLoop(repo, { ...pr, worktreePath: repo });
   assert.equal(released.checkedOutBase, true);
   assert.equal(released.prunedWorktree, false);
   assert.equal(released.reopen, false);
@@ -532,13 +580,69 @@ test("ensureWorktreeForLoop does not attach to another loop's leftover .loops fo
   assert.equal(sameFsPath(dest, leftover.worktreePath ?? ""), false);
 });
 
-test("a loop created on the base branch checks out a feature branch here", async () => {
+test("a loop created on the base branch peels an exclusive feature worktree", async () => {
   git(["checkout", "main"]);
   const pr = await createLocalPr(repo, { title: "Off main", base: "main" });
   assert.equal(pr.headRef, pr.id);
   assert.notEqual(pr.headRef, "main");
-  assert.equal(git(["branch", "--show-current"]), pr.id);
-  assert.equal(path.basename(pr.worktreePath ?? ""), path.basename(repo));
+  assert.equal(git(["branch", "--show-current"]), "main");
+  assert.ok(pr.worktreePath);
+  assert.match(pr.worktreePath.replace(/\\/g, "/"), /\.loops\//);
+  assert.match(pr.worktreePath.replace(/\\/g, "/"), new RegExp(`${pr.id}$`));
+  const trees = await listWorktrees(repo);
+  const exclusive = trees.find((t) => sameFsPath(t.path, pr.worktreePath ?? ""));
+  assert.equal(exclusive?.branch, pr.id);
+  assert.equal(exclusive?.detached, false);
+});
+
+test("every live loop gets an exclusive .loops worktree even when the branch is on primary", async () => {
+  git(["checkout", "feat/widget"]);
+  const pr = await createLocalPr(repo, { title: "Exclusive peel", base: "main" });
+  assert.ok(pr.worktreePath);
+  assert.match(pr.worktreePath.replace(/\\/g, "/"), /\.loops\//);
+  assert.match(pr.worktreePath.replace(/\\/g, "/"), new RegExp(`${pr.id}$`));
+  assert.equal(sameFsPath(pr.worktreePath, repo), false);
+  assert.equal(git(["branch", "--show-current"]), "main");
+  const trees = await listWorktrees(repo);
+  const exclusive = trees.find((t) => sameFsPath(t.path, pr.worktreePath ?? ""));
+  assert.equal(exclusive?.branch, "feat/widget");
+});
+
+test("refusePrimaryWorktreeIfParallel errors when primary bind would share with another live loop", () => {
+  assert.throws(
+    () => refusePrimaryWorktreeIfParallel(repo, repo, "lp-aaaaaaaa", ["lp-bbbbbbbb"]),
+    /Refusing to bind loop lp-aaaaaaaa to the primary checkout while other live loops exist \(lp-bbbbbbbb\)/,
+  );
+  assert.doesNotThrow(() =>
+    refusePrimaryWorktreeIfParallel(repo, repo, "lp-aaaaaaaa", ["lp-aaaaaaaa"]),
+  );
+  assert.doesNotThrow(() =>
+    refusePrimaryWorktreeIfParallel(
+      path.join(repo + ".loops", "lp-aaaaaaaa"),
+      repo,
+      "lp-aaaaaaaa",
+      ["lp-bbbbbbbb"],
+    ),
+  );
+});
+
+test("create refuses primary bind semantics by peeling a second live loop exclusively", async () => {
+  git(["checkout", "main"]);
+  const first = await createLocalPr(repo, {
+    title: "First exclusive",
+    base: "main",
+    head: "feat/widget",
+  });
+  assert.match(first.worktreePath?.replace(/\\/g, "/") ?? "", /\.loops\//);
+  git(["checkout", "-b", "feat/second"]);
+  await writeFile(path.join(repo, "second.txt"), "two\n");
+  git(["add", "."]);
+  git(["commit", "-m", "second work"]);
+  const second = await createLocalPr(repo, { title: "Second exclusive", base: "main" });
+  assert.match(second.worktreePath?.replace(/\\/g, "/") ?? "", /\.loops\//);
+  assert.equal(sameFsPath(second.worktreePath ?? "", repo), false);
+  assert.equal(sameFsPath(second.worktreePath ?? "", first.worktreePath ?? ""), false);
+  assert.equal(git(["branch", "--show-current"]), "main");
 });
 
 test("a peeled worktree is created on the loop branch, not detached", async () => {
@@ -673,11 +777,12 @@ test("ready handoff arms reviewRequestedSha for the drift guard", async () => {
 test("complete_review refuses when HEAD moved after Review requested", async () => {
   git(["checkout", "main"]);
   const pr = await createLocalPr(repo, { title: "Drift guard", base: "main" });
+  assert.ok(pr.worktreePath);
   await setLocalPrStatus(repo, pr.id, "ready");
   const marked = await markReviewRequested(repo, pr.id);
-  await writeFile(path.join(repo, "drift.txt"), "moved\n");
-  git(["add", "drift.txt"]);
-  git(["commit", "-m", "move head after review requested"]);
+  await writeFile(path.join(pr.worktreePath, "drift.txt"), "moved\n");
+  git(["add", "drift.txt"], pr.worktreePath);
+  git(["commit", "-m", "move head after review requested"], pr.worktreePath);
   await assert.rejects(
     () => completeLocalPrReview(repo, marked.id),
     /HEAD moved since Review requested/,
@@ -702,10 +807,11 @@ test("reviewer finding on reviewed flips to changes_requested", async () => {
 test("getLocalPrDiff supports paths filter", async () => {
   git(["checkout", "main"]);
   const pr = await createLocalPr(repo, { title: "Paths filter", base: "main" });
-  await writeFile(path.join(repo, "a.txt"), "a\n");
-  await writeFile(path.join(repo, "b.txt"), "b\n");
-  git(["add", "a.txt", "b.txt"]);
-  git(["commit", "-m", "two files"]);
+  assert.ok(pr.worktreePath);
+  await writeFile(path.join(pr.worktreePath, "a.txt"), "a\n");
+  await writeFile(path.join(pr.worktreePath, "b.txt"), "b\n");
+  git(["add", "a.txt", "b.txt"], pr.worktreePath);
+  git(["commit", "-m", "two files"], pr.worktreePath);
   await setLocalPrStatus(repo, pr.id, "ready");
   const onlyA = await getLocalPrDiff(repo, pr.id, { paths: ["a.txt"] });
   assert.match(onlyA, /a\.txt/);
@@ -762,13 +868,14 @@ test("localPrMatchesSearch matches title body comment and file", async () => {
     body: "Body mentions widget-xyz uniquely",
     base: "main",
   });
+  assert.ok(pr.worktreePath);
   await addLocalPrComment(repo, pr.id, "Finding about flubber", {
     role: "reviewer",
     path: "src/flubber.ts",
   });
-  await writeFile(path.join(repo, "unique-file-token.txt"), "x\n");
-  git(["add", "unique-file-token.txt"]);
-  git(["commit", "-m", "add unique file"]);
+  await writeFile(path.join(pr.worktreePath, "unique-file-token.txt"), "x\n");
+  git(["add", "unique-file-token.txt"], pr.worktreePath);
+  git(["commit", "-m", "add unique file"], pr.worktreePath);
   const fresh = await getLocalPr(repo, pr.id);
 
   assert.equal(localPrMatchesSearch(fresh, "Alpha search"), true);

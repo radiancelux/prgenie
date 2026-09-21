@@ -215,13 +215,15 @@ describe("evaluateAndStoreExportGate", () => {
       await writeFile(join(repo, "test.txt"), "test\n");
       await git(repo, ["add", "."]);
       await git(repo, ["commit", "-m", "Add test"]);
-      // Untracked on purpose: format:check only sees git-tracked files (README.md).
+      const pr = await createLocalPr(repo, { title: "CI fail", body: "Body", base: "main" });
+      assert.ok(pr.worktreePath);
+      // Untracked in the exclusive worktree: format:check only sees git-tracked files.
       await writeFile(
-        join(repo, "fail-test.mjs"),
+        join(pr.worktreePath, "fail-test.mjs"),
         "process.stderr.write('not ok 1 - widget renders\\n'); process.exit(1);\n",
       );
       await writeFile(
-        join(repo, "package.json"),
+        join(pr.worktreePath, "package.json"),
         JSON.stringify({
           name: "test-repo",
           scripts: {
@@ -233,7 +235,6 @@ describe("evaluateAndStoreExportGate", () => {
           },
         }),
       );
-      const pr = await createLocalPr(repo, { title: "CI fail", body: "Body", base: "main" });
       await setLocalPrStatus(repo, pr.id, "reviewed");
       const shepherd = await evaluateAndStoreExportGate(repo, pr.id);
       assert.equal(shepherd.status, "blocked");
@@ -266,8 +267,14 @@ describe("evaluateAndStoreExportGate", () => {
       await writeFile(join(repo, "test.txt"), "test\n");
       await git(repo, ["add", "."]);
       await git(repo, ["commit", "-m", "Add test"]);
+      const pr = await createLocalPr(repo, {
+        title: "Single flight",
+        body: "Body",
+        base: "main",
+      });
+      assert.ok(pr.worktreePath);
       await writeFile(
-        join(repo, "package.json"),
+        join(pr.worktreePath, "package.json"),
         JSON.stringify({
           name: "test-repo",
           scripts: {
@@ -279,7 +286,6 @@ describe("evaluateAndStoreExportGate", () => {
           },
         }),
       );
-      const pr = await createLocalPr(repo, { title: "Flight", body: "Body", base: "main" });
       await setLocalPrStatus(repo, pr.id, "reviewed");
       const a: ProgressEvent[] = [];
       const b: ProgressEvent[] = [];
