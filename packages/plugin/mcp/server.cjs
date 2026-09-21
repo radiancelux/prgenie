@@ -648,7 +648,7 @@ var init_watch = __esm({
       exportId: null
     });
     idle = () => derive(idleLane(), idleLane(), (/* @__PURE__ */ new Date(0)).toISOString());
-    LISTEN_REMOVED_MESSAGE = "Listen flywheel removed. Use /loop (MCP steward_next / bind_steward). Do not arm inbox/queue listen.";
+    LISTEN_REMOVED_MESSAGE = "Listen flywheel removed. Use /steward (MCP steward_next / bind_steward). Do not arm inbox/queue listen.";
   }
 });
 
@@ -89226,12 +89226,12 @@ var tools = [
   },
   {
     name: "watch_status",
-    description: "Show export-halt state under .git/agent-console/watch.json. Inbox/queue listen is removed \u2014 use /loop. Export halt still sets both lanes.",
+    description: "Show export-halt state under .git/agent-console/watch.json. Inbox/queue listen is removed \u2014 use /steward. Export halt still sets both lanes.",
     inputSchema: { type: "object", properties: { cwd: { type: "string" } } }
   },
   {
     name: "watch_stop",
-    description: "Removed. Listen flywheel is gone. Use /loop (steward_next / bind_steward). This tool always errors.",
+    description: "Removed. Listen flywheel is gone. Use /steward (steward_next / bind_steward). This tool always errors.",
     inputSchema: {
       type: "object",
       properties: {
@@ -89245,7 +89245,7 @@ var tools = [
   },
   {
     name: "watch_start",
-    description: "Removed. Listen flywheel is gone. Use /loop (steward_next / bind_steward). This tool always errors.",
+    description: "Removed. Listen flywheel is gone. Use /steward (steward_next / bind_steward). This tool always errors.",
     inputSchema: {
       type: "object",
       properties: {
@@ -89426,7 +89426,7 @@ var tools = [
   },
   {
     name: "bind_steward",
-    description: "Persist this loop's steward Task ids under .git/agent-console/stewards.json ({ loopId, implementorTaskId, reviewerTaskId }). Pass null or empty string to clear a field. Used by /loop so changes_requested resumes the same implementor Task.",
+    description: "Persist this loop's steward Task ids under .git/agent-console/stewards.json ({ loopId, implementorTaskId, reviewerTaskId }). Pass null or empty string to clear a field. Used by /steward so changes_requested resumes the same implementor Task.",
     inputSchema: {
       type: "object",
       required: ["id"],

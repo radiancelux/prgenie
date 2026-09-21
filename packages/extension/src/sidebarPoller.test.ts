@@ -293,6 +293,28 @@ test("laneView Push to origin / export CTA use humanExport, not bare reviewed st
   );
 });
 
+test("laneView EXPORT quiet until reviewed; empty state; no vertical reason layout", () => {
+  const src = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "laneView.ts"),
+    "utf8",
+  );
+  assert.match(
+    src,
+    /selected\.status === "reviewed"\s*\n\s*\? displayShepherdStatus/,
+    "cheap shepherd BLOCKED must not paint for draft/ready loops",
+  );
+  assert.ok(src.includes("Export when ready"));
+  assert.ok(src.includes("No loops yet. Export appears here"));
+  assert.ok(src.includes("shepherdEmpty"));
+  assert.ok(src.includes("flex-direction: column"));
+  assert.match(src, /\.shepherd-reason \.ci-check\s*\{[^}]*width:\s*auto/s);
+  assert.equal(
+    /\.shepherd-reason \.message[^}]*overflow-wrap:\s*anywhere/.test(src),
+    false,
+    "overflow-wrap:anywhere + squeezed width stacked one char per line",
+  );
+});
+
 test("export gate scheduler runs once per id+HEAD and ignores in-flight overlap", async () => {
   let inflight = 0;
   let maxInflight = 0;

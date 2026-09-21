@@ -8,7 +8,7 @@ PR Genie is a local review lane that sits in front of GitHub. The product flywhe
 | -------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `@prgenie/core`            | `packages/core`      | Local PR CRUD, status transitions, watch state, worktrees, export helpers, `doctor`, `gh` bind                                                       |
 | `prgenie` CLI              | `packages/cli`       | Thin CLI + MCP stdio server over core (`prgenie`, `prgenie doctor`, steward, hooks)                                                                  |
-| Cursor plugin              | `packages/plugin`    | Rules, skills (`/loop`, `/start`, `/export`, …), MCP entry, hooks (`github-gate.cjs`, `review-inbox.cjs`, `capture-subagent.cjs`, `session-log.mjs`) |
+| Cursor plugin              | `packages/plugin`    | Rules, skills (`/steward`, `/start`, `/export`, …), MCP entry, hooks (`github-gate.cjs`, `review-inbox.cjs`, `capture-subagent.cjs`, `session-log.mjs`) |
 | VS Code / Cursor extension | `packages/extension` | **Local PRs** sidebar: watch list, Switch to worktree, Complete review, Open on GitHub                                                               |
 
 Build at the monorepo root (`pnpm build`). Dev install copies the plugin and extension into Cursor via `pnpm link-plugin` and `pnpm link-extension`.
@@ -39,8 +39,8 @@ Statuses (from `@prgenie/core` types):
 
 Typical path:
 
-1. **Create** (`create_local_pr` / `prgenie create` / `/loop` / `/start`) — feature branch `lp-<id>`, draft packet. `createLocalPr` always calls `ensureWorktreeForLoop` and records a `worktreePath`. That path is `../<repo>.loops/<id>` (`loopWorktreeDir`) unless the loop branch is already checked out in the primary tree, in which case the primary path is reused. The worktree attachment is required; only the _location_ (sibling `.loops/<id>` vs primary) varies. **Pending ([RAD-99](https://linear.app/radiancelux/issue/RAD-99/exclusive-loop-worktrees-refuse-primary-when-another-loop-live)):** refuse primary reuse when another non-archived loop is live — exclusive `.loops/<id>` checkouts only.
-2. **Ready** — implementor refreshes `body` (why / what / how to test), then `set_status ready` / `prgenie ready`. That only arms the review request (`armReviewRequest`: sets `reviewRequestedSha`, clears `reviewerNotifiedSha`). It does **not** post a comment. On the first draft→ready handoff, agents `add_comment` **Review requested.** themselves (skills). `formatSpawnReviewer` is implementor copy only: stop and wait for `/loop` to Task `/review` — it does not authorize claim_review spawn. After later review rounds, addressing the last open finding runs `maybeHandoffToReviewer`, which returns `ready` and posts that comment automatically.
+1. **Create** (`create_local_pr` / `prgenie create` / `/steward` / `/start`) — feature branch `lp-<id>`, draft packet. `createLocalPr` always calls `ensureWorktreeForLoop` and records a `worktreePath`. That path is `../<repo>.loops/<id>` (`loopWorktreeDir`) unless the loop branch is already checked out in the primary tree, in which case the primary path is reused. The worktree attachment is required; only the _location_ (sibling `.loops/<id>` vs primary) varies. **Pending ([RAD-99](https://linear.app/radiancelux/issue/RAD-99/exclusive-loop-worktrees-refuse-primary-when-another-loop-live)):** refuse primary reuse when another non-archived loop is live — exclusive `.loops/<id>` checkouts only.
+2. **Ready** — implementor refreshes `body` (why / what / how to test), then `set_status ready` / `prgenie ready`. That only arms the review request (`armReviewRequest`: sets `reviewRequestedSha`, clears `reviewerNotifiedSha`). It does **not** post a comment. On the first draft→ready handoff, agents `add_comment` **Review requested.** themselves (skills). `formatSpawnReviewer` is implementor copy only: stop and wait for `/steward` to Task `/review` — it does not authorize claim_review spawn. After later review rounds, addressing the last open finding runs `maybeHandoffToReviewer`, which returns `ready` and posts that comment automatically.
 3. **Review** — reviewer files findings while status stays `ready`, then **`complete_review`**. That flip wakes the implementor (`changes_requested`) or marks `reviewed` (review cleared — steward runs the export gate; not a human handoff).
 4. **Address** — implementor `address_comment`s each open finding; addressing the last open finding returns `ready` and posts Review requested again.
 5. **Resolve + complete** — reviewer resolves addressed comments, then always `complete_review`.
@@ -59,13 +59,13 @@ One steward chat owns one loop. It does **not** implement or review in-chat. It:
 3. On `changes_requested`, **resumes the same implementor Task id** (no twin) unless missing/failed or the user asks to restart.
 4. After Reviewer clear (`reviewed`), runs the full export gate (`evaluateAndStoreExportGate` / `steward_next`). Human-exportable / Push to origin only when the gate is **ready**. On **blocked** (especially CI), resume the implementor with `failingCheck`, then `evaluate_export_gate` **again**. Do **not** auto-spawn a reviewer because CI failed. See [ci-checks.md](ci-checks.md).
 
-CLI: `prgenie steward <id>`, `prgenie steward bind <id> --implementor <taskId>`. MCP: `steward_next`, `bind_steward`. Skill: `/loop`. There is no inbox/queue listen flywheel.
+CLI: `prgenie steward <id>`, `prgenie steward bind <id> --implementor <taskId>`. MCP: `steward_next`, `bind_steward`. Skill: `/steward`. There is no inbox/queue listen flywheel.
 
 ## Export halt (`watch.json`)
 
 `.git/agent-console/watch.json` still records an **export halt** so a later `create_local_pr` can resume after that export id is archived or missing. It is not a listen arming surface.
 
-- `prgenie watch start|stop|listen` and MCP `watch_start` / `watch_stop` **hard-error** and point at `/loop`.
+- `prgenie watch start|stop|listen` and MCP `watch_start` / `watch_stop` **hard-error** and point at `/steward`.
 - `prgenie watch` / MCP `watch_status` remain read-only diagnostics of that halt file.
 - One in-flight reviewer per loop HEAD: `claim_review` / `prgenie claim-review` writes `.git/agent-console/review-claims.json` keyed by `id`+`headSha`. A second claim for the same HEAD returns `already_claimed`. Stale rows drop when the packet leaves `ready` or HEAD moves.
 
@@ -108,9 +108,9 @@ All local-PR state is git-native / machine-local — not committed:
 
 Skills (one slash name each — do not also add duplicate `commands/*.md`):
 
-`/loop`, `/start`, `/local-pr`, `/review`, `/export`
+`/steward`, `/start`, `/local-pr`, `/review`, `/export`
 
-MCP server name: `prgenie` (tools such as `list_local_prs`, `create_local_pr`, `set_status`, `complete_review`, `claim_review`, `steward_next`, `bind_steward`, `export_local_pr`, `watch_status`, `gh_use`, …). `watch_start` / `watch_stop` remain listed only to hard-error and point at `/loop`. Stdio is official **NDJSON** (one JSON-RPC line per message). The plugin is the only shipped registration — do not add a workspace `.cursor/mcp.json` with the same server id.
+MCP server name: `prgenie` (tools such as `list_local_prs`, `create_local_pr`, `set_status`, `complete_review`, `claim_review`, `steward_next`, `bind_steward`, `export_local_pr`, `watch_status`, `gh_use`, …). `watch_start` / `watch_stop` remain listed only to hard-error and point at `/steward`. Stdio is official **NDJSON** (one JSON-RPC line per message). The plugin is the only shipped registration — do not add a workspace `.cursor/mcp.json` with the same server id.
 
 Hooks registered in `hooks.json`:
 

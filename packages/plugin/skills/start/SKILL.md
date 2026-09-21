@@ -7,9 +7,9 @@ description: Kick off implementor work from a ClickUp, Jira, Linear, or GitHub t
 
 You are the **implementor**. Do not review your own loop. Do not `git push` unless `/export`.
 
-This skill is **implementor-only**. It is not `/loop`. Do not become the steward. Do not Task a reviewer. Do not arm inbox/queue listen (`/watch-inbox`, `/watch-ready`, `prgenie watch start|listen` — those are gone).
+This skill is **implementor-only**. It is not `/steward`. Do not become the steward. Do not Task a reviewer. Do not arm inbox/queue listen (`/watch-inbox`, `/watch-ready`, `prgenie watch start|listen` — those are gone).
 
-Prefer **`/loop`** when the user wants **one** agent to own implement ↔ review until Push to origin. If they ran `/start`, you implement here and stop when ready.
+Prefer **`/steward`** when the user wants **one** agent to own implement ↔ review until Push to origin. If they ran `/start`, you implement here and stop when ready.
 
 This is how work _enters_ a loop as the worktree agent. A ticket MCP or a message in this chat is enough. Do not wait for a local PR that does not exist yet.
 
@@ -42,4 +42,4 @@ Stay off the repo base (`main`/`master`). `create_local_pr` checks out `lp-<id>`
 2. Refresh `body` to a reviewer summary: why, what changed, how to test (keep the ticket link).
 3. Run MCP `run_ci` / `prgenie ci <id>` (same smart checks shepherd will run). Fix failures in this worktree. Skip only if the toolchain cannot run — say so.
 4. `set_status` `ready` and `add_comment` `role=agent` **Review requested.**
-5. **Stop.** If a steward (`/loop`) is driving this loop, it will Task the reviewer. If the user used `/start` alone, tell them to run `/loop` on this packet (or `/review`) — do not review it yourself and do not start listen.
+5. **Stop.** If a steward (`/steward`) is driving this loop, it will Task the reviewer. If the user used `/start` alone, tell them to run `/steward` on this packet (or `/review`) — do not review it yourself and do not start listen.

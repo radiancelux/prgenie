@@ -9,7 +9,7 @@ Do not push. Subagent output becomes a local PR on the developer's watch list.
 
 When a coding subagent **commits** and stops, the `subagentStop` hook drafts a loop automatically. Explore/shell subagents with no file changes are ignored. If files changed but nothing was committed, the parent is told to commit — still no `git push`.
 
-To **start** a full flywheel (one agent owns implement ↔ review): `/loop` with a ticket or brief. Implementor-only entry remains `/start`. Either creates the feature branch and the draft packet. Do not stay on `main`.
+To **start** a full flywheel (one agent owns implement ↔ review): `/steward` with a ticket or brief. Implementor-only entry remains `/start`. Either creates the feature branch and the draft packet. Do not stay on `main`.
 
 ## Create
 
@@ -83,7 +83,7 @@ You are the agent **on the worktree** (implementor). On completion:
 3. On CI-resume (export gate blocked): re-run at least the failing check(s) (`prgenie ci <id> --failing lint,test`) and only return when they pass.
 4. `set_status` `ready`.
 5. `add_comment` `role=agent`: `Review requested.`
-6. **Stop.** If a **steward** (`/loop`) is driving this loop, it will Task the reviewer. Do not start listen. Do not review this loop yourself.
+6. **Stop.** If a **steward** (`/steward`) is driving this loop, it will Task the reviewer. Do not start listen. Do not review this loop yourself.
 7. When review is done, status is `changes_requested` (findings) or `reviewed` (review cleared — steward runs the export gate). Treat `pendingComments` as the brief only after `changes_requested`. Do not wait for a DM; the loop is the channel. Do not start on comments while the loop is still `ready`. Do not say ready-for-human until `handoff_human`.
 
 `/export` is the developer cutting the GitHub PR at origin.

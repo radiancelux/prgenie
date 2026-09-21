@@ -78,7 +78,7 @@ export function watchLane(state: RepoWatchState, role: WatchRole): WatchLaneStat
 }
 
 export const LISTEN_REMOVED_MESSAGE =
-  "Listen flywheel removed. Use /loop (MCP steward_next / bind_steward). Do not arm inbox/queue listen.";
+  "Listen flywheel removed. Use /steward (MCP steward_next / bind_steward). Do not arm inbox/queue listen.";
 
 export function formatWatchLane(state: RepoWatchState, role: WatchRole): string {
   const lane = watchLane(state, role);

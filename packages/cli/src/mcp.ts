@@ -685,13 +685,13 @@ export const tools = [
   {
     name: "watch_status",
     description:
-      "Show export-halt state under .git/agent-console/watch.json. Inbox/queue listen is removed — use /loop. Export halt still sets both lanes.",
+      "Show export-halt state under .git/agent-console/watch.json. Inbox/queue listen is removed — use /steward. Export halt still sets both lanes.",
     inputSchema: { type: "object", properties: { cwd: { type: "string" } } },
   },
   {
     name: "watch_stop",
     description:
-      "Removed. Listen flywheel is gone. Use /loop (steward_next / bind_steward). This tool always errors.",
+      "Removed. Listen flywheel is gone. Use /steward (steward_next / bind_steward). This tool always errors.",
     inputSchema: {
       type: "object",
       properties: {
@@ -706,7 +706,7 @@ export const tools = [
   {
     name: "watch_start",
     description:
-      "Removed. Listen flywheel is gone. Use /loop (steward_next / bind_steward). This tool always errors.",
+      "Removed. Listen flywheel is gone. Use /steward (steward_next / bind_steward). This tool always errors.",
     inputSchema: {
       type: "object",
       properties: {
@@ -898,7 +898,7 @@ export const tools = [
   {
     name: "bind_steward",
     description:
-      "Persist this loop's steward Task ids under .git/agent-console/stewards.json ({ loopId, implementorTaskId, reviewerTaskId }). Pass null or empty string to clear a field. Used by /loop so changes_requested resumes the same implementor Task.",
+      "Persist this loop's steward Task ids under .git/agent-console/stewards.json ({ loopId, implementorTaskId, reviewerTaskId }). Pass null or empty string to clear a field. Used by /steward so changes_requested resumes the same implementor Task.",
     inputSchema: {
       type: "object",
       required: ["id"],

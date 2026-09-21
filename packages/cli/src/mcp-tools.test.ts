@@ -1,4 +1,4 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -156,9 +156,9 @@ test("handleTool watch_status and unknown tool", async () => {
   await assert.rejects(() => handleTool("not_a_real_tool", { cwd: repo }), /Unknown tool/);
 });
 
-test("handleTool watch_start and watch_stop hard-error pointing at /loop", async () => {
+test("handleTool watch_start and watch_stop hard-error pointing at /steward", async () => {
   await assert.rejects(() => handleTool("watch_start", { cwd: repo }), /Listen flywheel removed/);
-  await assert.rejects(() => handleTool("watch_stop", { cwd: repo, role: "inbox" }), /\/loop/);
+  await assert.rejects(() => handleTool("watch_stop", { cwd: repo, role: "inbox" }), /\/steward/);
 });
 
 test("handleTool list_local_prs status filter and complete_review path", async () => {
@@ -169,7 +169,7 @@ test("handleTool list_local_prs status filter and complete_review path", async (
     base: "main",
   })) as LocalPr;
   await handleTool("set_status", { cwd: repo, id: created.id, status: "ready" });
-  // Seed reviewRequestedSha via add_comment agent Review requested pattern isn't required —
+  // Seed reviewRequestedSha via add_comment agent Review requested pattern isn't required �
   // complete_review may refuse on drift; allowDrift covers the tool wiring.
   const done = (await handleTool("complete_review", {
     cwd: repo,

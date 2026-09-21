@@ -31,8 +31,12 @@ test("listen slash skills are gone", () => {
   }
 });
 
-test("/loop skill is hard steward-only and refuses MCP-unavailable DIY", () => {
-  const body = skillBody("loop");
+test("/steward skill is hard steward-only and refuses MCP-unavailable DIY", () => {
+  const names = new Set(readdirSync(skillsRoot));
+  assert.equal(names.has("steward"), true, "steward skill folder");
+  assert.equal(names.has("loop"), false, "/loop must not remain as a steward alias");
+  const body = skillBody("steward");
+  assert.match(body, /^name:\s*steward\s*$/m);
   assert.match(body, /You are the \*\*steward only\*\*/);
   assert.match(body, /Do \*\*not\*\* write product code/);
   assert.match(body, /while MCP loads/);
@@ -43,14 +47,16 @@ test("/loop skill is hard steward-only and refuses MCP-unavailable DIY", () => {
   assert.match(body, /bind_steward/);
   assert.match(body, /Resume the same implementor Task id/);
   assert.match(body, /handoff_human/);
+  assert.match(body, /\/steward/);
   assert.doesNotMatch(body, /Those listens are transitional/);
+  assert.doesNotMatch(body, /\/loop(?!-)/);
 });
 
 test("/start skill stays implementor-only and does not arm listen", () => {
   const body = skillBody("start");
   assert.match(body, /You are the \*\*implementor\*\*/);
   assert.match(body, /This skill is \*\*implementor-only\*\*/);
-  assert.match(body, /It is not `\/loop`/);
+  assert.match(body, /It is not `\/steward`/);
   assert.doesNotMatch(body, /start \*\*`\/watch-inbox`\*\*/);
   assert.doesNotMatch(body, /\/watch-ready`\*\*/);
 });

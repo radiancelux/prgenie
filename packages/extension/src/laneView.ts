@@ -958,7 +958,13 @@ export class LaneHub implements vscode.Disposable {
         };
       }
       const cheap = selected && this.lastShepherdId === selected.id ? this.lastShepherd : null;
-      const shepherd = selected ? displayShepherdStatus(cheap, selected) : null;
+      // Only surface EXPORT shepherd chrome once the loop is past review.
+      // Draft/ready/changes_requested cheap results (e.g. "Status is draft…") must not
+      // paint BLOCKED in the left-menu EXPORT box (RAD-83).
+      const shepherd =
+        selected && selected.status === "reviewed"
+          ? displayShepherdStatus(cheap, selected)
+          : null;
       const sidebarPrs = prs.map((pr) => ({ ...pr, humanExport: humanExportUi(pr) }));
       void this.promptExportReadyEnter(sidebarPrs);
       this.post(
@@ -1348,13 +1354,31 @@ function laneHtml(webview: vscode.Webview): string {
       display: flex; flex-direction: column; gap: 2px;
       padding-left: 50px; font-size: 10px;
       color: var(--vscode-descriptionForeground);
+      min-width: 0;
     }
-    .shepherd-reason { display: flex; gap: 6px; }
+    .shepherd-empty {
+      padding-left: 50px; font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .shepherd-header .status.quiet {
+      font-weight: 500; text-transform: none; letter-spacing: normal;
+      color: var(--vscode-descriptionForeground);
+    }
+    /* Column layout + no width:100% on the check button — row + .ci-check{width:100%}
+       squeezed .message to ~1ch and overflow-wrap:anywhere stacked one char per line. */
+    .shepherd-reason {
+      display: flex; flex-direction: column; gap: 2px; min-width: 0;
+    }
+    .shepherd-reason .ci-check {
+      width: auto; max-width: 100%; flex: none;
+    }
     .shepherd-reason .check {
       flex: none; text-transform: uppercase; letter-spacing: 0.04em;
-      font-weight: 600; min-width: 60px;
+      font-weight: 600;
     }
-    .shepherd-reason .message { flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .shepherd-reason .message {
+      min-width: 0; white-space: pre-wrap; overflow-wrap: break-word; word-break: normal;
+    }
     .pr {
       display: flex; align-items: flex-start; gap: 8px;
       padding: 6px 12px;
@@ -1438,6 +1462,7 @@ function laneHtml(webview: vscode.Webview): string {
         <span class="spinner" id="shepherdSpinner"></span>
         <span class="step" id="shepherdStep"></span>
       </div>
+      <p class="shepherd-empty" id="shepherdEmpty" hidden></p>
       <div class="shepherd-reasons" id="shepherdReasons"></div>
       <div class="ci-card" id="ciCard" hidden></div>
     </div>
@@ -1575,6 +1600,7 @@ function laneHtml(webview: vscode.Webview): string {
       const shepherdBox = document.getElementById("shepherd");
       const shepherdStatus = document.getElementById("shepherdStatus");
       const shepherdReasons = document.getElementById("shepherdReasons");
+      const shepherdEmpty = document.getElementById("shepherdEmpty");
       const progressBox = document.getElementById("shepherdProgress");
       const stepEl = document.getElementById("shepherdStep");
       const spinner = document.getElementById("shepherdSpinner");
@@ -1582,15 +1608,81 @@ function laneHtml(webview: vscode.Webview): string {
       const retry = document.getElementById("retryProgress");
       
       if (!shepherdBox || !shepherdStatus || !shepherdReasons) return;
-      
-      const shepherd = msg.shepherdStatus;
-      const progress = liveProgress;
-      if (!shepherd && !progress) {
+
+      const prs = msg.prs || [];
+      const selected = prs.find((p) => p.id === msg.selectedId) || null;
+      const progress = liveProgress && (!selected || liveProgress.id === selected.id)
+        ? liveProgress
+        : null;
+
+      const clearExportExtras = () => {
+        shepherdReasons.innerHTML = '';
+        if (shepherdEmpty) {
+          shepherdEmpty.hidden = true;
+          shepherdEmpty.textContent = '';
+        }
+        if (progressBox) progressBox.hidden = true;
+        if (cancel) cancel.hidden = true;
+        if (retry) retry.hidden = true;
+        renderCiCard(document.getElementById("ciCard"), null, null, null);
+      };
+
+      const showQuiet = (statusLabel, emptyText) => {
+        shepherdBox.hidden = false;
+        shepherdStatus.textContent = statusLabel;
+        shepherdStatus.className = "status quiet";
+        clearExportExtras();
+        if (shepherdEmpty) {
+          shepherdEmpty.hidden = false;
+          shepherdEmpty.textContent = emptyText;
+        }
+      };
+
+      // 0 loops — proper empty message in the EXPORT box (not dash + spinner only).
+      if (!prs.length) {
+        const archived = msg.archivedCount || 0;
+        let emptyText;
+        if (msg.searchQuery && msg.searchQuery.trim()) {
+          emptyText = "No matching loops to export.";
+        } else if (archived) {
+          emptyText = "No active loops to export. Show archived to view exported loops.";
+        } else {
+          emptyText = "No loops yet. Export appears here when a loop is ready to open on GitHub.";
+        }
+        showQuiet("—", emptyText);
+        return;
+      }
+
+      // Pre-review loops: quiet “Export when ready”, never BLOCKED for draft/ready.
+      if (selected && selected.status !== "reviewed" && selected.status !== "approved" && !progress) {
+        showQuiet("—", "Export when ready — after review clears and shepherd CI passes.");
+        return;
+      }
+
+      if (selected && selected.status === "approved" && !progress) {
         shepherdBox.hidden = true;
+        clearExportExtras();
+        return;
+      }
+
+      const shepherd = msg.shepherdStatus;
+      if (!shepherd && !progress) {
+        if (selected && selected.status === "reviewed") {
+          const hint = (selected.humanExport && selected.humanExport.hint)
+            || "Review is done. Shepherd CI must pass before Open on GitHub is available.";
+          showQuiet(selected.humanExport && selected.humanExport.kind === "pending" ? "pending" : "—", hint);
+          return;
+        }
+        shepherdBox.hidden = true;
+        clearExportExtras();
         return;
       }
       
       shepherdBox.hidden = false;
+      if (shepherdEmpty) {
+        shepherdEmpty.hidden = true;
+        shepherdEmpty.textContent = '';
+      }
       if (progress && progress.cancelled) {
         shepherdStatus.textContent = "cancelled";
         shepherdStatus.className = "status blocked";
