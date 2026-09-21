@@ -39,7 +39,7 @@ Statuses (from `@prgenie/core` types):
 
 Typical path:
 
-1. **Create** (`create_local_pr` / `prgenie create` / `/loop` / `/start`) — feature branch `lp-<id>`, draft packet. `createLocalPr` always calls `ensureWorktreeForLoop` and records a `worktreePath`. That path is `../<repo>.loops/<id>` (`loopWorktreeDir`) unless the loop branch is already checked out in the primary tree, in which case the primary path is reused. The worktree attachment is required; only the _location_ (sibling `.loops/<id>` vs primary) varies.
+1. **Create** (`create_local_pr` / `prgenie create` / `/loop` / `/start`) — feature branch `lp-<id>`, draft packet. `createLocalPr` always calls `ensureWorktreeForLoop` and records a `worktreePath`. That path is `../<repo>.loops/<id>` (`loopWorktreeDir`) unless the loop branch is already checked out in the primary tree, in which case the primary path is reused. The worktree attachment is required; only the _location_ (sibling `.loops/<id>` vs primary) varies. **Pending ([RAD-99](https://linear.app/radiancelux/issue/RAD-99/exclusive-loop-worktrees-refuse-primary-when-another-loop-live)):** refuse primary reuse when another non-archived loop is live — exclusive `.loops/<id>` checkouts only.
 2. **Ready** — implementor refreshes `body` (why / what / how to test), then `set_status ready` / `prgenie ready`. That only arms the review request (`armReviewRequest`: sets `reviewRequestedSha`, clears `reviewerNotifiedSha`). It does **not** post a comment. On the first draft→ready handoff, agents `add_comment` **Review requested.** themselves (skills). `formatSpawnReviewer` is implementor copy only: stop and wait for `/loop` to Task `/review` — it does not authorize claim_review spawn. After later review rounds, addressing the last open finding runs `maybeHandoffToReviewer`, which returns `ready` and posts that comment automatically.
 3. **Review** — reviewer files findings while status stays `ready`, then **`complete_review`**. That flip wakes the implementor (`changes_requested`) or marks `reviewed` (review cleared — steward runs the export gate; not a human handoff).
 4. **Address** — implementor `address_comment`s each open finding; addressing the last open finding returns `ready` and posts Review requested again.
@@ -90,6 +90,7 @@ All local-PR state is git-native / machine-local — not committed:
 
 - Primary checkout: the main repo folder (e.g. `…/pr-genie`).
 - Loop worktrees: sibling path `../<repo>.loops/<id>` (e.g. `…/pr-genie.loops/lp-3b8dbf41`).
+- **Invariant (pending [RAD-99](https://linear.app/radiancelux/issue/RAD-99/exclusive-loop-worktrees-refuse-primary-when-another-loop-live)):** do not reuse the primary tree for a loop when another loop is live; every implementor gets an exclusive `.loops/<id>` worktree.
 - Each loop owns a feature branch; never use the repo base (`main`/`master`) as head.
 - **Switch** in Local PRs reopens this window on that loop's worktree.
 - Export checks the main workspace off the loop branch onto the loop base and removes the sibling `.loops/<id>` checkout. If the window is still on that extra worktree, PR Genie reopens the primary folder first.
