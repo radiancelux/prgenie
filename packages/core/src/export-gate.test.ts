@@ -306,9 +306,7 @@ describe("evaluateAndStoreExportGate", () => {
     const repo = await initRepo();
     try {
       await git(repo, ["checkout", "-b", "feature"]);
-      await writeFile(join(repo, "test.txt"), "test\n");
-      await git(repo, ["add", "."]);
-      await git(repo, ["commit", "-m", "Add test"]);
+      // Commit slow lint scripts + a non-docs file so smart CI selects lint (not format-only).
       await writeFile(
         join(repo, "package.json"),
         JSON.stringify({
@@ -322,6 +320,9 @@ describe("evaluateAndStoreExportGate", () => {
           },
         }),
       );
+      await writeFile(join(repo, "code.ts"), "export const n = 1;\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "Add slow lint"]);
       const pr = await createLocalPr(repo, { title: "File abort", body: "Body", base: "main" });
       await setLocalPrStatus(repo, pr.id, "reviewed");
       const started = Date.now();
@@ -342,9 +343,6 @@ describe("evaluateAndStoreExportGate", () => {
     const repo = await initRepo();
     try {
       await git(repo, ["checkout", "-b", "feature"]);
-      await writeFile(join(repo, "test.txt"), "test\n");
-      await git(repo, ["add", "."]);
-      await git(repo, ["commit", "-m", "Add test"]);
       await writeFile(
         join(repo, "package.json"),
         JSON.stringify({
@@ -358,6 +356,9 @@ describe("evaluateAndStoreExportGate", () => {
           },
         }),
       );
+      await writeFile(join(repo, "code.ts"), "export const n = 1;\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "Add slow lint"]);
       const pr = await createLocalPr(repo, { title: "Abort", body: "Body", base: "main" });
       await setLocalPrStatus(repo, pr.id, "reviewed");
       const ac = new AbortController();
