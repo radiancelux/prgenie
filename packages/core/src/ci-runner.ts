@@ -49,7 +49,7 @@ export interface CiRunnerResult {
 export interface CiRunnerOptions {
   /** Override the default CI checks */
   checks?: string[];
-  /** Timeout per check in milliseconds. Default 300000 (5 minutes) */
+  /** Timeout per check in milliseconds. Default 600000 (10 minutes) */
   timeout?: number;
   /** Skip cache and force all checks to run (for testing). Default false. */
   skipCache?: boolean;
@@ -280,7 +280,7 @@ export async function runCiChecks(
   options: CiRunnerOptions = {},
 ): Promise<CiRunnerResult> {
   const checks = options.checks ?? ["format:check", "lint", "typecheck", "test", "build"];
-  const timeout = options.timeout ?? 300000;
+  const timeout = options.timeout ?? 600000;
   const skipCache = options.skipCache ?? false;
   const onProgress = options.onProgress;
   const signal = options.signal;
@@ -385,12 +385,6 @@ export async function runLoopCi(
   id: string,
   options: LoopCiOptions = {},
 ): Promise<CiRunnerResult> {
-  const pr = await getLocalPr(cwd, id);
-  const ciCwd = resolveCiCwd(cwd, pr.worktreePath);
-  const paths = options.changedPaths ?? (await changedPathsForCi(ciCwd, id));
-  const selection = options.selection ?? selectCiChecks(paths);
-  const extra = (options.failingChecks ?? []).map((name) => name.trim()).filter(Boolean);
-  const checks = options.checks ?? [...new Set([...selection.checks, ...extra])];
   const controller = new AbortController();
   const detach = onAbort(options.signal, () => {
     controller.abort();
@@ -400,8 +394,18 @@ export async function runLoopCi(
       // ignore
     }
   });
+  // Arm abort watch before path discovery — Cancel during startup must still land.
   const stopWatch = watchCiAbort(cwd, id, controller);
   try {
+    throwIfAborted(controller.signal);
+    const pr = await getLocalPr(cwd, id);
+    throwIfAborted(controller.signal);
+    const ciCwd = resolveCiCwd(cwd, pr.worktreePath);
+    const paths = options.changedPaths ?? (await changedPathsForCi(ciCwd, id));
+    throwIfAborted(controller.signal);
+    const selection = options.selection ?? selectCiChecks(paths);
+    const extra = (options.failingChecks ?? []).map((name) => name.trim()).filter(Boolean);
+    const checks = options.checks ?? [...new Set([...selection.checks, ...extra])];
     throwIfAborted(controller.signal);
     return await runCiChecks(ciCwd, {
       ...options,

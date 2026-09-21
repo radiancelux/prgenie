@@ -359,10 +359,7 @@ describe("runCiChecks", () => {
       await writeFile(join(repo, ".prettierignore"), ".gitignore\nnode_modules\n");
 
       // Link to workspace node_modules for prettier access
-      await execAsync(
-        `ln -s ${join(process.cwd(), "node_modules")} ${join(repo, "node_modules")}`,
-        { cwd: repo },
-      );
+      await linkNodeModules(repo, join(process.cwd(), "node_modules"));
 
       // Create .prettierrc.json with LF line ending requirement
       await writeFile(
@@ -419,6 +416,10 @@ describe("runCiChecks", () => {
     }
   });
 
+  // Cross-platform delay for package.json scripts (Windows has no `sleep`).
+  const nodeSleep = (ms: number) =>
+    `node -e "setTimeout(() => process.exit(0), ${ms})"`;
+
   // RAD-46: Verify timeout configuration works
   it("RAD-46: timeout configuration is respected", async () => {
     const repo = await initTestRepo();
@@ -429,7 +430,7 @@ describe("runCiChecks", () => {
         JSON.stringify({
           name: "test-repo",
           scripts: {
-            test: "sleep 3",
+            test: nodeSleep(3000),
           },
         }),
       );
@@ -446,7 +447,7 @@ describe("runCiChecks", () => {
       assert.equal(testCheck.passed, false);
       assert.ok(testCheck.error, "Should have timeout error");
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -460,7 +461,7 @@ describe("runCiChecks", () => {
         JSON.stringify({
           name: "test-repo",
           scripts: {
-            test: "sleep 2",
+            test: nodeSleep(2000),
           },
         }),
       );
@@ -476,7 +477,7 @@ describe("runCiChecks", () => {
       assert.ok(testCheck);
       assert.equal(testCheck.passed, true);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 

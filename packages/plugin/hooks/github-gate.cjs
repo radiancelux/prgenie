@@ -286,6 +286,7 @@ function gh(args, options = {}) {
     const child = (0, import_node_child_process2.spawn)("gh", args, {
       cwd: options.cwd,
       windowsHide: true,
+      shell: process.platform === "win32",
       stdio: ["ignore", "pipe", "pipe"]
     });
     let stdout = "";
