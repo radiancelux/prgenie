@@ -304,9 +304,14 @@ describe("evaluateAndStoreExportGate", () => {
 
   it("abortExportGate file token cancels another caller without a shared AbortSignal", async () => {
     const repo = await initRepo();
+    const prevFailFast = process.env.PRGENIE_CI_FAIL_FAST;
+    const prevParallel = process.env.PRGENIE_CI_PARALLEL;
     try {
+      // Serial + no fail-fast: format:check uses Prettier API (not package.json exit 0).
+      // On Linux a format fail would otherwise cancel lint before the abort token lands.
+      process.env.PRGENIE_CI_FAIL_FAST = "0";
+      process.env.PRGENIE_CI_PARALLEL = "0";
       await git(repo, ["checkout", "-b", "feature"]);
-      // Commit slow lint scripts + a non-docs file so smart CI selects lint (not format-only).
       await writeFile(
         join(repo, "package.json"),
         JSON.stringify({
@@ -320,21 +325,36 @@ describe("evaluateAndStoreExportGate", () => {
           },
         }),
       );
+      await writeFile(join(repo, ".prettierignore"), "*\n");
       await writeFile(join(repo, "code.ts"), "export const n = 1;\n");
       await git(repo, ["add", "."]);
       await git(repo, ["commit", "-m", "Add slow lint"]);
       const pr = await createLocalPr(repo, { title: "File abort", body: "Body", base: "main" });
       await setLocalPrStatus(repo, pr.id, "reviewed");
       const started = Date.now();
-      setTimeout(() => abortExportGate(repo, pr.id, pr.headSha), 500);
+      let armed = false;
       await assert.rejects(
-        () => evaluateAndStoreExportGate(repo, pr.id),
+        () =>
+          evaluateAndStoreExportGate(repo, pr.id, {
+            onProgress: (e) => {
+              if (armed) return;
+              if (e.phase === "ci" && (e.state === "start" || e.check === "lint")) {
+                armed = true;
+                // Omit headSha so abort hits even if inflight key races.
+                abortExportGate(repo, pr.id);
+              }
+            },
+          }),
         (err: unknown) => isAbortError(err),
       );
       assert.ok(Date.now() - started < 8000, "file abort should not wait out the check");
       const stored = await getLocalPr(repo, pr.id);
       assert.notEqual(stored.exportGate?.status, "ready");
     } finally {
+      if (prevFailFast === undefined) delete process.env.PRGENIE_CI_FAIL_FAST;
+      else process.env.PRGENIE_CI_FAIL_FAST = prevFailFast;
+      if (prevParallel === undefined) delete process.env.PRGENIE_CI_PARALLEL;
+      else process.env.PRGENIE_CI_PARALLEL = prevParallel;
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
