@@ -300,7 +300,7 @@ test("laneView EXPORT quiet until reviewed; empty state; no vertical reason layo
   );
   assert.match(
     src,
-    /selected\.status === "reviewed"\s*\n\s*\? displayShepherdStatus/,
+    /selected\.status === "reviewed"\s*\?\s*displayShepherdStatus/,
     "cheap shepherd BLOCKED must not paint for draft/ready loops",
   );
   assert.ok(src.includes("Export when ready"));
