@@ -44,11 +44,12 @@ test("mcpCwdCandidates prefers CURSOR_PROJECT_DIR then WORKSPACE_FOLDER_PATHS th
   const base = mcpCwdCandidates();
   assert.ok(base.includes(process.cwd()));
 
-  process.env.CURSOR_PROJECT_DIR = "C:/ws/project";
-  process.env.WORKSPACE_FOLDER_PATHS = `C:/ws/alt${path.delimiter}C:/ws/project`;
+  // Use POSIX paths so Linux CI does not split on `:` inside Windows drive letters.
+  process.env.CURSOR_PROJECT_DIR = "/ws/project";
+  process.env.WORKSPACE_FOLDER_PATHS = `/ws/alt${path.delimiter}/ws/project`;
   const withEnv = mcpCwdCandidates();
-  assert.equal(withEnv[0], path.normalize("C:/ws/project"));
-  assert.ok(withEnv.includes(path.normalize("C:/ws/alt")));
+  assert.equal(withEnv[0], path.normalize("/ws/project"));
+  assert.ok(withEnv.includes(path.normalize("/ws/alt")));
 });
 
 test("resolveMcpGitRoot uses workspace env when process.cwd is outside repo", async () => {
