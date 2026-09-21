@@ -86,106 +86,113 @@ export async function evaluateAndStoreExportGate(
   id: string,
   options: RunProgressOptions = {},
 ): Promise<ShepherdResult> {
-  const pr = await getLocalPr(cwd, id);
-  const key = gateKey(cwd, id, pr.headSha);
-  const existing = inflight.get(key);
-  if (existing) {
-    const unsub = existing.addListener(options.onProgress);
-    const detach = onAbort(options.signal, () => {
-      existing.abort();
-      requestAbortQuiet(cwd, id);
-    });
-    try {
-      return await existing.promise;
-    } finally {
-      unsub();
-      detach();
-    }
-  }
-
-  const listeners = new Set<ProgressCallback>();
-  if (options.onProgress) listeners.add(options.onProgress);
   const controller = new AbortController();
   const detachCaller = onAbort(options.signal, () => {
     controller.abort();
     requestAbortQuiet(cwd, id);
   });
+  // Arm before any await so Cancel during getLocalPr still lands.
   const stopWatch = watchCiAbort(cwd, id, controller);
-  const emit: ProgressCallback = (event) => {
-    for (const cb of listeners) cb(event);
-  };
-
-  const flight: GateFlight = {
-    promise: Promise.resolve({ status: "blocked", reasons: [] }),
-    abort: () => controller.abort(),
-    addListener: (cb) => {
-      if (!cb) return () => undefined;
-      listeners.add(cb);
-      return () => {
-        listeners.delete(cb);
-      };
-    },
-  };
-
-  const run = (async () => {
-    let lock = await acquireCiLock(cwd, id, pr.headSha, controller.signal);
-    try {
-      while (lock.peerDone) {
-        throwIfAborted(controller.signal);
-        const latest = await getLocalPr(cwd, id);
-        if (snapshotIsComplete(latest.exportGate, pr.headSha)) {
-          return shepherdFromSnapshot(latest.exportGate);
-        }
-        lock.release();
-        lock = await acquireCiLock(cwd, id, pr.headSha, controller.signal);
-      }
-      throwIfAborted(controller.signal);
-      let result: ShepherdResult;
-      try {
-        result = await shepherdStatus(cwd, id, {
-          onProgress: emit,
-          signal: controller.signal,
-        });
-      } catch (err) {
-        if (isAbortError(err) || controller.signal.aborted) throw abortError();
-        result = {
-          status: "blocked",
-          reasons: [
-            {
-              check: "review",
-              message: `Failed to check shepherd status: ${err instanceof Error ? err.message : String(err)}`,
-            },
-          ],
-        };
-      }
-      await setLocalPrExportGate(cwd, id, {
-        status: result.status,
-        reasons: result.reasons,
-        headSha: pr.headSha,
-        evaluatedAt: new Date().toISOString(),
-        ciPlan: result.ciPlan
-          ? {
-              checks: result.ciPlan.checks,
-              reason: result.ciPlan.reason,
-              uncertain: result.ciPlan.uncertain,
-            }
-          : null,
-        ciChecks: result.ciChecks ?? null,
-      });
-      return result;
-    } finally {
-      lock.release();
-    }
-  })();
-
-  flight.promise = run;
-  inflight.set(key, flight);
   try {
-    return await run;
+    throwIfAborted(controller.signal);
+    const pr = await getLocalPr(cwd, id);
+    throwIfAborted(controller.signal);
+    const key = gateKey(cwd, id, pr.headSha);
+    const existing = inflight.get(key);
+    if (existing) {
+      const unsub = existing.addListener(options.onProgress);
+      const detach = onAbort(options.signal, () => {
+        existing.abort();
+        requestAbortQuiet(cwd, id);
+      });
+      try {
+        if (controller.signal.aborted) existing.abort();
+        return await existing.promise;
+      } finally {
+        unsub();
+        detach();
+      }
+    }
+
+    const listeners = new Set<ProgressCallback>();
+    if (options.onProgress) listeners.add(options.onProgress);
+    const emit: ProgressCallback = (event) => {
+      for (const cb of listeners) cb(event);
+    };
+
+    const flight: GateFlight = {
+      promise: Promise.resolve({ status: "blocked", reasons: [] }),
+      abort: () => controller.abort(),
+      addListener: (cb) => {
+        if (!cb) return () => undefined;
+        listeners.add(cb);
+        return () => {
+          listeners.delete(cb);
+        };
+      },
+    };
+
+    const run = (async () => {
+      let lock = await acquireCiLock(cwd, id, pr.headSha, controller.signal);
+      try {
+        while (lock.peerDone) {
+          throwIfAborted(controller.signal);
+          const latest = await getLocalPr(cwd, id);
+          if (snapshotIsComplete(latest.exportGate, pr.headSha)) {
+            return shepherdFromSnapshot(latest.exportGate);
+          }
+          lock.release();
+          lock = await acquireCiLock(cwd, id, pr.headSha, controller.signal);
+        }
+        throwIfAborted(controller.signal);
+        let result: ShepherdResult;
+        try {
+          result = await shepherdStatus(cwd, id, {
+            onProgress: emit,
+            signal: controller.signal,
+          });
+        } catch (err) {
+          if (isAbortError(err) || controller.signal.aborted) throw abortError();
+          result = {
+            status: "blocked",
+            reasons: [
+              {
+                check: "review",
+                message: `Failed to check shepherd status: ${err instanceof Error ? err.message : String(err)}`,
+              },
+            ],
+          };
+        }
+        await setLocalPrExportGate(cwd, id, {
+          status: result.status,
+          reasons: result.reasons,
+          headSha: pr.headSha,
+          evaluatedAt: new Date().toISOString(),
+          ciPlan: result.ciPlan
+            ? {
+                checks: result.ciPlan.checks,
+                reason: result.ciPlan.reason,
+                uncertain: result.ciPlan.uncertain,
+              }
+            : null,
+          ciChecks: result.ciChecks ?? null,
+        });
+        return result;
+      } finally {
+        lock.release();
+      }
+    })();
+
+    flight.promise = run;
+    inflight.set(key, flight);
+    try {
+      return await run;
+    } finally {
+      inflight.delete(key);
+    }
   } finally {
     stopWatch();
     detachCaller();
-    inflight.delete(key);
   }
 }
 
