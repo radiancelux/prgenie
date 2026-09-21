@@ -42,18 +42,10 @@ describe("selectCiChecks", () => {
   });
 
   it("maps packages/core-only (+ docs) to scoped core lint/typecheck/unit — not full pnpm test", () => {
-    const result = selectCiChecks([
-      "packages/core/src/ci-select.ts",
-      "docs/ci-checks.md",
-    ]);
+    const result = selectCiChecks(["packages/core/src/ci-select.ts", "docs/ci-checks.md"]);
     assert.equal(result.uncertain, false);
     assert.equal(result.packageScoped, true);
-    assert.deepEqual(result.checks, [
-      "format:check",
-      "lint:core",
-      "typecheck:core",
-      "test:core",
-    ]);
+    assert.deepEqual(result.checks, ["format:check", "lint:core", "typecheck:core", "test:core"]);
     assert.ok(!result.checks.includes("test"));
     assert.ok(!result.checks.includes("build"));
     assert.ok(result.reason.some((r) => /packages\/core\/\*\*/.test(r)));
@@ -65,20 +57,12 @@ describe("selectCiChecks", () => {
     const result = selectCiChecks(["packages/cli/src/cli.ts"]);
     assert.equal(result.uncertain, false);
     assert.equal(result.packageScoped, true);
-    assert.deepEqual(result.checks, [
-      "format:check",
-      "lint:cli",
-      "typecheck:cli",
-      "test:cli",
-    ]);
+    assert.deepEqual(result.checks, ["format:check", "lint:cli", "typecheck:cli", "test:cli"]);
     assert.ok(result.reason.some((r) => /packages\/cli\/\*\*/.test(r)));
   });
 
   it("maps mixed core+cli to ordered per-package suites (stop after first package fail)", () => {
-    const result = selectCiChecks([
-      "packages/core/src/ci-select.ts",
-      "packages/cli/src/cli.ts",
-    ]);
+    const result = selectCiChecks(["packages/core/src/ci-select.ts", "packages/cli/src/cli.ts"]);
     assert.equal(result.packageScoped, true);
     assert.deepEqual(result.checks, [
       "format:check",

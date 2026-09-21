@@ -10,16 +10,16 @@ PR Genie selects local checks from the loop diff (implementor preflight **and** 
 
 Changed paths = committed `baseSha...headSha` plus dirty/untracked files in the CI cwd (loop worktree when it exists).
 
-| Changed paths | Checks | `reason[]` (concept) |
-| --- | --- | --- |
-| Empty / unclassifiable (binaries, unknown extensions) | Full suite | `uncertain path mapping` / `uncertain → full suite` |
-| Config / CI (`package.json`, lockfiles, `tsconfig*`, eslint, prettier config, `.github/**`, `scripts/**`) | Full suite | `config/CI scripts changed; running full suite` |
-| Docs / markdown only (`*.md`, `docs/**`, LICENSE, README, `*.txt`) | `format:check` only | `docs/markdown-only → format:check`; skip units |
-| Docs + style (`*.css`, non-config `*.json`) | `format:check` only | format; skip lint/test/build |
-| `packages/core/**` source/tests (+ optional docs) | `format:check`, `lint:core`, `typecheck:core`, `test:core` | confident — **not** full monorepo `pnpm test` |
-| `packages/cli/**` / `packages/extension/**` (same pattern) | `format:check` + `lint\|typecheck\|test:<pkg>` | per-package unit + typecheck/lint |
-| Multiple scopable packages | format + each package’s lint→typecheck→test in order | fail-fast stops after first package suite fail |
-| `packages/plugin/**` code or other unscoping paths | Full suite | `uncertain → full suite` |
+| Changed paths                                                                                             | Checks                                                     | `reason[]` (concept)                                |
+| --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------- |
+| Empty / unclassifiable (binaries, unknown extensions)                                                     | Full suite                                                 | `uncertain path mapping` / `uncertain → full suite` |
+| Config / CI (`package.json`, lockfiles, `tsconfig*`, eslint, prettier config, `.github/**`, `scripts/**`) | Full suite                                                 | `config/CI scripts changed; running full suite`     |
+| Docs / markdown only (`*.md`, `docs/**`, LICENSE, README, `*.txt`)                                        | `format:check` only                                        | `docs/markdown-only → format:check`; skip units     |
+| Docs + style (`*.css`, non-config `*.json`)                                                               | `format:check` only                                        | format; skip lint/test/build                        |
+| `packages/core/**` source/tests (+ optional docs)                                                         | `format:check`, `lint:core`, `typecheck:core`, `test:core` | confident — **not** full monorepo `pnpm test`       |
+| `packages/cli/**` / `packages/extension/**` (same pattern)                                                | `format:check` + `lint\|typecheck\|test:<pkg>`             | per-package unit + typecheck/lint                   |
+| Multiple scopable packages                                                                                | format + each package’s lint→typecheck→test in order       | fail-fast stops after first package suite fail      |
+| `packages/plugin/**` code or other unscoping paths                                                        | Full suite                                                 | `uncertain → full suite`                            |
 
 **Confident mapping forbids whole-repo `pnpm test`.** Agents must run MCP `run_ci` / `prgenie ci` (or the scoped commands it prints) and must **print** the returned `{ checks, reason }` plan. Do not substitute a manual full-suite `pnpm test` when `packageScoped` / reasons say the mapping is confident.
 
@@ -35,12 +35,12 @@ Uncertain mapping **always** runs the full configured suite and includes an expl
 
 ## Who runs what
 
-| Actor | Command | When |
-| --- | --- | --- |
-| Implementor | `prgenie ci <id>` / MCP `run_ci` | Before `set_status ready` / Review requested |
-| Implementor (CI-resume) | `prgenie ci <id> --failing lint,test` | After export-gate CI failure; return only when green |
-| Steward / shepherd | `prgenie shepherd` / `steward_next` / `shepherd_status` | After review clear; again after CI-resume |
-| Human export | panel Push / `prgenie export` | Same gate; cancel is shared |
+| Actor                   | Command                                                 | When                                                 |
+| ----------------------- | ------------------------------------------------------- | ---------------------------------------------------- |
+| Implementor             | `prgenie ci <id>` / MCP `run_ci`                        | Before `set_status ready` / Review requested         |
+| Implementor (CI-resume) | `prgenie ci <id> --failing lint,test`                   | After export-gate CI failure; return only when green |
+| Steward / shepherd      | `prgenie shepherd` / `steward_next` / `shepherd_status` | After review clear; again after CI-resume            |
+| Human export            | panel Push / `prgenie export`                           | Same gate; cancel is shared                          |
 
 Skip implementor preflight only when the toolchain cannot run (say so). Do not skip a red check. Do not “just `pnpm test` the whole repo” when `run_ci` already selected a confident scoped plan.
 

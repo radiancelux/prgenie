@@ -174,24 +174,14 @@ export function selectCiChecks(changedPaths: string[]): CiCheckSelection {
     return fullSuite(["uncertain path mapping", "uncertain → full suite"], paths, true);
   }
   if (kinds.some((kind) => kind === "config")) {
-    return fullSuite(
-      ["config/CI scripts changed; running full suite"],
-      paths,
-      false,
-    );
+    return fullSuite(["config/CI scripts changed; running full suite"], paths, false);
   }
 
   const onlyDocsOrStyle = kinds.every((kind) => kind === "docs" || kind === "style");
   if (onlyDocsOrStyle) {
     const reason = kinds.every((kind) => kind === "docs")
-      ? [
-          "docs/markdown-only → format:check",
-          "skip units/lint/typecheck/build (confident)",
-        ]
-      : [
-          "docs/style-only → format:check",
-          "skip units/lint/typecheck/build (confident)",
-        ];
+      ? ["docs/markdown-only → format:check", "skip units/lint/typecheck/build (confident)"]
+      : ["docs/style-only → format:check", "skip units/lint/typecheck/build (confident)"];
     return {
       checks: ["format:check"],
       reason,
@@ -216,10 +206,7 @@ export function selectCiChecks(changedPaths: string[]): CiCheckSelection {
 
   if (unscoping || pkgs.size === 0) {
     return fullSuite(
-      [
-        "changed paths outside scopable packages/core|cli|extension",
-        "uncertain → full suite",
-      ],
+      ["changed paths outside scopable packages/core|cli|extension", "uncertain → full suite"],
       paths,
       true,
     );
@@ -240,9 +227,7 @@ export function selectCiChecks(changedPaths: string[]): CiCheckSelection {
     const pkg = packageFromScopedCheck(check);
     return {
       check,
-      reason: pkg
-        ? `packages/${pkg}/** scoped ${check.split(":")[0]}`
-        : reason.join("; "),
+      reason: pkg ? `packages/${pkg}/** scoped ${check.split(":")[0]}` : reason.join("; "),
     };
   });
 
