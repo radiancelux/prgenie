@@ -6,9 +6,11 @@ Start with `prgenie doctor` from any worktree of the repo. It reports the checks
 
 | id                 | Meaning                                                                | Typical fix                                                                     |
 | ------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `git-path`         | `git` not resolvable from this process PATH                            | Install Git / fix PATH, or set `PRGENIE_GIT` to absolute `git.exe`               |
 | `git`              | Not inside a git repo                                                  | `cd` into a PR Genie checkout                                                   |
 | `plugin-install`   | No Cursor plugin at `~/.cursor/plugins/local/prgenie`                  | `pnpm build && pnpm link-plugin`, then disable/enable the plugin                |
 | `plugin-stale`     | Installed `mcp/server.cjs` hash ≠ repo build                           | Same as above — **reload alone often keeps a stale MCP tool list**              |
+| `plugin-dirt`      | Dirty tracked `packages/plugin/hooks\|mcp/*.cjs` on primary            | `git stash` or `git restore` those paths, then create + Switch into `.loops`    |
 | `extension`        | Local PRs extension missing or wrong version                           | `pnpm build && pnpm link-extension`, then **quit Cursor fully and reopen**      |
 | `watch`            | Export-halt record in `watch.json`                                     | Informational — export halt only; listen is removed                             |
 | `corrupt-prs`      | Unparsable JSON under `.git/agent-console/prs/`                        | Inspect or delete listed files; `listLocalPrs` skips them silently              |
@@ -133,9 +135,16 @@ Doctor `corrupt-prs` lists unparsable files under `.git/agent-console/prs/`. Cor
 ## Orphan worktrees / primary vs `.loops`
 
 - Loop checkouts live at `../<repo>.loops/<id>` next to the primary folder.
-- Never treat the primary checkout as a disposable loop worktree; never implement Later work in the primary when a loop worktree exists.
+- Never treat the primary checkout as a disposable loop worktree; never implement loop work in the primary when a loop worktree exists — Switch into `.loops/<id>` after create.
 - Orphans: `.loops` path still registered in `git worktree list` but no live (non-archived) local PR with that id → `git worktree remove <path>`.
 - Worktree collisions: two windows on the same branch, or a leftover `.loops/<other-id>` while coding a different loop — Switch to the correct loop id or remove the stale tree.
+- Dirty tracked plugin bundles on primary (`packages/plugin/hooks|mcp/*.cjs` after build/link-plugin): doctor `plugin-dirt` / `create_local_pr` refuse until stash or `git restore`. Peel would otherwise carry that dirt into the new loop worktree.
+
+## Git missing from PATH (MCP / CLI spawn)
+
+**Symptoms:** MCP or CLI fails with `GitBinaryError` / `git is not resolvable from this process` (ENOENT on spawn).
+
+**Fix:** Install [Git for Windows](https://git-scm.com/download/win) (or git on macOS/Linux) and ensure `git` / `git.exe` is on PATH for the Cursor process. Or set `PRGENIE_GIT` to the absolute path of the binary (e.g. `C:\Program Files\Git\cmd\git.exe`). Doctor check `git-path` prints the same hint. Core already pins well-known Windows install locations when PATH is empty — this error means those also failed.
 
 ## Version / VSIX skew
 

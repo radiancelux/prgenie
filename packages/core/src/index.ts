@@ -27,6 +27,7 @@ export {
   clearGitBinaryCache,
   findGitRoot,
   formatGitMissingError,
+  formatGitSpawnError,
   git,
   gitCommonDir,
   gitText,
@@ -48,11 +49,19 @@ export {
   loopWorktreeIdentity,
   peelStashMessage,
   pruneArchivedLoopWorktree,
+  pruneLoopWorktrees,
   refusePrimaryWorktreeIfParallel,
   releaseArchivedLoop,
   sameFsPath,
 } from "./worktrees.js";
 export type { ReleaseArchivedLoopResult } from "./worktrees.js";
+export {
+  assertNoDirtyPluginBuildArtifacts,
+  dirtyPluginDoctorFix,
+  formatDirtyPluginBuildArtifactsError,
+  isPluginBuildArtifact,
+  listDirtyPluginBuildArtifacts,
+} from "./plugin-dirt.js";
 export {
   addLocalPrComment,
   addressLocalPrComment,

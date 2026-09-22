@@ -53,6 +53,19 @@ export function formatGitMissingError(platform: NodeJS.Platform = process.platfo
   );
 }
 
+/** Clear MCP/CLI error when `spawn(git)` fails (ENOENT / bad path / EACCES). */
+export function formatGitSpawnError(
+  binary: string,
+  err: NodeJS.ErrnoException,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const detail = err.code ? `${err.code}: ${err.message}` : err.message;
+  if (err.code === "ENOENT") {
+    return formatGitMissingError(platform);
+  }
+  return `Failed to spawn git at "${binary}" (${detail}). ` + formatGitMissingError(platform);
+}
+
 function pathDelimiter(platform: NodeJS.Platform): string {
   return platform === "win32" ? ";" : ":";
 }
@@ -195,12 +208,9 @@ export async function git(
       stderr += chunk;
     });
     child.on("error", (err: NodeJS.ErrnoException) => {
-      if (err.code === "ENOENT") {
-        clearGitBinaryCache();
-        reject(new GitBinaryError(formatGitMissingError()));
-        return;
-      }
-      reject(err);
+      clearGitBinaryCache();
+      // Spawn failures (missing binary, bad path, EACCES, …) share one actionable message.
+      reject(new GitBinaryError(formatGitSpawnError(binary, err)));
     });
     const onAbort = () => {
       child.kill("SIGTERM");

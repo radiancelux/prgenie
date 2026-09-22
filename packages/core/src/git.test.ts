@@ -6,6 +6,7 @@ import {
   PRGENIE_GIT_ENV,
   clearGitBinaryCache,
   formatGitMissingError,
+  formatGitSpawnError,
   requireGitBinary,
   resolveGitBinary,
   windowsGitCandidates,
@@ -113,6 +114,23 @@ test("requireGitBinary throws a Windows install hint when missing", () => {
 test("formatGitMissingError mentions PRGENIE_GIT on all platforms", () => {
   assert.match(formatGitMissingError("linux"), new RegExp(PRGENIE_GIT_ENV));
   assert.match(formatGitMissingError("win32"), /git-scm\.com\/download\/win/);
+});
+
+test("formatGitSpawnError uses missing-git hint on ENOENT", () => {
+  const err = Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }) as NodeJS.ErrnoException;
+  const msg = formatGitSpawnError("C:\\missing\\git.exe", err, "win32");
+  assert.match(msg, /Git for Windows/);
+  assert.match(msg, new RegExp(PRGENIE_GIT_ENV));
+});
+
+test("formatGitSpawnError names binary and errno for non-ENOENT spawn failures", () => {
+  const err = Object.assign(new Error("permission denied"), {
+    code: "EACCES",
+  }) as NodeJS.ErrnoException;
+  const msg = formatGitSpawnError("C:\\Program Files\\Git\\cmd\\git.exe", err, "win32");
+  assert.match(msg, /Failed to spawn git/);
+  assert.match(msg, /EACCES/);
+  assert.match(msg, /Git for Windows/);
 });
 
 test("resolveGitBinary caches the live process result", () => {

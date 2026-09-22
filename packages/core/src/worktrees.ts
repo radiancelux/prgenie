@@ -242,6 +242,19 @@ async function checkoutPrimaryOffLoop(
   return switched.code === 0;
 }
 
+/**
+ * Remove every sibling `.loops/<id>` worktree for this repo (force).
+ * Tests should call this in `beforeEach` so leftover exclusive checkouts do not poison later cases.
+ */
+export async function pruneLoopWorktrees(cwd: string): Promise<void> {
+  const trees = await listWorktrees(cwd);
+  for (const t of trees) {
+    if (!loopWorktreeIdentity(t.path)) continue;
+    await git(cwd, ["worktree", "remove", "--force", "--", t.path], { allowFail: true });
+  }
+  await git(cwd, ["worktree", "prune"], { allowFail: true });
+}
+
 /** Drop a sibling .loops checkout after export. Never remove the primary repo folder. */
 export async function pruneArchivedLoopWorktree(
   cwd: string,

@@ -91,7 +91,11 @@ You are the agent **on the worktree** (implementor). On completion:
 
 ## Worktrees
 
-Each loop has a **feature branch** for export (never `main`/`master`) and an exclusive sibling `../<repo>.loops/<id>` worktree — never the primary folder. If this window is on the base, PR Genie creates `lp-<id>` without switching primary onto it, then peels the `.loops/<id>` checkout (`-b` when needed — never detached). If the branch was already checked out in primary, PR Genie moves primary back onto the loop base and peels the exclusive worktree. Use **Switch** in Local PRs / the loop panel to replace this window with that worktree. `prgenie worktree <id>` / MCP `ensure_worktree` only creates the checkout — they do not open the editor. Never implement in the primary folder when a loop worktree exists.
+Each loop has a **feature branch** for export (never `main`/`master`) and an exclusive sibling `../<repo>.loops/<id>` worktree — never the primary folder. If this window is on the base, PR Genie creates `lp-<id>` without switching primary onto it, then peels the `.loops/<id>` checkout (`-b` when needed — never detached). If the branch was already checked out in primary, PR Genie moves primary back onto the loop base and peels the exclusive worktree.
+
+**After create:** Switch / open `worktreePath` before any edits. All commits and CI run there. Never implement in the primary folder when a loop worktree exists. `prgenie worktree <id>` / MCP `ensure_worktree` only creates the checkout — they do not open the editor.
+
+`create_local_pr` / `prgenie doctor` refuse or warn when primary has dirty tracked plugin build artifacts (`packages/plugin/hooks|mcp/*.cjs` from build/link-plugin). Stash or `git restore` those paths on primary, then retry create.
 
 Do not delete worktrees unless the user asks. Do not create extras beyond the one per loop. After **export**, PR Genie checks the main workspace off the loop branch (onto the loop base) and removes the sibling `../<repo>.loops/<id>` checkout. The primary repo folder is never deleted. If this window is still on the extra worktree, reopen the primary folder — the sidebar does that, then the extra checkout is cleared.
 

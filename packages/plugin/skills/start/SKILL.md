@@ -35,11 +35,14 @@ Stay off the repo base (`main`/`master`). `create_local_pr` checks out `lp-<id>`
 
 1. If this branch already has a live (not archived) local PR, use it (`update_local_pr` to put the brief in `body` if empty). Do not open a second loop on the same branch.
 2. Otherwise MCP `create_local_pr` with `title` and `body` (the brief). That creates the feature branch and the draft loop.
-3. Show the id, `head → base`, and the brief. Then implement against it.
+3. **Immediately Switch / open `worktreePath`** (Local PRs **Switch**, or reopen this window on the exclusive `../<repo>.loops/<id>` path). Show the id, `head → base`, `worktreePath`, and the brief.
+4. **All** edits, commits, and CI run in that worktree. Never implement or commit in the primary folder when an exclusive worktree exists.
+
+If create refuses because primary has dirty tracked `packages/plugin/**/*.cjs` build artifacts: stash or `git restore` those paths on primary, then retry create.
 
 ## After the work
 
-1. Commit on this branch if needed. Do not push.
+1. Commit on this branch **in the exclusive worktree** if needed. Do not push. Do not commit on primary.
 2. Refresh `body` to a reviewer summary: why, what changed, how to test (keep the ticket link).
 3. Run MCP `run_ci` / `prgenie ci <id>` (path-scoped checks from changed files vs base — see `docs/ci-checks.md`). **Print** the returned `{ checks, reason }` plan in chat. Fix failures in this worktree. When mapping is confident (`packageScoped` / reasons say so), do **not** run whole-repo `pnpm test` as a substitute. Fail-fast stops after the first package suite fail — do not keep running later packages. Skip only if the toolchain cannot run — say so.
 4. `set_status` `ready` and `add_comment` `role=agent` **Review requested.**
