@@ -11,7 +11,7 @@ PR Genie is a local review lane that sits in front of GitHub. The product flywhe
 | Cursor plugin              | `packages/plugin`    | Rules, skills (`/steward`, `/start`, `/export`, …), MCP entry, hooks (`github-gate.cjs`, `review-inbox.cjs`, `capture-subagent.cjs`, `session-log.mjs`) |
 | VS Code / Cursor extension | `packages/extension` | **Local PRs** sidebar: watch list, Switch to worktree, Complete review, Open on GitHub                                                                  |
 
-Build at the monorepo root (`pnpm build`). Dev install copies the plugin and extension into Cursor via `pnpm link-plugin` and `pnpm link-extension`.
+Build at the monorepo root (`pnpm build`). Dev install copies the plugin and extension into Cursor via `pnpm link-plugin` and `pnpm link-extension`. Generated plugin MCP/hook bundles (`packages/plugin/mcp/server.cjs`, `packages/plugin/hooks/*.cjs`) are gitignored — link-plugin runs build first so a clean clone works without pre-committed artifacts.
 
 ## How the pieces connect
 

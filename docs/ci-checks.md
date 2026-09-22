@@ -67,7 +67,9 @@ When a human/steward **skips** CI: MCP `abort_ci` returns the bound `implementor
 
 ## Generated MCP bundle size
 
-Large line-count swings on `packages/plugin/mcp/server.cjs` (and hooks `.cjs`) after a rebuild are expected when dependencies are externalized or re-inlined — not a product source deletion. Prefer reading the TypeScript under `packages/core` / `packages/cli` for behavior.
+`packages/plugin/mcp/server.cjs` and `packages/plugin/hooks/*.cjs` are **generated and gitignored**. CI / `pnpm build` / `pnpm link-plugin` produce them; a no-op rebuild must not create a multi-thousand-line git diff.
+
+If you still see huge ±tens-of-thousands-line diffs on those paths in a PR, you have a dirty local build against an old **tracked** file, or you are on a **pre-migration** branch from before they were removed from the index. Prefer reading TypeScript under `packages/core` / `packages/cli` for behavior; rebuild or rebase onto current `main`.
 
 ## Cancel (panel + chat)
 

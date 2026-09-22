@@ -10,7 +10,8 @@ Start with `prgenie doctor` from any worktree of the repo. It reports the checks
 | `git`              | Not inside a git repo                                                  | `cd` into a PR Genie checkout                                                   |
 | `plugin-install`   | No Cursor plugin at `~/.cursor/plugins/local/prgenie`                  | `pnpm build && pnpm link-plugin`, then disable/enable the plugin                |
 | `plugin-stale`     | Installed `mcp/server.cjs` hash ≠ repo build                           | Same as above — **reload alone often keeps a stale MCP tool list**              |
-| `plugin-dirt`      | Dirty tracked `packages/plugin/hooks\|mcp/*.cjs` on primary            | `git stash` or `git restore` those paths, then create + Switch into `.loops`    |
+| `plugin-bundles`   | Repo `mcp/server.cjs` or hooks `.cjs` missing or older than sources    | `pnpm build` (`link-plugin` runs build first)                                   |
+| `plugin-dirt`      | Dirty **tracked** `packages/plugin/hooks\|mcp/*.cjs` on primary        | Rare post-gitignore — stash/restore, or rebase off a pre-migration branch       |
 | `extension`        | Local PRs extension missing or wrong version                           | `pnpm build && pnpm link-extension`, then **quit Cursor fully and reopen**      |
 | `watch`            | Export-halt record in `watch.json`                                     | Informational — export halt only; listen is removed                             |
 | `corrupt-prs`      | Unparsable JSON under `.git/agent-console/prs/`                        | Inspect or delete listed files; `listLocalPrs` skips them silently              |
@@ -154,7 +155,8 @@ Doctor `corrupt-prs` lists unparsable files under `.git/agent-console/prs/`. Cor
 4. Product lint/test failures still hard-block export. A pure **CI environment unhealthy** setup error is soft-surfaced and does **not** hard-block export by default (see [ci-checks.md](ci-checks.md#worktree-deps-rad-92)).
 
 - Worktree collisions: two windows on the same branch, or a leftover `.loops/<other-id>` while coding a different loop — Switch to the correct loop id or remove the stale tree.
-- Dirty tracked plugin bundles on primary (`packages/plugin/hooks|mcp/*.cjs` after build/link-plugin): doctor `plugin-dirt` / `create_local_pr` refuse until stash or `git restore`. Peel would otherwise carry that dirt into the new loop worktree.
+- Bundled MCP/hook `.cjs` outputs are **gitignored** and produced by `pnpm build` / `link-plugin` / CI — not committed. Doctor `plugin-bundles` fails when they are missing or older than sources.
+- Dirty **tracked** plugin bundles on primary (pre-migration branch still tracking `packages/plugin/hooks|mcp/*.cjs`): doctor `plugin-dirt` / `create_local_pr` refuse until stash or `git restore`. Peel would otherwise carry that dirt into the new loop worktree. On current `main`, those paths should not appear in `git status` after a rebuild.
 
 ## Git missing from PATH (MCP / CLI spawn)
 

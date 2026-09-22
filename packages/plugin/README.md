@@ -2,11 +2,16 @@
 
 Local pull requests for agent work. GitHub when you say so.
 
-This folder is a Cursor Plugin (`/.cursor-plugin/plugin.json`). After `pnpm build` at the repo root (produces `mcp/server.cjs`), copy it:
+This folder is a Cursor Plugin (`/.cursor-plugin/plugin.json`). Generated `mcp/server.cjs` and `hooks/*.cjs` are **gitignored** — build them at the repo root, then copy:
 
 ```powershell
+pnpm build          # or just pnpm link-plugin (runs build first)
 pnpm link-plugin
 ```
+
+Clean clone path: install → build → link-plugin → Customize → Plugins → PR Genie off/on. There is no pre-committed `server.cjs`.
+
+If a PR still shows huge ±tens-of-thousands-line diffs on those `.cjs` files, you have a dirty local build against an old tracked copy, or you are on a pre-migration branch — rebuild or rebase; that is not product source.
 
 `mcp.json` uses `${CURSOR_PLUGIN_ROOT}/mcp/server.cjs` (Cursor does **not** expand `${PLUGIN_ROOT}`). A relative `./mcp/server.cjs` resolves against the **workspace**, which 404s. `link-plugin` rewrites the installed copy to an absolute `node.exe` + `server.cjs` (UTF-8, no BOM; `cmd /c` when the node path has spaces). **Do not ship** a workspace `.cursor/mcp.json` named `prgenie` — that creates a second Connected MCP row tagged with the folder name.
 
