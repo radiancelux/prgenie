@@ -56,6 +56,13 @@ function formatGitMissingError(platform = process.platform) {
   }
   return `git is not resolvable from this process. Install git and ensure it is on PATH, or set ${PRGENIE_GIT_ENV} to the absolute path of the git binary.`;
 }
+function formatGitSpawnError(binary, err, platform = process.platform) {
+  const detail = err.code ? `${err.code}: ${err.message}` : err.message;
+  if (err.code === "ENOENT") {
+    return formatGitMissingError(platform);
+  }
+  return `Failed to spawn git at "${binary}" (${detail}). ` + formatGitMissingError(platform);
+}
 function pathDelimiter(platform) {
   return platform === "win32" ? ";" : ":";
 }
@@ -163,12 +170,8 @@ async function git(cwd, args, options7 = {}) {
       stderr += chunk;
     });
     child.on("error", (err) => {
-      if (err.code === "ENOENT") {
-        clearGitBinaryCache();
-        reject(new GitBinaryError(formatGitMissingError()));
-        return;
-      }
-      reject(err);
+      clearGitBinaryCache();
+      reject(new GitBinaryError(formatGitSpawnError(binary, err)));
     });
     const onAbort2 = () => {
       child.kill("SIGTERM");
@@ -618,6 +621,54 @@ var init_worktrees = __esm({
     import_promises = require("node:fs/promises");
     import_node_path3 = __toESM(require("node:path"), 1);
     init_git();
+  }
+});
+
+// packages/core/src/plugin-dirt.ts
+function isPluginBuildArtifact(relPath) {
+  const norm = relPath.replace(/\\/g, "/").replace(/^\.\//, "");
+  return /^packages\/plugin\/(hooks|mcp)\/.+\.cjs$/i.test(norm);
+}
+async function listDirtyPluginBuildArtifacts(cwd) {
+  const root2 = await requireGitRoot(cwd);
+  const trees = await listWorktrees(root2);
+  const primary = primaryWorktreePath(trees) ?? root2;
+  const result = await git(primary, ["status", "--porcelain", "--", "packages/plugin"], {
+    allowFail: true
+  });
+  if (result.code !== 0 || !result.stdout.trim()) return [];
+  const dirty = [];
+  for (const line3 of result.stdout.split("\n")) {
+    const text = line3.replace(/\r$/, "");
+    if (!text || text.length < 4) continue;
+    const xy2 = text.slice(0, 2);
+    if (xy2 === "??") continue;
+    const body = text.slice(3);
+    const arrow = body.indexOf(" -> ");
+    const file = (arrow >= 0 ? body.slice(arrow + 4) : body).replace(/\\/g, "/");
+    if (isPluginBuildArtifact(file)) dirty.push(file);
+  }
+  return [...new Set(dirty)].sort();
+}
+function formatDirtyPluginBuildArtifactsError(paths) {
+  const listed = paths.map((p5) => `  ${p5}`).join("\n");
+  return `Refusing to create a local PR while the primary checkout has dirty tracked plugin build artifacts:
+${listed}
+These are usually leftover from pnpm build / link-plugin and are not part of this loop. Stash or restore them on primary, then retry:
+  git stash push -m "plugin build dirt" -- packages/plugin/hooks packages/plugin/mcp
+  # or: git restore -- packages/plugin/hooks packages/plugin/mcp
+After create, Switch / open the exclusive ../<repo>.loops/<id> worktree before implementing \u2014 never commit on primary when that worktree exists.`;
+}
+async function assertNoDirtyPluginBuildArtifacts(cwd) {
+  const dirty = await listDirtyPluginBuildArtifacts(cwd);
+  if (dirty.length === 0) return;
+  throw new Error(formatDirtyPluginBuildArtifactsError(dirty));
+}
+var init_plugin_dirt = __esm({
+  "packages/core/src/plugin-dirt.ts"() {
+    "use strict";
+    init_git();
+    init_worktrees();
   }
 });
 
@@ -1445,6 +1496,7 @@ async function resumeWatchForNextLoop(cwd) {
 }
 async function createLocalPr(cwd, input = {}) {
   const root2 = await requireGitRoot(cwd);
+  await assertNoDirtyPluginBuildArtifacts(root2);
   const id3 = newId2("lp");
   const baseRef = input.base ?? await detectDefaultBase(cwd);
   const baseResolved = await git(cwd, ["rev-parse", "--verify", baseRef], {
@@ -1924,6 +1976,7 @@ async function getLocalPrNameStatus(cwd, id3) {
 }
 async function attachLocalPr(cwd, input) {
   const root2 = await requireGitRoot(cwd);
+  await assertNoDirtyPluginBuildArtifacts(root2);
   const { runGh: runGh2 } = await Promise.resolve().then(() => (init_github_ops(), github_ops_exports));
   const source2 = input.source.trim();
   let headRef;
@@ -2062,6 +2115,7 @@ var init_prs = __esm({
     init_watch();
     init_learnings();
     init_export_gate();
+    init_plugin_dirt();
     ALL_SEARCH_FIELDS = ["title", "body", "comment", "file"];
   }
 });
@@ -87972,6 +88026,7 @@ async function resolveMcpGitRoot(explicitCwd) {
 
 // packages/core/src/index.ts
 init_worktrees();
+init_plugin_dirt();
 init_prs();
 init_watch();
 
@@ -88355,6 +88410,7 @@ init_prs();
 init_watch();
 init_worktrees();
 init_ci_failure();
+init_plugin_dirt();
 
 // packages/core/src/export.ts
 init_git();
@@ -89271,7 +89327,7 @@ var tools = [
   },
   {
     name: "create_local_pr",
-    description: "Create a local PR (unpublished review loop) from the current branch or a named head. Only when the user asked for a local PR / loop / /start / /steward (or an existing live loop needs a packet). Always set body to a reviewer summary (why, what changed, how to test). Do not git push or gh pr create.",
+    description: "Create a local PR (unpublished review loop) from the current branch or a named head. Only when the user asked for a local PR / loop / /start / /steward (or an existing live loop needs a packet). Always set body to a reviewer summary (why, what changed, how to test). After create, Switch/open the returned worktreePath (../<repo>.loops/<id>) and do all edits/commits/CI there \u2014 never in primary when an exclusive worktree exists. Refuses if primary has dirty tracked packages/plugin/hooks|mcp/*.cjs build artifacts (stash/restore first). Do not git push or gh pr create.",
     inputSchema: {
       type: "object",
       properties: {
