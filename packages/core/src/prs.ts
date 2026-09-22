@@ -32,6 +32,7 @@ import { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
 import { getRepoWatch, resumeWatchRole } from "./watch.js";
 import { addLearnings, extractLearningsFromResolvedComments, runPreflight } from "./learnings.js";
 import { normalizeExportGate, pendingExportGate } from "./export-gate.js";
+import { assertNoDirtyPluginBuildArtifacts } from "./plugin-dirt.js";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -268,6 +269,7 @@ export async function resumeWatchForNextLoop(cwd: string): Promise<void> {
 
 export async function createLocalPr(cwd: string, input: CreateLocalPrInput = {}): Promise<LocalPr> {
   const root = await requireGitRoot(cwd);
+  await assertNoDirtyPluginBuildArtifacts(root);
   const id = newId("lp");
   const baseRef = input.base ?? (await detectDefaultBase(cwd));
   const baseResolved = await git(cwd, ["rev-parse", "--verify", baseRef], {
@@ -958,6 +960,7 @@ export interface AttachLocalPrInput {
 
 export async function attachLocalPr(cwd: string, input: AttachLocalPrInput): Promise<LocalPr> {
   const root = await requireGitRoot(cwd);
+  await assertNoDirtyPluginBuildArtifacts(root);
   const { runGh } = await import("./github-ops.js");
 
   // Parse input to determine if it's a PR number/URL or branch

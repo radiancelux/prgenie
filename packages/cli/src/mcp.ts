@@ -448,7 +448,7 @@ export const tools = [
   {
     name: "create_local_pr",
     description:
-      "Create a local PR (unpublished review loop) from the current branch or a named head. Only when the user asked for a local PR / loop / /start / /steward (or an existing live loop needs a packet). Always set body to a reviewer summary (why, what changed, how to test). Do not git push or gh pr create.",
+      "Create a local PR (unpublished review loop) from the current branch or a named head. Only when the user asked for a local PR / loop / /start / /steward (or an existing live loop needs a packet). Always set body to a reviewer summary (why, what changed, how to test). After create, Switch/open the returned worktreePath (../<repo>.loops/<id>) and do all edits/commits/CI there — never in primary when an exclusive worktree exists. Refuses if primary has dirty tracked packages/plugin/hooks|mcp/*.cjs build artifacts (stash/restore first). Do not git push or gh pr create.",
     inputSchema: {
       type: "object",
       properties: {

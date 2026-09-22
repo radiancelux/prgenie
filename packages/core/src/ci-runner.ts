@@ -1,4 +1,6 @@
 import { exec } from "node:child_process";
+import { createRequire } from "node:module";
+import path from "node:path";
 import { promisify } from "node:util";
 import { getCachedResult, recordCheckPass } from "./ci-cache.js";
 import {
@@ -27,6 +29,28 @@ import {
 } from "./progress.js";
 
 const execAsync = promisify(exec);
+
+/**
+ * Resolve prettier from the CI repo cwd, not the MCP/CLI bundle location.
+ * Bundles mark prettier external; linked-plugin installs under ~/.cursor/plugins
+ * have no node_modules, so bare `import("prettier")` fails MODULE_NOT_FOUND.
+ */
+export function resolvePrettierFromCwd(cwd: string): string {
+  return createRequire(path.join(cwd, "package.json")).resolve("prettier");
+}
+
+function loadPrettierFromCwd(cwd: string): typeof import("prettier") {
+  // require() (not import()) so CJS prettier exports land on the return value,
+  // not under `.default` the way `import(fileURL)` of index.cjs does.
+  return createRequire(path.join(cwd, "package.json"))("prettier") as typeof import("prettier");
+}
+
+/** Temp git fixtures and repos without a local prettier install. */
+function isPrettierUnresolved(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as NodeJS.ErrnoException).code;
+  return code === "MODULE_NOT_FOUND" || /Cannot find module ['"]prettier['"]/.test(err.message);
+}
 
 export interface CiCheckResult {
   name: string;
@@ -82,7 +106,11 @@ export interface CiRunnerOptions {
 async function getTrackedFiles(cwd: string): Promise<string[]> {
   try {
     // Get all tracked files, excluding submodules and symlinks
-    const { stdout } = await execAsync("git ls-files --exclude-standard", { cwd });
+    const { stdout } = await execAsync("git ls-files --exclude-standard", {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: 8 * 1024 * 1024,
+    });
     const files = stdout.trim().split("\n").filter(Boolean);
 
     // Filter out files that prettier can't or shouldn't check
@@ -148,6 +176,7 @@ async function getTrackedFiles(cwd: string): Promise<string[]> {
 
     return validFiles;
   } catch {
+    // Not a git repo (unit fixtures) or ls-files failed — caller falls back to package script.
     return [];
   }
 }
@@ -165,8 +194,7 @@ async function checkFormatFromBlobs(
   files: string[],
   signal?: AbortSignal,
 ): Promise<void> {
-  const prettier = await import("prettier");
-  const path = await import("node:path");
+  const prettier = loadPrettierFromCwd(cwd);
   const failures: string[] = [];
 
   for (const file of files) {
@@ -193,7 +221,8 @@ async function checkFormatFromBlobs(
       if (!ok) failures.push(file);
     } catch (err) {
       if (isAbortError(err) || signal?.aborted) throw abortError();
-      failures.push(file);
+      const detail = err instanceof Error ? err.message : String(err);
+      failures.push(`${file} (${detail})`);
     }
   }
 
@@ -238,16 +267,27 @@ async function runOneCheck(
     if (check === "format:check") {
       const tracked = await getTrackedFiles(cwd);
       if (tracked.length > 0) {
-        await checkFormatFromBlobs(cwd, tracked, signal);
-        const elapsedMs = Date.now() - started;
-        onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
+        let checkedBlobs = false;
         try {
-          await recordCheckPass(cwd, check);
-        } catch {
-          // Check passed; cache write failed — ignore and continue without cache
+          await checkFormatFromBlobs(cwd, tracked, signal);
+          checkedBlobs = true;
+        } catch (err) {
+          if (isAbortError(err) || signal?.aborted) throw abortError();
+          // Real format failures still fail. Missing prettier (unit fixtures) uses the package script.
+          if (!isPrettierUnresolved(err)) throw err;
         }
-        return { name: check, passed: true, elapsedMs, reason };
+        if (checkedBlobs) {
+          const elapsedMs = Date.now() - started;
+          onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
+          try {
+            await recordCheckPass(cwd, check);
+          } catch {
+            // Check passed; cache write failed — ignore and continue without cache
+          }
+          return { name: check, passed: true, elapsedMs, reason };
+        }
       }
+      // No tracked prettier files, not a git repo, or prettier is not installed in cwd.
     }
 
     await execAsync(command, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });

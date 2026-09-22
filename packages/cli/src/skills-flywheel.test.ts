@@ -57,6 +57,8 @@ test("/start skill stays implementor-only and does not arm listen", () => {
   assert.match(body, /You are the \*\*implementor\*\*/);
   assert.match(body, /This skill is \*\*implementor-only\*\*/);
   assert.match(body, /It is not `\/steward`/);
+  assert.match(body, /Switch \/ open `worktreePath`/);
+  assert.match(body, /\.loops\/<id>/);
   assert.doesNotMatch(body, /start \*\*`\/watch-inbox`\*\*/);
   assert.doesNotMatch(body, /\/watch-ready`\*\*/);
 });

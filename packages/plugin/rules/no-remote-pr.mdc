@@ -28,9 +28,11 @@ If PR Genie MCP / `steward_next` / `bind_steward` are unavailable during `/stewa
 
 Apply this section only when the user opted in (`/start`, `/steward` Task, `/local-pr`, or explicit loop ask) **or** `get_local_pr` / `list_local_prs` shows a live loop on this branch. Otherwise: do not call `create_local_pr`.
 
+After `create_local_pr`, **Switch / open `worktreePath`** (`../<repo>.loops/<id>`) before any edits. All commits and CI happen there. Never implement in the primary folder when an exclusive worktree exists.
+
 When work on this branch is ready for review:
 
-1. Commit on the current branch if needed (do not switch branches).
+1. Commit on the current branch **in the exclusive worktree** if needed (do not switch branches; do not commit on primary).
 2. Create or update a local PR with `create_local_pr` / `update_local_pr`. Always set `body` to a reviewer summary: why, what changed, how to test. Title is not enough.
 3. Run MCP `run_ci` / `prgenie ci <id>` (same smart checks as shepherd; see `docs/ci-checks.md`) and fix failures in-worktree. Skip only if the toolchain cannot run.
 4. `set_status` ready and `add_comment` with `role=agent` saying review is requested. Stop. Do not review this loop yourself. Do not open a GitHub pull request.

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
@@ -32,6 +32,7 @@ import {
   loopWorktreeIdentity,
   peelStashMessage,
   pruneArchivedLoopWorktree,
+  pruneLoopWorktrees,
   refusePrimaryWorktreeIfParallel,
   releaseArchivedLoop,
   reopenLocalPr,
@@ -57,19 +58,6 @@ function git(args: string[], cwd = repo): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
-async function pruneLoopWorktrees(): Promise<void> {
-  const trees = await listWorktrees(repo);
-  for (const t of trees) {
-    if (!loopWorktreeIdentity(t.path)) continue;
-    try {
-      git(["worktree", "remove", "--force", "--", t.path]);
-    } catch {
-      // already gone
-    }
-  }
-  git(["worktree", "prune"]);
-}
-
 before(async () => {
   repo = await mkdtemp(path.join(tmpdir(), "prgenie-"));
   git(["init", "-b", "main"]);
@@ -88,7 +76,7 @@ beforeEach(async () => {
   if (!repo) return;
   const trees = await listWorktrees(repo);
   if (trees.some((t) => loopWorktreeIdentity(t.path))) {
-    await pruneLoopWorktrees();
+    await pruneLoopWorktrees(repo);
   }
   try {
     git(["checkout", "feat/widget"]);
@@ -940,4 +928,41 @@ test("localPrMatchesSearch matches title body comment and file", async () => {
     titleOnly.some((p) => p.id === pr.id),
     false,
   );
+});
+
+test("createLocalPr refuses dirty tracked plugin build artifacts on primary", async () => {
+  const hookDir = path.join(repo, "packages", "plugin", "hooks");
+  const mcpDir = path.join(repo, "packages", "plugin", "mcp");
+  await mkdir(hookDir, { recursive: true });
+  await mkdir(mcpDir, { recursive: true });
+  await writeFile(path.join(hookDir, "github-gate.cjs"), "/* clean */\n");
+  await writeFile(path.join(mcpDir, "server.cjs"), "/* clean */\n");
+  git(["add", "packages/plugin"]);
+  git(["commit", "-m", "track plugin bundles"]);
+  await writeFile(path.join(hookDir, "github-gate.cjs"), "/* dirty build */\n");
+  await writeFile(path.join(mcpDir, "server.cjs"), "/* dirty build */\n");
+
+  await assert.rejects(
+    () => createLocalPr(repo, { title: "Should refuse dirt", base: "main" }),
+    (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /dirty tracked plugin build artifacts/);
+      assert.match(err.message, /git stash push|git restore/);
+      assert.match(err.message, /packages\/plugin\/hooks\/github-gate\.cjs/);
+      return true;
+    },
+  );
+
+  git(["restore", "--", "packages/plugin"]);
+});
+
+test("pruneLoopWorktrees clears leftover .loops between cases", async () => {
+  const first = await createLocalPr(repo, { title: "Prune A", base: "main" });
+  assert.ok(first.worktreePath);
+  const second = await createLocalPr(repo, { title: "Prune B", base: "main" });
+  assert.ok(second.worktreePath);
+  assert.notEqual(first.worktreePath, second.worktreePath);
+  await pruneLoopWorktrees(repo);
+  const trees = await listWorktrees(repo);
+  assert.equal(trees.filter((t) => loopWorktreeIdentity(t.path)).length, 0);
 });

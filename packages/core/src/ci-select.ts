@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { git } from "./git.js";
+import { isPluginBuildArtifact } from "./plugin-dirt.js";
 import { getLocalPrNameStatus } from "./prs.js";
 
 /** Default local CI suite (shepherd / implementor preflight) when mapping is uncertain or config-wide. */
@@ -94,7 +95,7 @@ export function classifyCiPath(filePath: string): CiPathKind {
   if (/\.([cm]?[jt]sx?)$/.test(lower)) return "source";
 
   if (
-    /\.(md|txt)$/.test(lower) ||
+    /\.(md|mdc|txt)$/.test(lower) ||
     p.startsWith("docs/") ||
     /^(readme|license|changelog|authors|roadmap)(\.|$)/i.test(base)
   ) {
@@ -196,6 +197,8 @@ export function selectCiChecks(changedPaths: string[]): CiCheckSelection {
   const pkgs = new Set<ScopablePackage>();
   let unscoping = false;
   for (const p of codePaths) {
+    // Bundled plugin MCP/hooks outputs track core changes; they must not force uncertain → full suite.
+    if (isPluginBuildArtifact(p)) continue;
     const name = packageFromCiPath(p);
     if (name && isScopablePackage(name)) {
       pkgs.add(name);

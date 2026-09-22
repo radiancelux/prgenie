@@ -1,12 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createRequire } from "node:module";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { abortExportGate } from "./export-validation.js";
-import { runCiChecks, runLoopCi } from "./ci-runner.js";
+import { resolvePrettierFromCwd, runCiChecks, runLoopCi } from "./ci-runner.js";
 import { git } from "./git.js";
 import { isAbortError } from "./progress.js";
 import { createLocalPr } from "./prs.js";
@@ -42,6 +43,30 @@ async function initTestRepo(): Promise<string> {
   );
   return tmp;
 }
+
+describe("resolvePrettierFromCwd", () => {
+  it("resolves prettier from the CI cwd, not the calling module path", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-prettier-cwd-"));
+    const fakePlugin = await mkdtemp(join(tmpdir(), "prgenie-fake-plugin-"));
+    try {
+      await writeFile(join(repo, "package.json"), JSON.stringify({ name: "ci-cwd" }));
+      await linkNodeModules(repo, join(process.cwd(), "node_modules"));
+      // Isolated plugin tree with package.json but no prettier (mirrors ~/.cursor/plugins/...).
+      await mkdir(join(fakePlugin, "mcp"), { recursive: true });
+      await writeFile(join(fakePlugin, "package.json"), JSON.stringify({ name: "fake-plugin" }));
+      await writeFile(join(fakePlugin, "mcp", "server.cjs"), "module.exports = {};\n");
+
+      const fromCwd = resolvePrettierFromCwd(repo);
+      assert.match(fromCwd, /prettier/);
+
+      const requireFromPlugin = createRequire(join(fakePlugin, "mcp", "server.cjs"));
+      assert.throws(() => requireFromPlugin.resolve("prettier"), /Cannot find module/);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+      await rm(fakePlugin, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("runCiChecks", () => {
   it("returns all passed when all checks succeed", async () => {

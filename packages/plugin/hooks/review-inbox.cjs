@@ -44,6 +44,13 @@ function formatGitMissingError(platform = process.platform) {
   }
   return `git is not resolvable from this process. Install git and ensure it is on PATH, or set ${PRGENIE_GIT_ENV} to the absolute path of the git binary.`;
 }
+function formatGitSpawnError(binary, err, platform = process.platform) {
+  const detail = err.code ? `${err.code}: ${err.message}` : err.message;
+  if (err.code === "ENOENT") {
+    return formatGitMissingError(platform);
+  }
+  return `Failed to spawn git at "${binary}" (${detail}). ` + formatGitMissingError(platform);
+}
 function pathDelimiter(platform) {
   return platform === "win32" ? ";" : ":";
 }
@@ -151,12 +158,8 @@ async function git(cwd, args, options = {}) {
       stderr += chunk;
     });
     child.on("error", (err) => {
-      if (err.code === "ENOENT") {
-        clearGitBinaryCache();
-        reject(new GitBinaryError(formatGitMissingError()));
-        return;
-      }
-      reject(err);
+      clearGitBinaryCache();
+      reject(new GitBinaryError(formatGitSpawnError(binary, err)));
     });
     const onAbort2 = () => {
       child.kill("SIGTERM");
@@ -335,6 +338,15 @@ var init_worktrees = __esm({
     import_node_fs2 = require("node:fs");
     import_node_path2 = __toESM(require("node:path"), 1);
     init_git();
+  }
+});
+
+// packages/core/src/plugin-dirt.ts
+var init_plugin_dirt = __esm({
+  "packages/core/src/plugin-dirt.ts"() {
+    "use strict";
+    init_git();
+    init_worktrees();
   }
 });
 
@@ -655,6 +667,7 @@ var init_prs = __esm({
     init_watch();
     init_learnings();
     init_export_gate();
+    init_plugin_dirt();
     ALL_SEARCH_FIELDS = ["title", "body", "comment", "file"];
   }
 });
@@ -718,6 +731,7 @@ var init_ci_select = __esm({
   "packages/core/src/ci-select.ts"() {
     "use strict";
     init_git();
+    init_plugin_dirt();
     init_prs();
     SCOPABLE_PACKAGES = ["core", "cli", "extension"];
     SCOPABLE_SET = new Set(SCOPABLE_PACKAGES);
@@ -777,6 +791,7 @@ init_git();
 
 // packages/core/src/index.ts
 init_worktrees();
+init_plugin_dirt();
 init_prs();
 init_watch();
 
@@ -799,6 +814,7 @@ init_prs();
 init_watch();
 init_worktrees();
 init_ci_failure();
+init_plugin_dirt();
 
 // packages/core/src/export.ts
 init_git();

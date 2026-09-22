@@ -14,12 +14,15 @@ Changed paths = committed `baseSha...headSha` plus dirty/untracked files in the 
 | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------- |
 | Empty / unclassifiable (binaries, unknown extensions)                                                     | Full suite                                                 | `uncertain path mapping` / `uncertain → full suite` |
 | Config / CI (`package.json`, lockfiles, `tsconfig*`, eslint, prettier config, `.github/**`, `scripts/**`) | Full suite                                                 | `config/CI scripts changed; running full suite`     |
-| Docs / markdown only (`*.md`, `docs/**`, LICENSE, README, `*.txt`)                                        | `format:check` only                                        | `docs/markdown-only → format:check`; skip units     |
+| Docs / markdown only (`*.md`, `*.mdc`, `docs/**`, LICENSE, README, `*.txt`)                               | `format:check` only                                        | `docs/markdown-only → format:check`; skip units     |
 | Docs + style (`*.css`, non-config `*.json`)                                                               | `format:check` only                                        | format; skip lint/test/build                        |
 | `packages/core/**` source/tests (+ optional docs)                                                         | `format:check`, `lint:core`, `typecheck:core`, `test:core` | confident — **not** full monorepo `pnpm test`       |
 | `packages/cli/**` / `packages/extension/**` (same pattern)                                                | `format:check` + `lint\|typecheck\|test:<pkg>`             | per-package unit + typecheck/lint                   |
 | Multiple scopable packages                                                                                | format + each package’s lint→typecheck→test in order       | fail-fast stops after first package suite fail      |
-| `packages/plugin/**` code or other unscoping paths                                                        | Full suite                                                 | `uncertain → full suite`                            |
+| Bundled `packages/plugin/hooks\|mcp/*.cjs` + scopable core/cli/extension                                  | Same as the scopable package row(s)                        | build artifacts ignored for scoping                 |
+| Other `packages/plugin/**` code, or only those `.cjs` with no scopable package                            | Full suite                                                 | `uncertain → full suite`                            |
+
+Bundled MCP/hooks `.cjs` outputs (`isPluginBuildArtifact`) are skipped when collecting package scopes so a rebuild beside `packages/core|cli|extension` does not force full suite. Alone, or with other unscoping plugin paths, mapping stays uncertain → full suite.
 
 **Confident mapping forbids whole-repo `pnpm test`.** Agents must run MCP `run_ci` / `prgenie ci` (or the scoped commands it prints) and must **print** the returned `{ checks, reason }` plan. Do not substitute a manual full-suite `pnpm test` when `packageScoped` / reasons say the mapping is confident.
 

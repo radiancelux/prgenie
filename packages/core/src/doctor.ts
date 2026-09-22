@@ -27,6 +27,7 @@ import {
   inspectMcpJson,
   sameNameCollision,
 } from "./plugin-mcp.js";
+import { dirtyPluginDoctorFix, listDirtyPluginBuildArtifacts } from "./plugin-dirt.js";
 
 export interface DoctorCheck {
   id: string;
@@ -347,6 +348,17 @@ export async function runDoctor(cwd: string, options?: { home?: string }): Promi
       orphans.length === 0
         ? undefined
         : `Remove with git worktree remove <path> (or reopen/delete the matching loop): ${orphans.join("; ")}`,
+  });
+
+  const pluginDirt = await listDirtyPluginBuildArtifacts(root).catch(() => [] as string[]);
+  checks.push({
+    id: "plugin-dirt",
+    ok: pluginDirt.length === 0,
+    summary:
+      pluginDirt.length === 0
+        ? "No dirty tracked plugin build artifacts on primary."
+        : `Primary has ${pluginDirt.length} dirty tracked plugin build artifact(s): ${pluginDirt.join(", ")}`,
+    fix: pluginDirt.length === 0 ? undefined : dirtyPluginDoctorFix(pluginDirt),
   });
 
   const accounts = await listGhAccounts().catch(() => []);

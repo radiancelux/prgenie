@@ -161,6 +161,11 @@ function printPr(pr: LocalPr): void {
   process.stdout.write(
     `${pr.id}  ${pr.status.padEnd(18)}  ${pr.headRef} -> ${pr.baseRef}\n  ${pr.title}${filesNote}${summary}${exportNote}\n`,
   );
+  if (pr.worktreePath) {
+    process.stdout.write(
+      `  → Switch / open worktree before implementing (never commit on primary while this exists).\n`,
+    );
+  }
 }
 
 async function cwdRepo(): Promise<string> {
