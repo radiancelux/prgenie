@@ -87328,7 +87328,11 @@ ${codeblock}`, options7);
 // packages/core/src/ci-runner.ts
 async function getTrackedFiles(cwd) {
   try {
-    const { stdout } = await execAsync("git ls-files --exclude-standard", { cwd });
+    const { stdout } = await execAsync("git ls-files --exclude-standard", {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: 8 * 1024 * 1024
+    });
     const files = stdout.trim().split("\n").filter(Boolean);
     const fs11 = await import("node:fs/promises");
     const path18 = await import("node:path");
@@ -87378,8 +87382,10 @@ async function getTrackedFiles(cwd) {
       }
     }
     return validFiles;
-  } catch {
-    return [];
+  } catch (err) {
+    throw new Error(
+      `Failed to list tracked files for format:check: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 }
 async function checkFormatFromBlobs(cwd, files, signal) {
@@ -87437,16 +87443,14 @@ async function runOneCheck(cwd, check2, options7) {
   try {
     if (check2 === "format:check") {
       const tracked = await getTrackedFiles(cwd);
-      if (tracked.length > 0) {
-        await checkFormatFromBlobs(cwd, tracked, signal);
-        const elapsedMs2 = Date.now() - started;
-        onProgress?.({ phase: "ci", check: check2, state: "pass", command, elapsedMs: elapsedMs2 });
-        try {
-          await recordCheckPass(cwd, check2);
-        } catch {
-        }
-        return { name: check2, passed: true, elapsedMs: elapsedMs2, reason };
+      await checkFormatFromBlobs(cwd, tracked, signal);
+      const elapsedMs2 = Date.now() - started;
+      onProgress?.({ phase: "ci", check: check2, state: "pass", command, elapsedMs: elapsedMs2 });
+      try {
+        await recordCheckPass(cwd, check2);
+      } catch {
       }
+      return { name: check2, passed: true, elapsedMs: elapsedMs2, reason };
     }
     await execAsync(command, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });
     const elapsedMs = Date.now() - started;
