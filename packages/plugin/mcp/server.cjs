@@ -2670,7 +2670,7 @@ function classifyCiPath(filePath) {
     return "test";
   }
   if (/\.([cm]?[jt]sx?)$/.test(lower)) return "source";
-  if (/\.(md|txt)$/.test(lower) || p5.startsWith("docs/") || /^(readme|license|changelog|authors|roadmap)(\.|$)/i.test(base)) {
+  if (/\.(md|mdc|txt)$/.test(lower) || p5.startsWith("docs/") || /^(readme|license|changelog|authors|roadmap)(\.|$)/i.test(base)) {
     return "docs";
   }
   if (/\.(css|scss|less|html|xml|json|ya?ml)$/.test(lower)) return "style";
@@ -2742,6 +2742,7 @@ function selectCiChecks(changedPaths) {
   const pkgs = /* @__PURE__ */ new Set();
   let unscoping = false;
   for (const p5 of codePaths) {
+    if (isPluginBuildArtifact(p5)) continue;
     const name = packageFromCiPath(p5);
     if (name && isScopablePackage(name)) {
       pkgs.add(name);
@@ -2831,6 +2832,7 @@ var init_ci_select = __esm({
     "use strict";
     import_node_fs4 = require("node:fs");
     init_git();
+    init_plugin_dirt();
     init_prs();
     DEFAULT_CI_CHECKS = ["format:check", "lint", "typecheck", "test", "build"];
     SCOPABLE_PACKAGES = ["core", "cli", "extension"];

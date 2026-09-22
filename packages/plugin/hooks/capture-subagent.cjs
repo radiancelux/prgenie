@@ -1243,6 +1243,7 @@ var init_ci_select = __esm({
   "packages/core/src/ci-select.ts"() {
     "use strict";
     init_git();
+    init_plugin_dirt();
     init_prs();
     SCOPABLE_PACKAGES = ["core", "cli", "extension"];
     SCOPABLE_SET = new Set(SCOPABLE_PACKAGES);
