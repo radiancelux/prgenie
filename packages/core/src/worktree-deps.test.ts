@@ -35,12 +35,30 @@ describe("isCiEnvFailureOutput", () => {
     );
     assert.equal(isCiEnvFailureOutput("Cannot find module 'eslint'"), true);
     assert.equal(isCiEnvFailureOutput("Missing toolchain in worktree: eslint"), true);
+    assert.equal(isCiEnvFailureOutput("tsx: command not found"), true);
   });
 
   it("does not treat product assertion failures as env unhealthy", () => {
     assert.equal(isCiEnvFailureOutput("AssertionError: expected 1 to equal 2"), false);
     assert.equal(isCiEnvFailureOutput("✖ 3 problems (3 errors, 0 warnings)"), false);
     assert.equal(isCiEnvFailureOutput("error TS2304: Cannot find name 'foo'"), false);
+  });
+
+  it("does not soft-classify product logs that merely mention command not found", () => {
+    const productLog = [
+      "not ok 1 - widget renders",
+      "  AssertionError: expected helper message to include command not found",
+      "  at TestContext.<anonymous> (test.ts:12)",
+    ].join("\n");
+    assert.equal(isCiEnvFailureOutput(productLog), false);
+    assert.equal(
+      isCiEnvFailureOutput(
+        "FAIL packages/core — docs say: if you see command not found, install deps",
+      ),
+      false,
+    );
+    // Unrelated binary missing on first line is still not a PR Genie CI toolchain miss.
+    assert.equal(isCiEnvFailureOutput("ffmpeg: command not found"), false);
   });
 });
 
@@ -157,6 +175,108 @@ describe("ensureWorktreeCiToolchain", () => {
           join(worktree, "packages", "cli", "node_modules", "@prgenie", "core", "WORKTREE"),
         ),
       );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("removes a primary-pinned partial package mirror and retargets @prgenie to the worktree", async () => {
+    const root = await mkdtemp(join(tmpdir(), "prgenie-wt-deps-partial-"));
+    try {
+      const primary = await makePrimaryWithBins(root);
+      await mkdir(join(primary, "packages", "core"), { recursive: true });
+      await writeFile(
+        join(primary, "packages", "core", "package.json"),
+        '{"name":"@prgenie/core"}',
+      );
+      await writeFile(join(primary, "packages", "core", "PRIMARY"), "1");
+      await mkdir(join(primary, "packages", "cli", "node_modules", "@prgenie"), {
+        recursive: true,
+      });
+      const type = process.platform === "win32" ? "junction" : "dir";
+      await symlink(
+        join(primary, "packages", "core"),
+        join(primary, "packages", "cli", "node_modules", "@prgenie", "core"),
+        type,
+      );
+
+      const worktree = join(root, "prgenie.loops", "lp-badc0de1");
+      await mkdir(join(worktree, "packages", "core"), { recursive: true });
+      await writeFile(
+        join(worktree, "packages", "core", "package.json"),
+        '{"name":"@prgenie/core"}',
+      );
+      await writeFile(join(worktree, "packages", "core", "WORKTREE"), "1");
+      await symlink(join(primary, "node_modules"), join(worktree, "node_modules"), type);
+
+      // Simulate a prior partial/wrong-tree mirror (dest exists, @prgenie → primary).
+      await mkdir(join(worktree, "packages", "cli", "node_modules", "@prgenie"), {
+        recursive: true,
+      });
+      await symlink(
+        join(primary, "packages", "core"),
+        join(worktree, "packages", "cli", "node_modules", "@prgenie", "core"),
+        type,
+      );
+      assert.ok(
+        existsSync(
+          join(worktree, "packages", "cli", "node_modules", "@prgenie", "core", "PRIMARY"),
+        ),
+      );
+
+      const result = await ensureWorktreeCiToolchain(worktree, {
+        primaryPath: primary,
+        skipInstall: true,
+      });
+      assert.equal(result.ok, true, result.message);
+      assert.ok(
+        existsSync(
+          join(worktree, "packages", "cli", "node_modules", "@prgenie", "core", "WORKTREE"),
+        ),
+      );
+      assert.equal(
+        existsSync(
+          join(worktree, "packages", "cli", "node_modules", "@prgenie", "core", "PRIMARY"),
+        ),
+        false,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces package mirror failure as env unhealthy (does not swallow)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "prgenie-wt-deps-mirror-fail-"));
+    try {
+      const primary = await makePrimaryWithBins(root);
+      // Primary has cli/@prgenie/core but worktree has no packages/core → remirror must fail closed.
+      await mkdir(join(primary, "packages", "core"), { recursive: true });
+      await writeFile(
+        join(primary, "packages", "core", "package.json"),
+        '{"name":"@prgenie/core"}',
+      );
+      await mkdir(join(primary, "packages", "cli", "node_modules", "@prgenie"), {
+        recursive: true,
+      });
+      const type = process.platform === "win32" ? "junction" : "dir";
+      await symlink(
+        join(primary, "packages", "core"),
+        join(primary, "packages", "cli", "node_modules", "@prgenie", "core"),
+        type,
+      );
+
+      const worktree = join(root, "prgenie.loops", "lp-f00dcafe");
+      await mkdir(worktree, { recursive: true });
+      await symlink(join(primary, "node_modules"), join(worktree, "node_modules"), type);
+      // Root bins resolvable — without this fix ensure would still return ok.
+
+      const result = await ensureWorktreeCiToolchain(worktree, {
+        primaryPath: primary,
+        skipInstall: true,
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.envUnhealthy, true);
+      assert.match(result.message, /mirror failed|missing packages\/core|Cannot retarget/i);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

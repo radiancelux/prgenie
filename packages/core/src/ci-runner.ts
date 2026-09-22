@@ -329,7 +329,7 @@ async function runOneCheck(
     const logPath = await writeCiFailureLog(cwd, check, command, output, excerpt);
     const elapsedMs = Date.now() - started;
     const error = formatCiCheckError({ command, excerpt, logPath });
-    const envFail = isCiEnvFailureOutput(`${output.firstLine}\n${output.combined}\n${excerpt}`);
+    const envFail = isCiEnvFailureOutput(output.firstLine);
     onProgress?.({
       phase: "ci",
       check,

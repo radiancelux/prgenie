@@ -294,6 +294,7 @@ export {
   hasCiBin,
   isCiEnvFailureOutput,
   missingCiBins,
+  packagePrgenieLinksPointAtWorktree,
 } from "./worktree-deps.js";
 export type {
   EnsureToolchainOptions,

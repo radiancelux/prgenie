@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { mkdir, symlink, rm } from "node:fs/promises";
 import path from "node:path";
 import { exec } from "node:child_process";
@@ -15,6 +15,10 @@ const execAsync = promisify(exec);
 /** Bins CI must resolve from the worktree (pnpm exec / .bin). turbo/vitest optional. */
 export const REQUIRED_CI_BINS = ["eslint", "tsc", "tsx", "prettier"] as const;
 export const OPTIONAL_CI_BINS = ["turbo", "vitest"] as const;
+
+/** Tool names that may appear in spawn / MODULE_NOT_FOUND env failures. */
+const CI_ENV_TOOL_NAMES = [...REQUIRED_CI_BINS, ...OPTIONAL_CI_BINS, "typescript"] as const;
+const CI_ENV_TOOL_ALT = CI_ENV_TOOL_NAMES.join("|");
 
 export type ToolchainLinkMethod = "junction" | "symlink" | "present" | "install" | "none";
 
@@ -72,18 +76,40 @@ export function missingCiBins(
 /**
  * Detect opaque "tool not found" failures vs real product CI fails.
  * Used so shepherd can soft-surface env unhealthy without hard-blocking export.
+ *
+ * Only the first non-empty line (spawn / shell failure) is probed — never the full
+ * log — so product fixtures that mention "command not found" stay product fails.
+ * Matches must name a known CI tool (eslint/tsc/tsx/prettier/…).
  */
 export function isCiEnvFailureOutput(text: string): boolean {
   const t = text.replace(/\r\n/g, "\n");
+  if (/Missing toolchain in worktree/i.test(t) || /CI environment unhealthy/i.test(t)) {
+    return true;
+  }
+
+  const firstLine =
+    t
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? "";
+  // Cap so buried product logs never get scanned even if callers pass combined output.
+  const probe = firstLine.slice(0, 480);
+  if (!probe) return false;
+
+  const tool = CI_ENV_TOOL_ALT;
   return (
-    /is not recognized as an internal or external command/i.test(t) ||
-    /command not found/i.test(t) ||
-    /ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL/i.test(t) ||
-    /Command ["'].+["'] not found/i.test(t) ||
-    /Cannot find module ['"](?:eslint|typescript|tsx|prettier|turbo|vitest)/i.test(t) ||
-    (/MODULE_NOT_FOUND/i.test(t) && /(?:eslint|typescript|tsx|prettier|turbo|vitest)/i.test(t)) ||
-    /Missing toolchain in worktree/i.test(t) ||
-    /CI environment unhealthy/i.test(t)
+    new RegExp(
+      `['"]?(?:${tool})['"]?(?:\\.cmd|\\.CMD|\\.exe)?\\s+is not recognized as an internal or external command`,
+      "i",
+    ).test(probe) ||
+    new RegExp(
+      `(?:^|[\\s\`'"])(?:${tool})(?:\\.cmd|\\.CMD|\\.exe)?\\s*:\\s*command not found`,
+      "i",
+    ).test(probe) ||
+    new RegExp(`Command ["'](?:${tool})["'] not found`, "i").test(probe) ||
+    (/ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL/i.test(probe) && new RegExp(tool, "i").test(probe)) ||
+    new RegExp(`Cannot find module ['"](?:${tool})`, "i").test(probe) ||
+    (/MODULE_NOT_FOUND/i.test(probe) && new RegExp(tool, "i").test(probe))
   );
 }
 
@@ -145,6 +171,62 @@ async function linkDirectory(targetLink: string, sourceDir: string): Promise<Too
   return process.platform === "win32" ? "junction" : "symlink";
 }
 
+function resolvePathCanon(absPath: string): string | null {
+  try {
+    return realpathSync(absPath);
+  } catch {
+    try {
+      return path.resolve(absPath);
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * True when every `@prgenie/<pkg>` under `packages/<packageName>/node_modules`
+ * resolves into the worktree's `packages/<pkg>` (not the primary tree).
+ * Packages without an `@prgenie` scope (and primary without one) are ok.
+ */
+export function packagePrgenieLinksPointAtWorktree(
+  worktreeDir: string,
+  packageName: string,
+  primaryDir?: string,
+): { ok: boolean; detail?: string } {
+  const scope = path.join(worktreeDir, "packages", packageName, "node_modules", "@prgenie");
+  const primaryScope = primaryDir
+    ? path.join(primaryDir, "packages", packageName, "node_modules", "@prgenie")
+    : null;
+  if (!isExistingDir(scope)) {
+    // Dest missing @prgenie while primary has one → incomplete mirror.
+    if (primaryScope && isExistingDir(primaryScope)) {
+      return {
+        ok: false,
+        detail: `packages/${packageName}/node_modules is missing @prgenie (incomplete mirror)`,
+      };
+    }
+    return { ok: true };
+  }
+  for (const ws of readdirSync(scope)) {
+    const expected = path.join(worktreeDir, "packages", ws);
+    if (!isExistingDir(expected)) {
+      return {
+        ok: false,
+        detail: `packages/${packageName}/node_modules/@prgenie/${ws} present but worktree lacks packages/${ws}`,
+      };
+    }
+    const resolved = resolvePathCanon(path.join(scope, ws));
+    const expectedCanon = resolvePathCanon(expected);
+    if (!resolved || !expectedCanon || !sameFsPath(resolved, expectedCanon)) {
+      return {
+        ok: false,
+        detail: `packages/${packageName}/node_modules/@prgenie/${ws} does not resolve to worktree packages/${ws}`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
 async function ensureOneNodeModulesLink(
   worktreeDir: string,
   primaryDir: string,
@@ -176,6 +258,8 @@ async function ensureOneNodeModulesLink(
  * Each entry is junctioned/symlinked from primary, except workspace packages
  * (`@prgenie/*` → worktree `packages/<name>`). Whole-dir junction is unsafe:
  * retargeting nested links would mutate the primary tree.
+ *
+ * Partial / wrong-tree dests are removed and rebuilt — never treated as `present`.
  */
 async function mirrorPackageNodeModules(
   worktreeDir: string,
@@ -188,36 +272,53 @@ async function mirrorPackageNodeModules(
   if (!isExistingDir(source)) {
     return { linked: false, method: "none", path: dest };
   }
+
   if (isExistingDir(dest)) {
-    return { linked: false, method: "present", path: dest };
-  }
-  if (existsSync(dest)) {
+    const check = packagePrgenieLinksPointAtWorktree(worktreeDir, packageName, primaryDir);
+    if (check.ok) {
+      return { linked: false, method: "present", path: dest };
+    }
+    // Partial or primary-pinned @prgenie — tear down and remirror.
+    await rm(dest, { recursive: true, force: true });
+  } else if (existsSync(dest)) {
     await rm(dest, { recursive: true, force: true });
   }
-  await mkdir(dest, { recursive: true });
+
   const method: ToolchainLinkMethod = process.platform === "win32" ? "junction" : "symlink";
-  for (const entry of readdirSync(source)) {
-    const from = path.join(source, entry);
-    const to = path.join(dest, entry);
-    if (entry === "@prgenie") {
-      await mkdir(to, { recursive: true });
-      const scopeSrc = path.join(source, entry);
-      if (!isExistingDir(scopeSrc)) continue;
-      for (const ws of readdirSync(scopeSrc)) {
-        const wsTarget = path.join(worktreeDir, "packages", ws);
-        const wsLink = path.join(to, ws);
-        if (!isExistingDir(wsTarget)) {
-          // Fall back to primary package if worktree lacks it.
-          await linkDirectory(wsLink, path.join(primaryDir, "packages", ws));
-        } else {
+  try {
+    await mkdir(dest, { recursive: true });
+    for (const entry of readdirSync(source)) {
+      const from = path.join(source, entry);
+      const to = path.join(dest, entry);
+      if (entry === "@prgenie") {
+        await mkdir(to, { recursive: true });
+        const scopeSrc = path.join(source, entry);
+        if (!isExistingDir(scopeSrc)) continue;
+        for (const ws of readdirSync(scopeSrc)) {
+          const wsTarget = path.join(worktreeDir, "packages", ws);
+          const wsLink = path.join(to, ws);
+          if (!isExistingDir(wsTarget)) {
+            throw new Error(
+              `Cannot retarget @prgenie/${ws} for packages/${packageName}: worktree is missing packages/${ws}`,
+            );
+          }
           await linkDirectory(wsLink, wsTarget);
         }
+        continue;
       }
-      continue;
+      await linkDirectory(to, from);
     }
-    await linkDirectory(to, from);
+    const verify = packagePrgenieLinksPointAtWorktree(worktreeDir, packageName, primaryDir);
+    if (!verify.ok) {
+      throw new Error(
+        verify.detail ?? `packages/${packageName}/node_modules @prgenie verify failed`,
+      );
+    }
+    return { linked: true, method, path: dest };
+  } catch (err) {
+    await rm(dest, { recursive: true, force: true }).catch(() => undefined);
+    throw err;
   }
-  return { linked: true, method, path: dest };
 }
 
 async function tryPnpmInstall(worktreePath: string): Promise<{ ok: boolean; detail: string }> {
@@ -287,6 +388,7 @@ export async function ensureWorktreeCiToolchain(
   async function linkPackageModules(fromPrimary: string): Promise<void> {
     const packagesRoot = path.join(fromPrimary, "packages");
     if (!isExistingDir(packagesRoot)) return;
+    const mirrorErrors: string[] = [];
     for (const name of readdirSync(packagesRoot)) {
       if (!isExistingDir(path.join(fromPrimary, "packages", name, "node_modules"))) continue;
       try {
@@ -295,9 +397,13 @@ export async function ensureWorktreeCiToolchain(
           linked.push(path.join("packages", name, "node_modules").replace(/\\/g, "/"));
           if (method === "none" || method === "present") method = pkgLink.method;
         }
-      } catch {
-        // Non-fatal — root junction is the happy path.
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        mirrorErrors.push(`${name}: ${detail}`);
       }
+    }
+    if (mirrorErrors.length > 0) {
+      throw new Error(`Package node_modules mirror failed: ${mirrorErrors.join("; ")}`);
     }
   }
 
@@ -352,6 +458,23 @@ export async function ensureWorktreeCiToolchain(
   }
 
   let afterMissing = missingCiBins(cwd, required);
+  if (linkError) {
+    const fixSteps = formatToolchainFixSteps({
+      worktreePath: cwd,
+      primaryPath: primary,
+      missing: afterMissing.length ? afterMissing : undefined,
+    });
+    return {
+      ok: false,
+      envUnhealthy: true,
+      worktreePath: cwd,
+      primaryPath: primary,
+      method,
+      linked,
+      message: `CI environment unhealthy — package/workspace toolchain mirror failed (not a product test/lint failure). ${linkError}`,
+      fixSteps,
+    };
+  }
   if (afterMissing.length === 0) {
     return {
       ok: true,
