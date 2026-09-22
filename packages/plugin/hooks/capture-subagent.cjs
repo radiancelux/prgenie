@@ -1252,7 +1252,7 @@ var init_ci_select = __esm({
 });
 
 // packages/core/src/worktree-deps.ts
-var import_node_child_process2, import_node_util, execAsync;
+var import_node_child_process2, import_node_util, execAsync, REQUIRED_CI_BINS, OPTIONAL_CI_BINS, CI_ENV_TOOL_NAMES, CI_ENV_TOOL_ALT;
 var init_worktree_deps = __esm({
   "packages/core/src/worktree-deps.ts"() {
     "use strict";
@@ -1260,6 +1260,10 @@ var init_worktree_deps = __esm({
     import_node_util = require("node:util");
     init_worktrees();
     execAsync = (0, import_node_util.promisify)(import_node_child_process2.exec);
+    REQUIRED_CI_BINS = ["eslint", "tsc", "tsx", "prettier"];
+    OPTIONAL_CI_BINS = ["turbo", "vitest"];
+    CI_ENV_TOOL_NAMES = [...REQUIRED_CI_BINS, ...OPTIONAL_CI_BINS, "typescript"];
+    CI_ENV_TOOL_ALT = CI_ENV_TOOL_NAMES.join("|");
   }
 });
 

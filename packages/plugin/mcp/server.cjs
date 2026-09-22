@@ -2915,7 +2915,20 @@ function missingCiBins(cwd, required = REQUIRED_CI_BINS) {
 }
 function isCiEnvFailureOutput(text) {
   const t = text.replace(/\r\n/g, "\n");
-  return /is not recognized as an internal or external command/i.test(t) || /command not found/i.test(t) || /ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL/i.test(t) || /Command ["'].+["'] not found/i.test(t) || /Cannot find module ['"](?:eslint|typescript|tsx|prettier|turbo|vitest)/i.test(t) || /MODULE_NOT_FOUND/i.test(t) && /(?:eslint|typescript|tsx|prettier|turbo|vitest)/i.test(t) || /Missing toolchain in worktree/i.test(t) || /CI environment unhealthy/i.test(t);
+  if (/Missing toolchain in worktree/i.test(t) || /CI environment unhealthy/i.test(t)) {
+    return true;
+  }
+  const firstLine = t.split("\n").map((line) => line.trim()).find((line) => line.length > 0) ?? "";
+  const probe = firstLine.slice(0, 480);
+  if (!probe) return false;
+  const tool = CI_ENV_TOOL_ALT;
+  return new RegExp(
+    `['"]?(?:${tool})['"]?(?:\\.cmd|\\.CMD|\\.exe)?\\s+is not recognized as an internal or external command`,
+    "i"
+  ).test(probe) || new RegExp(
+    `(?:^|[\\s\`'"])(?:${tool})(?:\\.cmd|\\.CMD|\\.exe)?\\s*:\\s*command not found`,
+    "i"
+  ).test(probe) || new RegExp(`Command ["'](?:${tool})["'] not found`, "i").test(probe) || /ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL/i.test(probe) && new RegExp(tool, "i").test(probe) || new RegExp(`Cannot find module ['"](?:${tool})`, "i").test(probe) || /MODULE_NOT_FOUND/i.test(probe) && new RegExp(tool, "i").test(probe);
 }
 function formatToolchainFixSteps(input) {
   const steps = [];
@@ -2962,6 +2975,48 @@ async function linkDirectory(targetLink, sourceDir) {
   await (0, import_promises10.symlink)(sourceDir, targetLink, type);
   return process.platform === "win32" ? "junction" : "symlink";
 }
+function resolvePathCanon(absPath) {
+  try {
+    return (0, import_node_fs5.realpathSync)(absPath);
+  } catch {
+    try {
+      return import_node_path14.default.resolve(absPath);
+    } catch {
+      return null;
+    }
+  }
+}
+function packagePrgenieLinksPointAtWorktree(worktreeDir, packageName, primaryDir) {
+  const scope = import_node_path14.default.join(worktreeDir, "packages", packageName, "node_modules", "@prgenie");
+  const primaryScope = primaryDir ? import_node_path14.default.join(primaryDir, "packages", packageName, "node_modules", "@prgenie") : null;
+  if (!isExistingDir(scope)) {
+    if (primaryScope && isExistingDir(primaryScope)) {
+      return {
+        ok: false,
+        detail: `packages/${packageName}/node_modules is missing @prgenie (incomplete mirror)`
+      };
+    }
+    return { ok: true };
+  }
+  for (const ws of (0, import_node_fs5.readdirSync)(scope)) {
+    const expected = import_node_path14.default.join(worktreeDir, "packages", ws);
+    if (!isExistingDir(expected)) {
+      return {
+        ok: false,
+        detail: `packages/${packageName}/node_modules/@prgenie/${ws} present but worktree lacks packages/${ws}`
+      };
+    }
+    const resolved = resolvePathCanon(import_node_path14.default.join(scope, ws));
+    const expectedCanon = resolvePathCanon(expected);
+    if (!resolved || !expectedCanon || !sameFsPath(resolved, expectedCanon)) {
+      return {
+        ok: false,
+        detail: `packages/${packageName}/node_modules/@prgenie/${ws} does not resolve to worktree packages/${ws}`
+      };
+    }
+  }
+  return { ok: true };
+}
 async function ensureOneNodeModulesLink(worktreeDir, primaryDir, relativeModules = "node_modules") {
   const dest = import_node_path14.default.join(worktreeDir, relativeModules);
   const source = import_node_path14.default.join(primaryDir, relativeModules);
@@ -2989,34 +3044,49 @@ async function mirrorPackageNodeModules(worktreeDir, primaryDir, packageName) {
     return { linked: false, method: "none", path: dest };
   }
   if (isExistingDir(dest)) {
-    return { linked: false, method: "present", path: dest };
-  }
-  if ((0, import_node_fs5.existsSync)(dest)) {
+    const check = packagePrgenieLinksPointAtWorktree(worktreeDir, packageName, primaryDir);
+    if (check.ok) {
+      return { linked: false, method: "present", path: dest };
+    }
+    await (0, import_promises10.rm)(dest, { recursive: true, force: true });
+  } else if ((0, import_node_fs5.existsSync)(dest)) {
     await (0, import_promises10.rm)(dest, { recursive: true, force: true });
   }
-  await (0, import_promises10.mkdir)(dest, { recursive: true });
   const method = process.platform === "win32" ? "junction" : "symlink";
-  for (const entry of (0, import_node_fs5.readdirSync)(source)) {
-    const from = import_node_path14.default.join(source, entry);
-    const to = import_node_path14.default.join(dest, entry);
-    if (entry === "@prgenie") {
-      await (0, import_promises10.mkdir)(to, { recursive: true });
-      const scopeSrc = import_node_path14.default.join(source, entry);
-      if (!isExistingDir(scopeSrc)) continue;
-      for (const ws of (0, import_node_fs5.readdirSync)(scopeSrc)) {
-        const wsTarget = import_node_path14.default.join(worktreeDir, "packages", ws);
-        const wsLink = import_node_path14.default.join(to, ws);
-        if (!isExistingDir(wsTarget)) {
-          await linkDirectory(wsLink, import_node_path14.default.join(primaryDir, "packages", ws));
-        } else {
+  try {
+    await (0, import_promises10.mkdir)(dest, { recursive: true });
+    for (const entry of (0, import_node_fs5.readdirSync)(source)) {
+      const from = import_node_path14.default.join(source, entry);
+      const to = import_node_path14.default.join(dest, entry);
+      if (entry === "@prgenie") {
+        await (0, import_promises10.mkdir)(to, { recursive: true });
+        const scopeSrc = import_node_path14.default.join(source, entry);
+        if (!isExistingDir(scopeSrc)) continue;
+        for (const ws of (0, import_node_fs5.readdirSync)(scopeSrc)) {
+          const wsTarget = import_node_path14.default.join(worktreeDir, "packages", ws);
+          const wsLink = import_node_path14.default.join(to, ws);
+          if (!isExistingDir(wsTarget)) {
+            throw new Error(
+              `Cannot retarget @prgenie/${ws} for packages/${packageName}: worktree is missing packages/${ws}`
+            );
+          }
           await linkDirectory(wsLink, wsTarget);
         }
+        continue;
       }
-      continue;
+      await linkDirectory(to, from);
     }
-    await linkDirectory(to, from);
+    const verify = packagePrgenieLinksPointAtWorktree(worktreeDir, packageName, primaryDir);
+    if (!verify.ok) {
+      throw new Error(
+        verify.detail ?? `packages/${packageName}/node_modules @prgenie verify failed`
+      );
+    }
+    return { linked: true, method, path: dest };
+  } catch (err) {
+    await (0, import_promises10.rm)(dest, { recursive: true, force: true }).catch(() => void 0);
+    throw err;
   }
-  return { linked: true, method, path: dest };
 }
 async function tryPnpmInstall(worktreePath) {
   try {
@@ -3069,6 +3139,7 @@ async function ensureWorktreeCiToolchain(worktreePath, options = {}) {
   async function linkPackageModules(fromPrimary) {
     const packagesRoot = import_node_path14.default.join(fromPrimary, "packages");
     if (!isExistingDir(packagesRoot)) return;
+    const mirrorErrors = [];
     for (const name of (0, import_node_fs5.readdirSync)(packagesRoot)) {
       if (!isExistingDir(import_node_path14.default.join(fromPrimary, "packages", name, "node_modules"))) continue;
       try {
@@ -3077,8 +3148,13 @@ async function ensureWorktreeCiToolchain(worktreePath, options = {}) {
           linked.push(import_node_path14.default.join("packages", name, "node_modules").replace(/\\/g, "/"));
           if (method === "none" || method === "present") method = pkgLink.method;
         }
-      } catch {
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        mirrorErrors.push(`${name}: ${detail}`);
       }
+    }
+    if (mirrorErrors.length > 0) {
+      throw new Error(`Package node_modules mirror failed: ${mirrorErrors.join("; ")}`);
     }
   }
   if (primary && !sameFsPath(primary, cwd)) {
@@ -3127,6 +3203,23 @@ async function ensureWorktreeCiToolchain(worktreePath, options = {}) {
     }
   }
   let afterMissing = missingCiBins(cwd, required);
+  if (linkError) {
+    const fixSteps2 = formatToolchainFixSteps({
+      worktreePath: cwd,
+      primaryPath: primary,
+      missing: afterMissing.length ? afterMissing : void 0
+    });
+    return {
+      ok: false,
+      envUnhealthy: true,
+      worktreePath: cwd,
+      primaryPath: primary,
+      method,
+      linked,
+      message: `CI environment unhealthy \u2014 package/workspace toolchain mirror failed (not a product test/lint failure). ${linkError}`,
+      fixSteps: fixSteps2
+    };
+  }
   if (afterMissing.length === 0) {
     return {
       ok: true,
@@ -3182,7 +3275,7 @@ function formatToolchainSetupError(result) {
 Fix:
 ${steps}`;
 }
-var import_node_fs5, import_promises10, import_node_path14, import_node_child_process4, import_node_util, execAsync, REQUIRED_CI_BINS;
+var import_node_fs5, import_promises10, import_node_path14, import_node_child_process4, import_node_util, execAsync, REQUIRED_CI_BINS, OPTIONAL_CI_BINS, CI_ENV_TOOL_NAMES, CI_ENV_TOOL_ALT;
 var init_worktree_deps = __esm({
   "packages/core/src/worktree-deps.ts"() {
     "use strict";
@@ -3194,6 +3287,9 @@ var init_worktree_deps = __esm({
     init_worktrees();
     execAsync = (0, import_node_util.promisify)(import_node_child_process4.exec);
     REQUIRED_CI_BINS = ["eslint", "tsc", "tsx", "prettier"];
+    OPTIONAL_CI_BINS = ["turbo", "vitest"];
+    CI_ENV_TOOL_NAMES = [...REQUIRED_CI_BINS, ...OPTIONAL_CI_BINS, "typescript"];
+    CI_ENV_TOOL_ALT = CI_ENV_TOOL_NAMES.join("|");
   }
 });
 
@@ -3356,9 +3452,7 @@ async function runOneCheck(cwd, check, options) {
     const logPath = await writeCiFailureLog(cwd, check, command, output, excerpt);
     const elapsedMs = Date.now() - started;
     const error = formatCiCheckError({ command, excerpt, logPath });
-    const envFail = isCiEnvFailureOutput(`${output.firstLine}
-${output.combined}
-${excerpt}`);
+    const envFail = isCiEnvFailureOutput(output.firstLine);
     onProgress?.({
       phase: "ci",
       check,
