@@ -2922,11 +2922,8 @@ async function getTrackedFiles(cwd) {
       }
     }
     return validFiles;
-  } catch (err) {
-    throw new Error(
-      `Failed to list tracked files for format:check: ${err instanceof Error ? err.message : String(err)}`,
-      { cause: err }
-    );
+  } catch {
+    return [];
   }
 }
 async function checkFormatFromBlobs(cwd, files, signal) {
@@ -2984,14 +2981,16 @@ async function runOneCheck(cwd, check, options) {
   try {
     if (check === "format:check") {
       const tracked = await getTrackedFiles(cwd);
-      await checkFormatFromBlobs(cwd, tracked, signal);
-      const elapsedMs2 = Date.now() - started;
-      onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs: elapsedMs2 });
-      try {
-        await recordCheckPass(cwd, check);
-      } catch {
+      if (tracked.length > 0) {
+        await checkFormatFromBlobs(cwd, tracked, signal);
+        const elapsedMs2 = Date.now() - started;
+        onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs: elapsedMs2 });
+        try {
+          await recordCheckPass(cwd, check);
+        } catch {
+        }
+        return { name: check, passed: true, elapsedMs: elapsedMs2, reason };
       }
-      return { name: check, passed: true, elapsedMs: elapsedMs2, reason };
     }
     await execAsync(command, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });
     const elapsedMs = Date.now() - started;
