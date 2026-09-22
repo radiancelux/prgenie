@@ -3560,9 +3560,11 @@ async function runCiChecks(cwd, options = {}) {
         })
       );
       const settled = await Promise.allSettled(pending);
+      if (signal?.aborted) throw abortError();
       for (let i = 0; i < settled.length; i++) {
         const item = settled[i];
         const check = checks[i];
+        if (signal?.aborted) throw abortError();
         if (item.status === "fulfilled") {
           results.push(item.value);
         } else if (isAbortError(item.reason) || child.signal.aborted) {
