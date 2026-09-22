@@ -85,7 +85,12 @@ function shepherdFromSnapshot(snap: ExportGateSnapshot): ShepherdResult {
 export async function evaluateAndStoreExportGate(
   cwd: string,
   id: string,
-  options: RunProgressOptions = {},
+  options: RunProgressOptions & {
+    skipToolchainEnsure?: boolean;
+    skipGithubCheck?: boolean;
+    skipCiCheck?: boolean;
+    hardBlockCiEnv?: boolean;
+  } = {},
 ): Promise<ShepherdResult> {
   const controller = new AbortController();
   const detachCaller = onAbort(options.signal, () => {
@@ -151,6 +156,10 @@ export async function evaluateAndStoreExportGate(
           result = await shepherdStatus(cwd, id, {
             onProgress: emit,
             signal: controller.signal,
+            skipToolchainEnsure: options.skipToolchainEnsure,
+            skipGithubCheck: options.skipGithubCheck,
+            skipCiCheck: options.skipCiCheck,
+            hardBlockCiEnv: options.hardBlockCiEnv,
           });
         } catch (err) {
           if (isAbortError(err) || controller.signal.aborted) throw abortError();

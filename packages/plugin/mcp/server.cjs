@@ -2891,9 +2891,411 @@ var init_ci_select = __esm({
   }
 });
 
+// packages/core/src/worktree-deps.ts
+function binStubs(modulesRoot, name) {
+  const binDir = import_node_path14.default.join(modulesRoot, ".bin");
+  if (process.platform === "win32") {
+    return [
+      import_node_path14.default.join(binDir, `${name}.CMD`),
+      import_node_path14.default.join(binDir, `${name}.cmd`),
+      import_node_path14.default.join(binDir, `${name}.ps1`),
+      import_node_path14.default.join(binDir, name),
+      import_node_path14.default.join(binDir, `${name}.exe`)
+    ];
+  }
+  return [import_node_path14.default.join(binDir, name)];
+}
+function hasCiBin(cwd, name) {
+  const modules = import_node_path14.default.join(cwd, "node_modules");
+  if (!(0, import_node_fs5.existsSync)(modules)) return false;
+  return binStubs(modules, name).some((p) => (0, import_node_fs5.existsSync)(p));
+}
+function missingCiBins(cwd, required = REQUIRED_CI_BINS) {
+  return required.filter((name) => !hasCiBin(cwd, name));
+}
+function isCiEnvFailureOutput(text) {
+  const t = text.replace(/\r\n/g, "\n");
+  if (/Missing toolchain in worktree/i.test(t) || /CI environment unhealthy/i.test(t)) {
+    return true;
+  }
+  const firstLine = t.split("\n").map((line) => line.trim()).find((line) => line.length > 0) ?? "";
+  const probe = firstLine.slice(0, 480);
+  if (!probe) return false;
+  const tool = CI_ENV_TOOL_ALT;
+  return new RegExp(
+    `['"]?(?:${tool})['"]?(?:\\.cmd|\\.CMD|\\.exe)?\\s+is not recognized as an internal or external command`,
+    "i"
+  ).test(probe) || new RegExp(
+    `(?:^|[\\s\`'"])(?:${tool})(?:\\.cmd|\\.CMD|\\.exe)?\\s*:\\s*command not found`,
+    "i"
+  ).test(probe) || new RegExp(`Command ["'](?:${tool})["'] not found`, "i").test(probe) || /ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL/i.test(probe) && new RegExp(tool, "i").test(probe) || new RegExp(`Cannot find module ['"](?:${tool})`, "i").test(probe) || /MODULE_NOT_FOUND/i.test(probe) && new RegExp(tool, "i").test(probe);
+}
+function formatToolchainFixSteps(input) {
+  const steps = [];
+  const primary = input.primaryPath;
+  if (primary) {
+    steps.push(
+      `From the primary checkout (${primary}): ensure deps exist \u2014 \`pnpm install\` (once, not per loop).`
+    );
+    steps.push(
+      `Then re-run CI; PR Genie junctions \`node_modules\` into the loop worktree (${input.worktreePath}) on Windows (symlink elsewhere).`
+    );
+  } else {
+    steps.push(`From a full checkout of this repo: \`pnpm install\`, then re-run CI.`);
+  }
+  steps.push(
+    `If a junction/link is impossible (permissions / cross-device): \`cd "${input.worktreePath}" && pnpm install\`.`
+  );
+  if (input.missing?.length) {
+    steps.push(`Still missing after link/install: ${input.missing.join(", ")}.`);
+  }
+  return steps;
+}
+async function resolvePrimaryForWorktree(worktreePath, override) {
+  if (override) return import_node_path14.default.resolve(override);
+  const ident = loopWorktreeIdentity(worktreePath);
+  if (ident?.primaryPath && (0, import_node_fs5.existsSync)(ident.primaryPath)) return ident.primaryPath;
+  try {
+    const trees = await listWorktrees(worktreePath);
+    const primary = primaryWorktreePath(trees);
+    if (primary && !sameFsPath(primary, worktreePath)) return primary;
+  } catch {
+  }
+  return null;
+}
+function isExistingDir(absPath) {
+  try {
+    return (0, import_node_fs5.statSync)(absPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+async function linkDirectory(targetLink, sourceDir) {
+  const type = process.platform === "win32" ? "junction" : "dir";
+  await (0, import_promises10.symlink)(sourceDir, targetLink, type);
+  return process.platform === "win32" ? "junction" : "symlink";
+}
+function resolvePathCanon(absPath) {
+  try {
+    return (0, import_node_fs5.realpathSync)(absPath);
+  } catch {
+    try {
+      return import_node_path14.default.resolve(absPath);
+    } catch {
+      return null;
+    }
+  }
+}
+function packagePrgenieLinksPointAtWorktree(worktreeDir, packageName, primaryDir) {
+  const scope = import_node_path14.default.join(worktreeDir, "packages", packageName, "node_modules", "@prgenie");
+  const primaryScope = primaryDir ? import_node_path14.default.join(primaryDir, "packages", packageName, "node_modules", "@prgenie") : null;
+  if (!isExistingDir(scope)) {
+    if (primaryScope && isExistingDir(primaryScope)) {
+      return {
+        ok: false,
+        detail: `packages/${packageName}/node_modules is missing @prgenie (incomplete mirror)`
+      };
+    }
+    return { ok: true };
+  }
+  for (const ws of (0, import_node_fs5.readdirSync)(scope)) {
+    const expected = import_node_path14.default.join(worktreeDir, "packages", ws);
+    if (!isExistingDir(expected)) {
+      return {
+        ok: false,
+        detail: `packages/${packageName}/node_modules/@prgenie/${ws} present but worktree lacks packages/${ws}`
+      };
+    }
+    const resolved = resolvePathCanon(import_node_path14.default.join(scope, ws));
+    const expectedCanon = resolvePathCanon(expected);
+    if (!resolved || !expectedCanon || !sameFsPath(resolved, expectedCanon)) {
+      return {
+        ok: false,
+        detail: `packages/${packageName}/node_modules/@prgenie/${ws} does not resolve to worktree packages/${ws}`
+      };
+    }
+  }
+  return { ok: true };
+}
+async function ensureOneNodeModulesLink(worktreeDir, primaryDir, relativeModules = "node_modules") {
+  const dest = import_node_path14.default.join(worktreeDir, relativeModules);
+  const source = import_node_path14.default.join(primaryDir, relativeModules);
+  if (!isExistingDir(source)) {
+    return { linked: false, method: "none", path: dest };
+  }
+  if (isExistingDir(dest)) {
+    return { linked: false, method: "present", path: dest };
+  }
+  if ((0, import_node_fs5.existsSync)(dest)) {
+    await (0, import_promises10.rm)(dest, { recursive: true, force: true });
+  }
+  await linkDirectory(dest, source);
+  return {
+    linked: true,
+    method: process.platform === "win32" ? "junction" : "symlink",
+    path: dest
+  };
+}
+async function mirrorPackageNodeModules(worktreeDir, primaryDir, packageName) {
+  const rel = import_node_path14.default.join("packages", packageName, "node_modules");
+  const dest = import_node_path14.default.join(worktreeDir, rel);
+  const source = import_node_path14.default.join(primaryDir, rel);
+  if (!isExistingDir(source)) {
+    return { linked: false, method: "none", path: dest };
+  }
+  if (isExistingDir(dest)) {
+    const check = packagePrgenieLinksPointAtWorktree(worktreeDir, packageName, primaryDir);
+    if (check.ok) {
+      return { linked: false, method: "present", path: dest };
+    }
+    await (0, import_promises10.rm)(dest, { recursive: true, force: true });
+  } else if ((0, import_node_fs5.existsSync)(dest)) {
+    await (0, import_promises10.rm)(dest, { recursive: true, force: true });
+  }
+  const method = process.platform === "win32" ? "junction" : "symlink";
+  try {
+    await (0, import_promises10.mkdir)(dest, { recursive: true });
+    for (const entry of (0, import_node_fs5.readdirSync)(source)) {
+      const from = import_node_path14.default.join(source, entry);
+      const to = import_node_path14.default.join(dest, entry);
+      if (entry === "@prgenie") {
+        await (0, import_promises10.mkdir)(to, { recursive: true });
+        const scopeSrc = import_node_path14.default.join(source, entry);
+        if (!isExistingDir(scopeSrc)) continue;
+        for (const ws of (0, import_node_fs5.readdirSync)(scopeSrc)) {
+          const wsTarget = import_node_path14.default.join(worktreeDir, "packages", ws);
+          const wsLink = import_node_path14.default.join(to, ws);
+          if (!isExistingDir(wsTarget)) {
+            throw new Error(
+              `Cannot retarget @prgenie/${ws} for packages/${packageName}: worktree is missing packages/${ws}`
+            );
+          }
+          await linkDirectory(wsLink, wsTarget);
+        }
+        continue;
+      }
+      await linkDirectory(to, from);
+    }
+    const verify = packagePrgenieLinksPointAtWorktree(worktreeDir, packageName, primaryDir);
+    if (!verify.ok) {
+      throw new Error(
+        verify.detail ?? `packages/${packageName}/node_modules @prgenie verify failed`
+      );
+    }
+    return { linked: true, method, path: dest };
+  } catch (err) {
+    await (0, import_promises10.rm)(dest, { recursive: true, force: true }).catch(() => void 0);
+    throw err;
+  }
+}
+async function tryPnpmInstall(worktreePath) {
+  try {
+    await execAsync("pnpm install", {
+      cwd: worktreePath,
+      timeout: 6e5,
+      maxBuffer: 4 * 1024 * 1024,
+      env: { ...process.env, CI: process.env.CI ?? "true" }
+    });
+    return { ok: true, detail: "pnpm install completed in worktree" };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, detail: msg.split("\n")[0] ?? msg };
+  }
+}
+async function ensureWorktreeCiToolchain(worktreePath, options = {}) {
+  const cwd = import_node_path14.default.resolve(worktreePath);
+  const required = options.requiredBins?.length ? [.../* @__PURE__ */ new Set([...REQUIRED_CI_BINS, ...options.requiredBins])] : [...REQUIRED_CI_BINS];
+  const allowInstall = options.allowInstall !== false && options.skipInstall !== true;
+  const alreadyMissing = missingCiBins(cwd, required);
+  const primary = await resolvePrimaryForWorktree(cwd, options.primaryPath);
+  const isLoopWorktree = Boolean(loopWorktreeIdentity(cwd)) || Boolean(options.primaryPath);
+  if (!isLoopWorktree) {
+    if (alreadyMissing.length === 0) {
+      return {
+        ok: true,
+        envUnhealthy: false,
+        worktreePath: cwd,
+        primaryPath: primary,
+        method: "present",
+        linked: [],
+        message: "CI toolchain already resolvable in worktree.",
+        fixSteps: []
+      };
+    }
+    return {
+      ok: true,
+      envUnhealthy: false,
+      worktreePath: cwd,
+      primaryPath: primary,
+      method: "none",
+      linked: [],
+      message: "Not a loop worktree; skipped toolchain junction.",
+      fixSteps: []
+    };
+  }
+  const linked = [];
+  let method = alreadyMissing.length === 0 ? "present" : "none";
+  let linkError = null;
+  async function linkPackageModules(fromPrimary) {
+    const packagesRoot = import_node_path14.default.join(fromPrimary, "packages");
+    if (!isExistingDir(packagesRoot)) return;
+    const mirrorErrors = [];
+    for (const name of (0, import_node_fs5.readdirSync)(packagesRoot)) {
+      if (!isExistingDir(import_node_path14.default.join(fromPrimary, "packages", name, "node_modules"))) continue;
+      try {
+        const pkgLink = await mirrorPackageNodeModules(cwd, fromPrimary, name);
+        if (pkgLink.linked) {
+          linked.push(import_node_path14.default.join("packages", name, "node_modules").replace(/\\/g, "/"));
+          if (method === "none" || method === "present") method = pkgLink.method;
+        }
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        mirrorErrors.push(`${name}: ${detail}`);
+      }
+    }
+    if (mirrorErrors.length > 0) {
+      throw new Error(`Package node_modules mirror failed: ${mirrorErrors.join("; ")}`);
+    }
+  }
+  if (primary && !sameFsPath(primary, cwd)) {
+    const primaryModules = import_node_path14.default.join(primary, "node_modules");
+    if (!isExistingDir(primaryModules)) {
+      if (alreadyMissing.length === 0) {
+        return {
+          ok: true,
+          envUnhealthy: false,
+          worktreePath: cwd,
+          primaryPath: primary,
+          method: "present",
+          linked: [],
+          message: "CI toolchain already resolvable in worktree.",
+          fixSteps: []
+        };
+      }
+      const fixSteps2 = formatToolchainFixSteps({
+        worktreePath: cwd,
+        primaryPath: primary,
+        missing: alreadyMissing
+      });
+      return {
+        ok: false,
+        envUnhealthy: true,
+        worktreePath: cwd,
+        primaryPath: primary,
+        method: "none",
+        linked: [],
+        message: `Missing toolchain in worktree (and primary has no node_modules): ${alreadyMissing.join(", ")}. CI environment unhealthy \u2014 not a product test/lint failure.`,
+        fixSteps: fixSteps2
+      };
+    }
+    try {
+      const root = await ensureOneNodeModulesLink(cwd, primary, "node_modules");
+      if (root.linked) {
+        linked.push("node_modules");
+        method = root.method;
+      } else if (root.method === "present" && method === "none") {
+        method = "present";
+      }
+      await linkPackageModules(primary);
+    } catch (err) {
+      linkError = err instanceof Error ? err.message : String(err);
+      method = "none";
+    }
+  }
+  let afterMissing = missingCiBins(cwd, required);
+  if (linkError) {
+    const fixSteps2 = formatToolchainFixSteps({
+      worktreePath: cwd,
+      primaryPath: primary,
+      missing: afterMissing.length ? afterMissing : void 0
+    });
+    return {
+      ok: false,
+      envUnhealthy: true,
+      worktreePath: cwd,
+      primaryPath: primary,
+      method,
+      linked,
+      message: `CI environment unhealthy \u2014 package/workspace toolchain mirror failed (not a product test/lint failure). ${linkError}`,
+      fixSteps: fixSteps2
+    };
+  }
+  if (afterMissing.length === 0) {
+    return {
+      ok: true,
+      envUnhealthy: false,
+      worktreePath: cwd,
+      primaryPath: primary,
+      method: linked.length ? method : "present",
+      linked,
+      message: linked.length ? `Linked CI toolchain from primary via ${method}: ${linked.join(", ")}.` : "CI toolchain resolvable after probing worktree.",
+      fixSteps: []
+    };
+  }
+  if (allowInstall && (linkError || !primary || afterMissing.length > 0)) {
+    const installed = await tryPnpmInstall(cwd);
+    if (installed.ok) {
+      afterMissing = missingCiBins(cwd, required);
+      if (afterMissing.length === 0) {
+        return {
+          ok: true,
+          envUnhealthy: false,
+          worktreePath: cwd,
+          primaryPath: primary,
+          method: "install",
+          linked,
+          message: `Installed CI toolchain in worktree (junction/link was insufficient${linkError ? `: ${linkError}` : ""}).`,
+          fixSteps: []
+        };
+      }
+    } else if (!linkError) {
+      linkError = installed.detail;
+    }
+  }
+  const fixSteps = formatToolchainFixSteps({
+    worktreePath: cwd,
+    primaryPath: primary,
+    missing: afterMissing
+  });
+  const why = linkError ? `Link/install failed: ${linkError}` : primary ? `Still missing after link attempt: ${afterMissing.join(", ")}` : `Could not locate primary checkout to junction from; missing: ${afterMissing.join(", ")}`;
+  return {
+    ok: false,
+    envUnhealthy: true,
+    worktreePath: cwd,
+    primaryPath: primary,
+    method,
+    linked,
+    message: `Missing toolchain in worktree: ${afterMissing.join(", ")}. CI environment unhealthy \u2014 not a product test/lint failure. ${why}`,
+    fixSteps
+  };
+}
+function formatToolchainSetupError(result) {
+  const steps = result.fixSteps.map((s, i) => `${i + 1}. ${s}`).join("\n");
+  return `${result.message}
+Fix:
+${steps}`;
+}
+var import_node_fs5, import_promises10, import_node_path14, import_node_child_process4, import_node_util, execAsync, REQUIRED_CI_BINS, OPTIONAL_CI_BINS, CI_ENV_TOOL_NAMES, CI_ENV_TOOL_ALT;
+var init_worktree_deps = __esm({
+  "packages/core/src/worktree-deps.ts"() {
+    "use strict";
+    import_node_fs5 = require("node:fs");
+    import_promises10 = require("node:fs/promises");
+    import_node_path14 = __toESM(require("node:path"), 1);
+    import_node_child_process4 = require("node:child_process");
+    import_node_util = require("node:util");
+    init_worktrees();
+    execAsync = (0, import_node_util.promisify)(import_node_child_process4.exec);
+    REQUIRED_CI_BINS = ["eslint", "tsc", "tsx", "prettier"];
+    OPTIONAL_CI_BINS = ["turbo", "vitest"];
+    CI_ENV_TOOL_NAMES = [...REQUIRED_CI_BINS, ...OPTIONAL_CI_BINS, "typescript"];
+    CI_ENV_TOOL_ALT = CI_ENV_TOOL_NAMES.join("|");
+  }
+});
+
 // packages/core/src/ci-runner.ts
 function loadPrettierFromCwd(cwd) {
-  return (0, import_node_module.createRequire)(import_node_path14.default.join(cwd, "package.json"))("prettier");
+  return (0, import_node_module.createRequire)(import_node_path15.default.join(cwd, "package.json"))("prettier");
 }
 function isPrettierUnresolved(err) {
   if (!(err instanceof Error)) return false;
@@ -2902,14 +3304,14 @@ function isPrettierUnresolved(err) {
 }
 async function getTrackedFiles(cwd) {
   try {
-    const { stdout } = await execAsync("git ls-files --exclude-standard", {
+    const { stdout } = await execAsync2("git ls-files --exclude-standard", {
       cwd,
       encoding: "utf8",
       maxBuffer: 8 * 1024 * 1024
     });
     const files = stdout.trim().split("\n").filter(Boolean);
     const fs = await import("node:fs/promises");
-    const path16 = await import("node:path");
+    const path17 = await import("node:path");
     const validFiles = [];
     const skipFiles = /* @__PURE__ */ new Set([
       ".gitignore",
@@ -2938,8 +3340,8 @@ async function getTrackedFiles(cwd) {
       ".xml"
     ]);
     for (const file of files) {
-      const basename2 = path16.basename(file);
-      const ext = path16.extname(file).toLowerCase();
+      const basename2 = path17.basename(file);
+      const ext = path17.extname(file).toLowerCase();
       if (skipFiles.has(basename2)) {
         continue;
       }
@@ -2947,7 +3349,7 @@ async function getTrackedFiles(cwd) {
         continue;
       }
       try {
-        const fullPath = path16.join(cwd, file);
+        const fullPath = path17.join(cwd, file);
         const stats = await fs.stat(fullPath);
         if (stats.isFile()) {
           validFiles.push(file);
@@ -2966,12 +3368,12 @@ async function checkFormatFromBlobs(cwd, files, signal) {
   for (const file of files) {
     throwIfAborted(signal);
     try {
-      const filepath = import_node_path14.default.join(cwd, file);
+      const filepath = import_node_path15.default.join(cwd, file);
       const info = await prettier.getFileInfo(filepath, {
-        ignorePath: import_node_path14.default.join(cwd, ".prettierignore")
+        ignorePath: import_node_path15.default.join(cwd, ".prettierignore")
       });
       if (info.ignored || info.inferredParser == null) continue;
-      const shown = await execAsync(`git show ":${file.replace(/"/g, '\\"')}"`, {
+      const shown = await execAsync2(`git show ":${file.replace(/"/g, '\\"')}"`, {
         cwd,
         encoding: "utf8",
         maxBuffer: 8 * 1024 * 1024,
@@ -3035,7 +3437,7 @@ async function runOneCheck(cwd, check, options) {
         }
       }
     }
-    await execAsync(command, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });
+    await execAsync2(command, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });
     const elapsedMs = Date.now() - started;
     onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
     try {
@@ -3050,6 +3452,7 @@ async function runOneCheck(cwd, check, options) {
     const logPath = await writeCiFailureLog(cwd, check, command, output, excerpt);
     const elapsedMs = Date.now() - started;
     const error = formatCiCheckError({ command, excerpt, logPath });
+    const envFail = isCiEnvFailureOutput(output.firstLine);
     onProgress?.({
       phase: "ci",
       check,
@@ -3066,7 +3469,8 @@ async function runOneCheck(cwd, check, options) {
       excerpt,
       logPath: logPath ?? void 0,
       elapsedMs,
-      reason
+      reason,
+      kind: envFail ? "env" : "product"
     };
   }
 }
@@ -3085,6 +3489,42 @@ async function runCiChecks(cwd, options = {}) {
     const joined = formatCiSelectionReason(selection?.reason);
     return joined || void 0;
   };
+  let toolchain;
+  if (!options.skipToolchainEnsure) {
+    toolchain = await ensureWorktreeCiToolchain(cwd, {
+      primaryPath: options.toolchainPrimaryPath,
+      allowInstall: options.allowToolchainInstall
+    });
+    if (!toolchain.ok) {
+      const error = formatToolchainSetupError(toolchain);
+      onProgress?.({
+        phase: "ci",
+        check: "toolchain",
+        state: "fail",
+        message: toolchain.message,
+        cwd
+      });
+      return {
+        allPassed: false,
+        envUnhealthy: true,
+        envMessage: toolchain.message,
+        fixSteps: toolchain.fixSteps,
+        toolchain,
+        checks: [
+          {
+            name: "toolchain",
+            passed: false,
+            error,
+            excerpt: toolchain.message,
+            reason: "worktree CI toolchain setup",
+            kind: "env"
+          }
+        ],
+        selection,
+        cwd
+      };
+    }
+  }
   if (selection) {
     onProgress?.({
       phase: "ci",
@@ -3120,9 +3560,11 @@ async function runCiChecks(cwd, options = {}) {
         })
       );
       const settled = await Promise.allSettled(pending);
+      if (signal?.aborted) throw abortError();
       for (let i = 0; i < settled.length; i++) {
         const item = settled[i];
         const check = checks[i];
+        if (signal?.aborted) throw abortError();
         if (item.status === "fulfilled") {
           results.push(item.value);
         } else if (isAbortError(item.reason) || child.signal.aborted) {
@@ -3159,11 +3601,16 @@ async function runCiChecks(cwd, options = {}) {
       }
     }
   }
+  const envUnhealthy = results.some((r) => !r.passed && !r.skipped && r.kind === "env");
+  const envFailed = results.find((r) => !r.passed && !r.skipped && r.kind === "env");
   return {
     allPassed: results.every((r) => r.passed),
     checks: results,
     selection,
-    cwd
+    cwd,
+    envUnhealthy: envUnhealthy || void 0,
+    envMessage: envFailed?.excerpt ?? envFailed?.error,
+    toolchain
   };
 }
 async function runLoopCi(cwd, id, options = {}) {
@@ -3199,21 +3646,22 @@ async function runLoopCi(cwd, id, options = {}) {
     detach();
   }
 }
-var import_node_child_process4, import_node_module, import_node_path14, import_node_util, execAsync;
+var import_node_child_process5, import_node_module, import_node_path15, import_node_util2, execAsync2;
 var init_ci_runner = __esm({
   "packages/core/src/ci-runner.ts"() {
     "use strict";
-    import_node_child_process4 = require("node:child_process");
+    import_node_child_process5 = require("node:child_process");
     import_node_module = require("node:module");
-    import_node_path14 = __toESM(require("node:path"), 1);
-    import_node_util = require("node:util");
+    import_node_path15 = __toESM(require("node:path"), 1);
+    import_node_util2 = require("node:util");
     init_ci_cache();
     init_ci_failure();
     init_ci_select();
     init_ci_abort();
     init_prs();
     init_progress();
-    execAsync = (0, import_node_util.promisify)(import_node_child_process4.exec);
+    init_worktree_deps();
+    execAsync2 = (0, import_node_util2.promisify)(import_node_child_process5.exec);
   }
 });
 
@@ -3225,6 +3673,7 @@ async function shepherdStatus(cwd, id, options = {}) {
   let ciPlan;
   let ciChecks;
   let ciCwd;
+  let ciEnvUnhealthy;
   try {
     throwIfAborted(signal);
     const reviewStarted = Date.now();
@@ -3322,11 +3771,44 @@ async function shepherdStatus(cwd, id, options = {}) {
         onProgress,
         signal,
         failFast: options.failFast,
-        parallel: options.parallel
+        parallel: options.parallel,
+        skipToolchainEnsure: options.skipToolchainEnsure
       });
       ciPlan = selection;
       ciChecks = ciResult.checks;
-      if (!ciResult.allPassed) {
+      const productFails = ciResult.checks.filter(
+        (check) => !check.passed && !check.skipped && check.kind !== "env"
+      );
+      const envFails = ciResult.checks.filter(
+        (check) => !check.passed && !check.skipped && check.kind === "env"
+      );
+      const envUnhealthy = Boolean(ciResult.envUnhealthy) || envFails.length > 0;
+      if (envUnhealthy) {
+        ciEnvUnhealthy = {
+          message: ciResult.envMessage ?? envFails[0]?.excerpt ?? envFails[0]?.error ?? "CI environment unhealthy (missing toolchain in worktree).",
+          fixSteps: ciResult.fixSteps ?? []
+        };
+        onProgress?.({
+          phase: "ci",
+          state: "fail",
+          message: `CI env unhealthy (soft): ${ciEnvUnhealthy.message}`,
+          cwd: resolvedCwd
+        });
+        if (options.hardBlockCiEnv) {
+          reasons.push({
+            check: "ci",
+            message: `CI environment unhealthy: ${ciEnvUnhealthy.message} (cwd: ${resolvedCwd})`
+          });
+        }
+      }
+      if (productFails.length > 0) {
+        for (const check of productFails) {
+          reasons.push({
+            check: "ci",
+            message: `CI check failed: ${check.name}${check.error ? ` \u2014 ${check.error}` : ""} (cwd: ${resolvedCwd})`
+          });
+        }
+      } else if (!envUnhealthy && !ciResult.allPassed) {
         for (const check of ciResult.checks) {
           if (!check.passed && !check.skipped) {
             reasons.push({
@@ -3351,7 +3833,8 @@ async function shepherdStatus(cwd, id, options = {}) {
     reasons,
     ciPlan,
     ciChecks,
-    ciCwd
+    ciCwd,
+    ciEnvUnhealthy
   };
 }
 var init_shepherd = __esm({
@@ -3467,7 +3950,11 @@ async function evaluateAndStoreExportGate(cwd, id, options = {}) {
         try {
           result = await shepherdStatus(cwd, id, {
             onProgress: emit,
-            signal: controller.signal
+            signal: controller.signal,
+            skipToolchainEnsure: options.skipToolchainEnsure,
+            skipGithubCheck: options.skipGithubCheck,
+            skipCiCheck: options.skipCiCheck,
+            hardBlockCiEnv: options.hardBlockCiEnv
           });
         } catch (err) {
           if (isAbortError(err) || controller.signal.aborted) throw abortError();
@@ -3607,7 +4094,7 @@ __export(steward_exports, {
   stewardNext: () => stewardNext
 });
 function stewardsFile(dir) {
-  return import_node_path15.default.join(dir, "stewards.json");
+  return import_node_path16.default.join(dir, "stewards.json");
 }
 function parseTaskId(raw) {
   if (typeof raw !== "string") return null;
@@ -3640,7 +4127,7 @@ function parseMap(raw) {
 }
 async function loadMap(file) {
   try {
-    return parseMap(await (0, import_promises10.readFile)(file, "utf8"));
+    return parseMap(await (0, import_promises11.readFile)(file, "utf8"));
   } catch {
     return emptyMap();
   }
@@ -3898,12 +4385,12 @@ function formatStewardDecision(result) {
 function formatStewardBinding(binding) {
   return `${binding.loopId}  implementor=${binding.implementorTaskId ?? "-"}  reviewer=${binding.reviewerTaskId ?? "-"}`;
 }
-var import_promises10, import_node_path15, emptyMap;
+var import_promises11, import_node_path16, emptyMap;
 var init_steward = __esm({
   "packages/core/src/steward.ts"() {
     "use strict";
-    import_promises10 = require("node:fs/promises");
-    import_node_path15 = __toESM(require("node:path"), 1);
+    import_promises11 = require("node:fs/promises");
+    import_node_path16 = __toESM(require("node:path"), 1);
     init_export_gate();
     init_export_validation();
     init_git();
@@ -4257,7 +4744,7 @@ init_progress();
 init_export_gate();
 
 // packages/core/src/sessions.ts
-var import_promises11 = require("node:fs/promises");
+var import_promises12 = require("node:fs/promises");
 init_git();
 init_store();
 async function listSessions(cwd, options = {}) {
@@ -4266,7 +4753,7 @@ async function listSessions(cwd, options = {}) {
   const file = await sessionsFile(root);
   let raw;
   try {
-    raw = await (0, import_promises11.readFile)(file, "utf8");
+    raw = await (0, import_promises12.readFile)(file, "utf8");
   } catch (err) {
     const code = err && typeof err === "object" && "code" in err ? err.code : void 0;
     if (code === "ENOENT") return [];
@@ -4475,7 +4962,7 @@ async function generateLearningDigest(cwd, options = {}) {
     }
   }
   const topKeywords = Array.from(keywordCounts.entries()).filter(([, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([keyword, count]) => ({ keyword, count }));
-  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path16, count]) => ({ path: path16, count }));
+  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path17, count]) => ({ path: path17, count }));
   const patterns = Array.from(patternCounts.entries()).filter(([, data]) => data.count >= 2).sort((a, b) => b[1].count - a[1].count).slice(0, 10).map(([pattern, data]) => ({
     pattern,
     examples: data.examples,
@@ -4515,8 +5002,8 @@ function formatLearningDigest(summary) {
   if (summary.topFiles.length > 0) {
     lines.push("## Most Commented Files");
     lines.push("");
-    for (const { path: path16, count } of summary.topFiles) {
-      lines.push(`- \`${path16}\` \u2014 ${count} comment(s)`);
+    for (const { path: path17, count } of summary.topFiles) {
+      lines.push(`- \`${path17}\` \u2014 ${count} comment(s)`);
     }
     lines.push("");
   }
@@ -4551,12 +5038,13 @@ init_github_ops();
 init_learnings();
 init_shepherd();
 init_ci_runner();
+init_worktree_deps();
 init_ci_select();
 init_ci_failure();
 init_ci_cache();
 
 // packages/cli/src/mcp.ts
-var import_node_fs5 = require("node:fs");
+var import_node_fs6 = require("node:fs");
 
 // packages/cli/src/mcp-stdio.ts
 var MCP_STDIO_READY = "[prgenie] mcp stdio ready";
@@ -4673,7 +5161,7 @@ function takeCompleteJsonObject(buffer) {
 
 // packages/cli/src/mcp.ts
 function writeMessage(msg) {
-  (0, import_node_fs5.writeSync)(1, encodeMcpFrame(msg));
+  (0, import_node_fs6.writeSync)(1, encodeMcpFrame(msg));
 }
 function ok(id, result) {
   writeMessage({ jsonrpc: "2.0", id, result });
@@ -5534,7 +6022,7 @@ async function onRequest(msg) {
 }
 async function startMcp() {
   try {
-    (0, import_node_fs5.writeSync)(2, `${MCP_STDIO_READY}
+    (0, import_node_fs6.writeSync)(2, `${MCP_STDIO_READY}
 `);
   } catch {
   }
@@ -5542,7 +6030,7 @@ async function startMcp() {
   let draining = false;
   process.stdin.on("error", (err) => {
     try {
-      (0, import_node_fs5.writeSync)(2, `[prgenie] mcp stdin error: ${err.message}
+      (0, import_node_fs6.writeSync)(2, `[prgenie] mcp stdin error: ${err.message}
 `);
     } catch {
     }

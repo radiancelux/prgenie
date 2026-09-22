@@ -17,6 +17,11 @@ export interface ShepherdBlockReason {
   message: string;
 }
 
+export interface ShepherdCiEnvUnhealthy {
+  message: string;
+  fixSteps: string[];
+}
+
 export interface ShepherdResult {
   status: ShepherdStatus;
   reasons: ShepherdBlockReason[];
@@ -24,6 +29,11 @@ export interface ShepherdResult {
   ciChecks?: CiCheckResult[];
   /** Path local CI ran in (RAD-112). */
   ciCwd?: string;
+  /**
+   * CI toolchain/setup problem (RAD-92). Soft-surfaced — does not hard-block export by default.
+   * Product CI fails still appear in `reasons` with check `ci`.
+   */
+  ciEnvUnhealthy?: ShepherdCiEnvUnhealthy;
 }
 
 export interface ShepherdOptions {
@@ -38,6 +48,13 @@ export interface ShepherdOptions {
   changedPaths?: string[];
   failFast?: boolean;
   parallel?: boolean;
+  /**
+   * When true, treat CI env unhealthy as a hard export block (opt-in).
+   * Default false — only product CI fails hard-block (RAD-92).
+   */
+  hardBlockCiEnv?: boolean;
+  /** Skip worktree node_modules junction (unit fixtures with exit-script package.json). */
+  skipToolchainEnsure?: boolean;
 }
 
 /**
@@ -55,6 +72,7 @@ export async function shepherdStatus(
   let ciPlan: CiCheckSelection | undefined;
   let ciChecks: CiCheckResult[] | undefined;
   let ciCwd: string | undefined;
+  let ciEnvUnhealthy: ShepherdCiEnvUnhealthy | undefined;
 
   try {
     throwIfAborted(signal);
@@ -162,10 +180,51 @@ export async function shepherdStatus(
         signal,
         failFast: options.failFast,
         parallel: options.parallel,
+        skipToolchainEnsure: options.skipToolchainEnsure,
       });
       ciPlan = selection;
       ciChecks = ciResult.checks;
-      if (!ciResult.allPassed) {
+
+      const productFails = ciResult.checks.filter(
+        (check) => !check.passed && !check.skipped && check.kind !== "env",
+      );
+      const envFails = ciResult.checks.filter(
+        (check) => !check.passed && !check.skipped && check.kind === "env",
+      );
+      const envUnhealthy = Boolean(ciResult.envUnhealthy) || envFails.length > 0;
+
+      if (envUnhealthy) {
+        ciEnvUnhealthy = {
+          message:
+            ciResult.envMessage ??
+            envFails[0]?.excerpt ??
+            envFails[0]?.error ??
+            "CI environment unhealthy (missing toolchain in worktree).",
+          fixSteps: ciResult.fixSteps ?? [],
+        };
+        onProgress?.({
+          phase: "ci",
+          state: "fail",
+          message: `CI env unhealthy (soft): ${ciEnvUnhealthy.message}`,
+          cwd: resolvedCwd,
+        });
+        if (options.hardBlockCiEnv) {
+          reasons.push({
+            check: "ci",
+            message: `CI environment unhealthy: ${ciEnvUnhealthy.message} (cwd: ${resolvedCwd})`,
+          });
+        }
+      }
+
+      if (productFails.length > 0) {
+        for (const check of productFails) {
+          reasons.push({
+            check: "ci",
+            message: `CI check failed: ${check.name}${check.error ? ` — ${check.error}` : ""} (cwd: ${resolvedCwd})`,
+          });
+        }
+      } else if (!envUnhealthy && !ciResult.allPassed) {
+        // Fail-closed for unclassified failures (no kind) — treat as product.
         for (const check of ciResult.checks) {
           if (!check.passed && !check.skipped) {
             reasons.push({
@@ -193,5 +252,6 @@ export async function shepherdStatus(
     ciPlan,
     ciChecks,
     ciCwd,
+    ciEnvUnhealthy,
   };
 }

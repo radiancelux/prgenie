@@ -994,6 +994,40 @@ describe("runCiChecks", () => {
     }
   });
 
+  it("caller abort during a parallel run rejects instead of returning skips", async () => {
+    const repo = await initTestRepo();
+    try {
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: 'node -e "setTimeout(() => {}, 30000)"',
+            test: "exit 0",
+          },
+        }),
+      );
+      const ac = new AbortController();
+      const started = Date.now();
+      setTimeout(() => ac.abort(), 80);
+      await assert.rejects(
+        () =>
+          runCiChecks(repo, {
+            checks: ["lint", "test"],
+            timeout: 30000,
+            skipCache: true,
+            parallel: true,
+            signal: ac.signal,
+            skipToolchainEnsure: true,
+          }),
+        (err: unknown) => isAbortError(err),
+      );
+      assert.ok(Date.now() - started < 8000, "abort should not wait out the check");
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it("RAD-77: fail-fast skips remaining checks after the first failure", async () => {
     const repo = await initTestRepo();
     try {
@@ -1083,6 +1117,7 @@ describe("runLoopCi", () => {
         failingChecks: ["lint", "test"],
         skipCache: true,
         timeout: 5000,
+        skipToolchainEnsure: true,
       });
       const names = result.checks.map((c) => c.name);
       assert.ok(names.includes("format:check"), "docs-only still selects format");
@@ -1124,6 +1159,7 @@ describe("runLoopCi", () => {
             skipCache: true,
             timeout: 30000,
             parallel: false,
+            skipToolchainEnsure: true,
           }),
         (err: unknown) => isAbortError(err),
       );
@@ -1147,6 +1183,7 @@ describe("runLoopCi", () => {
         checks: ["format:check"],
         skipCache: true,
         timeout: 5000,
+        skipToolchainEnsure: true,
         onProgress: (event) => {
           if (event.cwd) seen.push(event.cwd);
         },

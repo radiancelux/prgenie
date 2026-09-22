@@ -27,6 +27,12 @@ import {
   throwIfAborted,
   type ProgressCallback,
 } from "./progress.js";
+import {
+  ensureWorktreeCiToolchain,
+  formatToolchainSetupError,
+  isCiEnvFailureOutput,
+  type ToolchainEnsureResult,
+} from "./worktree-deps.js";
 
 const execAsync = promisify(exec);
 
@@ -63,6 +69,8 @@ export interface CiCheckResult {
   logPath?: string;
   elapsedMs?: number;
   reason?: string;
+  /** Env/setup failure (missing bins) vs product lint/test fail (RAD-92). */
+  kind?: "product" | "env";
 }
 
 export interface CiRunnerResult {
@@ -71,6 +79,14 @@ export interface CiRunnerResult {
   selection?: CiCheckSelection;
   /** Absolute path CI actually ran in (loop worktree when present). */
   cwd: string;
+  /**
+   * True when CI could not run (or failed) because the worktree toolchain is missing.
+   * Distinct from a product check fail — export gate soft-surfaces this by default (RAD-92).
+   */
+  envUnhealthy?: boolean;
+  envMessage?: string;
+  fixSteps?: string[];
+  toolchain?: ToolchainEnsureResult;
 }
 
 export interface CiRunnerOptions {
@@ -98,6 +114,11 @@ export interface CiRunnerOptions {
   selection?: CiCheckSelection;
   /** Changed paths used when the caller wants selection recorded. */
   changedPaths?: string[];
+  /** Skip auto-junction of primary node_modules (tests). */
+  skipToolchainEnsure?: boolean;
+  /** Forwarded to ensureWorktreeCiToolchain. */
+  toolchainPrimaryPath?: string | null;
+  allowToolchainInstall?: boolean;
 }
 
 /**
@@ -308,6 +329,7 @@ async function runOneCheck(
     const logPath = await writeCiFailureLog(cwd, check, command, output, excerpt);
     const elapsedMs = Date.now() - started;
     const error = formatCiCheckError({ command, excerpt, logPath });
+    const envFail = isCiEnvFailureOutput(output.firstLine);
     onProgress?.({
       phase: "ci",
       check,
@@ -325,6 +347,7 @@ async function runOneCheck(
       logPath: logPath ?? undefined,
       elapsedMs,
       reason,
+      kind: envFail ? "env" : "product",
     };
   }
 }
@@ -337,6 +360,7 @@ async function runOneCheck(
  * RAD-36: format:check runs over git-tracked files only (matching remote CI clean checkout).
  * RAD-46: format:check checks git blob (LF-normalized) content, not CRLF working tree.
  * RAD-77: fail-fast (default), parallel independent checks, smart selection via caller.
+ * RAD-92: junction/link primary node_modules into worktree before running checks.
  */
 export async function runCiChecks(
   cwd: string,
@@ -360,6 +384,43 @@ export async function runCiChecks(
     const joined = formatCiSelectionReason(selection?.reason);
     return joined || undefined;
   };
+
+  let toolchain: ToolchainEnsureResult | undefined;
+  if (!options.skipToolchainEnsure) {
+    toolchain = await ensureWorktreeCiToolchain(cwd, {
+      primaryPath: options.toolchainPrimaryPath,
+      allowInstall: options.allowToolchainInstall,
+    });
+    if (!toolchain.ok) {
+      const error = formatToolchainSetupError(toolchain);
+      onProgress?.({
+        phase: "ci",
+        check: "toolchain",
+        state: "fail",
+        message: toolchain.message,
+        cwd,
+      });
+      return {
+        allPassed: false,
+        envUnhealthy: true,
+        envMessage: toolchain.message,
+        fixSteps: toolchain.fixSteps,
+        toolchain,
+        checks: [
+          {
+            name: "toolchain",
+            passed: false,
+            error,
+            excerpt: toolchain.message,
+            reason: "worktree CI toolchain setup",
+            kind: "env",
+          },
+        ],
+        selection,
+        cwd,
+      };
+    }
+  }
 
   if (selection) {
     onProgress?.({
@@ -398,9 +459,13 @@ export async function runCiChecks(
         }),
       );
       const settled = await Promise.allSettled(pending);
+      // Caller abort and fail-fast share the child controller. A caller abort
+      // must reject; only a failed check should be recorded as a skip.
+      if (signal?.aborted) throw abortError();
       for (let i = 0; i < settled.length; i++) {
         const item = settled[i];
         const check = checks[i];
+        if (signal?.aborted) throw abortError();
         if (item.status === "fulfilled") {
           results.push(item.value);
         } else if (isAbortError(item.reason) || child.signal.aborted) {
@@ -438,11 +503,16 @@ export async function runCiChecks(
     }
   }
 
+  const envUnhealthy = results.some((r) => !r.passed && !r.skipped && r.kind === "env");
+  const envFailed = results.find((r) => !r.passed && !r.skipped && r.kind === "env");
   return {
     allPassed: results.every((r) => r.passed),
     checks: results,
     selection,
     cwd,
+    envUnhealthy: envUnhealthy || undefined,
+    envMessage: envFailed?.excerpt ?? envFailed?.error,
+    toolchain,
   };
 }
 

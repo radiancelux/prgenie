@@ -278,12 +278,29 @@ export {
 export { shepherdStatus } from "./shepherd.js";
 export type {
   ShepherdBlockReason,
+  ShepherdCiEnvUnhealthy,
   ShepherdOptions,
   ShepherdResult,
   ShepherdStatus,
 } from "./shepherd.js";
 export { runCiChecks, runLoopCi } from "./ci-runner.js";
 export type { CiCheckResult, CiRunnerOptions, CiRunnerResult, LoopCiOptions } from "./ci-runner.js";
+export {
+  REQUIRED_CI_BINS,
+  OPTIONAL_CI_BINS,
+  ensureWorktreeCiToolchain,
+  formatToolchainFixSteps,
+  formatToolchainSetupError,
+  hasCiBin,
+  isCiEnvFailureOutput,
+  missingCiBins,
+  packagePrgenieLinksPointAtWorktree,
+} from "./worktree-deps.js";
+export type {
+  EnsureToolchainOptions,
+  ToolchainEnsureResult,
+  ToolchainLinkMethod,
+} from "./worktree-deps.js";
 export {
   changedPathsForCi,
   classifyCiPath,
