@@ -168,11 +168,9 @@ async function getTrackedFiles(cwd: string): Promise<string[]> {
     }
 
     return validFiles;
-  } catch (err) {
-    throw new Error(
-      `Failed to list tracked files for format:check: ${err instanceof Error ? err.message : String(err)}`,
-      { cause: err },
-    );
+  } catch {
+    // Not a git repo (unit fixtures) or ls-files failed — caller falls back to package script.
+    return [];
   }
 }
 
@@ -261,15 +259,18 @@ async function runOneCheck(
   try {
     if (check === "format:check") {
       const tracked = await getTrackedFiles(cwd);
-      await checkFormatFromBlobs(cwd, tracked, signal);
-      const elapsedMs = Date.now() - started;
-      onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
-      try {
-        await recordCheckPass(cwd, check);
-      } catch {
-        // Check passed; cache write failed — ignore and continue without cache
+      if (tracked.length > 0) {
+        await checkFormatFromBlobs(cwd, tracked, signal);
+        const elapsedMs = Date.now() - started;
+        onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
+        try {
+          await recordCheckPass(cwd, check);
+        } catch {
+          // Check passed; cache write failed — ignore and continue without cache
+        }
+        return { name: check, passed: true, elapsedMs, reason };
       }
-      return { name: check, passed: true, elapsedMs, reason };
+      // No tracked prettier files (or not a git repo): use package.json script.
     }
 
     await execAsync(command, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });
