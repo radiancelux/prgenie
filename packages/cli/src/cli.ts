@@ -616,6 +616,13 @@ export async function run(argv: string[]): Promise<number> {
     if (result.ciPlan) {
       process.stdout.write(`CI plan: ${result.ciPlan.reason.join("; ")}\n`);
     }
+    if (result.ciEnvUnhealthy) {
+      process.stdout.write(`\nCI env unhealthy (does not hard-block export by default):\n`);
+      process.stdout.write(`  ${result.ciEnvUnhealthy.message}\n`);
+      for (const step of result.ciEnvUnhealthy.fixSteps) {
+        process.stdout.write(`  - ${step}\n`);
+      }
+    }
     if (result.reasons.length > 0) {
       process.stdout.write("\nBlocking reasons:\n");
       for (const reason of result.reasons) {
@@ -650,6 +657,12 @@ export async function run(argv: string[]): Promise<number> {
     if (result.selection) {
       process.stdout.write(`CI plan checks: ${result.selection.checks.join(", ")}\n`);
       process.stdout.write(`CI plan reason: ${result.selection.reason.join("; ")}\n`);
+    }
+    if (result.envUnhealthy) {
+      process.stdout.write(`CI env unhealthy: ${result.envMessage ?? "missing toolchain"}\n`);
+      for (const step of result.fixSteps ?? []) {
+        process.stdout.write(`  fix: ${step}\n`);
+      }
     }
     process.stdout.write(result.allPassed ? "CI preflight passed.\n" : "CI preflight failed.\n");
     return result.allPassed ? 0 : 1;

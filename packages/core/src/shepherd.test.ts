@@ -288,8 +288,11 @@ describe("shepherdStatus", () => {
 
       await setLocalPrStatus(repo, pr.id, "reviewed");
 
-      // Skip github check but allow CI check to run
-      const result = await shepherdStatus(repo, pr.id, { skipGithubCheck: true });
+      // Skip github check but allow CI check to run (exit-script fixture — no real bins)
+      const result = await shepherdStatus(repo, pr.id, {
+        skipGithubCheck: true,
+        skipToolchainEnsure: true,
+      });
 
       assert.equal(result.status, "blocked");
       const ciReasons = result.reasons.filter((r) => r.check === "ci");
@@ -394,7 +397,10 @@ describe("shepherdStatus", () => {
 
       await setLocalPrStatus(repo, pr.id, "reviewed");
 
-      const result = await shepherdStatus(repo, pr.id, { skipGithubCheck: true });
+      const result = await shepherdStatus(repo, pr.id, {
+        skipGithubCheck: true,
+        skipToolchainEnsure: true,
+      });
 
       assert.equal(result.status, "ready");
       const ciReasons = result.reasons.filter((r) => r.check === "ci");
@@ -447,9 +453,48 @@ describe("shepherdStatus", () => {
         "skipCiCheck must not report CI failures",
       );
 
-      const full = await shepherdStatus(repo, pr.id, { skipGithubCheck: true });
+      const full = await shepherdStatus(repo, pr.id, {
+        skipGithubCheck: true,
+        skipToolchainEnsure: true,
+      });
       assert.equal(full.status, "blocked", "CLI/default path still runs full CI");
       assert.ok(full.reasons.some((r) => r.check === "ci"));
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("CI env unhealthy does not hard-block export by default (RAD-92)", async () => {
+    const repo = await initRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(join(repo, "test.txt"), "test\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "Add test"]);
+
+      const pr = await createLocalPr(repo, {
+        title: "PR missing toolchain",
+        body: "Body",
+        base: "main",
+        head: "feature",
+      });
+      assert.ok(pr.worktreePath);
+      // No node_modules on primary or worktree — ensure reports env unhealthy.
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+
+      const soft = await shepherdStatus(repo, pr.id, { skipGithubCheck: true });
+      assert.equal(soft.status, "ready", "env unhealthy alone must not hard-block");
+      assert.equal(soft.reasons.filter((r) => r.check === "ci").length, 0);
+      assert.ok(soft.ciEnvUnhealthy);
+      assert.match(soft.ciEnvUnhealthy.message, /Missing toolchain|unhealthy/i);
+      assert.ok(soft.ciEnvUnhealthy.fixSteps.length > 0);
+
+      const hard = await shepherdStatus(repo, pr.id, {
+        skipGithubCheck: true,
+        hardBlockCiEnv: true,
+      });
+      assert.equal(hard.status, "blocked");
+      assert.ok(hard.reasons.some((r) => r.check === "ci" && /unhealthy/i.test(r.message)));
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
@@ -486,6 +531,7 @@ describe("shepherdStatus", () => {
       const events: ProgressEvent[] = [];
       const result = await shepherdStatus(repo, pr.id, {
         skipGithubCheck: true,
+        skipToolchainEnsure: true,
         onProgress: (event) => events.push(event),
       });
       assert.equal(result.status, "blocked");
@@ -543,6 +589,7 @@ describe("shepherdStatus", () => {
       const events: ProgressEvent[] = [];
       const result = await shepherdStatus(repo, pr.id, {
         skipGithubCheck: true,
+        skipToolchainEnsure: true,
         onProgress: (event) => events.push(event),
       });
       assert.equal(result.status, "blocked");

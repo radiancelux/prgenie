@@ -137,6 +137,21 @@ Doctor `corrupt-prs` lists unparsable files under `.git/agent-console/prs/`. Cor
 - Loop checkouts live at `../<repo>.loops/<id>` next to the primary folder.
 - Never treat the primary checkout as a disposable loop worktree; never implement loop work in the primary when a loop worktree exists — Switch into `.loops/<id>` after create.
 - Orphans: `.loops` path still registered in `git worktree list` but no live (non-archived) local PR with that id → `git worktree remove <path>`.
+
+## Worktree CI toolchain (Windows)
+
+**Symptoms:** `run_ci` / shepherd in a `.loops/<id>` worktree fails with `eslint` / `tsc` / `tsx` “not recognized”, `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL`, or “Missing toolchain in worktree”.
+
+**Cause:** Exclusive loop worktrees do not copy `node_modules`. RAD-112 correctly runs CI **in** the worktree; without deps, bins are missing.
+
+**Happy path (RAD-92):** Before checks, PR Genie **junctions** primary `node_modules` into the worktree on Windows (`mklink /J` equivalent via `fs.symlink(..., "junction")` — no admin). On macOS/Linux it uses a directory symlink. Prefer this over a full install per loop.
+
+**Fix:**
+
+1. In the **primary** checkout: `pnpm install` (once).
+2. Re-run `prgenie ci <id>` / MCP `run_ci` — junction is created automatically.
+3. If junction is impossible (rare cross-device / permission): `cd ../<repo>.loops/<id> && pnpm install`.
+4. Product lint/test failures still hard-block export. A pure **CI environment unhealthy** setup error is soft-surfaced and does **not** hard-block export by default (see [ci-checks.md](ci-checks.md#worktree-deps-rad-92)).
 - Worktree collisions: two windows on the same branch, or a leftover `.loops/<other-id>` while coding a different loop — Switch to the correct loop id or remove the stale tree.
 - Dirty tracked plugin bundles on primary (`packages/plugin/hooks|mcp/*.cjs` after build/link-plugin): doctor `plugin-dirt` / `create_local_pr` refuse until stash or `git restore`. Peel would otherwise carry that dirt into the new loop worktree.
 

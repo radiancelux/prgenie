@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git } from "./git.js";
@@ -235,8 +235,13 @@ describe("evaluateAndStoreExportGate", () => {
           },
         }),
       );
+      await writeFile(join(repo, ".gitignore"), "node_modules\n");
+      const type = process.platform === "win32" ? "junction" : "dir";
+      await symlink(join(process.cwd(), "node_modules"), join(pr.worktreePath, "node_modules"), type);
       await setLocalPrStatus(repo, pr.id, "reviewed");
-      const shepherd = await evaluateAndStoreExportGate(repo, pr.id);
+      const shepherd = await evaluateAndStoreExportGate(repo, pr.id, {
+        skipGithubCheck: true,
+      });
       assert.equal(shepherd.status, "blocked");
       assert.ok(shepherd.reasons.some((r) => r.check === "ci" && r.message.includes("test")));
 
@@ -290,8 +295,16 @@ describe("evaluateAndStoreExportGate", () => {
       const a: ProgressEvent[] = [];
       const b: ProgressEvent[] = [];
       const [first, second] = await Promise.all([
-        evaluateAndStoreExportGate(repo, pr.id, { onProgress: (e) => a.push(e) }),
-        evaluateAndStoreExportGate(repo, pr.id, { onProgress: (e) => b.push(e) }),
+        evaluateAndStoreExportGate(repo, pr.id, {
+          skipGithubCheck: true,
+          skipToolchainEnsure: true,
+          onProgress: (e) => a.push(e),
+        }),
+        evaluateAndStoreExportGate(repo, pr.id, {
+          skipGithubCheck: true,
+          skipToolchainEnsure: true,
+          onProgress: (e) => b.push(e),
+        }),
       ]);
       assert.equal(first.status, second.status);
       const lintStartsA = a.filter(
@@ -342,6 +355,8 @@ describe("evaluateAndStoreExportGate", () => {
       await assert.rejects(
         () =>
           evaluateAndStoreExportGate(repo, pr.id, {
+            skipGithubCheck: true,
+            skipToolchainEnsure: true,
             onProgress: (e) => {
               if (armed) return;
               if (e.phase === "ci" && (e.state === "start" || e.check === "lint")) {
@@ -390,7 +405,12 @@ describe("evaluateAndStoreExportGate", () => {
       const ac = new AbortController();
       setTimeout(() => ac.abort(), 80);
       await assert.rejects(
-        () => evaluateAndStoreExportGate(repo, pr.id, { signal: ac.signal }),
+        () =>
+          evaluateAndStoreExportGate(repo, pr.id, {
+            signal: ac.signal,
+            skipGithubCheck: true,
+            skipToolchainEnsure: true,
+          }),
         (err: unknown) => isAbortError(err),
       );
       const stored = await getLocalPr(repo, pr.id);

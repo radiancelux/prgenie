@@ -1083,6 +1083,7 @@ describe("runLoopCi", () => {
         failingChecks: ["lint", "test"],
         skipCache: true,
         timeout: 5000,
+        skipToolchainEnsure: true,
       });
       const names = result.checks.map((c) => c.name);
       assert.ok(names.includes("format:check"), "docs-only still selects format");
@@ -1124,6 +1125,7 @@ describe("runLoopCi", () => {
             skipCache: true,
             timeout: 30000,
             parallel: false,
+            skipToolchainEnsure: true,
           }),
         (err: unknown) => isAbortError(err),
       );
@@ -1147,6 +1149,7 @@ describe("runLoopCi", () => {
         checks: ["format:check"],
         skipCache: true,
         timeout: 5000,
+        skipToolchainEnsure: true,
         onProgress: (event) => {
           if (event.cwd) seen.push(event.cwd);
         },
