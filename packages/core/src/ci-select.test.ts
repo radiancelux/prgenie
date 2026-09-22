@@ -94,6 +94,18 @@ describe("selectCiChecks", () => {
     assert.ok(result.reason.some((r) => /uncertain → full/.test(r)));
   });
 
+  it("ignores bundled plugin hooks/mcp .cjs when scoping with core/cli", () => {
+    const result = selectCiChecks([
+      "packages/core/src/git.ts",
+      "packages/plugin/hooks/capture-subagent.cjs",
+      "packages/plugin/mcp/server.cjs",
+      "packages/plugin/skills/start/SKILL.md",
+    ]);
+    assert.equal(result.uncertain, false);
+    assert.equal(result.packageScoped, true);
+    assert.deepEqual(result.checks, ["format:check", "lint:core", "typecheck:core", "test:core"]);
+  });
+
   it("classifies test, source, docs, and config paths", () => {
     assert.equal(classifyCiPath("packages/core/src/ci-select.test.ts"), "test");
     assert.equal(classifyCiPath("packages/core/src/ci-select.ts"), "source");
