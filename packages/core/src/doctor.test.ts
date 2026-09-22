@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { formatDoctorReport, runDoctor } from "./doctor.js";
+import { PRGENIE_GIT_ENV, clearGitBinaryCache } from "./git.js";
 
 let dir = "";
 
@@ -105,4 +106,37 @@ test("doctor fails mcp-config on UTF-8 BOM and unresolved PLUGIN_ROOT", async ()
   assert.ok(cfg);
   assert.equal(cfg.ok, false);
   assert.match(cfg.summary, /BOM|PLUGIN_ROOT/);
+});
+
+test("doctor reports git-path ok with resolved absolute git binary", async () => {
+  const repo = await initRepo("git-path-ok");
+  const home = path.join(dir, "home-git-path");
+  const report = await runDoctor(repo, { home });
+  const gitPath = report.checks.find((c) => c.id === "git-path");
+  assert.ok(gitPath);
+  assert.equal(gitPath.ok, true);
+  assert.match(gitPath.summary, /resolvable from this process at /);
+});
+
+test("doctor fails git-path when PRGENIE_GIT points at a missing binary", async () => {
+  const prev = process.env[PRGENIE_GIT_ENV];
+  const missing = path.join(dir, "no-such-git.exe");
+  process.env[PRGENIE_GIT_ENV] = missing;
+  clearGitBinaryCache();
+  try {
+    const report = await runDoctor(path.join(dir, "not-a-repo-yet"), {
+      home: path.join(dir, "home-missing-git"),
+    });
+    assert.equal(report.ok, false);
+    assert.equal(report.checks.length, 1);
+    const gitPath = report.checks[0];
+    assert.equal(gitPath.id, "git-path");
+    assert.equal(gitPath.ok, false);
+    assert.match(gitPath.summary, new RegExp(PRGENIE_GIT_ENV));
+    assert.match(gitPath.fix ?? "", /Git for Windows|Install git/);
+  } finally {
+    if (prev === undefined) delete process.env[PRGENIE_GIT_ENV];
+    else process.env[PRGENIE_GIT_ENV] = prev;
+    clearGitBinaryCache();
+  }
 });

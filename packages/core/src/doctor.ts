@@ -3,7 +3,13 @@ import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { findGitRoot, requireGitRoot } from "./git.js";
+import {
+  PRGENIE_GIT_ENV,
+  findGitRoot,
+  formatGitMissingError,
+  requireGitRoot,
+  resolveGitBinary,
+} from "./git.js";
 import { getRepoGithubBind, listGhAccounts } from "./github-ops.js";
 import { isArchivedPr, listCorruptLocalPrFiles, listLocalPrs } from "./prs.js";
 import { formatWatchStatus, getRepoWatch } from "./watch.js";
@@ -48,11 +54,36 @@ async function hashFile(file: string): Promise<string | null> {
 
 export async function runDoctor(cwd: string, options?: { home?: string }): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
+
+  const gitBinary = resolveGitBinary();
+  if (!gitBinary) {
+    const override = process.env[PRGENIE_GIT_ENV]?.trim();
+    return {
+      ok: false,
+      checks: [
+        {
+          id: "git-path",
+          ok: false,
+          summary: override
+            ? `${PRGENIE_GIT_ENV} is set to "${override}" but that path does not exist (not resolvable from this MCP/process environment).`
+            : "git is not resolvable from this MCP/process PATH.",
+          fix: formatGitMissingError(),
+        },
+      ],
+    };
+  }
+  checks.push({
+    id: "git-path",
+    ok: true,
+    summary: `git resolvable from this process at ${gitBinary}.`,
+  });
+
   const root = await findGitRoot(cwd);
   if (!root) {
     return {
       ok: false,
       checks: [
+        ...checks,
         {
           id: "git",
           ok: false,
