@@ -15,6 +15,8 @@ const shared = {
   platform: "node",
   format: "cjs",
   logLevel: "info",
+  // Load workspace prettier at runtime — bundling it breaks format:check blob API on Windows.
+  external: ["prettier"],
   alias: {
     "@prgenie/core": path.join(root, "packages/core/src/index.ts"),
   },
@@ -55,7 +57,7 @@ await esbuild.build({
   ...shared,
   entryPoints: ["packages/extension/src/extension.ts"],
   outfile: "packages/extension/dist/extension.js",
-  external: ["vscode"],
+  external: ["vscode", "prettier"],
 });
 
 console.log("PR Genie build complete.");

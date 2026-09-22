@@ -199,7 +199,8 @@ async function checkFormatFromBlobs(
       if (!ok) failures.push(file);
     } catch (err) {
       if (isAbortError(err) || signal?.aborted) throw abortError();
-      failures.push(file);
+      const detail = err instanceof Error ? err.message : String(err);
+      failures.push(`${file} (${detail})`);
     }
   }
 
