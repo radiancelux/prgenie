@@ -1078,6 +1078,91 @@ describe("runCiChecks", () => {
       await rm(repo, { recursive: true, force: true });
     }
   });
+
+  it("host-repo eslint . runs path-scoped and progress shows changed paths (RAD-120)", async () => {
+    const repo = await initTestRepo();
+    try {
+      await mkdir(join(repo, "apps", "mobile", "src"), { recursive: true });
+      await writeFile(join(repo, "apps", "mobile", "src", "badge.ts"), "export {};\n");
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "host-phoenix-like",
+          scripts: {
+            "format:check": "exit 0",
+            lint: "eslint .",
+            typecheck: "exit 0",
+            test: "exit 0",
+            build: "exit 0",
+          },
+        }),
+      );
+
+      const changedPaths = ["apps/mobile/src/badge.ts"];
+      const commands: string[] = [];
+      await runCiChecks(repo, {
+        checks: ["lint"],
+        changedPaths,
+        selection: {
+          checks: ["lint"],
+          reason: ["changed paths outside scopable packages", "uncertain → full suite"],
+          mapping: [{ check: "lint", reason: "root lint" }],
+          uncertain: true,
+          changedPaths,
+          packageScoped: false,
+        },
+        skipCache: true,
+        skipToolchainEnsure: true,
+        timeout: 15000,
+        onProgress: (event) => {
+          if (event.check === "lint" && event.command) commands.push(event.command);
+        },
+      });
+
+      assert.ok(commands.length > 0, "progress emitted a lint command");
+      assert.match(commands[0], /pnpm exec eslint/);
+      assert.match(commands[0], /apps\/mobile\/src\/badge\.ts/);
+      assert.notEqual(commands[0], "pnpm lint");
+      // Fixture may lack a working eslint bin; scoped command string is the contract.
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("host-repo config change fail-closes to full pnpm lint (RAD-120)", async () => {
+    const repo = await initTestRepo();
+    try {
+      // package.json script exits 0; packageScripts still reports monorepo-wide eslint .
+      // so resolve would scope unless fail-closed kicks in for config paths.
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "host-phoenix-like",
+          scripts: { lint: "exit 0" },
+        }),
+      );
+      const changedPaths = ["eslint.config.mjs", "apps/mobile/src/badge.ts"];
+      const commands: string[] = [];
+      const result = await runCiChecks(repo, {
+        checks: ["lint"],
+        changedPaths,
+        packageScripts: { lint: "eslint ." },
+        skipCache: true,
+        skipToolchainEnsure: true,
+        timeout: 5000,
+        onProgress: (event) => {
+          if (event.check === "lint" && event.state === "start" && event.command) {
+            commands.push(event.command);
+          }
+        },
+      });
+      assert.equal(result.allPassed, true);
+      assert.equal(commands[0], "pnpm lint");
+      assert.ok(result.checks[0]?.reason?.includes("config/CI"));
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("runLoopCi", () => {

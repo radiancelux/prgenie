@@ -326,6 +326,20 @@ export {
 } from "./ci-select.js";
 export type { CiCheckMapping, CiCheckSelection, CiPathKind, ScopablePackage } from "./ci-select.js";
 export {
+  detectMonorepoWideScript,
+  eslintPathsFromChanged,
+  hostScopeFailClosedReason,
+  packageFiltersFromChanged,
+  readPackageScripts,
+  resolveCiCheckCommand,
+} from "./ci-host-scope.js";
+export type {
+  HostScopeTool,
+  MonorepoWideScript,
+  ResolveCiCheckCommandOptions,
+  ResolvedCiCommand,
+} from "./ci-host-scope.js";
+export {
   collectExecOutput,
   formatCiCheckError,
   formatFailureExcerpt,

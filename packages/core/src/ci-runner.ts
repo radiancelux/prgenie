@@ -17,11 +17,14 @@ import {
   selectCiChecks,
   type CiCheckSelection,
 } from "./ci-select.js";
+import {
+  hostScopeFailClosedReason,
+  resolveCiCheckCommand,
+} from "./ci-host-scope.js";
 import { requestCiAbort, watchCiAbort } from "./ci-abort.js";
 import { getLocalPr } from "./prs.js";
 import {
   abortError,
-  ciCheckCommand,
   isAbortError,
   onAbort,
   throwIfAborted,
@@ -119,6 +122,11 @@ export interface CiRunnerOptions {
   /** Forwarded to ensureWorktreeCiToolchain. */
   toolchainPrimaryPath?: string | null;
   allowToolchainInstall?: boolean;
+  /**
+   * Optional package.json scripts map for host-repo scoping (unit fixtures).
+   * When omitted, scripts are read from `cwd/package.json`.
+   */
+  packageScripts?: Record<string, string> | null;
 }
 
 /**
@@ -269,16 +277,26 @@ async function runOneCheck(
     onProgress?: ProgressCallback;
     signal?: AbortSignal;
     reason?: string;
+    changedPaths?: string[];
+    packageScripts?: Record<string, string> | null;
   },
 ): Promise<CiCheckResult> {
-  const { timeout, skipCache, onProgress, signal, reason } = options;
-  const command = ciCheckCommand(check);
+  const { timeout, skipCache, onProgress, signal, changedPaths, packageScripts } = options;
+  const resolved = resolveCiCheckCommand({
+    check,
+    cwd,
+    changedPaths,
+    scripts: packageScripts,
+    failClosedReason: hostScopeFailClosedReason(changedPaths) ?? undefined,
+  });
+  const command = resolved.command;
+  const reason = [options.reason, resolved.reason].filter(Boolean).join("; ");
 
   if (!skipCache) {
     const cached = await getCachedResult(cwd, check);
     if (cached) {
       onProgress?.({ phase: "ci", check, state: "cached", command, elapsedMs: 0 });
-      return { name: check, passed: true, elapsedMs: 0, reason };
+      return { name: check, passed: true, elapsedMs: 0, reason: reason || options.reason };
     }
   }
 
@@ -307,7 +325,7 @@ async function runOneCheck(
           } catch {
             // Check passed; cache write failed — ignore and continue without cache
           }
-          return { name: check, passed: true, elapsedMs, reason };
+          return { name: check, passed: true, elapsedMs, reason: reason || options.reason };
         }
       }
       // No tracked prettier files, not a git repo, or prettier is not installed in cwd.
@@ -321,7 +339,7 @@ async function runOneCheck(
     } catch {
       // Check passed; cache write failed — ignore and continue without cache
     }
-    return { name: check, passed: true, elapsedMs, reason };
+    return { name: check, passed: true, elapsedMs, reason: reason || options.reason };
   } catch (err) {
     if (isAbortError(err) || signal?.aborted) throw abortError();
     const output = collectExecOutput(err);
@@ -346,7 +364,7 @@ async function runOneCheck(
       excerpt,
       logPath: logPath ?? undefined,
       elapsedMs,
-      reason,
+      reason: reason || options.reason,
       kind: envFail ? "env" : "product",
     };
   }
@@ -441,6 +459,8 @@ export async function runCiChecks(
   }
 
   const results: CiCheckResult[] = [];
+  const changedPaths = options.changedPaths ?? selection?.changedPaths;
+  const packageScripts = options.packageScripts;
 
   if (parallel && checks.length > 1) {
     const child = new AbortController();
@@ -453,6 +473,8 @@ export async function runCiChecks(
           onProgress,
           signal: child.signal,
           reason: reasonFor(check),
+          changedPaths,
+          packageScripts,
         }).then((result) => {
           if (!result.passed && failFast) child.abort();
           return result;
@@ -494,6 +516,8 @@ export async function runCiChecks(
             onProgress,
             signal,
             reason: reasonFor(check),
+            changedPaths,
+            packageScripts,
           }),
         );
       } catch (err) {

@@ -49,8 +49,11 @@ export interface RunProgressOptions {
 }
 
 /**
- * Map a smart-CI check name to a shell command.
+ * Map a smart-CI check name to a default shell command.
  * Package-scoped names (`lint:core`, `test:cli`, …) never expand to root `pnpm test`.
+ * Host-repo monorepo-wide scripts (`eslint .`) are rewritten by
+ * `resolveCiCheckCommand` in `ci-host-scope.ts` so the progress card can show
+ * `eslint path1 path2` instead of bare `pnpm lint`.
  */
 export function ciCheckCommand(check: string): string {
   const scoped = check.match(/^(lint|typecheck|test|build):(core|cli|extension)$/);
