@@ -16,13 +16,13 @@ Changed paths = committed `baseSha...headSha` plus dirty/untracked files in the 
 
 Loop checkouts under `../<repo>.loops/<id>` usually have **no** `node_modules`. Before checks run, PR Genie **junctions** (Windows) or **symlinks** (macOS/Linux) `node_modules` from the primary checkout into the worktree so `pnpm exec eslint|tsc|tsx|prettier` resolve. Package-local `packages/*/node_modules` are linked the same way when present on primary.
 
-| Situation | Behavior |
-| --------- | -------- |
-| Primary has `node_modules` | Auto-junction/link into the loop worktree (preferred) |
-| Junction/link impossible | Fall back to `pnpm install` **in the worktree** only then |
-| Primary also missing deps | Clear **CI environment unhealthy** setup error with fix steps — not an opaque red lint/test failure |
-| Product lint/test fail | Hard-blocks export (shepherd `reasons` / gate `blocked`) |
-| Env unhealthy only | Soft-surfaced (`ciEnvUnhealthy`); does **not** hard-block export by default |
+| Situation                  | Behavior                                                                                            |
+| -------------------------- | --------------------------------------------------------------------------------------------------- |
+| Primary has `node_modules` | Auto-junction/link into the loop worktree (preferred)                                               |
+| Junction/link impossible   | Fall back to `pnpm install` **in the worktree** only then                                           |
+| Primary also missing deps  | Clear **CI environment unhealthy** setup error with fix steps — not an opaque red lint/test failure |
+| Product lint/test fail     | Hard-blocks export (shepherd `reasons` / gate `blocked`)                                            |
+| Env unhealthy only         | Soft-surfaced (`ciEnvUnhealthy`); does **not** hard-block export by default                         |
 
 Fix path when setup fails: `pnpm install` once in the **primary** checkout, then re-run `prgenie ci` / shepherd (junction recreates). Manual worktree install: `cd ../<repo>.loops/<id> && pnpm install`. See [troubleshooting.md](troubleshooting.md#worktree-ci-toolchain-windows).
 

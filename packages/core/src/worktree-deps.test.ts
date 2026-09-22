@@ -30,7 +30,7 @@ describe("isCiEnvFailureOutput", () => {
       true,
     );
     assert.equal(
-      isCiEnvFailureOutput("ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command \"eslint\" not found"),
+      isCiEnvFailureOutput('ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command "eslint" not found'),
       true,
     );
     assert.equal(isCiEnvFailureOutput("Cannot find module 'eslint'"), true);
@@ -117,7 +117,10 @@ describe("ensureWorktreeCiToolchain", () => {
     try {
       const primary = await makePrimaryWithBins(root);
       await mkdir(join(primary, "packages", "core"), { recursive: true });
-      await writeFile(join(primary, "packages", "core", "package.json"), '{"name":"@prgenie/core"}');
+      await writeFile(
+        join(primary, "packages", "core", "package.json"),
+        '{"name":"@prgenie/core"}',
+      );
       await mkdir(join(primary, "packages", "cli", "node_modules", "@prgenie"), {
         recursive: true,
       });
@@ -130,7 +133,10 @@ describe("ensureWorktreeCiToolchain", () => {
 
       const worktree = join(root, "prgenie.loops", "lp-feedface");
       await mkdir(join(worktree, "packages", "core"), { recursive: true });
-      await writeFile(join(worktree, "packages", "core", "package.json"), '{"name":"@prgenie/core"}');
+      await writeFile(
+        join(worktree, "packages", "core", "package.json"),
+        '{"name":"@prgenie/core"}',
+      );
       await writeFile(join(worktree, "packages", "core", "WORKTREE"), "1");
       await symlink(join(primary, "node_modules"), join(worktree, "node_modules"), type);
       assert.equal(hasCiBin(worktree, "eslint"), true);
@@ -146,7 +152,11 @@ describe("ensureWorktreeCiToolchain", () => {
       );
       assert.ok(existsSync(join(worktree, "packages", "cli", "node_modules", "@prgenie", "core")));
       // Workspace link must point at the worktree package, not primary.
-      assert.ok(existsSync(join(worktree, "packages", "cli", "node_modules", "@prgenie", "core", "WORKTREE")));
+      assert.ok(
+        existsSync(
+          join(worktree, "packages", "cli", "node_modules", "@prgenie", "core", "WORKTREE"),
+        ),
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

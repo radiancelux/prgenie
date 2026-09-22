@@ -152,6 +152,7 @@ Doctor `corrupt-prs` lists unparsable files under `.git/agent-console/prs/`. Cor
 2. Re-run `prgenie ci <id>` / MCP `run_ci` — junction is created automatically.
 3. If junction is impossible (rare cross-device / permission): `cd ../<repo>.loops/<id> && pnpm install`.
 4. Product lint/test failures still hard-block export. A pure **CI environment unhealthy** setup error is soft-surfaced and does **not** hard-block export by default (see [ci-checks.md](ci-checks.md#worktree-deps-rad-92)).
+
 - Worktree collisions: two windows on the same branch, or a leftover `.loops/<other-id>` while coding a different loop — Switch to the correct loop id or remove the stale tree.
 - Dirty tracked plugin bundles on primary (`packages/plugin/hooks|mcp/*.cjs` after build/link-plugin): doctor `plugin-dirt` / `create_local_pr` refuse until stash or `git restore`. Peel would otherwise carry that dirt into the new loop worktree.
 

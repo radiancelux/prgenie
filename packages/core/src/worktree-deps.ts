@@ -3,7 +3,12 @@ import { mkdir, symlink, rm } from "node:fs/promises";
 import path from "node:path";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { listWorktrees, loopWorktreeIdentity, primaryWorktreePath, sameFsPath } from "./worktrees.js";
+import {
+  listWorktrees,
+  loopWorktreeIdentity,
+  primaryWorktreePath,
+  sameFsPath,
+} from "./worktrees.js";
 
 const execAsync = promisify(exec);
 
@@ -57,7 +62,10 @@ export function hasCiBin(cwd: string, name: string): boolean {
   return binStubs(modules, name).some((p) => existsSync(p));
 }
 
-export function missingCiBins(cwd: string, required: readonly string[] = REQUIRED_CI_BINS): string[] {
+export function missingCiBins(
+  cwd: string,
+  required: readonly string[] = REQUIRED_CI_BINS,
+): string[] {
   return required.filter((name) => !hasCiBin(cwd, name));
 }
 
@@ -73,8 +81,7 @@ export function isCiEnvFailureOutput(text: string): boolean {
     /ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL/i.test(t) ||
     /Command ["'].+["'] not found/i.test(t) ||
     /Cannot find module ['"](?:eslint|typescript|tsx|prettier|turbo|vitest)/i.test(t) ||
-    (/MODULE_NOT_FOUND/i.test(t) &&
-      /(?:eslint|typescript|tsx|prettier|turbo|vitest)/i.test(t)) ||
+    (/MODULE_NOT_FOUND/i.test(t) && /(?:eslint|typescript|tsx|prettier|turbo|vitest)/i.test(t)) ||
     /Missing toolchain in worktree/i.test(t) ||
     /CI environment unhealthy/i.test(t)
   );

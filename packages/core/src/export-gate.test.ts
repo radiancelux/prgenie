@@ -237,7 +237,11 @@ describe("evaluateAndStoreExportGate", () => {
       );
       await writeFile(join(repo, ".gitignore"), "node_modules\n");
       const type = process.platform === "win32" ? "junction" : "dir";
-      await symlink(join(process.cwd(), "node_modules"), join(pr.worktreePath, "node_modules"), type);
+      await symlink(
+        join(process.cwd(), "node_modules"),
+        join(pr.worktreePath, "node_modules"),
+        type,
+      );
       await setLocalPrStatus(repo, pr.id, "reviewed");
       const shepherd = await evaluateAndStoreExportGate(repo, pr.id, {
         skipGithubCheck: true,
