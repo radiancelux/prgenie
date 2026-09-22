@@ -112,22 +112,41 @@ describe("ensureWorktreeCiToolchain", () => {
     }
   });
 
-  it("treats an existing linked node_modules as present", async () => {
-    const root = await mkdtemp(join(tmpdir(), "prgenie-wt-deps-present-"));
+  it("links package-local node_modules even when root bins already exist", async () => {
+    const root = await mkdtemp(join(tmpdir(), "prgenie-wt-deps-pkg-"));
     try {
       const primary = await makePrimaryWithBins(root);
-      const worktree = join(root, "prgenie.loops", "lp-cafebabe");
-      await mkdir(worktree, { recursive: true });
+      await mkdir(join(primary, "packages", "core"), { recursive: true });
+      await writeFile(join(primary, "packages", "core", "package.json"), '{"name":"@prgenie/core"}');
+      await mkdir(join(primary, "packages", "cli", "node_modules", "@prgenie"), {
+        recursive: true,
+      });
       const type = process.platform === "win32" ? "junction" : "dir";
+      await symlink(
+        join(primary, "packages", "core"),
+        join(primary, "packages", "cli", "node_modules", "@prgenie", "core"),
+        type,
+      );
+
+      const worktree = join(root, "prgenie.loops", "lp-feedface");
+      await mkdir(join(worktree, "packages", "core"), { recursive: true });
+      await writeFile(join(worktree, "packages", "core", "package.json"), '{"name":"@prgenie/core"}');
+      await writeFile(join(worktree, "packages", "core", "WORKTREE"), "1");
       await symlink(join(primary, "node_modules"), join(worktree, "node_modules"), type);
+      assert.equal(hasCiBin(worktree, "eslint"), true);
 
       const result = await ensureWorktreeCiToolchain(worktree, {
         primaryPath: primary,
         skipInstall: true,
       });
       assert.equal(result.ok, true);
-      assert.equal(result.method, "present");
-      assert.deepEqual(result.linked, []);
+      assert.ok(
+        result.linked.some((p) => p.replace(/\\/g, "/").includes("packages/cli/node_modules")),
+        `expected package link in ${result.linked.join(", ")}`,
+      );
+      assert.ok(existsSync(join(worktree, "packages", "cli", "node_modules", "@prgenie", "core")));
+      // Workspace link must point at the worktree package, not primary.
+      assert.ok(existsSync(join(worktree, "packages", "cli", "node_modules", "@prgenie", "core", "WORKTREE")));
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { symlink, rm } from "node:fs/promises";
+import { mkdir, symlink, rm } from "node:fs/promises";
 import path from "node:path";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
@@ -164,6 +164,55 @@ async function ensureOneNodeModulesLink(
   };
 }
 
+/**
+ * Mirror a package-local node_modules into the worktree as a real directory.
+ * Each entry is junctioned/symlinked from primary, except workspace packages
+ * (`@prgenie/*` → worktree `packages/<name>`). Whole-dir junction is unsafe:
+ * retargeting nested links would mutate the primary tree.
+ */
+async function mirrorPackageNodeModules(
+  worktreeDir: string,
+  primaryDir: string,
+  packageName: string,
+): Promise<{ linked: boolean; method: ToolchainLinkMethod; path: string }> {
+  const rel = path.join("packages", packageName, "node_modules");
+  const dest = path.join(worktreeDir, rel);
+  const source = path.join(primaryDir, rel);
+  if (!isExistingDir(source)) {
+    return { linked: false, method: "none", path: dest };
+  }
+  if (isExistingDir(dest)) {
+    return { linked: false, method: "present", path: dest };
+  }
+  if (existsSync(dest)) {
+    await rm(dest, { recursive: true, force: true });
+  }
+  await mkdir(dest, { recursive: true });
+  const method: ToolchainLinkMethod = process.platform === "win32" ? "junction" : "symlink";
+  for (const entry of readdirSync(source)) {
+    const from = path.join(source, entry);
+    const to = path.join(dest, entry);
+    if (entry === "@prgenie") {
+      await mkdir(to, { recursive: true });
+      const scopeSrc = path.join(source, entry);
+      if (!isExistingDir(scopeSrc)) continue;
+      for (const ws of readdirSync(scopeSrc)) {
+        const wsTarget = path.join(worktreeDir, "packages", ws);
+        const wsLink = path.join(to, ws);
+        if (!isExistingDir(wsTarget)) {
+          // Fall back to primary package if worktree lacks it.
+          await linkDirectory(wsLink, path.join(primaryDir, "packages", ws));
+        } else {
+          await linkDirectory(wsLink, wsTarget);
+        }
+      }
+      continue;
+    }
+    await linkDirectory(to, from);
+  }
+  return { linked: true, method, path: dest };
+}
+
 async function tryPnpmInstall(worktreePath: string): Promise<{ ok: boolean; detail: string }> {
   try {
     await execAsync("pnpm install", {
@@ -194,25 +243,24 @@ export async function ensureWorktreeCiToolchain(
   const allowInstall = options.allowInstall !== false && options.skipInstall !== true;
 
   const alreadyMissing = missingCiBins(cwd, required);
-  if (alreadyMissing.length === 0) {
-    return {
-      ok: true,
-      envUnhealthy: false,
-      worktreePath: cwd,
-      primaryPath: await resolvePrimaryForWorktree(cwd, options.primaryPath),
-      method: "present",
-      linked: [],
-      message: "CI toolchain already resolvable in worktree.",
-      fixSteps: [],
-    };
-  }
-
   const primary = await resolvePrimaryForWorktree(cwd, options.primaryPath);
   const isLoopWorktree = Boolean(loopWorktreeIdentity(cwd)) || Boolean(options.primaryPath);
 
   // Non-loop checkouts (primary, unit fixtures): do not auto-junction or fail closed here.
   // Missing-bin product commands still classify as env unhealthy after the check runs.
   if (!isLoopWorktree) {
+    if (alreadyMissing.length === 0) {
+      return {
+        ok: true,
+        envUnhealthy: false,
+        worktreePath: cwd,
+        primaryPath: primary,
+        method: "present",
+        linked: [],
+        message: "CI toolchain already resolvable in worktree.",
+        fixSteps: [],
+      };
+    }
     return {
       ok: true,
       envUnhealthy: false,
@@ -226,12 +274,42 @@ export async function ensureWorktreeCiToolchain(
   }
 
   const linked: string[] = [];
-  let method: ToolchainLinkMethod = "none";
+  let method: ToolchainLinkMethod = alreadyMissing.length === 0 ? "present" : "none";
   let linkError: string | null = null;
+
+  async function linkPackageModules(fromPrimary: string): Promise<void> {
+    const packagesRoot = path.join(fromPrimary, "packages");
+    if (!isExistingDir(packagesRoot)) return;
+    for (const name of readdirSync(packagesRoot)) {
+      if (!isExistingDir(path.join(fromPrimary, "packages", name, "node_modules"))) continue;
+      try {
+        const pkgLink = await mirrorPackageNodeModules(cwd, fromPrimary, name);
+        if (pkgLink.linked) {
+          linked.push(path.join("packages", name, "node_modules").replace(/\\/g, "/"));
+          if (method === "none" || method === "present") method = pkgLink.method;
+        }
+      } catch {
+        // Non-fatal — root junction is the happy path.
+      }
+    }
+  }
 
   if (primary && !sameFsPath(primary, cwd)) {
     const primaryModules = path.join(primary, "node_modules");
     if (!isExistingDir(primaryModules)) {
+      if (alreadyMissing.length === 0) {
+        // Bins somehow resolvable without primary modules — still try package links no-op.
+        return {
+          ok: true,
+          envUnhealthy: false,
+          worktreePath: cwd,
+          primaryPath: primary,
+          method: "present",
+          linked: [],
+          message: "CI toolchain already resolvable in worktree.",
+          fixSteps: [],
+        };
+      }
       const fixSteps = formatToolchainFixSteps({
         worktreePath: cwd,
         primaryPath: primary,
@@ -256,27 +334,10 @@ export async function ensureWorktreeCiToolchain(
       if (root.linked) {
         linked.push("node_modules");
         method = root.method;
-      } else if (root.method === "present") {
+      } else if (root.method === "present" && method === "none") {
         method = "present";
       }
-
-      // Package-local modules (pnpm workspace) when present on primary.
-      const packagesRoot = path.join(primary, "packages");
-      if (isExistingDir(packagesRoot)) {
-        for (const name of readdirSync(packagesRoot)) {
-          const rel = path.join("packages", name, "node_modules");
-          if (!isExistingDir(path.join(primary, rel))) continue;
-          try {
-            const pkgLink = await ensureOneNodeModulesLink(cwd, primary, rel);
-            if (pkgLink.linked) {
-              linked.push(rel.replace(/\\/g, "/"));
-              if (method === "none" || method === "present") method = pkgLink.method;
-            }
-          } catch {
-            // Non-fatal — root junction is the happy path.
-          }
-        }
-      }
+      await linkPackageModules(primary);
     } catch (err) {
       linkError = err instanceof Error ? err.message : String(err);
       method = "none";
