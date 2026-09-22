@@ -82,7 +82,11 @@ export interface CiRunnerOptions {
 async function getTrackedFiles(cwd: string): Promise<string[]> {
   try {
     // Get all tracked files, excluding submodules and symlinks
-    const { stdout } = await execAsync("git ls-files --exclude-standard", { cwd });
+    const { stdout } = await execAsync("git ls-files --exclude-standard", {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: 8 * 1024 * 1024,
+    });
     const files = stdout.trim().split("\n").filter(Boolean);
 
     // Filter out files that prettier can't or shouldn't check
@@ -147,8 +151,10 @@ async function getTrackedFiles(cwd: string): Promise<string[]> {
     }
 
     return validFiles;
-  } catch {
-    return [];
+  } catch (err) {
+    throw new Error(
+      `Failed to list tracked files for format:check: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
@@ -237,17 +243,15 @@ async function runOneCheck(
   try {
     if (check === "format:check") {
       const tracked = await getTrackedFiles(cwd);
-      if (tracked.length > 0) {
-        await checkFormatFromBlobs(cwd, tracked, signal);
-        const elapsedMs = Date.now() - started;
-        onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
-        try {
-          await recordCheckPass(cwd, check);
-        } catch {
-          // Check passed; cache write failed — ignore and continue without cache
-        }
-        return { name: check, passed: true, elapsedMs, reason };
+      await checkFormatFromBlobs(cwd, tracked, signal);
+      const elapsedMs = Date.now() - started;
+      onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
+      try {
+        await recordCheckPass(cwd, check);
+      } catch {
+        // Check passed; cache write failed — ignore and continue without cache
       }
+      return { name: check, passed: true, elapsedMs, reason };
     }
 
     await execAsync(command, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });
