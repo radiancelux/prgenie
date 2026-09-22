@@ -739,20 +739,33 @@ var init_ci_select = __esm({
   }
 });
 
-// packages/core/src/ci-runner.ts
+// packages/core/src/worktree-deps.ts
 var import_node_child_process2, import_node_util, execAsync;
-var init_ci_runner = __esm({
-  "packages/core/src/ci-runner.ts"() {
+var init_worktree_deps = __esm({
+  "packages/core/src/worktree-deps.ts"() {
     "use strict";
     import_node_child_process2 = require("node:child_process");
     import_node_util = require("node:util");
+    init_worktrees();
+    execAsync = (0, import_node_util.promisify)(import_node_child_process2.exec);
+  }
+});
+
+// packages/core/src/ci-runner.ts
+var import_node_child_process3, import_node_util2, execAsync2;
+var init_ci_runner = __esm({
+  "packages/core/src/ci-runner.ts"() {
+    "use strict";
+    import_node_child_process3 = require("node:child_process");
+    import_node_util2 = require("node:util");
     init_ci_cache();
     init_ci_failure();
     init_ci_select();
     init_ci_abort();
     init_prs();
     init_progress();
-    execAsync = (0, import_node_util.promisify)(import_node_child_process2.exec);
+    init_worktree_deps();
+    execAsync2 = (0, import_node_util2.promisify)(import_node_child_process3.exec);
   }
 });
 
@@ -854,6 +867,7 @@ init_github_ops();
 init_learnings();
 init_shepherd();
 init_ci_runner();
+init_worktree_deps();
 init_ci_select();
 init_ci_failure();
 init_ci_cache();
