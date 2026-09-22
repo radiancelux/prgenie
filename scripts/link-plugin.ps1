@@ -51,7 +51,7 @@ function Stop-PrgeniePluginHolders {
 
     if (-not $matchesDest) { return }
 
-    # Targeted node / cmd wrappers only — never taskkill all node.exe.
+    # Targeted node / cmd wrappers only -- never taskkill all node.exe.
     $name = [string]$_.Name
     if ($name -notmatch '^(node|node\.exe|cmd|cmd\.exe)$') { return }
 
@@ -65,7 +65,7 @@ function Remove-PluginDest {
 
   if (-not (Test-Path -LiteralPath $PluginDest)) { return }
 
-  # Attempt 0: normal delete. On lock: kill holders, retry 1–2 times, then rename.
+  # Attempt 0: normal delete. On lock: kill holders, retry 1-2 times, then rename.
   $maxAttempts = 3
   for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
     try {
@@ -117,7 +117,7 @@ Push-Location $repoRoot
 try {
   & pnpm build
   if ($LASTEXITCODE -ne 0) {
-    Write-Error "pnpm build failed with exit $LASTEXITCODE — cannot link plugin without generated bundles."
+    Write-Error "pnpm build failed with exit $LASTEXITCODE - cannot link plugin without generated bundles."
     exit 1
   }
 } finally {
@@ -155,5 +155,5 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "Installed Cursor plugin (real copy, not a junction):"
 Write-Host "  $dest"
-Write-Host "Reload is often not enough for MCP tools. In Customize → Plugins, disable and re-enable PR Genie."
+Write-Host "Reload is often not enough for MCP tools. In Customize -> Plugins, disable and re-enable PR Genie."
 Write-Host "Canonical MCP is this plugin (prgenie). Delete leftover .cursor/mcp.json if Connected MCPs shows two prgenie rows. See docs/troubleshooting.md."
