@@ -20,7 +20,21 @@ export type {
   WorktreeInfo,
 } from "./types.js";
 export { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
-export { GitError, findGitRoot, git, gitCommonDir, gitText, requireGitRoot } from "./git.js";
+export {
+  GitBinaryError,
+  GitError,
+  PRGENIE_GIT_ENV,
+  clearGitBinaryCache,
+  findGitRoot,
+  formatGitMissingError,
+  git,
+  gitCommonDir,
+  gitText,
+  requireGitBinary,
+  requireGitRoot,
+  resolveGitBinary,
+  windowsGitCandidates,
+} from "./git.js";
 export { mcpCwdCandidates, resolveMcpGitRoot } from "./mcp-cwd.js";
 export {
   currentBranch,
