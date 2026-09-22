@@ -45,6 +45,13 @@ function loadPrettierFromCwd(cwd: string): typeof import("prettier") {
   return createRequire(path.join(cwd, "package.json"))("prettier") as typeof import("prettier");
 }
 
+/** Temp git fixtures and repos without a local prettier install. */
+function isPrettierUnresolved(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as NodeJS.ErrnoException).code;
+  return code === "MODULE_NOT_FOUND" || /Cannot find module ['"]prettier['"]/.test(err.message);
+}
+
 export interface CiCheckResult {
   name: string;
   passed: boolean;
@@ -260,17 +267,27 @@ async function runOneCheck(
     if (check === "format:check") {
       const tracked = await getTrackedFiles(cwd);
       if (tracked.length > 0) {
-        await checkFormatFromBlobs(cwd, tracked, signal);
-        const elapsedMs = Date.now() - started;
-        onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
+        let checkedBlobs = false;
         try {
-          await recordCheckPass(cwd, check);
-        } catch {
-          // Check passed; cache write failed — ignore and continue without cache
+          await checkFormatFromBlobs(cwd, tracked, signal);
+          checkedBlobs = true;
+        } catch (err) {
+          if (isAbortError(err) || signal?.aborted) throw abortError();
+          // Real format failures still fail. Missing prettier (unit fixtures) uses the package script.
+          if (!isPrettierUnresolved(err)) throw err;
         }
-        return { name: check, passed: true, elapsedMs, reason };
+        if (checkedBlobs) {
+          const elapsedMs = Date.now() - started;
+          onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
+          try {
+            await recordCheckPass(cwd, check);
+          } catch {
+            // Check passed; cache write failed — ignore and continue without cache
+          }
+          return { name: check, passed: true, elapsedMs, reason };
+        }
       }
-      // No tracked prettier files (or not a git repo): use package.json script.
+      // No tracked prettier files, not a git repo, or prettier is not installed in cwd.
     }
 
     await execAsync(command, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });

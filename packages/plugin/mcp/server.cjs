@@ -2866,6 +2866,11 @@ var init_ci_select = __esm({
 function loadPrettierFromCwd(cwd) {
   return (0, import_node_module.createRequire)(import_node_path13.default.join(cwd, "package.json"))("prettier");
 }
+function isPrettierUnresolved(err) {
+  if (!(err instanceof Error)) return false;
+  const code = err.code;
+  return code === "MODULE_NOT_FOUND" || /Cannot find module ['"]prettier['"]/.test(err.message);
+}
 async function getTrackedFiles(cwd) {
   try {
     const { stdout } = await execAsync("git ls-files --exclude-standard", {
@@ -2982,14 +2987,23 @@ async function runOneCheck(cwd, check, options) {
     if (check === "format:check") {
       const tracked = await getTrackedFiles(cwd);
       if (tracked.length > 0) {
-        await checkFormatFromBlobs(cwd, tracked, signal);
-        const elapsedMs2 = Date.now() - started;
-        onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs: elapsedMs2 });
+        let checkedBlobs = false;
         try {
-          await recordCheckPass(cwd, check);
-        } catch {
+          await checkFormatFromBlobs(cwd, tracked, signal);
+          checkedBlobs = true;
+        } catch (err) {
+          if (isAbortError(err) || signal?.aborted) throw abortError();
+          if (!isPrettierUnresolved(err)) throw err;
         }
-        return { name: check, passed: true, elapsedMs: elapsedMs2, reason };
+        if (checkedBlobs) {
+          const elapsedMs2 = Date.now() - started;
+          onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs: elapsedMs2 });
+          try {
+            await recordCheckPass(cwd, check);
+          } catch {
+          }
+          return { name: check, passed: true, elapsedMs: elapsedMs2, reason };
+        }
       }
     }
     await execAsync(command, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });
