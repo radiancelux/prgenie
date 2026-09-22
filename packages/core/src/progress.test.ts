@@ -70,6 +70,7 @@ describe("progress helpers", () => {
       state: "start",
       selectedChecks: ["format:check", "lint"],
       selectionReason: "docs/markdown-only — format only, skip lint/test/build",
+      cwd: "/tmp/pr-genie.loops/lp-demo",
     });
     snap = applyCiProgressEvent(snap, {
       phase: "ci",
@@ -81,13 +82,14 @@ describe("progress helpers", () => {
     const card = formatProgressCard(snap);
     assert.match(card, /CI progress/);
     assert.match(card, /Why: docs\/markdown-only/);
+    assert.match(card, /Cwd: \/tmp\/pr-genie\.loops\/lp-demo/);
     assert.match(card, /format\s+fail\s+1\.2s — bad\.js/);
     assert.match(card, /lint\s+queued/);
   });
 
   it("names the check command and abort errors", () => {
     assert.equal(ciCheckCommand("test"), "pnpm test");
-    assert.equal(ciCheckCommand("test:core"), "pnpm exec tsx --test packages/core/src");
+    assert.equal(ciCheckCommand("test:core"), "pnpm exec tsx --test packages/core/src/*.test.ts");
     assert.equal(shortCheckName("format:check"), "format");
     assert.equal(formatElapsed(40), "40ms");
     assert.equal(

@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
@@ -1128,6 +1128,32 @@ describe("runLoopCi", () => {
         (err: unknown) => isAbortError(err),
       );
       assert.ok(Date.now() - started < 8000);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("runs CI in the loop worktree and returns that cwd (RAD-112)", async () => {
+    const repo = await initGitRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(join(repo, "notes.md"), "docs\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "docs"]);
+      const pr = await createLocalPr(repo, { title: "Docs", body: "Body", base: "main" });
+      assert.ok(pr.worktreePath, "createLocalPr should bind a worktree");
+      const seen: string[] = [];
+      const result = await runLoopCi(repo, pr.id, {
+        checks: ["format:check"],
+        skipCache: true,
+        timeout: 5000,
+        onProgress: (event) => {
+          if (event.cwd) seen.push(event.cwd);
+        },
+      });
+      const norm = (p: string) => resolve(p).replace(/\\/g, "/").toLowerCase();
+      assert.equal(norm(result.cwd), norm(pr.worktreePath));
+      assert.ok(seen.some((p) => norm(p) === norm(pr.worktreePath!)));
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

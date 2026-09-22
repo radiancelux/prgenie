@@ -97,3 +97,13 @@ If the user asks to restart the implementor, `steward_next` `{ restart: true }` 
 ## Stop
 
 If the user says stop, stop Tasking and say so. There is no listen halt. `/export` is still the only publish step.
+
+## Human / steward CI skip (RAD-112)
+
+When the human tells you to skip CI (toolchain broken, known stale-plugin false red, etc.):
+
+1. Call MCP `abort_ci` `{ id }` (or `prgenie ci` cancel / panel Cancel). Read `implementorTaskId` and `stewardAction` from the result.
+2. If `stewardAction` is `stop_implementor_and_abort_ci`, **immediately** stop/interrupt that implementor Task (`Task` resume with `interrupt: true`, or end the await). Do **not** leave the implementor looping on `run_ci`.
+3. Tell the implementor (or next resume) that CI was skipped by human direction — they may `set_status ready` with `skipPreflight` only when the human said so; do not call `run_ci` again on that skip.
+
+`abort_ci` alone is not enough. Stopping the implementor and aborting CI are one steward action.

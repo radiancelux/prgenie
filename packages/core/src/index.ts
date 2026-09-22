@@ -169,10 +169,17 @@ export {
 } from "./export.js";
 export type { GithubPrHeadState } from "./export.js";
 export {
+  abortCiForSteward,
   abortExportGate,
   evaluateAndStoreExportGate,
   exportGateInFlight,
   validateExport,
+} from "./export-validation.js";
+export type {
+  AbortCiResult,
+  AbortCiStewardAction,
+  ExportValidationOptions,
+  ExportValidationResult,
 } from "./export-validation.js";
 export {
   acquireCiLock,
@@ -182,7 +189,6 @@ export {
   requestCiAbort,
   watchCiAbort,
 } from "./ci-abort.js";
-export type { ExportValidationOptions, ExportValidationResult } from "./export-validation.js";
 export {
   abortError,
   ciCheckCommand,
@@ -284,6 +290,7 @@ export {
   DEFAULT_CI_CHECKS,
   envFlag,
   formatCiSelectionReason,
+  isCursorPluginInstallPath,
   isPackageScopedCheck,
   isScopablePackage,
   packageFromCiPath,

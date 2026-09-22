@@ -18,6 +18,8 @@ export interface CiProgressSnapshot {
   selectedChecks: string[];
   selectionReason: string;
   checks: CiCheckProgress[];
+  /** Path CI ran / is running in (RAD-112). */
+  cwd?: string;
 }
 
 export interface ProgressEvent {
@@ -35,6 +37,8 @@ export interface ProgressEvent {
   /** Smart-CI plan (RAD-77) — which checks and why. */
   selectedChecks?: string[];
   selectionReason?: string;
+  /** Path CI is running in (RAD-112). */
+  cwd?: string;
 }
 
 export type ProgressCallback = (event: ProgressEvent) => void;
@@ -55,8 +59,8 @@ export function ciCheckCommand(check: string): string {
     const dir = `packages/${pkg}`;
     if (kind === "lint") return `pnpm exec eslint ${dir}/src`;
     if (kind === "typecheck") return `pnpm exec tsc -p ${dir} --noEmit`;
-    // Directory form: Node test runner recursively finds *.test.ts (no shell glob).
-    if (kind === "test") return `pnpm exec tsx --test ${dir}/src`;
+    // Flat src/*.test.ts — cmd.exe expands `*` (directory form breaks under tsx on Windows).
+    if (kind === "test") return `pnpm exec tsx --test ${dir}/src/*.test.ts`;
     if (kind === "build") return `pnpm exec node scripts/build.mjs`;
   }
   return `pnpm ${check}`;
@@ -151,6 +155,7 @@ export function applyCiProgressEvent(
 ): CiProgressSnapshot {
   const selectedChecks = event.selectedChecks ?? current.selectedChecks;
   const selectionReason = event.selectionReason ?? current.selectionReason;
+  const cwd = event.cwd ?? current.cwd;
   const checks = current.checks.map((c) => ({ ...c }));
   const ensure = (name: string): CiCheckProgress => {
     const existing = checks.find((c) => c.name === name);
@@ -170,7 +175,7 @@ export function applyCiProgressEvent(
     if (event.message) row.message = event.message;
     if (event.logPath) row.logPath = event.logPath;
   }
-  return { selectedChecks, selectionReason, checks };
+  return { selectedChecks, selectionReason, checks, cwd };
 }
 
 /** Agent-chat / CLI card: selected checks, why, running/pass/fail, elapsed. */
@@ -195,6 +200,9 @@ export function formatProgressCard(snapshot: CiProgressSnapshot): string {
     ? `Why: ${snapshot.selectionReason}`
     : "Why: configured suite";
   const lines = ["CI progress", why];
+  if (snapshot.cwd) {
+    lines.push(`Cwd: ${snapshot.cwd}`);
+  }
   const names =
     snapshot.selectedChecks.length > 0
       ? snapshot.selectedChecks

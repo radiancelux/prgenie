@@ -22,6 +22,8 @@ export interface ShepherdResult {
   reasons: ShepherdBlockReason[];
   ciPlan?: CiCheckSelection;
   ciChecks?: CiCheckResult[];
+  /** Path local CI ran in (RAD-112). */
+  ciCwd?: string;
 }
 
 export interface ShepherdOptions {
@@ -52,6 +54,7 @@ export async function shepherdStatus(
   const signal = options.signal;
   let ciPlan: CiCheckSelection | undefined;
   let ciChecks: CiCheckResult[] | undefined;
+  let ciCwd: string | undefined;
 
   try {
     throwIfAborted(signal);
@@ -148,10 +151,11 @@ export async function shepherdStatus(
     throwIfAborted(signal);
     // 4. Check local CI passes (smart-selected format/lint/typecheck/test/build)
     if (!options.skipCiCheck) {
-      const ciCwd = resolveCiCwd(cwd, pr.worktreePath);
-      const paths = options.changedPaths ?? (await changedPathsForCi(ciCwd, id));
+      const resolvedCwd = resolveCiCwd(cwd, pr.worktreePath);
+      ciCwd = resolvedCwd;
+      const paths = options.changedPaths ?? (await changedPathsForCi(resolvedCwd, id));
       const selection = selectCiChecks(paths);
-      const ciResult = await runCiChecks(ciCwd, {
+      const ciResult = await runCiChecks(resolvedCwd, {
         checks: selection.checks,
         selection,
         onProgress,
@@ -166,7 +170,7 @@ export async function shepherdStatus(
           if (!check.passed && !check.skipped) {
             reasons.push({
               check: "ci",
-              message: `CI check failed: ${check.name}${check.error ? ` — ${check.error}` : ""}`,
+              message: `CI check failed: ${check.name}${check.error ? ` — ${check.error}` : ""} (cwd: ${resolvedCwd})`,
             });
           }
         }
@@ -188,5 +192,6 @@ export async function shepherdStatus(
     reasons,
     ciPlan,
     ciChecks,
+    ciCwd,
   };
 }

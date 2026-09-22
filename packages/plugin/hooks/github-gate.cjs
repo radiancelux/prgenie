@@ -576,6 +576,18 @@ var init_export_validation = __esm({
   }
 });
 
+// packages/core/src/steward.ts
+var init_steward = __esm({
+  "packages/core/src/steward.ts"() {
+    "use strict";
+    init_export_gate();
+    init_export_validation();
+    init_git();
+    init_prs();
+    init_store();
+  }
+});
+
 // packages/cli/src/github-hook.ts
 var import_node_fs2 = require("node:fs");
 
@@ -597,12 +609,8 @@ init_git();
 init_prs();
 init_store();
 
-// packages/core/src/steward.ts
-init_export_gate();
-init_export_validation();
-init_git();
-init_prs();
-init_store();
+// packages/core/src/index.ts
+init_steward();
 
 // packages/core/src/doctor.ts
 init_git();

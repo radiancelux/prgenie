@@ -229,3 +229,19 @@ test("stewardNext gate-before-handoff: blocked CI resumes implementor, ready han
   await clearStewardBinding(repo, pr.id);
   assert.equal(await getStewardBinding(repo, pr.id), null);
 });
+
+test("abortCiForSteward returns stop_implementor when a Task is bound (RAD-112)", async () => {
+  const { abortCiForSteward } = await import("./export-validation.js");
+  const pr = await createLocalPr(repo, { title: "CI skip steward", base: "main" });
+  await bindSteward(repo, pr.id, { implementorTaskId: "task-impl-skip" });
+  const withTask = await abortCiForSteward(repo, pr.id);
+  assert.equal(withTask.aborted, true);
+  assert.equal(withTask.implementorTaskId, "task-impl-skip");
+  assert.equal(withTask.stewardAction, "stop_implementor_and_abort_ci");
+  assert.match(withTask.message, /stop\/interrupt implementor Task task-impl-skip/);
+
+  await clearStewardBinding(repo, pr.id);
+  const alone = await abortCiForSteward(repo, pr.id);
+  assert.equal(alone.implementorTaskId, null);
+  assert.equal(alone.stewardAction, "abort_ci_only");
+});
