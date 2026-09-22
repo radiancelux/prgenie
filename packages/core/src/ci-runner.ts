@@ -154,6 +154,7 @@ async function getTrackedFiles(cwd: string): Promise<string[]> {
   } catch (err) {
     throw new Error(
       `Failed to list tracked files for format:check: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
     );
   }
 }
