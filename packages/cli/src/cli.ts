@@ -158,8 +158,12 @@ function printPr(pr: LocalPr): void {
               : "pending (shepherd CI not green yet)"
         }`
       : "";
+  const ciCwdNote =
+    pr.exportGate?.ciCwd != null && pr.exportGate.ciCwd !== ""
+      ? `\n  ci cwd: ${pr.exportGate.ciCwd}`
+      : "";
   process.stdout.write(
-    `${pr.id}  ${pr.status.padEnd(18)}  ${pr.headRef} -> ${pr.baseRef}\n  ${pr.title}${filesNote}${summary}${exportNote}\n`,
+    `${pr.id}  ${pr.status.padEnd(18)}  ${pr.headRef} -> ${pr.baseRef}\n  ${pr.title}${filesNote}${summary}${exportNote}${ciCwdNote}\n`,
   );
   if (pr.worktreePath) {
     process.stdout.write(
@@ -606,6 +610,9 @@ export async function run(argv: string[]): Promise<number> {
     }
     process.stdout.write(`${card.card()}\n`);
     process.stdout.write(`Shepherd status: ${result.status}\n`);
+    if (result.ciCwd) {
+      process.stdout.write(`CI cwd: ${result.ciCwd}\n`);
+    }
     if (result.ciPlan) {
       process.stdout.write(`CI plan: ${result.ciPlan.reason.join("; ")}\n`);
     }
@@ -637,6 +644,9 @@ export async function run(argv: string[]): Promise<number> {
       onProgress: card.onProgress,
     });
     process.stdout.write(`${card.card()}\n`);
+    if (result.cwd) {
+      process.stdout.write(`CI cwd: ${result.cwd}\n`);
+    }
     if (result.selection) {
       process.stdout.write(`CI plan checks: ${result.selection.checks.join(", ")}\n`);
       process.stdout.write(`CI plan reason: ${result.selection.reason.join("; ")}\n`);

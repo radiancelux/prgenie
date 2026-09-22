@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import path from "node:path";
 import { git } from "./git.js";
 import { isPluginBuildArtifact } from "./plugin-dirt.js";
 import { getLocalPrNameStatus } from "./prs.js";
@@ -244,8 +245,46 @@ export function selectCiChecks(changedPaths: string[]): CiCheckSelection {
   };
 }
 
+/** Normalize for plugin-install / worktree path compares (Windows-safe). */
+function normCiPath(p: string): string {
+  return path.resolve(p).replace(/\\/g, "/").toLowerCase();
+}
+
+/**
+ * True when `cwd` is a Cursor plugin install (linked copy under ~/.cursor/plugins
+ * or CURSOR_PLUGIN_ROOT) — not a workspace / loop worktree source of truth.
+ */
+export function isCursorPluginInstallPath(cwd: string): boolean {
+  const normalized = normCiPath(cwd);
+  if (normalized.includes("/.cursor/plugins/")) return true;
+  const pluginRoot = process.env.CURSOR_PLUGIN_ROOT?.trim();
+  if (!pluginRoot) return false;
+  const root = normCiPath(pluginRoot);
+  return normalized === root || normalized.startsWith(`${root}/`);
+}
+
+/**
+ * Resolve the directory local CI must run in.
+ * Live loops prefer `worktreePath`. A Cursor plugin-install cwd is never used
+ * silently (RAD-112): redirect to the worktree, or refuse with a clear error.
+ * Allowed only when the loop itself is editing that install path.
+ */
 export function resolveCiCwd(cwd: string, worktreePath: string | null | undefined): string {
-  if (worktreePath && existsSync(worktreePath)) return worktreePath;
+  const worktreeOk = Boolean(worktreePath && existsSync(worktreePath));
+  if (worktreeOk) {
+    const wt = worktreePath as string;
+    // After link-plugin/rebuild, still target the loop worktree unless this loop IS the install.
+    if (isCursorPluginInstallPath(cwd) && normCiPath(cwd) !== normCiPath(wt)) {
+      return wt;
+    }
+    return wt;
+  }
+  if (isCursorPluginInstallPath(cwd)) {
+    throw new Error(
+      `Refusing CI in Cursor plugin install (${cwd}): stale plugin build / wrong tree. ` +
+        `run_ci must use the loop worktree (.loops/<id>) or the workspace git root — not the linked plugin copy.`,
+    );
+  }
   return cwd;
 }
 

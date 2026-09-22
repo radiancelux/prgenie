@@ -69,6 +69,8 @@ export interface CiRunnerResult {
   allPassed: boolean;
   checks: CiCheckResult[];
   selection?: CiCheckSelection;
+  /** Absolute path CI actually ran in (loop worktree when present). */
+  cwd: string;
 }
 
 export interface CiRunnerOptions {
@@ -365,6 +367,7 @@ export async function runCiChecks(
       state: "start",
       selectedChecks: selection.checks,
       selectionReason: formatCiSelectionReason(selection.reason),
+      cwd,
     });
   } else {
     onProgress?.({
@@ -372,6 +375,7 @@ export async function runCiChecks(
       state: "start",
       selectedChecks: checks,
       selectionReason: options.changedPaths ? "caller-provided check list" : "configured suite",
+      cwd,
     });
   }
 
@@ -438,6 +442,7 @@ export async function runCiChecks(
     allPassed: results.every((r) => r.passed),
     checks: results,
     selection,
+    cwd,
   };
 }
 

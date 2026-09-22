@@ -139,6 +139,7 @@ type LiveProgress = {
   cancelled?: boolean;
   checks?: LiveCheck[];
   selectionReason?: string;
+  cwd?: string;
 };
 
 type Snapshot = {
@@ -160,6 +161,8 @@ type Snapshot = {
   progress?: LiveProgress | null;
   ciPlan?: { checks: string[]; reason: string | string[] } | null;
   ciChecks?: LiveCheck[] | null;
+  /** Persisted path CI ran in (exportGate.ciCwd) — shown after live progress clears. */
+  ciCwd?: string | null;
   searchQuery?: string;
 };
 
@@ -416,6 +419,7 @@ export class LaneHub implements vscode.Disposable {
       failed: event.state === "fail",
       checks: this.ciSnap.checks,
       selectionReason: this.ciSnap.selectionReason,
+      cwd: this.ciSnap.cwd,
     });
   }
 
@@ -991,6 +995,7 @@ export class LaneHub implements vscode.Disposable {
             logPath: c.logPath,
             reason: c.reason,
           })),
+          ciCwd: selected?.exportGate?.ciCwd ?? null,
           searchQuery: this.searchQuery,
         },
         force,
@@ -1027,6 +1032,7 @@ function snapshotKey(payload: Snapshot | { type: "snapshot"; error: string; prs:
     progress: "progress" in payload ? payload.progress : null,
     ciPlan: "ciPlan" in payload ? payload.ciPlan : null,
     ciChecks: "ciChecks" in payload ? payload.ciChecks : null,
+    ciCwd: "ciCwd" in payload ? payload.ciCwd : null,
     searchQuery: "searchQuery" in payload ? payload.searchQuery : "",
     prs: payload.prs,
   });
@@ -1235,18 +1241,19 @@ function ciUiScript(): string {
       });
       return { open, close };
     }
-    function renderCiCard(host, progress, plan, stored) {
+    function renderCiCard(host, progress, plan, stored, storedCwd) {
       if (!host) return;
       const planReason = plan && plan.reason
         ? (Array.isArray(plan.reason) ? plan.reason.join("; ") : plan.reason)
         : "";
       const reason = (progress && progress.selectionReason) || planReason || "";
+      const cwdLine = (progress && progress.cwd) || storedCwd || "";
       const live = (progress && progress.checks) || [];
       const names = (live.length ? live.map((c) => c.name) : null)
         || (plan && plan.checks)
         || (stored && stored.map((c) => c.name))
         || [];
-      if (!names.length && !reason && !(progress && (progress.state === "start" || progress.phase === "ci"))) {
+      if (!names.length && !reason && !cwdLine && !(progress && (progress.state === "start" || progress.phase === "ci"))) {
         host.hidden = true;
         host.innerHTML = "";
         return;
@@ -1265,8 +1272,11 @@ function ciUiScript(): string {
           reason: row.reason,
         };
       }
-      let html = '<div class="ci-card-why">' + escapeHtml(reason || "CI checks") + "</div><ul class='ci-checks'>";
-      for (const name of rows) {
+      let html = '<div class="ci-card-why">' + escapeHtml(reason || "CI checks") + "</div>";
+      if (cwdLine) {
+        html += '<div class="ci-card-cwd muted">Cwd: ' + escapeHtml(cwdLine) + "</div>";
+      }
+      html += "<ul class='ci-checks'>";      for (const name of rows) {
         const row = byName[name] || { name, state: progress && !progress.cancelled ? "queued" : "unknown" };
         const st = row.state || "queued";
         const elapsed = row.elapsedMs != null ? " · " + formatElapsed(row.elapsedMs) : "";
@@ -1625,7 +1635,7 @@ function laneHtml(webview: vscode.Webview): string {
         if (progressBox) progressBox.hidden = true;
         if (cancel) cancel.hidden = true;
         if (retry) retry.hidden = true;
-        renderCiCard(document.getElementById("ciCard"), null, null, null);
+        renderCiCard(document.getElementById("ciCard"), null, null, null, null);
       };
 
       const showQuiet = (statusLabel, emptyText) => {
@@ -1739,7 +1749,7 @@ function laneHtml(webview: vscode.Webview): string {
           }
         }
       }
-      renderCiCard(document.getElementById("ciCard"), progress, msg.ciPlan, msg.ciChecks);
+      renderCiCard(document.getElementById("ciCard"), progress, msg.ciPlan, msg.ciChecks, msg.ciCwd);
     }
     function prRow(id) {
       const el = document.createElement("div");
@@ -2191,7 +2201,7 @@ function panelHtml(webview: vscode.Webview): string {
           runBox.hidden = true;
         }
       }
-      renderCiCard(root.querySelector("#ciCard"), progress, msg.ciPlan, msg.ciChecks);
+      renderCiCard(root.querySelector("#ciCard"), progress, msg.ciPlan, msg.ciChecks, msg.ciCwd);
       const openTermBtn = root.querySelector("#openTerminal");
       if (openTermBtn) {
         openTermBtn.disabled = archived || !selected.worktreePath;

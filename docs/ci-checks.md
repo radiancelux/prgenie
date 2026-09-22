@@ -10,6 +10,8 @@ PR Genie selects local checks from the loop diff (implementor preflight **and** 
 
 Changed paths = committed `baseSha...headSha` plus dirty/untracked files in the CI cwd (loop worktree when it exists).
 
+`run_ci` / shepherd always run in the loop’s `worktreePath` when that checkout exists. A Cursor plugin-install cwd (`~/.cursor/plugins/...`) is refused or redirected — never a silent format fail against a stale linked build. Progress cards, CLI, and export-gate snapshots cite `CI cwd: <path>`.
+
 | Changed paths                                                                                             | Checks                                                     | `reason[]` (concept)                                |
 | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------- |
 | Empty / unclassifiable (binaries, unknown extensions)                                                     | Full suite                                                 | `uncertain path mapping` / `uncertain → full suite` |
@@ -46,6 +48,12 @@ Uncertain mapping **always** runs the full configured suite and includes an expl
 | Human export            | panel Push / `prgenie export`                           | Same gate; cancel is shared                          |
 
 Skip implementor preflight only when the toolchain cannot run (say so). Do not skip a red check. Do not “just `pnpm test` the whole repo” when `run_ci` already selected a confident scoped plan.
+
+When a human/steward **skips** CI: MCP `abort_ci` returns the bound `implementorTaskId` — stop/interrupt that Task in the same steward turn (abort alone leaves the implementor looping).
+
+## Generated MCP bundle size
+
+Large line-count swings on `packages/plugin/mcp/server.cjs` (and hooks `.cjs`) after a rebuild are expected when dependencies are externalized or re-inlined — not a product source deletion. Prefer reading the TypeScript under `packages/core` / `packages/cli` for behavior.
 
 ## Cancel (panel + chat)
 

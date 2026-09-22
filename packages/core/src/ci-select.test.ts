@@ -124,7 +124,33 @@ describe("selectCiChecks", () => {
     assert.equal(ciCheckCommand("test"), "pnpm test");
     assert.equal(ciCheckCommand("lint:core"), "pnpm exec eslint packages/core/src");
     assert.equal(ciCheckCommand("typecheck:core"), "pnpm exec tsc -p packages/core --noEmit");
-    assert.equal(ciCheckCommand("test:core"), "pnpm exec tsx --test packages/core/src");
+    assert.equal(ciCheckCommand("test:core"), "pnpm exec tsx --test packages/core/src/*.test.ts");
     assert.notEqual(ciCheckCommand("test:core"), "pnpm test");
+  });
+
+  it("resolveCiCwd prefers the loop worktree over primary/plugin cwd", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const { resolveCiCwd, isCursorPluginInstallPath } = await import("./ci-select.js");
+    const worktree = await mkdtemp(path.join(tmpdir(), "prgenie-ci-wt-"));
+    const primary = await mkdtemp(path.join(tmpdir(), "prgenie-ci-primary-"));
+    try {
+      await writeFile(path.join(worktree, ".keep"), "");
+      assert.equal(resolveCiCwd(primary, worktree), worktree);
+
+      const plugin = path.join(tmpdir(), ".cursor", "plugins", "local", "prgenie-fake");
+      assert.equal(isCursorPluginInstallPath(plugin), true);
+      assert.equal(resolveCiCwd(plugin, worktree), worktree);
+
+      assert.throws(() => resolveCiCwd(plugin, null), /stale plugin build|wrong tree/);
+      assert.throws(
+        () => resolveCiCwd(plugin, path.join(tmpdir(), "missing-worktree")),
+        /stale plugin build|wrong tree/,
+      );
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+      await rm(primary, { recursive: true, force: true });
+    }
   });
 });

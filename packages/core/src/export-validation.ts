@@ -71,6 +71,7 @@ function shepherdFromSnapshot(snap: ExportGateSnapshot): ShepherdResult {
         }
       : undefined,
     ciChecks: snap.ciChecks ?? undefined,
+    ciCwd: snap.ciCwd ?? undefined,
   };
 }
 
@@ -176,6 +177,7 @@ export async function evaluateAndStoreExportGate(
               }
             : null,
           ciChecks: result.ciChecks ?? null,
+          ciCwd: result.ciCwd ?? null,
         });
         return result;
       } finally {
@@ -225,6 +227,56 @@ export function abortExportGate(cwd: string, id: string, headSha?: string): bool
     // ignore write failures — in-memory abort still counts
   }
   return hit;
+}
+
+export type AbortCiStewardAction = "stop_implementor_and_abort_ci" | "abort_ci_only";
+
+export interface AbortCiResult {
+  aborted: boolean;
+  /** Bound implementor Task id when a steward owns this loop (RAD-112). */
+  implementorTaskId: string | null;
+  /**
+   * Human/steward CI skip must stop the implementor Task and abort CI together.
+   * abort_ci alone leaves the implementor looping on the stale suite.
+   */
+  stewardAction: AbortCiStewardAction;
+  message: string;
+}
+
+/**
+ * Abort in-flight CI and return the steward action for a human/steward CI skip.
+ * Callers must also stop/interrupt `implementorTaskId` when stewardAction says so.
+ */
+export async function abortCiForSteward(
+  cwd: string,
+  id: string,
+  headSha?: string,
+): Promise<AbortCiResult> {
+  const aborted = abortExportGate(cwd, id, headSha);
+  const { getStewardBinding } = await import("./steward.js");
+  let implementorTaskId: string | null = null;
+  try {
+    const binding = await getStewardBinding(cwd, id);
+    implementorTaskId = binding?.implementorTaskId ?? null;
+  } catch {
+    // Loop may lack a steward binding — abort still applies.
+  }
+  if (implementorTaskId) {
+    return {
+      aborted,
+      implementorTaskId,
+      stewardAction: "stop_implementor_and_abort_ci",
+      message:
+        `CI aborted. Also stop/interrupt implementor Task ${implementorTaskId} ` +
+        `(abort_ci alone leaves that Task looping on CI). Do not resume run_ci unless the human asks.`,
+    };
+  }
+  return {
+    aborted,
+    implementorTaskId: null,
+    stewardAction: "abort_ci_only",
+    message: "CI aborted.",
+  };
 }
 
 export function exportGateInFlight(cwd: string, id: string, headSha: string): boolean {

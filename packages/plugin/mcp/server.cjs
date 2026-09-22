@@ -1100,7 +1100,8 @@ function normalizeExportGate(raw) {
     headSha: g.headSha,
     evaluatedAt: typeof g.evaluatedAt === "string" ? g.evaluatedAt : null,
     ciPlan,
-    ciChecks
+    ciChecks,
+    ciCwd: typeof g.ciCwd === "string" && g.ciCwd ? g.ciCwd : null
   };
 }
 function normalizeCiPlanReason(raw) {
@@ -2128,7 +2129,7 @@ function ciCheckCommand(check) {
     const dir = `packages/${pkg}`;
     if (kind === "lint") return `pnpm exec eslint ${dir}/src`;
     if (kind === "typecheck") return `pnpm exec tsc -p ${dir} --noEmit`;
-    if (kind === "test") return `pnpm exec tsx --test ${dir}/src`;
+    if (kind === "test") return `pnpm exec tsx --test ${dir}/src/*.test.ts`;
     if (kind === "build") return `pnpm exec node scripts/build.mjs`;
   }
   return `pnpm ${check}`;
@@ -2188,6 +2189,7 @@ function emptyCiProgressSnapshot() {
 function applyCiProgressEvent(current, event) {
   const selectedChecks = event.selectedChecks ?? current.selectedChecks;
   const selectionReason = event.selectionReason ?? current.selectionReason;
+  const cwd = event.cwd ?? current.cwd;
   const checks = current.checks.map((c) => ({ ...c }));
   const ensure = (name) => {
     const existing = checks.find((c) => c.name === name);
@@ -2207,7 +2209,7 @@ function applyCiProgressEvent(current, event) {
     if (event.message) row.message = event.message;
     if (event.logPath) row.logPath = event.logPath;
   }
-  return { selectedChecks, selectionReason, checks };
+  return { selectedChecks, selectionReason, checks, cwd };
 }
 function createProgressCardSink(write) {
   let snap = emptyCiProgressSnapshot();
@@ -2223,6 +2225,9 @@ function createProgressCardSink(write) {
 function formatProgressCard(snapshot) {
   const why = snapshot.selectionReason ? `Why: ${snapshot.selectionReason}` : "Why: configured suite";
   const lines = ["CI progress", why];
+  if (snapshot.cwd) {
+    lines.push(`Cwd: ${snapshot.cwd}`);
+  }
   const names = snapshot.selectedChecks.length > 0 ? snapshot.selectedChecks : snapshot.checks.map((c) => c.name);
   if (names.length === 0) {
     lines.push("  (no checks yet \u2014 waiting to start)");
@@ -2784,8 +2789,31 @@ function selectCiChecks(changedPaths) {
     packageScoped: true
   };
 }
+function normCiPath(p) {
+  return import_node_path13.default.resolve(p).replace(/\\/g, "/").toLowerCase();
+}
+function isCursorPluginInstallPath(cwd) {
+  const normalized = normCiPath(cwd);
+  if (normalized.includes("/.cursor/plugins/")) return true;
+  const pluginRoot = process.env.CURSOR_PLUGIN_ROOT?.trim();
+  if (!pluginRoot) return false;
+  const root = normCiPath(pluginRoot);
+  return normalized === root || normalized.startsWith(`${root}/`);
+}
 function resolveCiCwd(cwd, worktreePath) {
-  if (worktreePath && (0, import_node_fs4.existsSync)(worktreePath)) return worktreePath;
+  const worktreeOk = Boolean(worktreePath && (0, import_node_fs4.existsSync)(worktreePath));
+  if (worktreeOk) {
+    const wt = worktreePath;
+    if (isCursorPluginInstallPath(cwd) && normCiPath(cwd) !== normCiPath(wt)) {
+      return wt;
+    }
+    return wt;
+  }
+  if (isCursorPluginInstallPath(cwd)) {
+    throw new Error(
+      `Refusing CI in Cursor plugin install (${cwd}): stale plugin build / wrong tree. run_ci must use the loop worktree (.loops/<id>) or the workspace git root \u2014 not the linked plugin copy.`
+    );
+  }
   return cwd;
 }
 function addSplitPaths(set, raw) {
@@ -2826,11 +2854,12 @@ function envFlag(name, fallback) {
   if (raw === "1" || raw.toLowerCase() === "true") return true;
   return fallback;
 }
-var import_node_fs4, DEFAULT_CI_CHECKS, SCOPABLE_PACKAGES, CONFIG_BASENAMES, SCOPABLE_SET;
+var import_node_fs4, import_node_path13, DEFAULT_CI_CHECKS, SCOPABLE_PACKAGES, CONFIG_BASENAMES, SCOPABLE_SET;
 var init_ci_select = __esm({
   "packages/core/src/ci-select.ts"() {
     "use strict";
     import_node_fs4 = require("node:fs");
+    import_node_path13 = __toESM(require("node:path"), 1);
     init_git();
     init_plugin_dirt();
     init_prs();
@@ -2864,7 +2893,7 @@ var init_ci_select = __esm({
 
 // packages/core/src/ci-runner.ts
 function loadPrettierFromCwd(cwd) {
-  return (0, import_node_module.createRequire)(import_node_path13.default.join(cwd, "package.json"))("prettier");
+  return (0, import_node_module.createRequire)(import_node_path14.default.join(cwd, "package.json"))("prettier");
 }
 function isPrettierUnresolved(err) {
   if (!(err instanceof Error)) return false;
@@ -2880,7 +2909,7 @@ async function getTrackedFiles(cwd) {
     });
     const files = stdout.trim().split("\n").filter(Boolean);
     const fs = await import("node:fs/promises");
-    const path15 = await import("node:path");
+    const path16 = await import("node:path");
     const validFiles = [];
     const skipFiles = /* @__PURE__ */ new Set([
       ".gitignore",
@@ -2909,8 +2938,8 @@ async function getTrackedFiles(cwd) {
       ".xml"
     ]);
     for (const file of files) {
-      const basename2 = path15.basename(file);
-      const ext = path15.extname(file).toLowerCase();
+      const basename2 = path16.basename(file);
+      const ext = path16.extname(file).toLowerCase();
       if (skipFiles.has(basename2)) {
         continue;
       }
@@ -2918,7 +2947,7 @@ async function getTrackedFiles(cwd) {
         continue;
       }
       try {
-        const fullPath = path15.join(cwd, file);
+        const fullPath = path16.join(cwd, file);
         const stats = await fs.stat(fullPath);
         if (stats.isFile()) {
           validFiles.push(file);
@@ -2937,9 +2966,9 @@ async function checkFormatFromBlobs(cwd, files, signal) {
   for (const file of files) {
     throwIfAborted(signal);
     try {
-      const filepath = import_node_path13.default.join(cwd, file);
+      const filepath = import_node_path14.default.join(cwd, file);
       const info = await prettier.getFileInfo(filepath, {
-        ignorePath: import_node_path13.default.join(cwd, ".prettierignore")
+        ignorePath: import_node_path14.default.join(cwd, ".prettierignore")
       });
       if (info.ignored || info.inferredParser == null) continue;
       const shown = await execAsync(`git show ":${file.replace(/"/g, '\\"')}"`, {
@@ -3061,14 +3090,16 @@ async function runCiChecks(cwd, options = {}) {
       phase: "ci",
       state: "start",
       selectedChecks: selection.checks,
-      selectionReason: formatCiSelectionReason(selection.reason)
+      selectionReason: formatCiSelectionReason(selection.reason),
+      cwd
     });
   } else {
     onProgress?.({
       phase: "ci",
       state: "start",
       selectedChecks: checks,
-      selectionReason: options.changedPaths ? "caller-provided check list" : "configured suite"
+      selectionReason: options.changedPaths ? "caller-provided check list" : "configured suite",
+      cwd
     });
   }
   const results = [];
@@ -3131,7 +3162,8 @@ async function runCiChecks(cwd, options = {}) {
   return {
     allPassed: results.every((r) => r.passed),
     checks: results,
-    selection
+    selection,
+    cwd
   };
 }
 async function runLoopCi(cwd, id, options = {}) {
@@ -3167,13 +3199,13 @@ async function runLoopCi(cwd, id, options = {}) {
     detach();
   }
 }
-var import_node_child_process4, import_node_module, import_node_path13, import_node_util, execAsync;
+var import_node_child_process4, import_node_module, import_node_path14, import_node_util, execAsync;
 var init_ci_runner = __esm({
   "packages/core/src/ci-runner.ts"() {
     "use strict";
     import_node_child_process4 = require("node:child_process");
     import_node_module = require("node:module");
-    import_node_path13 = __toESM(require("node:path"), 1);
+    import_node_path14 = __toESM(require("node:path"), 1);
     import_node_util = require("node:util");
     init_ci_cache();
     init_ci_failure();
@@ -3192,6 +3224,7 @@ async function shepherdStatus(cwd, id, options = {}) {
   const signal = options.signal;
   let ciPlan;
   let ciChecks;
+  let ciCwd;
   try {
     throwIfAborted(signal);
     const reviewStarted = Date.now();
@@ -3279,10 +3312,11 @@ async function shepherdStatus(cwd, id, options = {}) {
     }
     throwIfAborted(signal);
     if (!options.skipCiCheck) {
-      const ciCwd = resolveCiCwd(cwd, pr.worktreePath);
-      const paths = options.changedPaths ?? await changedPathsForCi(ciCwd, id);
+      const resolvedCwd = resolveCiCwd(cwd, pr.worktreePath);
+      ciCwd = resolvedCwd;
+      const paths = options.changedPaths ?? await changedPathsForCi(resolvedCwd, id);
       const selection = selectCiChecks(paths);
-      const ciResult = await runCiChecks(ciCwd, {
+      const ciResult = await runCiChecks(resolvedCwd, {
         checks: selection.checks,
         selection,
         onProgress,
@@ -3297,7 +3331,7 @@ async function shepherdStatus(cwd, id, options = {}) {
           if (!check.passed && !check.skipped) {
             reasons.push({
               check: "ci",
-              message: `CI check failed: ${check.name}${check.error ? ` \u2014 ${check.error}` : ""}`
+              message: `CI check failed: ${check.name}${check.error ? ` \u2014 ${check.error}` : ""} (cwd: ${resolvedCwd})`
             });
           }
         }
@@ -3316,7 +3350,8 @@ async function shepherdStatus(cwd, id, options = {}) {
     status: reasons.length === 0 ? "ready" : "blocked",
     reasons,
     ciPlan,
-    ciChecks
+    ciChecks,
+    ciCwd
   };
 }
 var init_shepherd = __esm({
@@ -3334,6 +3369,7 @@ var init_shepherd = __esm({
 // packages/core/src/export-validation.ts
 var export_validation_exports = {};
 __export(export_validation_exports, {
+  abortCiForSteward: () => abortCiForSteward,
   abortExportGate: () => abortExportGate,
   evaluateAndStoreExportGate: () => evaluateAndStoreExportGate,
   exportGateInFlight: () => exportGateInFlight,
@@ -3367,7 +3403,8 @@ function shepherdFromSnapshot(snap) {
       uncertain: snap.ciPlan.uncertain ?? false,
       changedPaths: []
     } : void 0,
-    ciChecks: snap.ciChecks ?? void 0
+    ciChecks: snap.ciChecks ?? void 0,
+    ciCwd: snap.ciCwd ?? void 0
   };
 }
 async function evaluateAndStoreExportGate(cwd, id, options = {}) {
@@ -3454,7 +3491,8 @@ async function evaluateAndStoreExportGate(cwd, id, options = {}) {
             reason: result.ciPlan.reason,
             uncertain: result.ciPlan.uncertain
           } : null,
-          ciChecks: result.ciChecks ?? null
+          ciChecks: result.ciChecks ?? null,
+          ciCwd: result.ciCwd ?? null
         });
         return result;
       } finally {
@@ -3497,6 +3535,30 @@ function abortExportGate(cwd, id, headSha) {
   }
   return hit;
 }
+async function abortCiForSteward(cwd, id, headSha) {
+  const aborted = abortExportGate(cwd, id, headSha);
+  const { getStewardBinding: getStewardBinding2 } = await Promise.resolve().then(() => (init_steward(), steward_exports));
+  let implementorTaskId = null;
+  try {
+    const binding = await getStewardBinding2(cwd, id);
+    implementorTaskId = binding?.implementorTaskId ?? null;
+  } catch {
+  }
+  if (implementorTaskId) {
+    return {
+      aborted,
+      implementorTaskId,
+      stewardAction: "stop_implementor_and_abort_ci",
+      message: `CI aborted. Also stop/interrupt implementor Task ${implementorTaskId} (abort_ci alone leaves that Task looping on CI). Do not resume run_ci unless the human asks.`
+    };
+  }
+  return {
+    aborted,
+    implementorTaskId: null,
+    stewardAction: "abort_ci_only",
+    message: "CI aborted."
+  };
+}
 function exportGateInFlight(cwd, id, headSha) {
   return inflight.has(gateKey(cwd, id, headSha));
 }
@@ -3528,6 +3590,329 @@ var init_export_validation = __esm({
     init_shepherd();
     init_progress();
     inflight = /* @__PURE__ */ new Map();
+  }
+});
+
+// packages/core/src/steward.ts
+var steward_exports = {};
+__export(steward_exports, {
+  bindSteward: () => bindSteward,
+  clearStewardBinding: () => clearStewardBinding,
+  decideStewardAction: () => decideStewardAction,
+  formatStewardBinding: () => formatStewardBinding,
+  formatStewardDecision: () => formatStewardDecision,
+  getStewardBinding: () => getStewardBinding,
+  isStewardOwned: () => isStewardOwned,
+  listStewardBindings: () => listStewardBindings,
+  stewardNext: () => stewardNext
+});
+function stewardsFile(dir) {
+  return import_node_path15.default.join(dir, "stewards.json");
+}
+function parseTaskId(raw) {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+function parseBinding(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const parsed = raw;
+  if (typeof parsed.loopId !== "string" || !parsed.loopId) return null;
+  return {
+    loopId: parsed.loopId,
+    implementorTaskId: parseTaskId(parsed.implementorTaskId),
+    reviewerTaskId: parseTaskId(parsed.reviewerTaskId),
+    updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : (/* @__PURE__ */ new Date(0)).toISOString()
+  };
+}
+function parseMap(raw) {
+  const parsed = parseJsonObject(raw);
+  const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : emptyMap().updatedAt;
+  const bindings = {};
+  const rawBindings = parsed.bindings;
+  if (rawBindings && typeof rawBindings === "object" && !Array.isArray(rawBindings)) {
+    for (const value of Object.values(rawBindings)) {
+      const binding = parseBinding(value);
+      if (binding) bindings[binding.loopId] = binding;
+    }
+  }
+  return { updatedAt, bindings };
+}
+async function loadMap(file) {
+  try {
+    return parseMap(await (0, import_promises10.readFile)(file, "utf8"));
+  } catch {
+    return emptyMap();
+  }
+}
+async function pruneStale2(cwd, state) {
+  const live = (await listLocalPrs(cwd)).filter((pr) => !isArchivedPr(pr));
+  const liveIds = new Set(live.map((pr) => pr.id));
+  const bindings = {};
+  for (const binding of Object.values(state.bindings)) {
+    if (!liveIds.has(binding.loopId)) continue;
+    bindings[binding.loopId] = binding;
+  }
+  return { updatedAt: state.updatedAt, bindings };
+}
+function emptyBinding(loopId) {
+  return {
+    loopId,
+    implementorTaskId: null,
+    reviewerTaskId: null,
+    updatedAt: (/* @__PURE__ */ new Date(0)).toISOString()
+  };
+}
+function isStewardOwned(binding) {
+  return Boolean(binding);
+}
+function canResumeTask(taskId, missing, failed, restart) {
+  return Boolean(taskId) && !missing && !failed && !restart;
+}
+function decideStewardAction(pr, binding, options = {}) {
+  const current = binding ?? emptyBinding(pr.id);
+  const implementorTaskId = current.implementorTaskId;
+  const reviewerTaskId = current.reviewerTaskId;
+  const resumeImplementor = canResumeTask(
+    implementorTaskId,
+    options.implementorMissing,
+    options.implementorFailed,
+    options.restart
+  );
+  const resumeReviewer = canResumeTask(
+    reviewerTaskId,
+    options.reviewerMissing,
+    options.reviewerFailed,
+    options.restart
+  );
+  if (pr.status === "approved") {
+    return {
+      kind: "done",
+      loopId: pr.id,
+      implementorTaskId,
+      reviewerTaskId,
+      resumeSameImplementor: false,
+      humanExportable: false,
+      yourTurn: false,
+      failingCheck: null,
+      gateStatus: null,
+      reason: "Loop is archived. Steward is done."
+    };
+  }
+  if (pr.status === "ready") {
+    if (resumeReviewer) {
+      return {
+        kind: "resume_reviewer",
+        loopId: pr.id,
+        implementorTaskId,
+        reviewerTaskId,
+        resumeSameImplementor: false,
+        humanExportable: false,
+        yourTurn: false,
+        failingCheck: null,
+        gateStatus: null,
+        reason: "Loop is ready. Resume the same reviewer Task."
+      };
+    }
+    return {
+      kind: "spawn_reviewer",
+      loopId: pr.id,
+      implementorTaskId,
+      reviewerTaskId: null,
+      resumeSameImplementor: false,
+      humanExportable: false,
+      yourTurn: false,
+      failingCheck: null,
+      gateStatus: null,
+      reason: "Loop is ready. Spawn a reviewer Task and persist reviewerTaskId."
+    };
+  }
+  if (pr.status === "reviewed") {
+    const gate = pr.exportGate ?? null;
+    const gateStatus = gate && gate.headSha === pr.headSha ? gate.status : null;
+    if (!gateStatus || gateStatus === "pending") {
+      return {
+        kind: "evaluate_export_gate",
+        loopId: pr.id,
+        implementorTaskId,
+        reviewerTaskId,
+        resumeSameImplementor: false,
+        humanExportable: false,
+        yourTurn: false,
+        failingCheck: null,
+        gateStatus: gateStatus ?? "pending",
+        reason: "Reviewer cleared. Run the full export gate before any human handoff."
+      };
+    }
+    if (gateStatus === "blocked") {
+      const failingCheck = formatExportBlockLabel(gate?.reasons ?? []);
+      if (resumeImplementor) {
+        return {
+          kind: "resume_implementor",
+          loopId: pr.id,
+          implementorTaskId,
+          reviewerTaskId,
+          resumeSameImplementor: true,
+          humanExportable: false,
+          yourTurn: false,
+          failingCheck,
+          gateStatus,
+          reason: `Export gate blocked (${failingCheck}). Resume the same implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer \u2014 do not show Push to origin.`
+        };
+      }
+      return {
+        kind: "spawn_implementor",
+        loopId: pr.id,
+        implementorTaskId: null,
+        reviewerTaskId,
+        resumeSameImplementor: false,
+        humanExportable: false,
+        yourTurn: false,
+        failingCheck,
+        gateStatus,
+        reason: `Export gate blocked (${failingCheck}). Spawn an implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer \u2014 do not show Push to origin.`
+      };
+    }
+    return {
+      kind: "handoff_human",
+      loopId: pr.id,
+      implementorTaskId,
+      reviewerTaskId,
+      resumeSameImplementor: false,
+      humanExportable: true,
+      yourTurn: true,
+      failingCheck: null,
+      gateStatus,
+      reason: "Export gate ready. Hand off to the human for Push to origin."
+    };
+  }
+  if (resumeImplementor) {
+    return {
+      kind: "resume_implementor",
+      loopId: pr.id,
+      implementorTaskId,
+      reviewerTaskId,
+      resumeSameImplementor: true,
+      humanExportable: false,
+      yourTurn: false,
+      failingCheck: null,
+      gateStatus: null,
+      reason: pr.status === "changes_requested" ? "changes_requested. Resume the same implementor Task id (do not spawn a twin)." : "Resume the same implementor Task to continue the draft."
+    };
+  }
+  return {
+    kind: "spawn_implementor",
+    loopId: pr.id,
+    implementorTaskId: null,
+    reviewerTaskId,
+    resumeSameImplementor: false,
+    humanExportable: false,
+    yourTurn: false,
+    failingCheck: null,
+    gateStatus: null,
+    reason: pr.status === "changes_requested" ? "changes_requested and implementor Task is missing/failed/restart. Spawn a new implementor." : "Spawn an implementor Task and persist implementorTaskId."
+  };
+}
+async function bindSteward(cwd, id, input = {}) {
+  const root = await requireGitRoot(cwd);
+  const pr = await getLocalPr(root, id);
+  const file = stewardsFile(await consoleDir(root));
+  return withFileLock(file, async () => {
+    const current = await pruneStale2(root, await loadMap(file));
+    const existing = current.bindings[pr.id] ?? emptyBinding(pr.id);
+    const next = {
+      loopId: pr.id,
+      implementorTaskId: input.implementorTaskId === void 0 ? existing.implementorTaskId : parseTaskId(input.implementorTaskId),
+      reviewerTaskId: input.reviewerTaskId === void 0 ? existing.reviewerTaskId : parseTaskId(input.reviewerTaskId),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    current.bindings[pr.id] = next;
+    current.updatedAt = next.updatedAt;
+    await writeJsonFile(file, current);
+    return next;
+  });
+}
+async function getStewardBinding(cwd, id) {
+  const root = await requireGitRoot(cwd);
+  const pr = await getLocalPr(root, id);
+  const file = stewardsFile(await consoleDir(root));
+  return withFileLock(file, async () => {
+    const current = await pruneStale2(root, await loadMap(file));
+    await writeJsonFile(file, current);
+    return current.bindings[pr.id] ?? null;
+  });
+}
+async function listStewardBindings(cwd) {
+  const root = await requireGitRoot(cwd);
+  const file = stewardsFile(await consoleDir(root));
+  return withFileLock(file, async () => {
+    const current = await pruneStale2(root, await loadMap(file));
+    await writeJsonFile(file, current);
+    return Object.values(current.bindings);
+  });
+}
+async function clearStewardBinding(cwd, id) {
+  const root = await requireGitRoot(cwd);
+  const pr = await getLocalPr(root, id);
+  const file = stewardsFile(await consoleDir(root));
+  await withFileLock(file, async () => {
+    const current = await pruneStale2(root, await loadMap(file));
+    delete current.bindings[pr.id];
+    current.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    await writeJsonFile(file, current);
+  });
+}
+async function stewardNext(cwd, id, options = {}) {
+  const root = await requireGitRoot(cwd);
+  let pr = await getLocalPr(root, id);
+  const binding = await bindSteward(root, pr.id, {
+    implementorTaskId: options.implementorTaskId,
+    reviewerTaskId: options.reviewerTaskId
+  });
+  if (pr.status === "reviewed" && options.evaluateGate !== false && needsExportGateEvaluation(pr)) {
+    await evaluateAndStoreExportGate(root, pr.id, {
+      onProgress: options.onProgress,
+      signal: options.signal
+    });
+    pr = await getLocalPr(root, pr.id);
+  }
+  return {
+    binding,
+    decision: decideStewardAction(pr, binding, options),
+    status: pr.status,
+    exportGate: pr.exportGate ?? null
+  };
+}
+function formatStewardDecision(result) {
+  const { binding, decision } = result;
+  const lines = [
+    `${decision.loopId}  action=${decision.kind}  status=${result.status}`,
+    `  implementorTaskId=${binding.implementorTaskId ?? "-"}  reviewerTaskId=${binding.reviewerTaskId ?? "-"}`,
+    `  resumeSameImplementor=${decision.resumeSameImplementor}  humanExportable=${decision.humanExportable}  yourTurn=${decision.yourTurn}`
+  ];
+  if (decision.failingCheck) lines.push(`  failingCheck=${decision.failingCheck}`);
+  if (decision.gateStatus) lines.push(`  exportGate=${decision.gateStatus}`);
+  lines.push(`  ${decision.reason}`);
+  return lines.join("\n");
+}
+function formatStewardBinding(binding) {
+  return `${binding.loopId}  implementor=${binding.implementorTaskId ?? "-"}  reviewer=${binding.reviewerTaskId ?? "-"}`;
+}
+var import_promises10, import_node_path15, emptyMap;
+var init_steward = __esm({
+  "packages/core/src/steward.ts"() {
+    "use strict";
+    import_promises10 = require("node:fs/promises");
+    import_node_path15 = __toESM(require("node:path"), 1);
+    init_export_gate();
+    init_export_validation();
+    init_git();
+    init_prs();
+    init_store();
+    emptyMap = () => ({
+      updatedAt: (/* @__PURE__ */ new Date(0)).toISOString(),
+      bindings: {}
+    });
   }
 });
 
@@ -3699,271 +4084,8 @@ async function claimReview(cwd, id, options = {}) {
   });
 }
 
-// packages/core/src/steward.ts
-var import_promises10 = require("node:fs/promises");
-var import_node_path14 = __toESM(require("node:path"), 1);
-init_export_gate();
-init_export_validation();
-init_git();
-init_prs();
-init_store();
-function stewardsFile(dir) {
-  return import_node_path14.default.join(dir, "stewards.json");
-}
-var emptyMap = () => ({
-  updatedAt: (/* @__PURE__ */ new Date(0)).toISOString(),
-  bindings: {}
-});
-function parseTaskId(raw) {
-  if (typeof raw !== "string") return null;
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-function parseBinding(raw) {
-  if (!raw || typeof raw !== "object") return null;
-  const parsed = raw;
-  if (typeof parsed.loopId !== "string" || !parsed.loopId) return null;
-  return {
-    loopId: parsed.loopId,
-    implementorTaskId: parseTaskId(parsed.implementorTaskId),
-    reviewerTaskId: parseTaskId(parsed.reviewerTaskId),
-    updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : (/* @__PURE__ */ new Date(0)).toISOString()
-  };
-}
-function parseMap(raw) {
-  const parsed = parseJsonObject(raw);
-  const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : emptyMap().updatedAt;
-  const bindings = {};
-  const rawBindings = parsed.bindings;
-  if (rawBindings && typeof rawBindings === "object" && !Array.isArray(rawBindings)) {
-    for (const value of Object.values(rawBindings)) {
-      const binding = parseBinding(value);
-      if (binding) bindings[binding.loopId] = binding;
-    }
-  }
-  return { updatedAt, bindings };
-}
-async function loadMap(file) {
-  try {
-    return parseMap(await (0, import_promises10.readFile)(file, "utf8"));
-  } catch {
-    return emptyMap();
-  }
-}
-async function pruneStale2(cwd, state) {
-  const live = (await listLocalPrs(cwd)).filter((pr) => !isArchivedPr(pr));
-  const liveIds = new Set(live.map((pr) => pr.id));
-  const bindings = {};
-  for (const binding of Object.values(state.bindings)) {
-    if (!liveIds.has(binding.loopId)) continue;
-    bindings[binding.loopId] = binding;
-  }
-  return { updatedAt: state.updatedAt, bindings };
-}
-function emptyBinding(loopId) {
-  return {
-    loopId,
-    implementorTaskId: null,
-    reviewerTaskId: null,
-    updatedAt: (/* @__PURE__ */ new Date(0)).toISOString()
-  };
-}
-function canResumeTask(taskId, missing, failed, restart) {
-  return Boolean(taskId) && !missing && !failed && !restart;
-}
-function decideStewardAction(pr, binding, options = {}) {
-  const current = binding ?? emptyBinding(pr.id);
-  const implementorTaskId = current.implementorTaskId;
-  const reviewerTaskId = current.reviewerTaskId;
-  const resumeImplementor = canResumeTask(
-    implementorTaskId,
-    options.implementorMissing,
-    options.implementorFailed,
-    options.restart
-  );
-  const resumeReviewer = canResumeTask(
-    reviewerTaskId,
-    options.reviewerMissing,
-    options.reviewerFailed,
-    options.restart
-  );
-  if (pr.status === "approved") {
-    return {
-      kind: "done",
-      loopId: pr.id,
-      implementorTaskId,
-      reviewerTaskId,
-      resumeSameImplementor: false,
-      humanExportable: false,
-      yourTurn: false,
-      failingCheck: null,
-      gateStatus: null,
-      reason: "Loop is archived. Steward is done."
-    };
-  }
-  if (pr.status === "ready") {
-    if (resumeReviewer) {
-      return {
-        kind: "resume_reviewer",
-        loopId: pr.id,
-        implementorTaskId,
-        reviewerTaskId,
-        resumeSameImplementor: false,
-        humanExportable: false,
-        yourTurn: false,
-        failingCheck: null,
-        gateStatus: null,
-        reason: "Loop is ready. Resume the same reviewer Task."
-      };
-    }
-    return {
-      kind: "spawn_reviewer",
-      loopId: pr.id,
-      implementorTaskId,
-      reviewerTaskId: null,
-      resumeSameImplementor: false,
-      humanExportable: false,
-      yourTurn: false,
-      failingCheck: null,
-      gateStatus: null,
-      reason: "Loop is ready. Spawn a reviewer Task and persist reviewerTaskId."
-    };
-  }
-  if (pr.status === "reviewed") {
-    const gate = pr.exportGate ?? null;
-    const gateStatus = gate && gate.headSha === pr.headSha ? gate.status : null;
-    if (!gateStatus || gateStatus === "pending") {
-      return {
-        kind: "evaluate_export_gate",
-        loopId: pr.id,
-        implementorTaskId,
-        reviewerTaskId,
-        resumeSameImplementor: false,
-        humanExportable: false,
-        yourTurn: false,
-        failingCheck: null,
-        gateStatus: gateStatus ?? "pending",
-        reason: "Reviewer cleared. Run the full export gate before any human handoff."
-      };
-    }
-    if (gateStatus === "blocked") {
-      const failingCheck = formatExportBlockLabel(gate?.reasons ?? []);
-      if (resumeImplementor) {
-        return {
-          kind: "resume_implementor",
-          loopId: pr.id,
-          implementorTaskId,
-          reviewerTaskId,
-          resumeSameImplementor: true,
-          humanExportable: false,
-          yourTurn: false,
-          failingCheck,
-          gateStatus,
-          reason: `Export gate blocked (${failingCheck}). Resume the same implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer \u2014 do not show Push to origin.`
-        };
-      }
-      return {
-        kind: "spawn_implementor",
-        loopId: pr.id,
-        implementorTaskId: null,
-        reviewerTaskId,
-        resumeSameImplementor: false,
-        humanExportable: false,
-        yourTurn: false,
-        failingCheck,
-        gateStatus,
-        reason: `Export gate blocked (${failingCheck}). Spawn an implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer \u2014 do not show Push to origin.`
-      };
-    }
-    return {
-      kind: "handoff_human",
-      loopId: pr.id,
-      implementorTaskId,
-      reviewerTaskId,
-      resumeSameImplementor: false,
-      humanExportable: true,
-      yourTurn: true,
-      failingCheck: null,
-      gateStatus,
-      reason: "Export gate ready. Hand off to the human for Push to origin."
-    };
-  }
-  if (resumeImplementor) {
-    return {
-      kind: "resume_implementor",
-      loopId: pr.id,
-      implementorTaskId,
-      reviewerTaskId,
-      resumeSameImplementor: true,
-      humanExportable: false,
-      yourTurn: false,
-      failingCheck: null,
-      gateStatus: null,
-      reason: pr.status === "changes_requested" ? "changes_requested. Resume the same implementor Task id (do not spawn a twin)." : "Resume the same implementor Task to continue the draft."
-    };
-  }
-  return {
-    kind: "spawn_implementor",
-    loopId: pr.id,
-    implementorTaskId: null,
-    reviewerTaskId,
-    resumeSameImplementor: false,
-    humanExportable: false,
-    yourTurn: false,
-    failingCheck: null,
-    gateStatus: null,
-    reason: pr.status === "changes_requested" ? "changes_requested and implementor Task is missing/failed/restart. Spawn a new implementor." : "Spawn an implementor Task and persist implementorTaskId."
-  };
-}
-async function bindSteward(cwd, id, input = {}) {
-  const root = await requireGitRoot(cwd);
-  const pr = await getLocalPr(root, id);
-  const file = stewardsFile(await consoleDir(root));
-  return withFileLock(file, async () => {
-    const current = await pruneStale2(root, await loadMap(file));
-    const existing = current.bindings[pr.id] ?? emptyBinding(pr.id);
-    const next = {
-      loopId: pr.id,
-      implementorTaskId: input.implementorTaskId === void 0 ? existing.implementorTaskId : parseTaskId(input.implementorTaskId),
-      reviewerTaskId: input.reviewerTaskId === void 0 ? existing.reviewerTaskId : parseTaskId(input.reviewerTaskId),
-      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    current.bindings[pr.id] = next;
-    current.updatedAt = next.updatedAt;
-    await writeJsonFile(file, current);
-    return next;
-  });
-}
-async function listStewardBindings(cwd) {
-  const root = await requireGitRoot(cwd);
-  const file = stewardsFile(await consoleDir(root));
-  return withFileLock(file, async () => {
-    const current = await pruneStale2(root, await loadMap(file));
-    await writeJsonFile(file, current);
-    return Object.values(current.bindings);
-  });
-}
-async function stewardNext(cwd, id, options = {}) {
-  const root = await requireGitRoot(cwd);
-  let pr = await getLocalPr(root, id);
-  const binding = await bindSteward(root, pr.id, {
-    implementorTaskId: options.implementorTaskId,
-    reviewerTaskId: options.reviewerTaskId
-  });
-  if (pr.status === "reviewed" && options.evaluateGate !== false && needsExportGateEvaluation(pr)) {
-    await evaluateAndStoreExportGate(root, pr.id, {
-      onProgress: options.onProgress,
-      signal: options.signal
-    });
-    pr = await getLocalPr(root, pr.id);
-  }
-  return {
-    binding,
-    decision: decideStewardAction(pr, binding, options),
-    status: pr.status,
-    exportGate: pr.exportGate ?? null
-  };
-}
+// packages/core/src/index.ts
+init_steward();
 
 // packages/core/src/doctor.ts
 init_git();
@@ -4353,7 +4475,7 @@ async function generateLearningDigest(cwd, options = {}) {
     }
   }
   const topKeywords = Array.from(keywordCounts.entries()).filter(([, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([keyword, count]) => ({ keyword, count }));
-  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path15, count]) => ({ path: path15, count }));
+  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path16, count]) => ({ path: path16, count }));
   const patterns = Array.from(patternCounts.entries()).filter(([, data]) => data.count >= 2).sort((a, b) => b[1].count - a[1].count).slice(0, 10).map(([pattern, data]) => ({
     pattern,
     examples: data.examples,
@@ -4393,8 +4515,8 @@ function formatLearningDigest(summary) {
   if (summary.topFiles.length > 0) {
     lines.push("## Most Commented Files");
     lines.push("");
-    for (const { path: path15, count } of summary.topFiles) {
-      lines.push(`- \`${path15}\` \u2014 ${count} comment(s)`);
+    for (const { path: path16, count } of summary.topFiles) {
+      lines.push(`- \`${path16}\` \u2014 ${count} comment(s)`);
     }
     lines.push("");
   }
@@ -4767,12 +4889,11 @@ async function handleTool(name, args) {
       return { ...result, progressCard: card.card() };
     }
     case "abort_ci": {
-      const aborted = abortExportGate(
+      return abortCiForSteward(
         cwd,
         String(args.id ?? ""),
         typeof args.headSha === "string" ? args.headSha : void 0
       );
-      return { aborted };
     }
     case "shepherd_status": {
       const card = createProgressCardSink((line) => process.stderr.write(`${line}
@@ -5261,7 +5382,7 @@ var tools = [
   },
   {
     name: "run_ci",
-    description: "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; confident package paths \u2192 scoped lint/typecheck/unit; uncertain \u2192 full suite). Returns allPassed, checks, selection `{ checks[], reason[] }` (print both), and a progressCard. When selection is confident/packageScoped, do not substitute whole-repo pnpm test. Fail-fast stops after the first package suite fail. Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run \u2014 say so; do not skip a flaky failure.",
+    description: "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; confident package paths \u2192 scoped lint/typecheck/unit; uncertain \u2192 full suite). Runs in the loop worktreePath (never a stale Cursor plugin install). Returns allPassed, checks, selection `{ checks[], reason[] }` (print both), cwd (path CI ran in), and a progressCard. When selection is confident/packageScoped, do not substitute whole-repo pnpm test. Fail-fast stops after the first package suite fail. Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run \u2014 say so; do not skip a flaky failure.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -5285,7 +5406,7 @@ var tools = [
   },
   {
     name: "abort_ci",
-    description: "Cancel in-flight implementor preflight or export-gate CI for a loop. Same abort as the loop panel Cancel: bumps the shared abort token under .git/agent-console/ci-abort and stops the in-process gate. Steward MCP and the panel share one suite per id+HEAD.",
+    description: "Cancel in-flight implementor preflight or export-gate CI for a loop. Same abort as the loop panel Cancel: bumps the shared abort token under .git/agent-console/ci-abort and stops the in-process gate. For a human/steward CI skip (RAD-112), this is one half of the skip: also stop/interrupt the returned implementorTaskId \u2014 abort alone leaves the implementor Task looping. Returns { aborted, implementorTaskId, stewardAction, message }.",
     inputSchema: {
       type: "object",
       required: ["id"],

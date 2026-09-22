@@ -113,6 +113,7 @@ export function normalizeExportGate(raw: unknown): ExportGateSnapshot | null {
     evaluatedAt: typeof g.evaluatedAt === "string" ? g.evaluatedAt : null,
     ciPlan,
     ciChecks,
+    ciCwd: typeof g.ciCwd === "string" && g.ciCwd ? g.ciCwd : null,
   };
 }
 

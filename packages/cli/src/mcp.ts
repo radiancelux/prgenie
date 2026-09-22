@@ -39,7 +39,7 @@ import {
   resolveLocalPrComment,
   runPreflight,
   setLocalPrStatus,
-  abortExportGate,
+  abortCiForSteward,
   createProgressCardSink,
   evaluateAndStoreExportGate,
   bindSteward,
@@ -311,12 +311,11 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
       return { ...result, progressCard: card.card() };
     }
     case "abort_ci": {
-      const aborted = abortExportGate(
+      return abortCiForSteward(
         cwd,
         String(args.id ?? ""),
         typeof args.headSha === "string" ? args.headSha : undefined,
       );
-      return { aborted };
     }
     case "shepherd_status": {
       const card = createProgressCardSink((line) => process.stderr.write(`${line}\n`));
@@ -846,7 +845,7 @@ export const tools = [
   {
     name: "run_ci",
     description:
-      "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; confident package paths → scoped lint/typecheck/unit; uncertain → full suite). Returns allPassed, checks, selection `{ checks[], reason[] }` (print both), and a progressCard. When selection is confident/packageScoped, do not substitute whole-repo pnpm test. Fail-fast stops after the first package suite fail. Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run — say so; do not skip a flaky failure.",
+      "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; confident package paths → scoped lint/typecheck/unit; uncertain → full suite). Runs in the loop worktreePath (never a stale Cursor plugin install). Returns allPassed, checks, selection `{ checks[], reason[] }` (print both), cwd (path CI ran in), and a progressCard. When selection is confident/packageScoped, do not substitute whole-repo pnpm test. Fail-fast stops after the first package suite fail. Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run — say so; do not skip a flaky failure.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -871,7 +870,7 @@ export const tools = [
   {
     name: "abort_ci",
     description:
-      "Cancel in-flight implementor preflight or export-gate CI for a loop. Same abort as the loop panel Cancel: bumps the shared abort token under .git/agent-console/ci-abort and stops the in-process gate. Steward MCP and the panel share one suite per id+HEAD.",
+      "Cancel in-flight implementor preflight or export-gate CI for a loop. Same abort as the loop panel Cancel: bumps the shared abort token under .git/agent-console/ci-abort and stops the in-process gate. For a human/steward CI skip (RAD-112), this is one half of the skip: also stop/interrupt the returned implementorTaskId — abort alone leaves the implementor Task looping. Returns { aborted, implementorTaskId, stewardAction, message }.",
     inputSchema: {
       type: "object",
       required: ["id"],

@@ -93,6 +93,8 @@ export interface ExportGateSnapshot {
   ciPlan?: ExportGateCiPlan | null;
   /** Per-check results for the breakout modal (RAD-74 excerpt/log). */
   ciChecks?: ExportGateCiCheck[] | null;
+  /** Path local CI ran in (RAD-112). */
+  ciCwd?: string | null;
 }
 
 export interface WorktreeInfo {
