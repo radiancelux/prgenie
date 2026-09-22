@@ -63,6 +63,14 @@ export {
   listDirtyPluginBuildArtifacts,
 } from "./plugin-dirt.js";
 export {
+  PLUGIN_BUNDLE_OUTFILES,
+  PLUGIN_BUNDLE_SOURCE_PATHS,
+  assertPluginBundlesReady,
+  formatPluginBundlesError,
+  inspectPluginBundles,
+} from "./plugin-bundles.js";
+export type { PluginBundleStatus } from "./plugin-bundles.js";
+export {
   addLocalPrComment,
   addressLocalPrComment,
   addressedReviewComments,

@@ -95,7 +95,7 @@ Each loop has a **feature branch** for export (never `main`/`master`) and an exc
 
 **After create:** Switch / open `worktreePath` before any edits. All commits and CI run there. Never implement in the primary folder when a loop worktree exists. `prgenie worktree <id>` / MCP `ensure_worktree` only creates the checkout — they do not open the editor.
 
-`create_local_pr` / `prgenie doctor` refuse or warn when primary has dirty tracked plugin build artifacts (`packages/plugin/hooks|mcp/*.cjs` from build/link-plugin). Stash or `git restore` those paths on primary, then retry create.
+`create_local_pr` / `prgenie doctor` refuse or warn when primary has dirty **tracked** plugin build artifacts (`packages/plugin/hooks|mcp/*.cjs`). After the RAD-113 migration those paths are gitignored — if you still see tracked dirt, stash/`git restore` or rebase off a pre-migration branch. Doctor `plugin-bundles` fails when generated bundles are missing or stale versus sources (`pnpm build`).
 
 Do not delete worktrees unless the user asks. Do not create extras beyond the one per loop. After **export**, PR Genie checks the main workspace off the loop branch (onto the loop base) and removes the sibling `../<repo>.loops/<id>` checkout. The primary repo folder is never deleted. If this window is still on the extra worktree, reopen the primary folder — the sidebar does that, then the extra checkout is cleared.
 

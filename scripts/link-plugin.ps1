@@ -104,6 +104,34 @@ if ($ForceQuitCursor -and (Test-IsWindowsHost)) {
   Start-Sleep -Seconds 1
 }
 
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$requiredBundles = @(
+  "packages\plugin\mcp\server.cjs",
+  "packages\plugin\hooks\capture-subagent.cjs",
+  "packages\plugin\hooks\github-gate.cjs",
+  "packages\plugin\hooks\review-inbox.cjs"
+)
+
+Write-Host "Building plugin MCP/hook bundles (pnpm build)..."
+Push-Location $repoRoot
+try {
+  & pnpm build
+  if ($LASTEXITCODE -ne 0) {
+    Write-Error "pnpm build failed with exit $LASTEXITCODE — cannot link plugin without generated bundles."
+    exit 1
+  }
+} finally {
+  Pop-Location
+}
+
+foreach ($rel in $requiredBundles) {
+  $abs = Join-Path $repoRoot $rel
+  if (-not (Test-Path -LiteralPath $abs)) {
+    Write-Error "Missing generated bundle after build: $rel. Fix scripts/build.mjs or run pnpm build."
+    exit 1
+  }
+}
+
 # Cursor rejects junctions/symlinks whose target is outside ~/.cursor/plugins/local.
 # Dest is a real copied directory, so always recurse-delete (rmdir fails on non-empty dirs).
 Remove-PluginDest -PluginDest $dest
