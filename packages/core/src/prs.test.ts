@@ -964,8 +964,5 @@ test("pruneLoopWorktrees clears leftover .loops between cases", async () => {
   assert.notEqual(first.worktreePath, second.worktreePath);
   await pruneLoopWorktrees(repo);
   const trees = await listWorktrees(repo);
-  assert.equal(
-    trees.filter((t) => loopWorktreeIdentity(t.path)).length,
-    0,
-  );
+  assert.equal(trees.filter((t) => loopWorktreeIdentity(t.path)).length, 0);
 });

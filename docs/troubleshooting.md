@@ -6,7 +6,7 @@ Start with `prgenie doctor` from any worktree of the repo. It reports the checks
 
 | id                 | Meaning                                                                | Typical fix                                                                     |
 | ------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `git-path`         | `git` not resolvable from this process PATH                            | Install Git / fix PATH, or set `PRGENIE_GIT` to absolute `git.exe`               |
+| `git-path`         | `git` not resolvable from this process PATH                            | Install Git / fix PATH, or set `PRGENIE_GIT` to absolute `git.exe`              |
 | `git`              | Not inside a git repo                                                  | `cd` into a PR Genie checkout                                                   |
 | `plugin-install`   | No Cursor plugin at `~/.cursor/plugins/local/prgenie`                  | `pnpm build && pnpm link-plugin`, then disable/enable the plugin                |
 | `plugin-stale`     | Installed `mcp/server.cjs` hash ≠ repo build                           | Same as above — **reload alone often keeps a stale MCP tool list**              |

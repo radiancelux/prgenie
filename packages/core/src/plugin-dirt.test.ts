@@ -60,7 +60,10 @@ test("listDirtyPluginBuildArtifacts ignores untracked and non-artifact paths", a
 
   await writeFile(path.join(repo, "packages", "plugin", "hooks", "x.cjs"), "/* dirty */\n");
   await writeFile(path.join(repo, "packages", "plugin", "skills.md"), "changed\n");
-  await writeFile(path.join(repo, "packages", "plugin", "hooks", "scratch.cjs"), "/* untracked */\n");
+  await writeFile(
+    path.join(repo, "packages", "plugin", "hooks", "scratch.cjs"),
+    "/* untracked */\n",
+  );
 
   const dirty = await listDirtyPluginBuildArtifacts(repo);
   assert.deepEqual(dirty, ["packages/plugin/hooks/x.cjs"]);
