@@ -2981,6 +2981,43 @@ async function ensureOneNodeModulesLink(worktreeDir, primaryDir, relativeModules
     path: dest
   };
 }
+async function mirrorPackageNodeModules(worktreeDir, primaryDir, packageName) {
+  const rel = import_node_path14.default.join("packages", packageName, "node_modules");
+  const dest = import_node_path14.default.join(worktreeDir, rel);
+  const source = import_node_path14.default.join(primaryDir, rel);
+  if (!isExistingDir(source)) {
+    return { linked: false, method: "none", path: dest };
+  }
+  if (isExistingDir(dest)) {
+    return { linked: false, method: "present", path: dest };
+  }
+  if ((0, import_node_fs5.existsSync)(dest)) {
+    await (0, import_promises10.rm)(dest, { recursive: true, force: true });
+  }
+  await (0, import_promises10.mkdir)(dest, { recursive: true });
+  const method = process.platform === "win32" ? "junction" : "symlink";
+  for (const entry of (0, import_node_fs5.readdirSync)(source)) {
+    const from = import_node_path14.default.join(source, entry);
+    const to = import_node_path14.default.join(dest, entry);
+    if (entry === "@prgenie") {
+      await (0, import_promises10.mkdir)(to, { recursive: true });
+      const scopeSrc = import_node_path14.default.join(source, entry);
+      if (!isExistingDir(scopeSrc)) continue;
+      for (const ws of (0, import_node_fs5.readdirSync)(scopeSrc)) {
+        const wsTarget = import_node_path14.default.join(worktreeDir, "packages", ws);
+        const wsLink = import_node_path14.default.join(to, ws);
+        if (!isExistingDir(wsTarget)) {
+          await linkDirectory(wsLink, import_node_path14.default.join(primaryDir, "packages", ws));
+        } else {
+          await linkDirectory(wsLink, wsTarget);
+        }
+      }
+      continue;
+    }
+    await linkDirectory(to, from);
+  }
+  return { linked: true, method, path: dest };
+}
 async function tryPnpmInstall(worktreePath) {
   try {
     await execAsync("pnpm install", {
@@ -3000,21 +3037,21 @@ async function ensureWorktreeCiToolchain(worktreePath, options = {}) {
   const required = options.requiredBins?.length ? [.../* @__PURE__ */ new Set([...REQUIRED_CI_BINS, ...options.requiredBins])] : [...REQUIRED_CI_BINS];
   const allowInstall = options.allowInstall !== false && options.skipInstall !== true;
   const alreadyMissing = missingCiBins(cwd, required);
-  if (alreadyMissing.length === 0) {
-    return {
-      ok: true,
-      envUnhealthy: false,
-      worktreePath: cwd,
-      primaryPath: await resolvePrimaryForWorktree(cwd, options.primaryPath),
-      method: "present",
-      linked: [],
-      message: "CI toolchain already resolvable in worktree.",
-      fixSteps: []
-    };
-  }
   const primary = await resolvePrimaryForWorktree(cwd, options.primaryPath);
   const isLoopWorktree = Boolean(loopWorktreeIdentity(cwd)) || Boolean(options.primaryPath);
   if (!isLoopWorktree) {
+    if (alreadyMissing.length === 0) {
+      return {
+        ok: true,
+        envUnhealthy: false,
+        worktreePath: cwd,
+        primaryPath: primary,
+        method: "present",
+        linked: [],
+        message: "CI toolchain already resolvable in worktree.",
+        fixSteps: []
+      };
+    }
     return {
       ok: true,
       envUnhealthy: false,
@@ -3027,11 +3064,38 @@ async function ensureWorktreeCiToolchain(worktreePath, options = {}) {
     };
   }
   const linked = [];
-  let method = "none";
+  let method = alreadyMissing.length === 0 ? "present" : "none";
   let linkError = null;
+  async function linkPackageModules(fromPrimary) {
+    const packagesRoot = import_node_path14.default.join(fromPrimary, "packages");
+    if (!isExistingDir(packagesRoot)) return;
+    for (const name of (0, import_node_fs5.readdirSync)(packagesRoot)) {
+      if (!isExistingDir(import_node_path14.default.join(fromPrimary, "packages", name, "node_modules"))) continue;
+      try {
+        const pkgLink = await mirrorPackageNodeModules(cwd, fromPrimary, name);
+        if (pkgLink.linked) {
+          linked.push(import_node_path14.default.join("packages", name, "node_modules").replace(/\\/g, "/"));
+          if (method === "none" || method === "present") method = pkgLink.method;
+        }
+      } catch {
+      }
+    }
+  }
   if (primary && !sameFsPath(primary, cwd)) {
     const primaryModules = import_node_path14.default.join(primary, "node_modules");
     if (!isExistingDir(primaryModules)) {
+      if (alreadyMissing.length === 0) {
+        return {
+          ok: true,
+          envUnhealthy: false,
+          worktreePath: cwd,
+          primaryPath: primary,
+          method: "present",
+          linked: [],
+          message: "CI toolchain already resolvable in worktree.",
+          fixSteps: []
+        };
+      }
       const fixSteps2 = formatToolchainFixSteps({
         worktreePath: cwd,
         primaryPath: primary,
@@ -3053,24 +3117,10 @@ async function ensureWorktreeCiToolchain(worktreePath, options = {}) {
       if (root.linked) {
         linked.push("node_modules");
         method = root.method;
-      } else if (root.method === "present") {
+      } else if (root.method === "present" && method === "none") {
         method = "present";
       }
-      const packagesRoot = import_node_path14.default.join(primary, "packages");
-      if (isExistingDir(packagesRoot)) {
-        for (const name of (0, import_node_fs5.readdirSync)(packagesRoot)) {
-          const rel = import_node_path14.default.join("packages", name, "node_modules");
-          if (!isExistingDir(import_node_path14.default.join(primary, rel))) continue;
-          try {
-            const pkgLink = await ensureOneNodeModulesLink(cwd, primary, rel);
-            if (pkgLink.linked) {
-              linked.push(rel.replace(/\\/g, "/"));
-              if (method === "none" || method === "present") method = pkgLink.method;
-            }
-          } catch {
-          }
-        }
-      }
+      await linkPackageModules(primary);
     } catch (err) {
       linkError = err instanceof Error ? err.message : String(err);
       method = "none";
