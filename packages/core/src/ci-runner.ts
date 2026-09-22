@@ -1,4 +1,6 @@
 import { exec } from "node:child_process";
+import { createRequire } from "node:module";
+import path from "node:path";
 import { promisify } from "node:util";
 import { getCachedResult, recordCheckPass } from "./ci-cache.js";
 import {
@@ -27,6 +29,21 @@ import {
 } from "./progress.js";
 
 const execAsync = promisify(exec);
+
+/**
+ * Resolve prettier from the CI repo cwd, not the MCP/CLI bundle location.
+ * Bundles mark prettier external; linked-plugin installs under ~/.cursor/plugins
+ * have no node_modules, so bare `import("prettier")` fails MODULE_NOT_FOUND.
+ */
+export function resolvePrettierFromCwd(cwd: string): string {
+  return createRequire(path.join(cwd, "package.json")).resolve("prettier");
+}
+
+function loadPrettierFromCwd(cwd: string): typeof import("prettier") {
+  // require() (not import()) so CJS prettier exports land on the return value,
+  // not under `.default` the way `import(fileURL)` of index.cjs does.
+  return createRequire(path.join(cwd, "package.json"))("prettier") as typeof import("prettier");
+}
 
 export interface CiCheckResult {
   name: string;
@@ -172,8 +189,7 @@ async function checkFormatFromBlobs(
   files: string[],
   signal?: AbortSignal,
 ): Promise<void> {
-  const prettier = await import("prettier");
-  const path = await import("node:path");
+  const prettier = loadPrettierFromCwd(cwd);
   const failures: string[] = [];
 
   for (const file of files) {

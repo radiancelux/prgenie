@@ -2863,6 +2863,9 @@ var init_ci_select = __esm({
 });
 
 // packages/core/src/ci-runner.ts
+function loadPrettierFromCwd(cwd) {
+  return (0, import_node_module.createRequire)(import_node_path13.default.join(cwd, "package.json"))("prettier");
+}
 async function getTrackedFiles(cwd) {
   try {
     const { stdout } = await execAsync("git ls-files --exclude-standard", {
@@ -2872,7 +2875,7 @@ async function getTrackedFiles(cwd) {
     });
     const files = stdout.trim().split("\n").filter(Boolean);
     const fs = await import("node:fs/promises");
-    const path14 = await import("node:path");
+    const path15 = await import("node:path");
     const validFiles = [];
     const skipFiles = /* @__PURE__ */ new Set([
       ".gitignore",
@@ -2901,8 +2904,8 @@ async function getTrackedFiles(cwd) {
       ".xml"
     ]);
     for (const file of files) {
-      const basename2 = path14.basename(file);
-      const ext = path14.extname(file).toLowerCase();
+      const basename2 = path15.basename(file);
+      const ext = path15.extname(file).toLowerCase();
       if (skipFiles.has(basename2)) {
         continue;
       }
@@ -2910,7 +2913,7 @@ async function getTrackedFiles(cwd) {
         continue;
       }
       try {
-        const fullPath = path14.join(cwd, file);
+        const fullPath = path15.join(cwd, file);
         const stats = await fs.stat(fullPath);
         if (stats.isFile()) {
           validFiles.push(file);
@@ -2927,15 +2930,14 @@ async function getTrackedFiles(cwd) {
   }
 }
 async function checkFormatFromBlobs(cwd, files, signal) {
-  const prettier = await import("prettier");
-  const path14 = await import("node:path");
+  const prettier = loadPrettierFromCwd(cwd);
   const failures = [];
   for (const file of files) {
     throwIfAborted(signal);
     try {
-      const filepath = path14.join(cwd, file);
+      const filepath = import_node_path13.default.join(cwd, file);
       const info = await prettier.getFileInfo(filepath, {
-        ignorePath: path14.join(cwd, ".prettierignore")
+        ignorePath: import_node_path13.default.join(cwd, ".prettierignore")
       });
       if (info.ignored || info.inferredParser == null) continue;
       const shown = await execAsync(`git show ":${file.replace(/"/g, '\\"')}"`, {
@@ -3152,11 +3154,13 @@ async function runLoopCi(cwd, id, options = {}) {
     detach();
   }
 }
-var import_node_child_process4, import_node_util, execAsync;
+var import_node_child_process4, import_node_module, import_node_path13, import_node_util, execAsync;
 var init_ci_runner = __esm({
   "packages/core/src/ci-runner.ts"() {
     "use strict";
     import_node_child_process4 = require("node:child_process");
+    import_node_module = require("node:module");
+    import_node_path13 = __toESM(require("node:path"), 1);
     import_node_util = require("node:util");
     init_ci_cache();
     init_ci_failure();
@@ -3684,14 +3688,14 @@ async function claimReview(cwd, id, options = {}) {
 
 // packages/core/src/steward.ts
 var import_promises10 = require("node:fs/promises");
-var import_node_path13 = __toESM(require("node:path"), 1);
+var import_node_path14 = __toESM(require("node:path"), 1);
 init_export_gate();
 init_export_validation();
 init_git();
 init_prs();
 init_store();
 function stewardsFile(dir) {
-  return import_node_path13.default.join(dir, "stewards.json");
+  return import_node_path14.default.join(dir, "stewards.json");
 }
 var emptyMap = () => ({
   updatedAt: (/* @__PURE__ */ new Date(0)).toISOString(),
@@ -4336,7 +4340,7 @@ async function generateLearningDigest(cwd, options = {}) {
     }
   }
   const topKeywords = Array.from(keywordCounts.entries()).filter(([, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([keyword, count]) => ({ keyword, count }));
-  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path14, count]) => ({ path: path14, count }));
+  const topFiles = Array.from(fileCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([path15, count]) => ({ path: path15, count }));
   const patterns = Array.from(patternCounts.entries()).filter(([, data]) => data.count >= 2).sort((a, b) => b[1].count - a[1].count).slice(0, 10).map(([pattern, data]) => ({
     pattern,
     examples: data.examples,
@@ -4376,8 +4380,8 @@ function formatLearningDigest(summary) {
   if (summary.topFiles.length > 0) {
     lines.push("## Most Commented Files");
     lines.push("");
-    for (const { path: path14, count } of summary.topFiles) {
-      lines.push(`- \`${path14}\` \u2014 ${count} comment(s)`);
+    for (const { path: path15, count } of summary.topFiles) {
+      lines.push(`- \`${path15}\` \u2014 ${count} comment(s)`);
     }
     lines.push("");
   }
