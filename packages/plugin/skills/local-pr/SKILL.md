@@ -80,7 +80,7 @@ If the current branch's local PR is `changes_requested`:
 You are the agent **on the worktree** (implementor). On completion:
 
 1. Loop exists, `body` is a real summary, HEAD matches the work.
-2. Run MCP `run_ci` `{ id }` or `prgenie ci <id>` (same smart check set shepherd will run — `docs/ci-checks.md`). Fix failures in this worktree. Prefer fix-before-ready over discover-via-gate. Skip only if the toolchain cannot run — say so in the Review requested comment.
+2. Run MCP `run_ci` `{ id }` or `prgenie ci <id>` (path-scoped checks from the loop diff — `docs/ci-checks.md`). **Print** `{ checks, reason }` from the result. Prefer fix-before-ready over discover-via-gate. When mapping is confident, **forbid** substituting whole-repo `pnpm test`; use the selected scoped cmds only. Fail-fast stops after the first package suite fail. Skip only if the toolchain cannot run — say so in the Review requested comment.
 3. On CI-resume (export gate blocked): re-run at least the failing check(s) (`prgenie ci <id> --failing lint,test`) and only return when they pass.
 4. `set_status` `ready`.
 5. `add_comment` `role=agent`: `Review requested.`

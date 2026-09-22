@@ -116,13 +116,24 @@ export function normalizeExportGate(raw: unknown): ExportGateSnapshot | null {
   };
 }
 
+function normalizeCiPlanReason(raw: unknown): string[] | null {
+  if (Array.isArray(raw)) {
+    const reasons = raw.filter((r): r is string => typeof r === "string" && r.length > 0);
+    return reasons.length ? reasons : null;
+  }
+  if (typeof raw === "string" && raw.length > 0) return [raw];
+  return null;
+}
+
 function normalizeCiPlan(raw: unknown): ExportGateCiPlan | null {
   if (!raw || typeof raw !== "object") return null;
-  const plan = raw as Partial<ExportGateCiPlan>;
-  if (!Array.isArray(plan.checks) || typeof plan.reason !== "string") return null;
+  const plan = raw as Partial<ExportGateCiPlan> & { reason?: unknown };
+  if (!Array.isArray(plan.checks)) return null;
+  const reason = normalizeCiPlanReason(plan.reason);
+  if (!reason) return null;
   const checks = plan.checks.filter((c): c is string => typeof c === "string" && c.length > 0);
   if (checks.length === 0) return null;
-  return { checks, reason: plan.reason, uncertain: plan.uncertain === true };
+  return { checks, reason, uncertain: plan.uncertain === true };
 }
 
 function normalizeCiChecks(raw: unknown): ExportGateCiCheck[] | null {

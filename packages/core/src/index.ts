@@ -274,10 +274,16 @@ export {
   classifyCiPath,
   DEFAULT_CI_CHECKS,
   envFlag,
+  formatCiSelectionReason,
+  isPackageScopedCheck,
+  isScopablePackage,
+  packageFromCiPath,
+  packageFromScopedCheck,
   resolveCiCwd,
+  SCOPABLE_PACKAGES,
   selectCiChecks,
 } from "./ci-select.js";
-export type { CiCheckMapping, CiCheckSelection, CiPathKind } from "./ci-select.js";
+export type { CiCheckMapping, CiCheckSelection, CiPathKind, ScopablePackage } from "./ci-select.js";
 export {
   collectExecOutput,
   formatCiCheckError,

@@ -2,8 +2,12 @@ import { existsSync } from "node:fs";
 import { git } from "./git.js";
 import { getLocalPrNameStatus } from "./prs.js";
 
-/** Default local CI suite (shepherd / implementor preflight). */
+/** Default local CI suite (shepherd / implementor preflight) when mapping is uncertain or config-wide. */
 export const DEFAULT_CI_CHECKS = ["format:check", "lint", "typecheck", "test", "build"] as const;
+
+/** Packages that support path-scoped lint / typecheck / unit tests (not full-monorepo `pnpm test`). */
+export const SCOPABLE_PACKAGES = ["core", "cli", "extension"] as const;
+export type ScopablePackage = (typeof SCOPABLE_PACKAGES)[number];
 
 export type CiPathKind = "docs" | "source" | "test" | "config" | "style" | "unknown";
 
@@ -13,11 +17,15 @@ export interface CiCheckMapping {
 }
 
 export interface CiCheckSelection {
+  /** Check names to run (`format:check`, `lint:core`, `test`, …). */
   checks: string[];
-  reason: string;
+  /** Why this plan was chosen (print these; RAD-105). */
+  reason: string[];
   mapping: CiCheckMapping[];
   uncertain: boolean;
   changedPaths: string[];
+  /** True when checks are per-package scoped (not root `pnpm test` / full suite). */
+  packageScoped?: boolean;
 }
 
 const CONFIG_BASENAMES = new Set([
@@ -42,6 +50,8 @@ const CONFIG_BASENAMES = new Set([
   "docker-compose.yml",
   "docker-compose.yaml",
 ]);
+
+const SCOPABLE_SET = new Set<string>(SCOPABLE_PACKAGES);
 
 export function normalizeCiPath(filePath: string): string {
   return filePath.replace(/\\/g, "/").replace(/^\.\//, "");
@@ -96,62 +106,138 @@ export function classifyCiPath(filePath: string): CiPathKind {
   return "unknown";
 }
 
-function fullSuite(reason: string, paths: string[], uncertain: boolean): CiCheckSelection {
-  const mapping: CiCheckMapping[] = DEFAULT_CI_CHECKS.map((check) => ({ check, reason }));
+/** Package name under `packages/<name>/`, or null. */
+export function packageFromCiPath(filePath: string): string | null {
+  const m = normalizeCiPath(filePath).match(/^packages\/([^/]+)\//);
+  return m?.[1] ?? null;
+}
+
+export function isScopablePackage(name: string): name is ScopablePackage {
+  return SCOPABLE_SET.has(name);
+}
+
+/** Scoped check name → human package id (`lint:core` → `core`). */
+export function packageFromScopedCheck(check: string): ScopablePackage | null {
+  const m = check.match(/^(?:lint|typecheck|test|build):(core|cli|extension)$/);
+  return m ? (m[1] as ScopablePackage) : null;
+}
+
+export function isPackageScopedCheck(check: string): boolean {
+  return packageFromScopedCheck(check) != null;
+}
+
+/** Join selection reasons for progress cards / one-line CLI. */
+export function formatCiSelectionReason(reason: string | string[] | undefined): string {
+  if (reason == null) return "";
+  if (Array.isArray(reason)) return reason.filter(Boolean).join("; ");
+  return reason;
+}
+
+function fullSuite(reasons: string[], paths: string[], uncertain: boolean): CiCheckSelection {
+  const reason = reasons.length ? reasons : ["uncertain → full suite"];
+  const mapping: CiCheckMapping[] = DEFAULT_CI_CHECKS.map((check) => ({
+    check,
+    reason: reason.join("; "),
+  }));
   return {
     checks: [...DEFAULT_CI_CHECKS],
     reason,
     mapping,
     uncertain,
     changedPaths: paths,
+    packageScoped: false,
   };
+}
+
+function packageSuiteChecks(pkgs: ScopablePackage[]): string[] {
+  const checks: string[] = ["format:check"];
+  for (const pkg of pkgs) {
+    // Order: lint → typecheck → test per package so fail-fast stops that package suite first.
+    checks.push(`lint:${pkg}`, `typecheck:${pkg}`, `test:${pkg}`);
+  }
+  return checks;
 }
 
 /**
  * Path-aware check selection for implementor preflight and shepherd/export.
- * Uncertain mapping always returns the full configured suite.
+ * Confident package mapping → scoped lint/typecheck/unit (never root `pnpm test`).
+ * Uncertain mapping always returns the full configured suite with an explicit reason.
  */
 export function selectCiChecks(changedPaths: string[]): CiCheckSelection {
   const paths = [...new Set(changedPaths.map(normalizeCiPath).filter(Boolean))];
   if (paths.length === 0) {
-    return fullSuite("no changed paths; running full suite", paths, true);
+    return fullSuite(["no changed paths", "uncertain → full suite"], paths, true);
   }
 
   const kinds = paths.map(classifyCiPath);
   if (kinds.some((kind) => kind === "unknown")) {
-    return fullSuite("uncertain path mapping; running full suite", paths, true);
+    return fullSuite(["uncertain path mapping", "uncertain → full suite"], paths, true);
   }
   if (kinds.some((kind) => kind === "config")) {
-    return fullSuite("config/CI scripts changed; running full suite", paths, false);
+    return fullSuite(["config/CI scripts changed; running full suite"], paths, false);
   }
 
   const onlyDocsOrStyle = kinds.every((kind) => kind === "docs" || kind === "style");
   if (onlyDocsOrStyle) {
     const reason = kinds.every((kind) => kind === "docs")
-      ? "docs/markdown-only — format only, skip lint/test/build"
-      : "docs/style-only — format only, skip lint/test/build";
+      ? ["docs/markdown-only → format:check", "skip units/lint/typecheck/build (confident)"]
+      : ["docs/style-only → format:check", "skip units/lint/typecheck/build (confident)"];
     return {
       checks: ["format:check"],
       reason,
-      mapping: [{ check: "format:check", reason }],
+      mapping: [{ check: "format:check", reason: reason.join("; ") }],
       uncertain: false,
       changedPaths: paths,
+      packageScoped: false,
     };
   }
 
-  const hasCli = paths.some((p) => p.startsWith("packages/cli/"));
-  const hasCore = paths.some((p) => p.startsWith("packages/core/"));
-  const hasExtension = paths.some((p) => p.startsWith("packages/extension/"));
-  const scope =
-    [hasCli && "cli", hasCore && "core", hasExtension && "extension"].filter(Boolean).join("+") ||
-    "source";
-  const reason = `${scope} source/test changed — format, lint, typecheck, test, build`;
+  const codePaths = paths.filter((_, i) => kinds[i] === "source" || kinds[i] === "test");
+  const pkgs = new Set<ScopablePackage>();
+  let unscoping = false;
+  for (const p of codePaths) {
+    const name = packageFromCiPath(p);
+    if (name && isScopablePackage(name)) {
+      pkgs.add(name);
+    } else {
+      unscoping = true;
+    }
+  }
+
+  if (unscoping || pkgs.size === 0) {
+    return fullSuite(
+      ["changed paths outside scopable packages/core|cli|extension", "uncertain → full suite"],
+      paths,
+      true,
+    );
+  }
+
+  const ordered = SCOPABLE_PACKAGES.filter((p) => pkgs.has(p));
+  const checks = packageSuiteChecks(ordered);
+  const pkgList = ordered.map((p) => `packages/${p}/**`).join(" + ");
+  const reason = [
+    `${pkgList} → per-package format + lint + typecheck + unit tests`,
+    "confident mapping — not full monorepo pnpm test",
+    "fail-fast: stop after first package suite fail",
+  ];
+  const mapping: CiCheckMapping[] = checks.map((check) => {
+    if (check === "format:check") {
+      return { check, reason: "shared format check before package suites" };
+    }
+    const pkg = packageFromScopedCheck(check);
+    return {
+      check,
+      reason: pkg ? `packages/${pkg}/** scoped ${check.split(":")[0]}` : reason.join("; "),
+    };
+  });
+
   return {
-    checks: [...DEFAULT_CI_CHECKS],
+    checks,
     reason,
-    mapping: DEFAULT_CI_CHECKS.map((check) => ({ check, reason })),
+    mapping,
     uncertain: false,
     changedPaths: paths,
+    packageScoped: true,
   };
 }
 

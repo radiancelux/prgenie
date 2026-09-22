@@ -33,6 +33,91 @@ var init_types = __esm({
 });
 
 // packages/core/src/git.ts
+function clearGitBinaryCache() {
+  cachedGitBinary = void 0;
+}
+function formatGitMissingError(platform = process.platform) {
+  if (platform === "win32") {
+    return `git is not resolvable from this process. Install Git for Windows (https://git-scm.com/download/win) and ensure git.exe is on PATH, or set ${PRGENIE_GIT_ENV} to the absolute path of git.exe (e.g. C:\\Program Files\\Git\\cmd\\git.exe).`;
+  }
+  return `git is not resolvable from this process. Install git and ensure it is on PATH, or set ${PRGENIE_GIT_ENV} to the absolute path of the git binary.`;
+}
+function pathDelimiter(platform) {
+  return platform === "win32" ? ";" : ":";
+}
+function findOnPath(names, pathEnv, exists, delimiter) {
+  for (const dir of pathEnv.split(delimiter)) {
+    const trimmed = dir.trim();
+    if (!trimmed) continue;
+    for (const name of names) {
+      const candidate = import_node_path.default.join(trimmed, name);
+      if (exists(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+function windowsGitCandidates(env = process.env) {
+  const pf = env.ProgramFiles || "C:\\Program Files";
+  const pf86 = env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+  const local = env.LOCALAPPDATA?.trim();
+  const out = [
+    import_node_path.default.join(pf, "Git", "cmd", "git.exe"),
+    import_node_path.default.join(pf, "Git", "bin", "git.exe"),
+    import_node_path.default.join(pf86, "Git", "cmd", "git.exe"),
+    import_node_path.default.join(pf86, "Git", "bin", "git.exe")
+  ];
+  if (local) {
+    out.push(import_node_path.default.join(local, "Programs", "Git", "cmd", "git.exe"));
+    out.push(import_node_path.default.join(local, "Programs", "Git", "bin", "git.exe"));
+  }
+  return out;
+}
+function resolveGitBinary(options = {}) {
+  const useCache = !options.bypassCache && options.env === void 0 && options.pathEnv === void 0 && options.existsSync === void 0 && options.platform === void 0;
+  if (useCache && cachedGitBinary !== void 0) {
+    return cachedGitBinary;
+  }
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const exists = options.existsSync ?? import_node_fs.existsSync;
+  const pathEnv = options.pathEnv ?? env.PATH ?? env.Path ?? "";
+  const delimiter = pathDelimiter(platform);
+  const override = env[PRGENIE_GIT_ENV]?.trim();
+  if (override) {
+    const resolved = exists(override) ? override : null;
+    if (useCache) cachedGitBinary = resolved;
+    return resolved;
+  }
+  const names = platform === "win32" ? ["git.exe", "git"] : ["git"];
+  const onPath = findOnPath(names, pathEnv, exists, delimiter);
+  if (onPath) {
+    if (useCache) cachedGitBinary = onPath;
+    return onPath;
+  }
+  if (platform === "win32") {
+    for (const candidate of windowsGitCandidates(env)) {
+      if (exists(candidate)) {
+        if (useCache) cachedGitBinary = candidate;
+        return candidate;
+      }
+    }
+  }
+  if (useCache) cachedGitBinary = null;
+  return null;
+}
+function requireGitBinary(options) {
+  const resolved = resolveGitBinary(options);
+  if (resolved) return resolved;
+  const env = options?.env ?? process.env;
+  const platform = options?.platform ?? process.platform;
+  const override = env[PRGENIE_GIT_ENV]?.trim();
+  if (override) {
+    throw new GitBinaryError(
+      `${PRGENIE_GIT_ENV} is set to "${override}" but that path does not exist. ` + formatGitMissingError(platform)
+    );
+  }
+  throw new GitBinaryError(formatGitMissingError(platform));
+}
 async function git(cwd, args, options = {}) {
   return new Promise((resolve, reject) => {
     if (options.signal?.aborted) {
@@ -41,7 +126,14 @@ async function git(cwd, args, options = {}) {
       reject(err);
       return;
     }
-    const child = (0, import_node_child_process.spawn)("git", args, {
+    let binary;
+    try {
+      binary = requireGitBinary();
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const child = (0, import_node_child_process.spawn)(binary, args, {
       cwd,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"]
@@ -56,7 +148,14 @@ async function git(cwd, args, options = {}) {
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
-    child.on("error", reject);
+    child.on("error", (err) => {
+      if (err.code === "ENOENT") {
+        clearGitBinaryCache();
+        reject(new GitBinaryError(formatGitMissingError()));
+        return;
+      }
+      reject(err);
+    });
     const onAbort2 = () => {
       child.kill("SIGTERM");
     };
@@ -102,12 +201,14 @@ async function gitCommonDir(cwd) {
   const dir = await gitText(cwd, ["rev-parse", "--git-common-dir"]);
   return import_node_path.default.isAbsolute(dir) ? import_node_path.default.normalize(dir) : import_node_path.default.resolve(cwd, dir);
 }
-var import_node_child_process, import_node_path, GitError;
+var import_node_child_process, import_node_fs, import_node_path, PRGENIE_GIT_ENV, GitError, GitBinaryError, cachedGitBinary;
 var init_git = __esm({
   "packages/core/src/git.ts"() {
     "use strict";
     import_node_child_process = require("node:child_process");
+    import_node_fs = require("node:fs");
     import_node_path = __toESM(require("node:path"), 1);
+    PRGENIE_GIT_ENV = "PRGENIE_GIT";
     GitError = class extends Error {
       constructor(args, stderr, exitCode) {
         super(`git ${args.join(" ")} failed (${exitCode}): ${stderr.trim()}`);
@@ -115,6 +216,12 @@ var init_git = __esm({
         this.stderr = stderr;
         this.exitCode = exitCode;
         this.name = "GitError";
+      }
+    };
+    GitBinaryError = class extends Error {
+      constructor(message) {
+        super(message);
+        this.name = "GitBinaryError";
       }
     };
   }
@@ -403,11 +510,14 @@ var init_ci_failure = __esm({
 });
 
 // packages/core/src/ci-select.ts
+var SCOPABLE_PACKAGES, SCOPABLE_SET;
 var init_ci_select = __esm({
   "packages/core/src/ci-select.ts"() {
     "use strict";
     init_git();
     init_prs();
+    SCOPABLE_PACKAGES = ["core", "cli", "extension"];
+    SCOPABLE_SET = new Set(SCOPABLE_PACKAGES);
   }
 });
 
@@ -453,7 +563,7 @@ var init_export_validation = __esm({
 });
 
 // packages/cli/src/github-hook.ts
-var import_node_fs = require("node:fs");
+var import_node_fs2 = require("node:fs");
 
 // packages/core/src/index.ts
 init_types();
@@ -534,7 +644,7 @@ function switchUser(command) {
 async function main() {
   let input;
   try {
-    const raw = (0, import_node_fs.readFileSync)(0, "utf8");
+    const raw = (0, import_node_fs2.readFileSync)(0, "utf8");
     input = raw ? JSON.parse(raw) : {};
   } catch {
     input = {};

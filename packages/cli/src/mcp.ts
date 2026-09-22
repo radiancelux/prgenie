@@ -846,7 +846,7 @@ export const tools = [
   {
     name: "run_ci",
     description:
-      "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; uncertain → full suite). Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Returns allPassed, checks, selection, and a progressCard for the agent chat. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run — say so; do not skip a flaky failure.",
+      "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; confident package paths → scoped lint/typecheck/unit; uncertain → full suite). Returns allPassed, checks, selection `{ checks[], reason[] }` (print both), and a progressCard. When selection is confident/packageScoped, do not substitute whole-repo pnpm test. Fail-fast stops after the first package suite fail. Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run — say so; do not skip a flaky failure.",
     inputSchema: {
       type: "object",
       required: ["id"],

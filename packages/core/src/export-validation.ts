@@ -64,7 +64,7 @@ function shepherdFromSnapshot(snap: ExportGateSnapshot): ShepherdResult {
           reason: snap.ciPlan.reason,
           mapping: snap.ciPlan.checks.map((check) => ({
             check,
-            reason: snap.ciPlan?.reason ?? "",
+            reason: snap.ciPlan?.reason.join("; ") ?? "",
           })),
           uncertain: snap.ciPlan.uncertain ?? false,
           changedPaths: [],

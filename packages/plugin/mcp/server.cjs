@@ -47,6 +47,91 @@ var init_types = __esm({
 });
 
 // packages/core/src/git.ts
+function clearGitBinaryCache() {
+  cachedGitBinary = void 0;
+}
+function formatGitMissingError(platform = process.platform) {
+  if (platform === "win32") {
+    return `git is not resolvable from this process. Install Git for Windows (https://git-scm.com/download/win) and ensure git.exe is on PATH, or set ${PRGENIE_GIT_ENV} to the absolute path of git.exe (e.g. C:\\Program Files\\Git\\cmd\\git.exe).`;
+  }
+  return `git is not resolvable from this process. Install git and ensure it is on PATH, or set ${PRGENIE_GIT_ENV} to the absolute path of the git binary.`;
+}
+function pathDelimiter(platform) {
+  return platform === "win32" ? ";" : ":";
+}
+function findOnPath(names, pathEnv, exists, delimiter) {
+  for (const dir of pathEnv.split(delimiter)) {
+    const trimmed = dir.trim();
+    if (!trimmed) continue;
+    for (const name of names) {
+      const candidate = import_node_path.default.join(trimmed, name);
+      if (exists(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+function windowsGitCandidates(env = process.env) {
+  const pf4 = env.ProgramFiles || "C:\\Program Files";
+  const pf86 = env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+  const local = env.LOCALAPPDATA?.trim();
+  const out = [
+    import_node_path.default.join(pf4, "Git", "cmd", "git.exe"),
+    import_node_path.default.join(pf4, "Git", "bin", "git.exe"),
+    import_node_path.default.join(pf86, "Git", "cmd", "git.exe"),
+    import_node_path.default.join(pf86, "Git", "bin", "git.exe")
+  ];
+  if (local) {
+    out.push(import_node_path.default.join(local, "Programs", "Git", "cmd", "git.exe"));
+    out.push(import_node_path.default.join(local, "Programs", "Git", "bin", "git.exe"));
+  }
+  return out;
+}
+function resolveGitBinary(options7 = {}) {
+  const useCache = !options7.bypassCache && options7.env === void 0 && options7.pathEnv === void 0 && options7.existsSync === void 0 && options7.platform === void 0;
+  if (useCache && cachedGitBinary !== void 0) {
+    return cachedGitBinary;
+  }
+  const env = options7.env ?? process.env;
+  const platform = options7.platform ?? process.platform;
+  const exists = options7.existsSync ?? import_node_fs.existsSync;
+  const pathEnv = options7.pathEnv ?? env.PATH ?? env.Path ?? "";
+  const delimiter = pathDelimiter(platform);
+  const override = env[PRGENIE_GIT_ENV]?.trim();
+  if (override) {
+    const resolved = exists(override) ? override : null;
+    if (useCache) cachedGitBinary = resolved;
+    return resolved;
+  }
+  const names = platform === "win32" ? ["git.exe", "git"] : ["git"];
+  const onPath = findOnPath(names, pathEnv, exists, delimiter);
+  if (onPath) {
+    if (useCache) cachedGitBinary = onPath;
+    return onPath;
+  }
+  if (platform === "win32") {
+    for (const candidate of windowsGitCandidates(env)) {
+      if (exists(candidate)) {
+        if (useCache) cachedGitBinary = candidate;
+        return candidate;
+      }
+    }
+  }
+  if (useCache) cachedGitBinary = null;
+  return null;
+}
+function requireGitBinary(options7) {
+  const resolved = resolveGitBinary(options7);
+  if (resolved) return resolved;
+  const env = options7?.env ?? process.env;
+  const platform = options7?.platform ?? process.platform;
+  const override = env[PRGENIE_GIT_ENV]?.trim();
+  if (override) {
+    throw new GitBinaryError(
+      `${PRGENIE_GIT_ENV} is set to "${override}" but that path does not exist. ` + formatGitMissingError(platform)
+    );
+  }
+  throw new GitBinaryError(formatGitMissingError(platform));
+}
 async function git(cwd, args, options7 = {}) {
   return new Promise((resolve4, reject) => {
     if (options7.signal?.aborted) {
@@ -55,7 +140,14 @@ async function git(cwd, args, options7 = {}) {
       reject(err);
       return;
     }
-    const child = (0, import_node_child_process.spawn)("git", args, {
+    let binary;
+    try {
+      binary = requireGitBinary();
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const child = (0, import_node_child_process.spawn)(binary, args, {
       cwd,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"]
@@ -70,7 +162,14 @@ async function git(cwd, args, options7 = {}) {
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
-    child.on("error", reject);
+    child.on("error", (err) => {
+      if (err.code === "ENOENT") {
+        clearGitBinaryCache();
+        reject(new GitBinaryError(formatGitMissingError()));
+        return;
+      }
+      reject(err);
+    });
     const onAbort2 = () => {
       child.kill("SIGTERM");
     };
@@ -123,12 +222,14 @@ async function requireGitRoot(cwd) {
   }
   return root2;
 }
-var import_node_child_process, import_node_path, GitError;
+var import_node_child_process, import_node_fs, import_node_path, PRGENIE_GIT_ENV, GitError, GitBinaryError, cachedGitBinary;
 var init_git = __esm({
   "packages/core/src/git.ts"() {
     "use strict";
     import_node_child_process = require("node:child_process");
+    import_node_fs = require("node:fs");
     import_node_path = __toESM(require("node:path"), 1);
+    PRGENIE_GIT_ENV = "PRGENIE_GIT";
     GitError = class extends Error {
       constructor(args, stderr, exitCode) {
         super(`git ${args.join(" ")} failed (${exitCode}): ${stderr.trim()}`);
@@ -136,6 +237,12 @@ var init_git = __esm({
         this.stderr = stderr;
         this.exitCode = exitCode;
         this.name = "GitError";
+      }
+    };
+    GitBinaryError = class extends Error {
+      constructor(message) {
+        super(message);
+        this.name = "GitBinaryError";
       }
     };
   }
@@ -214,8 +321,8 @@ function refusePrimaryWorktreeIfParallel(worktreePath, primary, loopId, liveLoop
 }
 function sameFsPath(a4, b6) {
   try {
-    const leftStat = (0, import_node_fs.statSync)(a4);
-    const rightStat = (0, import_node_fs.statSync)(b6);
+    const leftStat = (0, import_node_fs2.statSync)(a4);
+    const rightStat = (0, import_node_fs2.statSync)(b6);
     if (leftStat.ino !== 0 && leftStat.ino === rightStat.ino && leftStat.dev === rightStat.dev) {
       return true;
     }
@@ -224,10 +331,10 @@ function sameFsPath(a4, b6) {
   const canon = (p5) => {
     const normalized = import_node_path3.default.resolve(p5);
     try {
-      return import_node_fs.realpathSync.native(normalized);
+      return import_node_fs2.realpathSync.native(normalized);
     } catch {
       try {
-        return (0, import_node_fs.realpathSync)(normalized);
+        return (0, import_node_fs2.realpathSync)(normalized);
       } catch {
         return normalized;
       }
@@ -412,7 +519,7 @@ async function restorePeelStash(dest, loopId) {
   await git(dest, ["stash", "pop", ref], { allowFail: true });
 }
 async function addLoopWorktree(cwd, dest, loop) {
-  if ((0, import_node_fs.existsSync)(dest)) {
+  if ((0, import_node_fs2.existsSync)(dest)) {
     const already = await findGitRoot(dest);
     if (already) return dest;
   }
@@ -503,11 +610,11 @@ async function userName(cwd) {
 async function shortLogSubject(cwd, rev = "HEAD") {
   return gitText(cwd, ["log", "-1", "--format=%s", rev]);
 }
-var import_node_fs, import_promises, import_node_path3;
+var import_node_fs2, import_promises, import_node_path3;
 var init_worktrees = __esm({
   "packages/core/src/worktrees.ts"() {
     "use strict";
-    import_node_fs = require("node:fs");
+    import_node_fs2 = require("node:fs");
     import_promises = require("node:fs/promises");
     import_node_path3 = __toESM(require("node:path"), 1);
     init_git();
@@ -945,13 +1052,23 @@ function normalizeExportGate(raw) {
     ciChecks
   };
 }
+function normalizeCiPlanReason(raw) {
+  if (Array.isArray(raw)) {
+    const reasons = raw.filter((r5) => typeof r5 === "string" && r5.length > 0);
+    return reasons.length ? reasons : null;
+  }
+  if (typeof raw === "string" && raw.length > 0) return [raw];
+  return null;
+}
 function normalizeCiPlan(raw) {
   if (!raw || typeof raw !== "object") return null;
   const plan = raw;
-  if (!Array.isArray(plan.checks) || typeof plan.reason !== "string") return null;
+  if (!Array.isArray(plan.checks)) return null;
+  const reason = normalizeCiPlanReason(plan.reason);
+  if (!reason) return null;
   const checks = plan.checks.filter((c5) => typeof c5 === "string" && c5.length > 0);
   if (checks.length === 0) return null;
-  return { checks, reason: plan.reason, uncertain: plan.uncertain === true };
+  return { checks, reason, uncertain: plan.uncertain === true };
 }
 function normalizeCiChecks(raw) {
   if (!Array.isArray(raw)) return null;
@@ -1951,6 +2068,15 @@ var init_prs = __esm({
 
 // packages/core/src/progress.ts
 function ciCheckCommand(check2) {
+  const scoped = check2.match(/^(lint|typecheck|test|build):(core|cli|extension)$/);
+  if (scoped) {
+    const [, kind, pkg] = scoped;
+    const dir = `packages/${pkg}`;
+    if (kind === "lint") return `pnpm exec eslint ${dir}/src`;
+    if (kind === "typecheck") return `pnpm exec tsc -p ${dir} --noEmit`;
+    if (kind === "test") return `pnpm exec tsx --test ${dir}/src`;
+    if (kind === "build") return `pnpm exec node scripts/build.mjs`;
+  }
   return `pnpm ${check2}`;
 }
 function abortError(message = "Cancelled") {
@@ -2089,7 +2215,7 @@ function ciLockFile(cwd, id3, headSha) {
 }
 function readJson(file) {
   try {
-    return JSON.parse((0, import_node_fs2.readFileSync)(file, "utf8"));
+    return JSON.parse((0, import_node_fs3.readFileSync)(file, "utf8"));
   } catch {
     return null;
   }
@@ -2100,14 +2226,14 @@ function readCiAbortSeq(cwd, id3) {
 }
 function requestCiAbort(cwd, id3) {
   const file = ciAbortFile(cwd, id3);
-  (0, import_node_fs2.mkdirSync)(import_node_path10.default.dirname(file), { recursive: true });
+  (0, import_node_fs3.mkdirSync)(import_node_path10.default.dirname(file), { recursive: true });
   const next = readCiAbortSeq(cwd, id3) + 1;
   const token2 = {
     id: id3,
     seq: next,
     requestedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
-  (0, import_node_fs2.writeFileSync)(file, `${JSON.stringify(token2)}
+  (0, import_node_fs3.writeFileSync)(file, `${JSON.stringify(token2)}
 `, "utf8");
   return next;
 }
@@ -2137,7 +2263,7 @@ function lockStale(lock) {
 }
 async function acquireCiLock(cwd, id3, headSha, signal) {
   const file = ciLockFile(cwd, id3, headSha);
-  (0, import_node_fs2.mkdirSync)(import_node_path10.default.dirname(file), { recursive: true });
+  (0, import_node_fs3.mkdirSync)(import_node_path10.default.dirname(file), { recursive: true });
   const record = {
     pid: process.pid,
     id: id3,
@@ -2146,7 +2272,7 @@ async function acquireCiLock(cwd, id3, headSha, signal) {
   };
   for (; ; ) {
     throwIfAborted(signal);
-    const existing = (0, import_node_fs2.existsSync)(file) ? readJson(file) : null;
+    const existing = (0, import_node_fs3.existsSync)(file) ? readJson(file) : null;
     if (existing && !lockStale(existing)) {
       await new Promise((resolve4, reject) => {
         const onAbort2 = () => {
@@ -2166,7 +2292,7 @@ async function acquireCiLock(cwd, id3, headSha, signal) {
           signal.addEventListener("abort", onAbort2, { once: true });
         }
       });
-      const still = (0, import_node_fs2.existsSync)(file) ? readJson(file) : null;
+      const still = (0, import_node_fs3.existsSync)(file) ? readJson(file) : null;
       if (!still || lockStale(still) || still.pid !== existing.pid) {
         return { peerDone: true, release: () => void 0 };
       }
@@ -2174,23 +2300,23 @@ async function acquireCiLock(cwd, id3, headSha, signal) {
     }
     if (existing && lockStale(existing)) {
       try {
-        (0, import_node_fs2.unlinkSync)(file);
+        (0, import_node_fs3.unlinkSync)(file);
       } catch {
       }
     }
     try {
-      const fd3 = (0, import_node_fs2.openSync)(file, "wx");
+      const fd3 = (0, import_node_fs3.openSync)(file, "wx");
       try {
-        (0, import_node_fs2.writeFileSync)(fd3, `${JSON.stringify(record)}
+        (0, import_node_fs3.writeFileSync)(fd3, `${JSON.stringify(record)}
 `, "utf8");
       } finally {
-        (0, import_node_fs2.closeSync)(fd3);
+        (0, import_node_fs3.closeSync)(fd3);
       }
       return {
         peerDone: false,
         release: () => {
           try {
-            (0, import_node_fs2.unlinkSync)(file);
+            (0, import_node_fs3.unlinkSync)(file);
           } catch {
           }
         }
@@ -2200,12 +2326,12 @@ async function acquireCiLock(cwd, id3, headSha, signal) {
     }
   }
 }
-var import_node_child_process3, import_node_fs2, import_node_path10, POLL_MS, STALE_LOCK_MS;
+var import_node_child_process3, import_node_fs3, import_node_path10, POLL_MS, STALE_LOCK_MS;
 var init_ci_abort = __esm({
   "packages/core/src/ci-abort.ts"() {
     "use strict";
     import_node_child_process3 = require("node:child_process");
-    import_node_fs2 = require("node:fs");
+    import_node_fs3 = require("node:fs");
     import_node_path10 = __toESM(require("node:path"), 1);
     init_progress();
     POLL_MS = 150;
@@ -2496,54 +2622,115 @@ function classifyCiPath(filePath) {
   if (/\.(css|scss|less|html|xml|json|ya?ml)$/.test(lower)) return "style";
   return "unknown";
 }
-function fullSuite(reason, paths, uncertain) {
-  const mapping = DEFAULT_CI_CHECKS.map((check2) => ({ check: check2, reason }));
+function packageFromCiPath(filePath) {
+  const m7 = normalizeCiPath(filePath).match(/^packages\/([^/]+)\//);
+  return m7?.[1] ?? null;
+}
+function isScopablePackage(name) {
+  return SCOPABLE_SET.has(name);
+}
+function packageFromScopedCheck(check2) {
+  const m7 = check2.match(/^(?:lint|typecheck|test|build):(core|cli|extension)$/);
+  return m7 ? m7[1] : null;
+}
+function formatCiSelectionReason(reason) {
+  if (reason == null) return "";
+  if (Array.isArray(reason)) return reason.filter(Boolean).join("; ");
+  return reason;
+}
+function fullSuite(reasons, paths, uncertain) {
+  const reason = reasons.length ? reasons : ["uncertain \u2192 full suite"];
+  const mapping = DEFAULT_CI_CHECKS.map((check2) => ({
+    check: check2,
+    reason: reason.join("; ")
+  }));
   return {
     checks: [...DEFAULT_CI_CHECKS],
     reason,
     mapping,
     uncertain,
-    changedPaths: paths
+    changedPaths: paths,
+    packageScoped: false
   };
+}
+function packageSuiteChecks(pkgs) {
+  const checks = ["format:check"];
+  for (const pkg of pkgs) {
+    checks.push(`lint:${pkg}`, `typecheck:${pkg}`, `test:${pkg}`);
+  }
+  return checks;
 }
 function selectCiChecks(changedPaths) {
   const paths = [...new Set(changedPaths.map(normalizeCiPath).filter(Boolean))];
   if (paths.length === 0) {
-    return fullSuite("no changed paths; running full suite", paths, true);
+    return fullSuite(["no changed paths", "uncertain \u2192 full suite"], paths, true);
   }
   const kinds = paths.map(classifyCiPath);
   if (kinds.some((kind) => kind === "unknown")) {
-    return fullSuite("uncertain path mapping; running full suite", paths, true);
+    return fullSuite(["uncertain path mapping", "uncertain \u2192 full suite"], paths, true);
   }
   if (kinds.some((kind) => kind === "config")) {
-    return fullSuite("config/CI scripts changed; running full suite", paths, false);
+    return fullSuite(["config/CI scripts changed; running full suite"], paths, false);
   }
   const onlyDocsOrStyle = kinds.every((kind) => kind === "docs" || kind === "style");
   if (onlyDocsOrStyle) {
-    const reason2 = kinds.every((kind) => kind === "docs") ? "docs/markdown-only \u2014 format only, skip lint/test/build" : "docs/style-only \u2014 format only, skip lint/test/build";
+    const reason2 = kinds.every((kind) => kind === "docs") ? ["docs/markdown-only \u2192 format:check", "skip units/lint/typecheck/build (confident)"] : ["docs/style-only \u2192 format:check", "skip units/lint/typecheck/build (confident)"];
     return {
       checks: ["format:check"],
       reason: reason2,
-      mapping: [{ check: "format:check", reason: reason2 }],
+      mapping: [{ check: "format:check", reason: reason2.join("; ") }],
       uncertain: false,
-      changedPaths: paths
+      changedPaths: paths,
+      packageScoped: false
     };
   }
-  const hasCli = paths.some((p5) => p5.startsWith("packages/cli/"));
-  const hasCore = paths.some((p5) => p5.startsWith("packages/core/"));
-  const hasExtension = paths.some((p5) => p5.startsWith("packages/extension/"));
-  const scope = [hasCli && "cli", hasCore && "core", hasExtension && "extension"].filter(Boolean).join("+") || "source";
-  const reason = `${scope} source/test changed \u2014 format, lint, typecheck, test, build`;
+  const codePaths = paths.filter((_8, i) => kinds[i] === "source" || kinds[i] === "test");
+  const pkgs = /* @__PURE__ */ new Set();
+  let unscoping = false;
+  for (const p5 of codePaths) {
+    const name = packageFromCiPath(p5);
+    if (name && isScopablePackage(name)) {
+      pkgs.add(name);
+    } else {
+      unscoping = true;
+    }
+  }
+  if (unscoping || pkgs.size === 0) {
+    return fullSuite(
+      ["changed paths outside scopable packages/core|cli|extension", "uncertain \u2192 full suite"],
+      paths,
+      true
+    );
+  }
+  const ordered = SCOPABLE_PACKAGES.filter((p5) => pkgs.has(p5));
+  const checks = packageSuiteChecks(ordered);
+  const pkgList = ordered.map((p5) => `packages/${p5}/**`).join(" + ");
+  const reason = [
+    `${pkgList} \u2192 per-package format + lint + typecheck + unit tests`,
+    "confident mapping \u2014 not full monorepo pnpm test",
+    "fail-fast: stop after first package suite fail"
+  ];
+  const mapping = checks.map((check2) => {
+    if (check2 === "format:check") {
+      return { check: check2, reason: "shared format check before package suites" };
+    }
+    const pkg = packageFromScopedCheck(check2);
+    return {
+      check: check2,
+      reason: pkg ? `packages/${pkg}/** scoped ${check2.split(":")[0]}` : reason.join("; ")
+    };
+  });
   return {
-    checks: [...DEFAULT_CI_CHECKS],
+    checks,
     reason,
-    mapping: DEFAULT_CI_CHECKS.map((check2) => ({ check: check2, reason })),
+    mapping,
     uncertain: false,
-    changedPaths: paths
+    changedPaths: paths,
+    packageScoped: true
   };
 }
 function resolveCiCwd(cwd, worktreePath) {
-  if (worktreePath && (0, import_node_fs3.existsSync)(worktreePath)) return worktreePath;
+  if (worktreePath && (0, import_node_fs4.existsSync)(worktreePath)) return worktreePath;
   return cwd;
 }
 function addSplitPaths(set, raw) {
@@ -2584,14 +2771,15 @@ function envFlag(name, fallback) {
   if (raw === "1" || raw.toLowerCase() === "true") return true;
   return fallback;
 }
-var import_node_fs3, DEFAULT_CI_CHECKS, CONFIG_BASENAMES;
+var import_node_fs4, DEFAULT_CI_CHECKS, SCOPABLE_PACKAGES, CONFIG_BASENAMES, SCOPABLE_SET;
 var init_ci_select = __esm({
   "packages/core/src/ci-select.ts"() {
     "use strict";
-    import_node_fs3 = require("node:fs");
+    import_node_fs4 = require("node:fs");
     init_git();
     init_prs();
     DEFAULT_CI_CHECKS = ["format:check", "lint", "typecheck", "test", "build"];
+    SCOPABLE_PACKAGES = ["core", "cli", "extension"];
     CONFIG_BASENAMES = /* @__PURE__ */ new Set([
       "package.json",
       "pnpm-lock.yaml",
@@ -2614,6 +2802,7 @@ var init_ci_select = __esm({
       "docker-compose.yml",
       "docker-compose.yaml"
     ]);
+    SCOPABLE_SET = new Set(SCOPABLE_PACKAGES);
   }
 });
 
@@ -87245,15 +87434,20 @@ async function runCiChecks(cwd, options7 = {}) {
   const onProgress = options7.onProgress;
   const signal = options7.signal;
   const failFast = options7.failFast ?? envFlag("PRGENIE_CI_FAIL_FAST", true);
-  const parallel = options7.parallel ?? envFlag("PRGENIE_CI_PARALLEL", true);
   const selection = options7.selection;
-  const reasonFor = (name) => selection?.mapping.find((m7) => m7.check === name)?.reason ?? selection?.reason;
+  const parallel = selection?.packageScoped === true ? false : options7.parallel ?? envFlag("PRGENIE_CI_PARALLEL", true);
+  const reasonFor = (name) => {
+    const mapped = selection?.mapping.find((m7) => m7.check === name)?.reason;
+    if (mapped) return mapped;
+    const joined = formatCiSelectionReason(selection?.reason);
+    return joined || void 0;
+  };
   if (selection) {
     onProgress?.({
       phase: "ci",
       state: "start",
       selectedChecks: selection.checks,
-      selectionReason: selection.reason
+      selectionReason: formatCiSelectionReason(selection.reason)
     });
   } else {
     onProgress?.({
@@ -87552,7 +87746,7 @@ function shepherdFromSnapshot(snap) {
       reason: snap.ciPlan.reason,
       mapping: snap.ciPlan.checks.map((check2) => ({
         check: check2,
-        reason: snap.ciPlan?.reason ?? ""
+        reason: snap.ciPlan?.reason.join("; ") ?? ""
       })),
       uncertain: snap.ciPlan.uncertain ?? false,
       changedPaths: []
@@ -88622,7 +88816,7 @@ init_ci_failure();
 init_ci_cache();
 
 // packages/cli/src/mcp.ts
-var import_node_fs4 = require("node:fs");
+var import_node_fs5 = require("node:fs");
 
 // packages/cli/src/mcp-stdio.ts
 var MCP_STDIO_READY = "[prgenie] mcp stdio ready";
@@ -88739,7 +88933,7 @@ function takeCompleteJsonObject(buffer2) {
 
 // packages/cli/src/mcp.ts
 function writeMessage(msg) {
-  (0, import_node_fs4.writeSync)(1, encodeMcpFrame(msg));
+  (0, import_node_fs5.writeSync)(1, encodeMcpFrame(msg));
 }
 function ok2(id3, result) {
   writeMessage({ jsonrpc: "2.0", id: id3, result });
@@ -89449,7 +89643,7 @@ var tools = [
   },
   {
     name: "run_ci",
-    description: "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; uncertain \u2192 full suite). Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Returns allPassed, checks, selection, and a progressCard for the agent chat. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run \u2014 say so; do not skip a flaky failure.",
+    description: "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; confident package paths \u2192 scoped lint/typecheck/unit; uncertain \u2192 full suite). Returns allPassed, checks, selection `{ checks[], reason[] }` (print both), and a progressCard. When selection is confident/packageScoped, do not substitute whole-repo pnpm test. Fail-fast stops after the first package suite fail. Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run \u2014 say so; do not skip a flaky failure.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -89601,7 +89795,7 @@ async function onRequest(msg) {
 }
 async function startMcp() {
   try {
-    (0, import_node_fs4.writeSync)(2, `${MCP_STDIO_READY}
+    (0, import_node_fs5.writeSync)(2, `${MCP_STDIO_READY}
 `);
   } catch {
   }
@@ -89609,7 +89803,7 @@ async function startMcp() {
   let draining = false;
   process.stdin.on("error", (err) => {
     try {
-      (0, import_node_fs4.writeSync)(2, `[prgenie] mcp stdin error: ${err.message}
+      (0, import_node_fs5.writeSync)(2, `[prgenie] mcp stdin error: ${err.message}
 `);
     } catch {
     }
