@@ -448,7 +448,7 @@ export const tools = [
   {
     name: "create_local_pr",
     description:
-      "Create a local PR (unpublished review loop) from the current branch or a named head. Always set body to a reviewer summary (why, what changed, how to test). Do not git push or gh pr create.",
+      "Create a local PR (unpublished review loop) from the current branch or a named head. Only when the user asked for a local PR / loop / /start / /steward (or an existing live loop needs a packet). Always set body to a reviewer summary (why, what changed, how to test). Do not git push or gh pr create.",
     inputSchema: {
       type: "object",
       properties: {

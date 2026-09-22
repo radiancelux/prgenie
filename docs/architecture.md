@@ -116,7 +116,7 @@ Hooks registered in `hooks.json`:
 
 - `github-gate.cjs` — push / `gh pr create` gate + bound-account switch
 - `review-inbox.cjs` — inject pending comments into implementor sessions (no listen ticks; no stop-hook reviewer spawn)
-- `capture-subagent.cjs` — subagentStop capture into local PRs
+- `capture-subagent.cjs` — subagentStop capture into local PRs (**off by default**; set `PRGENIE_CAPTURE_SUBAGENT=1` to enable)
 - `session-log.mjs` — session log helper used by hooks
 
 ## See also

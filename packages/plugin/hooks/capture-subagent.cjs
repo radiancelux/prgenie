@@ -1061,6 +1061,13 @@ var init_ci_failure = __esm({
 });
 
 // packages/core/src/ci-select.ts
+function envFlag(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || raw === "") return fallback;
+  if (raw === "0" || raw.toLowerCase() === "false") return false;
+  if (raw === "1" || raw.toLowerCase() === "true") return true;
+  return fallback;
+}
 var init_ci_select = __esm({
   "packages/core/src/ci-select.ts"() {
     "use strict";
@@ -1202,6 +1209,9 @@ function inferCwd(input) {
 function silent() {
   process.stdout.write("{}\n");
 }
+function captureSubagentEnabled() {
+  return envFlag("PRGENIE_CAPTURE_SUBAGENT", false);
+}
 async function main() {
   let input;
   try {
@@ -1225,6 +1235,10 @@ async function main() {
       task,
       modified_files: modified
     });
+  }
+  if (!captureSubagentEnabled()) {
+    silent();
+    return;
   }
   if (status === "aborted") {
     silent();

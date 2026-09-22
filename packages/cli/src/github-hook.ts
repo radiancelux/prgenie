@@ -68,9 +68,9 @@ export async function main(): Promise<void> {
     process.stdout.write(
       JSON.stringify({
         permission: "ask",
-        user_message: `PR Genie: this would publish to GitHub${asWho}. Local PR first, unless you explicitly want to export.`,
+        user_message: `PR Genie: this would publish to GitHub${asWho}. Prefer a local PR Genie loop unless you explicitly want to export.`,
         agent_message:
-          "Do not git push or gh pr create. Open a local PR with PR Genie, then wait for the user to export.",
+          "Do not git push or gh pr create unless the user explicitly asked to export (/export). Ask whether they want to open a PR Genie local PR (/start, /steward, or /local-pr) — do not create one unless they opt in.",
       }),
     );
     return;
