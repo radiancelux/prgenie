@@ -98,6 +98,7 @@ describe("selectCiChecks", () => {
     assert.equal(classifyCiPath("packages/core/src/ci-select.test.ts"), "test");
     assert.equal(classifyCiPath("packages/core/src/ci-select.ts"), "source");
     assert.equal(classifyCiPath("docs/ci-checks.md"), "docs");
+    assert.equal(classifyCiPath("packages/plugin/rules/no-remote-pr.mdc"), "docs");
     assert.equal(classifyCiPath(".github/workflows/ci.yml"), "config");
     assert.equal(classifyCiPath("scripts/build.mjs"), "config");
     assert.equal(packageFromCiPath("packages/core/src/ci-select.ts"), "core");

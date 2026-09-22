@@ -94,7 +94,7 @@ export function classifyCiPath(filePath: string): CiPathKind {
   if (/\.([cm]?[jt]sx?)$/.test(lower)) return "source";
 
   if (
-    /\.(md|txt)$/.test(lower) ||
+    /\.(md|mdc|txt)$/.test(lower) ||
     p.startsWith("docs/") ||
     /^(readme|license|changelog|authors|roadmap)(\.|$)/i.test(base)
   ) {
