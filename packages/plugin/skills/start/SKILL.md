@@ -38,7 +38,7 @@ Stay off the repo base (`main`/`master`). `create_local_pr` checks out `lp-<id>`
 3. **Immediately Switch / open `worktreePath`** (Local PRs **Switch**, or reopen this window on the exclusive `../<repo>.loops/<id>` path). Show the id, `head → base`, `worktreePath`, and the brief.
 4. **All** edits, commits, and CI run in that worktree. Never implement or commit in the primary folder when an exclusive worktree exists.
 
-If create refuses because primary has dirty tracked `packages/plugin/**/*.cjs` build artifacts: stash or `git restore` those paths on primary, then retry create.
+If create refuses because primary has dirty tracked plugin build artifacts (`packages/plugin/hooks|mcp/*.cjs`): stash or `git restore` those paths on primary, then retry create.
 
 ## After the work
 
