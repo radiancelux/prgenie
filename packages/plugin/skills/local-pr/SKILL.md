@@ -1,13 +1,14 @@
 ---
 name: local-pr
-description: Create and update unpublished PR Genie local pull requests (branch, diff, comments, status) instead of git push or gh pr create. Use when agent work is ready for review, the user mentions local PRs, or export is not requested.
+description: Create and update unpublished PR Genie local pull requests (branch, diff, comments, status). Use only when the user runs /local-pr, asks for a local PR or loop, or an existing live loop needs updating.
+disable-model-invocation: true
 ---
 
 # PR Genie local PRs
 
-Do not push. Subagent output becomes a local PR on the developer's watch list.
+Do not push. Local create is **opt-in** — slash `/local-pr`, `/start`, `/steward`, or an explicit “use PR Genie” / “start a loop”. Ready-for-review alone is not enough.
 
-When a coding subagent **commits** and stops, the `subagentStop` hook drafts a loop automatically. Explore/shell subagents with no file changes are ignored. If files changed but nothing was committed, the parent is told to commit — still no `git push`.
+`subagentStop` auto-capture is **off by default**. Set `PRGENIE_CAPTURE_SUBAGENT=1` to draft a loop when a coding subagent commits and stops. Explore/shell subagents with no file changes are ignored.
 
 To **start** a full flywheel (one agent owns implement ↔ review): `/steward` with a ticket or brief. Implementor-only entry remains `/start`. Either creates the feature branch and the draft packet. Do not stay on `main`.
 

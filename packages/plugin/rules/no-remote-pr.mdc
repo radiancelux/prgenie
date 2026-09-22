@@ -1,11 +1,13 @@
 ---
-description: Do not push or open GitHub PRs. Create a PR Genie local PR instead.
+description: Never push or open GitHub PRs unless /export. Local PR Genie create is opt-in only.
 alwaysApply: true
 ---
 
 PR Genie owns unpublished review. GitHub is an explicit later step.
 
 Never run `git push`, `gh pr create`, or `gh pr merge` unless the developer clearly asks to export — `/export`, MCP `export_local_pr`, or `prgenie export`.
+
+Do **not** create or update a local PR unless the user opted in (`/start`, `/steward`, `/local-pr`, or an explicit “use PR Genie” / “start a loop”) **or** this branch already has a live local PR. Ready-for-review alone is not permission to create.
 
 Slash workflows live in `packages/plugin/skills/*/SKILL.md` only. Do not add a matching `commands/*.md` — Cursor lists both, so the user sees two `/start` entries.
 
@@ -22,7 +24,9 @@ Slash workflows live in `packages/plugin/skills/*/SKILL.md` only. Do not add a m
 
 If PR Genie MCP / `steward_next` / `bind_steward` are unavailable during `/steward`: **stop and tell the user to wait/retry**. Never CLI DIY (`prgenie create` + code + ready + listen).
 
-## Implementor (this worktree, `/start` or a steward Task)
+## Implementor (this worktree — only after opt-in or with a live loop)
+
+Apply this section only when the user opted in (`/start`, `/steward` Task, `/local-pr`, or explicit loop ask) **or** `get_local_pr` / `list_local_prs` shows a live loop on this branch. Otherwise: do not call `create_local_pr`.
 
 When work on this branch is ready for review:
 

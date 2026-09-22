@@ -1,6 +1,7 @@
 ---
 name: start
-description: Kick off implementor work from a ClickUp, Jira, Linear, or GitHub ticket or a chat brief. Creates a feature branch and a local PR. Use when the user runs /start, pastes a ticket, or asks to start implementor work with no local PR yet.
+description: Kick off implementor work from a ClickUp, Jira, Linear, or GitHub ticket or a chat brief. Creates a feature branch and a local PR. Use only when the user runs /start, asks to start a loop, or explicitly asks to use PR Genie.
+disable-model-invocation: true
 ---
 
 # Start implementor work

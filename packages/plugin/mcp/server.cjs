@@ -47,6 +47,91 @@ var init_types = __esm({
 });
 
 // packages/core/src/git.ts
+function clearGitBinaryCache() {
+  cachedGitBinary = void 0;
+}
+function formatGitMissingError(platform = process.platform) {
+  if (platform === "win32") {
+    return `git is not resolvable from this process. Install Git for Windows (https://git-scm.com/download/win) and ensure git.exe is on PATH, or set ${PRGENIE_GIT_ENV} to the absolute path of git.exe (e.g. C:\\Program Files\\Git\\cmd\\git.exe).`;
+  }
+  return `git is not resolvable from this process. Install git and ensure it is on PATH, or set ${PRGENIE_GIT_ENV} to the absolute path of the git binary.`;
+}
+function pathDelimiter(platform) {
+  return platform === "win32" ? ";" : ":";
+}
+function findOnPath(names, pathEnv, exists, delimiter) {
+  for (const dir of pathEnv.split(delimiter)) {
+    const trimmed = dir.trim();
+    if (!trimmed) continue;
+    for (const name of names) {
+      const candidate = import_node_path.default.join(trimmed, name);
+      if (exists(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+function windowsGitCandidates(env = process.env) {
+  const pf4 = env.ProgramFiles || "C:\\Program Files";
+  const pf86 = env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+  const local = env.LOCALAPPDATA?.trim();
+  const out = [
+    import_node_path.default.join(pf4, "Git", "cmd", "git.exe"),
+    import_node_path.default.join(pf4, "Git", "bin", "git.exe"),
+    import_node_path.default.join(pf86, "Git", "cmd", "git.exe"),
+    import_node_path.default.join(pf86, "Git", "bin", "git.exe")
+  ];
+  if (local) {
+    out.push(import_node_path.default.join(local, "Programs", "Git", "cmd", "git.exe"));
+    out.push(import_node_path.default.join(local, "Programs", "Git", "bin", "git.exe"));
+  }
+  return out;
+}
+function resolveGitBinary(options7 = {}) {
+  const useCache = !options7.bypassCache && options7.env === void 0 && options7.pathEnv === void 0 && options7.existsSync === void 0 && options7.platform === void 0;
+  if (useCache && cachedGitBinary !== void 0) {
+    return cachedGitBinary;
+  }
+  const env = options7.env ?? process.env;
+  const platform = options7.platform ?? process.platform;
+  const exists = options7.existsSync ?? import_node_fs.existsSync;
+  const pathEnv = options7.pathEnv ?? env.PATH ?? env.Path ?? "";
+  const delimiter = pathDelimiter(platform);
+  const override = env[PRGENIE_GIT_ENV]?.trim();
+  if (override) {
+    const resolved = exists(override) ? override : null;
+    if (useCache) cachedGitBinary = resolved;
+    return resolved;
+  }
+  const names = platform === "win32" ? ["git.exe", "git"] : ["git"];
+  const onPath = findOnPath(names, pathEnv, exists, delimiter);
+  if (onPath) {
+    if (useCache) cachedGitBinary = onPath;
+    return onPath;
+  }
+  if (platform === "win32") {
+    for (const candidate of windowsGitCandidates(env)) {
+      if (exists(candidate)) {
+        if (useCache) cachedGitBinary = candidate;
+        return candidate;
+      }
+    }
+  }
+  if (useCache) cachedGitBinary = null;
+  return null;
+}
+function requireGitBinary(options7) {
+  const resolved = resolveGitBinary(options7);
+  if (resolved) return resolved;
+  const env = options7?.env ?? process.env;
+  const platform = options7?.platform ?? process.platform;
+  const override = env[PRGENIE_GIT_ENV]?.trim();
+  if (override) {
+    throw new GitBinaryError(
+      `${PRGENIE_GIT_ENV} is set to "${override}" but that path does not exist. ` + formatGitMissingError(platform)
+    );
+  }
+  throw new GitBinaryError(formatGitMissingError(platform));
+}
 async function git(cwd, args, options7 = {}) {
   return new Promise((resolve4, reject) => {
     if (options7.signal?.aborted) {
@@ -55,7 +140,14 @@ async function git(cwd, args, options7 = {}) {
       reject(err);
       return;
     }
-    const child = (0, import_node_child_process.spawn)("git", args, {
+    let binary;
+    try {
+      binary = requireGitBinary();
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const child = (0, import_node_child_process.spawn)(binary, args, {
       cwd,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"]
@@ -70,7 +162,14 @@ async function git(cwd, args, options7 = {}) {
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
-    child.on("error", reject);
+    child.on("error", (err) => {
+      if (err.code === "ENOENT") {
+        clearGitBinaryCache();
+        reject(new GitBinaryError(formatGitMissingError()));
+        return;
+      }
+      reject(err);
+    });
     const onAbort2 = () => {
       child.kill("SIGTERM");
     };
@@ -123,12 +222,14 @@ async function requireGitRoot(cwd) {
   }
   return root2;
 }
-var import_node_child_process, import_node_path, GitError;
+var import_node_child_process, import_node_fs, import_node_path, PRGENIE_GIT_ENV, GitError, GitBinaryError, cachedGitBinary;
 var init_git = __esm({
   "packages/core/src/git.ts"() {
     "use strict";
     import_node_child_process = require("node:child_process");
+    import_node_fs = require("node:fs");
     import_node_path = __toESM(require("node:path"), 1);
+    PRGENIE_GIT_ENV = "PRGENIE_GIT";
     GitError = class extends Error {
       constructor(args, stderr, exitCode) {
         super(`git ${args.join(" ")} failed (${exitCode}): ${stderr.trim()}`);
@@ -136,6 +237,12 @@ var init_git = __esm({
         this.stderr = stderr;
         this.exitCode = exitCode;
         this.name = "GitError";
+      }
+    };
+    GitBinaryError = class extends Error {
+      constructor(message) {
+        super(message);
+        this.name = "GitBinaryError";
       }
     };
   }
@@ -214,8 +321,8 @@ function refusePrimaryWorktreeIfParallel(worktreePath, primary, loopId, liveLoop
 }
 function sameFsPath(a4, b6) {
   try {
-    const leftStat = (0, import_node_fs.statSync)(a4);
-    const rightStat = (0, import_node_fs.statSync)(b6);
+    const leftStat = (0, import_node_fs2.statSync)(a4);
+    const rightStat = (0, import_node_fs2.statSync)(b6);
     if (leftStat.ino !== 0 && leftStat.ino === rightStat.ino && leftStat.dev === rightStat.dev) {
       return true;
     }
@@ -224,10 +331,10 @@ function sameFsPath(a4, b6) {
   const canon = (p5) => {
     const normalized = import_node_path3.default.resolve(p5);
     try {
-      return import_node_fs.realpathSync.native(normalized);
+      return import_node_fs2.realpathSync.native(normalized);
     } catch {
       try {
-        return (0, import_node_fs.realpathSync)(normalized);
+        return (0, import_node_fs2.realpathSync)(normalized);
       } catch {
         return normalized;
       }
@@ -412,7 +519,7 @@ async function restorePeelStash(dest, loopId) {
   await git(dest, ["stash", "pop", ref], { allowFail: true });
 }
 async function addLoopWorktree(cwd, dest, loop) {
-  if ((0, import_node_fs.existsSync)(dest)) {
+  if ((0, import_node_fs2.existsSync)(dest)) {
     const already = await findGitRoot(dest);
     if (already) return dest;
   }
@@ -503,11 +610,11 @@ async function userName(cwd) {
 async function shortLogSubject(cwd, rev = "HEAD") {
   return gitText(cwd, ["log", "-1", "--format=%s", rev]);
 }
-var import_node_fs, import_promises, import_node_path3;
+var import_node_fs2, import_promises, import_node_path3;
 var init_worktrees = __esm({
   "packages/core/src/worktrees.ts"() {
     "use strict";
-    import_node_fs = require("node:fs");
+    import_node_fs2 = require("node:fs");
     import_promises = require("node:fs/promises");
     import_node_path3 = __toESM(require("node:path"), 1);
     init_git();
@@ -2108,7 +2215,7 @@ function ciLockFile(cwd, id3, headSha) {
 }
 function readJson(file) {
   try {
-    return JSON.parse((0, import_node_fs2.readFileSync)(file, "utf8"));
+    return JSON.parse((0, import_node_fs3.readFileSync)(file, "utf8"));
   } catch {
     return null;
   }
@@ -2119,14 +2226,14 @@ function readCiAbortSeq(cwd, id3) {
 }
 function requestCiAbort(cwd, id3) {
   const file = ciAbortFile(cwd, id3);
-  (0, import_node_fs2.mkdirSync)(import_node_path10.default.dirname(file), { recursive: true });
+  (0, import_node_fs3.mkdirSync)(import_node_path10.default.dirname(file), { recursive: true });
   const next = readCiAbortSeq(cwd, id3) + 1;
   const token2 = {
     id: id3,
     seq: next,
     requestedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
-  (0, import_node_fs2.writeFileSync)(file, `${JSON.stringify(token2)}
+  (0, import_node_fs3.writeFileSync)(file, `${JSON.stringify(token2)}
 `, "utf8");
   return next;
 }
@@ -2156,7 +2263,7 @@ function lockStale(lock) {
 }
 async function acquireCiLock(cwd, id3, headSha, signal) {
   const file = ciLockFile(cwd, id3, headSha);
-  (0, import_node_fs2.mkdirSync)(import_node_path10.default.dirname(file), { recursive: true });
+  (0, import_node_fs3.mkdirSync)(import_node_path10.default.dirname(file), { recursive: true });
   const record = {
     pid: process.pid,
     id: id3,
@@ -2165,7 +2272,7 @@ async function acquireCiLock(cwd, id3, headSha, signal) {
   };
   for (; ; ) {
     throwIfAborted(signal);
-    const existing = (0, import_node_fs2.existsSync)(file) ? readJson(file) : null;
+    const existing = (0, import_node_fs3.existsSync)(file) ? readJson(file) : null;
     if (existing && !lockStale(existing)) {
       await new Promise((resolve4, reject) => {
         const onAbort2 = () => {
@@ -2185,7 +2292,7 @@ async function acquireCiLock(cwd, id3, headSha, signal) {
           signal.addEventListener("abort", onAbort2, { once: true });
         }
       });
-      const still = (0, import_node_fs2.existsSync)(file) ? readJson(file) : null;
+      const still = (0, import_node_fs3.existsSync)(file) ? readJson(file) : null;
       if (!still || lockStale(still) || still.pid !== existing.pid) {
         return { peerDone: true, release: () => void 0 };
       }
@@ -2193,23 +2300,23 @@ async function acquireCiLock(cwd, id3, headSha, signal) {
     }
     if (existing && lockStale(existing)) {
       try {
-        (0, import_node_fs2.unlinkSync)(file);
+        (0, import_node_fs3.unlinkSync)(file);
       } catch {
       }
     }
     try {
-      const fd3 = (0, import_node_fs2.openSync)(file, "wx");
+      const fd3 = (0, import_node_fs3.openSync)(file, "wx");
       try {
-        (0, import_node_fs2.writeFileSync)(fd3, `${JSON.stringify(record)}
+        (0, import_node_fs3.writeFileSync)(fd3, `${JSON.stringify(record)}
 `, "utf8");
       } finally {
-        (0, import_node_fs2.closeSync)(fd3);
+        (0, import_node_fs3.closeSync)(fd3);
       }
       return {
         peerDone: false,
         release: () => {
           try {
-            (0, import_node_fs2.unlinkSync)(file);
+            (0, import_node_fs3.unlinkSync)(file);
           } catch {
           }
         }
@@ -2219,12 +2326,12 @@ async function acquireCiLock(cwd, id3, headSha, signal) {
     }
   }
 }
-var import_node_child_process3, import_node_fs2, import_node_path10, POLL_MS, STALE_LOCK_MS;
+var import_node_child_process3, import_node_fs3, import_node_path10, POLL_MS, STALE_LOCK_MS;
 var init_ci_abort = __esm({
   "packages/core/src/ci-abort.ts"() {
     "use strict";
     import_node_child_process3 = require("node:child_process");
-    import_node_fs2 = require("node:fs");
+    import_node_fs3 = require("node:fs");
     import_node_path10 = __toESM(require("node:path"), 1);
     init_progress();
     POLL_MS = 150;
@@ -2563,21 +2670,11 @@ function selectCiChecks(changedPaths) {
     return fullSuite(["uncertain path mapping", "uncertain \u2192 full suite"], paths, true);
   }
   if (kinds.some((kind) => kind === "config")) {
-    return fullSuite(
-      ["config/CI scripts changed; running full suite"],
-      paths,
-      false
-    );
+    return fullSuite(["config/CI scripts changed; running full suite"], paths, false);
   }
   const onlyDocsOrStyle = kinds.every((kind) => kind === "docs" || kind === "style");
   if (onlyDocsOrStyle) {
-    const reason2 = kinds.every((kind) => kind === "docs") ? [
-      "docs/markdown-only \u2192 format:check",
-      "skip units/lint/typecheck/build (confident)"
-    ] : [
-      "docs/style-only \u2192 format:check",
-      "skip units/lint/typecheck/build (confident)"
-    ];
+    const reason2 = kinds.every((kind) => kind === "docs") ? ["docs/markdown-only \u2192 format:check", "skip units/lint/typecheck/build (confident)"] : ["docs/style-only \u2192 format:check", "skip units/lint/typecheck/build (confident)"];
     return {
       checks: ["format:check"],
       reason: reason2,
@@ -2600,10 +2697,7 @@ function selectCiChecks(changedPaths) {
   }
   if (unscoping || pkgs.size === 0) {
     return fullSuite(
-      [
-        "changed paths outside scopable packages/core|cli|extension",
-        "uncertain \u2192 full suite"
-      ],
+      ["changed paths outside scopable packages/core|cli|extension", "uncertain \u2192 full suite"],
       paths,
       true
     );
@@ -2636,7 +2730,7 @@ function selectCiChecks(changedPaths) {
   };
 }
 function resolveCiCwd(cwd, worktreePath) {
-  if (worktreePath && (0, import_node_fs3.existsSync)(worktreePath)) return worktreePath;
+  if (worktreePath && (0, import_node_fs4.existsSync)(worktreePath)) return worktreePath;
   return cwd;
 }
 function addSplitPaths(set, raw) {
@@ -2677,11 +2771,11 @@ function envFlag(name, fallback) {
   if (raw === "1" || raw.toLowerCase() === "true") return true;
   return fallback;
 }
-var import_node_fs3, DEFAULT_CI_CHECKS, SCOPABLE_PACKAGES, CONFIG_BASENAMES, SCOPABLE_SET;
+var import_node_fs4, DEFAULT_CI_CHECKS, SCOPABLE_PACKAGES, CONFIG_BASENAMES, SCOPABLE_SET;
 var init_ci_select = __esm({
   "packages/core/src/ci-select.ts"() {
     "use strict";
-    import_node_fs3 = require("node:fs");
+    import_node_fs4 = require("node:fs");
     init_git();
     init_prs();
     DEFAULT_CI_CHECKS = ["format:check", "lint", "typecheck", "test", "build"];
@@ -88722,7 +88816,7 @@ init_ci_failure();
 init_ci_cache();
 
 // packages/cli/src/mcp.ts
-var import_node_fs4 = require("node:fs");
+var import_node_fs5 = require("node:fs");
 
 // packages/cli/src/mcp-stdio.ts
 var MCP_STDIO_READY = "[prgenie] mcp stdio ready";
@@ -88839,7 +88933,7 @@ function takeCompleteJsonObject(buffer2) {
 
 // packages/cli/src/mcp.ts
 function writeMessage(msg) {
-  (0, import_node_fs4.writeSync)(1, encodeMcpFrame(msg));
+  (0, import_node_fs5.writeSync)(1, encodeMcpFrame(msg));
 }
 function ok2(id3, result) {
   writeMessage({ jsonrpc: "2.0", id: id3, result });
@@ -89177,7 +89271,7 @@ var tools = [
   },
   {
     name: "create_local_pr",
-    description: "Create a local PR (unpublished review loop) from the current branch or a named head. Always set body to a reviewer summary (why, what changed, how to test). Do not git push or gh pr create.",
+    description: "Create a local PR (unpublished review loop) from the current branch or a named head. Only when the user asked for a local PR / loop / /start / /steward (or an existing live loop needs a packet). Always set body to a reviewer summary (why, what changed, how to test). Do not git push or gh pr create.",
     inputSchema: {
       type: "object",
       properties: {
@@ -89701,7 +89795,7 @@ async function onRequest(msg) {
 }
 async function startMcp() {
   try {
-    (0, import_node_fs4.writeSync)(2, `${MCP_STDIO_READY}
+    (0, import_node_fs5.writeSync)(2, `${MCP_STDIO_READY}
 `);
   } catch {
   }
@@ -89709,7 +89803,7 @@ async function startMcp() {
   let draining = false;
   process.stdin.on("error", (err) => {
     try {
-      (0, import_node_fs4.writeSync)(2, `[prgenie] mcp stdin error: ${err.message}
+      (0, import_node_fs5.writeSync)(2, `[prgenie] mcp stdin error: ${err.message}
 `);
     } catch {
     }
