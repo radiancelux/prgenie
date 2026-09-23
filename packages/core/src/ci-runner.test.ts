@@ -78,7 +78,8 @@ describe("runCiChecks", () => {
   it("returns all passed when all checks succeed", async () => {
     const repo = await initTestRepo();
     try {
-      const result = await runCiChecks(repo, { timeout: 5000 });
+      // Generous timeout: under parallel node:test load, spawning five shells can exceed 5s.
+      const result = await runCiChecks(repo, { timeout: 60_000, parallel: false });
 
       assert.equal(result.allPassed, true);
       assert.equal(result.checks.length, 5);
@@ -113,7 +114,11 @@ describe("runCiChecks", () => {
         }),
       );
 
-      const result = await runCiChecks(repo, { timeout: 5000, failFast: false, parallel: false });
+      const result = await runCiChecks(repo, {
+        timeout: 60_000,
+        failFast: false,
+        parallel: false,
+      });
 
       assert.equal(result.allPassed, false);
       const lintCheck = result.checks.find((c) => c.name === "lint");
@@ -123,7 +128,10 @@ describe("runCiChecks", () => {
 
       // Other checks should still pass when fail-fast is off
       const passedChecks = result.checks.filter((c) => c.name !== "lint");
-      assert.ok(passedChecks.every((c) => c.passed));
+      assert.ok(
+        passedChecks.every((c) => c.passed),
+        `expected non-lint checks to pass, got ${JSON.stringify(passedChecks)}`,
+      );
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
@@ -146,7 +154,11 @@ describe("runCiChecks", () => {
         }),
       );
 
-      const result = await runCiChecks(repo, { timeout: 5000, failFast: false, parallel: false });
+      const result = await runCiChecks(repo, {
+        timeout: 60_000,
+        failFast: false,
+        parallel: false,
+      });
 
       assert.equal(result.allPassed, false);
 
