@@ -54,8 +54,9 @@ export interface RunProgressOptions {
  * Host-repo monorepo-wide scripts (`eslint .`) are rewritten by
  * `resolveCiCheckCommand` in `ci-host-scope.ts` so the progress card can show
  * `eslint path1 path2` instead of bare `pnpm lint`.
+ * RAD-127: pass `testFiles` for file-scoped `test:<pkg>` (not the package glob).
  */
-export function ciCheckCommand(check: string): string {
+export function ciCheckCommand(check: string, testFiles?: readonly string[]): string {
   const scoped = check.match(/^(lint|typecheck|test|build):(core|cli|extension)$/);
   if (scoped) {
     const [, kind, pkg] = scoped;
@@ -63,7 +64,13 @@ export function ciCheckCommand(check: string): string {
     if (kind === "lint") return `pnpm exec eslint ${dir}/src`;
     if (kind === "typecheck") return `pnpm exec tsc -p ${dir} --noEmit`;
     // Flat src/*.test.ts — cmd.exe expands `*` (directory form breaks under tsx on Windows).
-    if (kind === "test") return `pnpm exec tsx --test ${dir}/src/*.test.ts`;
+    // File-scoped lists replace the glob so agents see the real command (RAD-127).
+    if (kind === "test") {
+      if (testFiles && testFiles.length > 0) {
+        return `pnpm exec tsx --test ${testFiles.join(" ")}`;
+      }
+      return `pnpm exec tsx --test ${dir}/src/*.test.ts`;
+    }
     if (kind === "build") return `pnpm exec node scripts/build.mjs`;
   }
   return `pnpm ${check}`;

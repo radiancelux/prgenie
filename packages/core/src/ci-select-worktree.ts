@@ -39,9 +39,11 @@ export function worktreeCiSelectModulePath(worktreePath: string): string {
 export function ciSelectionPlansEqual(a: CiCheckSelection, b: CiCheckSelection): boolean {
   // Flag drift (skipped / uncertain / packageScoped) changes runner behavior even when
   // checks + reason text match — treat as divergence so worktree wins (RAD-123).
+  // RAD-127: testFiles drift changes which unit files run.
   return (
     JSON.stringify(a.checks) === JSON.stringify(b.checks) &&
     JSON.stringify([...a.reason].sort()) === JSON.stringify([...b.reason].sort()) &&
+    JSON.stringify(a.testFiles ?? null) === JSON.stringify(b.testFiles ?? null) &&
     Boolean(a.skipped) === Boolean(b.skipped) &&
     Boolean(a.uncertain) === Boolean(b.uncertain) &&
     Boolean(a.packageScoped) === Boolean(b.packageScoped)

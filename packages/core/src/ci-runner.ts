@@ -324,6 +324,7 @@ async function runOneCheck(
   const { timeout, skipCache, onProgress, signal, changedPaths, packageScripts, selection } =
     options;
   const formatScoped = check === "format:check" && shouldScopeFormatCheck(selection);
+  const scopedTestFiles = check.startsWith("test:") ? selection?.testFiles?.[check] : undefined;
   const resolved = resolveCiCheckCommand({
     check,
     cwd,
@@ -331,6 +332,8 @@ async function runOneCheck(
     scripts: packageScripts,
     failClosedReason: hostScopeFailClosedReason(changedPaths) ?? undefined,
     formatScoped,
+    selection,
+    testFiles: scopedTestFiles,
   });
   // Progress may show a descriptive blob-scope label; shell fallback stays pnpm <check>.
   const progressCommand = resolved.command;
@@ -348,8 +351,19 @@ async function runOneCheck(
   }
 
   throwIfAborted(signal);
-  onProgress?.({ phase: "ci", check, state: "start", command: progressCommand });
+  const fileCountNote =
+    scopedTestFiles && scopedTestFiles.length > 0
+      ? `${scopedTestFiles.length} file(s), not package glob`
+      : undefined;
+  onProgress?.({
+    phase: "ci",
+    check,
+    state: "start",
+    command: progressCommand,
+    message: fileCountNote,
+  });
   const started = Date.now();
+  let activeShellCommand = shellCommand;
 
   try {
     if (check === "format:check") {
@@ -393,7 +407,30 @@ async function runOneCheck(
       // No tracked prettier files, not a git repo, or prettier is not installed in cwd.
     }
 
-    await execAsync(shellCommand, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });
+    // RAD-127: file-scoped package tests run one file at a time so progress moves.
+    if (scopedTestFiles && scopedTestFiles.length > 0) {
+      const total = scopedTestFiles.length;
+      for (let i = 0; i < total; i++) {
+        const file = scopedTestFiles[i]!;
+        activeShellCommand = ciCheckCommand(check, [file]);
+        throwIfAborted(signal);
+        onProgress?.({
+          phase: "ci",
+          check,
+          state: "start",
+          command: `${activeShellCommand} (${i + 1}/${total})`,
+          message: `${i + 1}/${total} files`,
+        });
+        await execAsync(activeShellCommand, {
+          cwd,
+          timeout,
+          signal,
+          maxBuffer: 2 * 1024 * 1024,
+        });
+      }
+    } else {
+      await execAsync(shellCommand, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });
+    }
     const elapsedMs = Date.now() - started;
     onProgress?.({ phase: "ci", check, state: "pass", command: progressCommand, elapsedMs });
     try {
@@ -406,9 +443,9 @@ async function runOneCheck(
     if (isAbortError(err) || signal?.aborted) throw abortError();
     const output = collectExecOutput(err);
     const excerpt = formatFailureExcerpt(check, output);
-    const logPath = await writeCiFailureLog(cwd, check, shellCommand, output, excerpt);
+    const logPath = await writeCiFailureLog(cwd, check, activeShellCommand, output, excerpt);
     const elapsedMs = Date.now() - started;
-    const error = formatCiCheckError({ command: shellCommand, excerpt, logPath });
+    const error = formatCiCheckError({ command: activeShellCommand, excerpt, logPath });
     const envFail = isCiEnvFailureOutput(output.firstLine);
     onProgress?.({
       phase: "ci",
