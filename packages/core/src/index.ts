@@ -340,6 +340,7 @@ export {
   clearWorktreeCiSelectCache,
   isCiSelectionSourcePath,
   loadWorktreeSelectCiChecks,
+  looksLikeStaleFullSuitePlan,
   resolveCiSelection,
   touchesCiSelectionSource,
   worktreeCiSelectModulePath,

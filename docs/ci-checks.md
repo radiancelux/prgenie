@@ -38,11 +38,13 @@ RAD-112 fixed **cwd**. Selection still used to come from the **in-memory / insta
 
 `run_ci`, shepherd, and the export gate now call `resolveCiSelection`:
 
-1. If the loop diff touches `packages/core/src/ci-select.ts`, `ci-runner.ts`, or the worktree loader — **always** evaluate `selectCiChecks` from the **worktree source** (via `tsx` `tsImport`, with a CLI fallback).
-2. Otherwise load the worktree module and **compare** `{ checks, reason }` to the installed plugin. On divergence: **warn loudly** on stderr and **use the worktree plan** (refuse the stale installed plan).
-3. If the diff touches selection sources but the worktree module cannot be loaded → **refuse** with a clear error (do not silently gate on the installed plugin).
+1. When the loop worktree has `packages/core/src/ci-select.ts`, **always** evaluate `selectCiChecks` from that **worktree source** (via `tsx` `tsImport`, with a CLI fallback) — not the in-memory install.
+2. Compare `{ checks, reason, skipped, uncertain, packageScoped }` to the installed plugin. On divergence: **warn loudly** on stderr and **use the worktree plan** (refuse the stale installed plan). Classic stale reasons like `core source/test changed — format, lint, typecheck, test, build` / root `test`+`build` are treated as a full-suite plan and **refused** if the worktree module cannot load.
+3. If the worktree module is missing/unloadable and the installed plan looks like that full suite → **throw** (do not silently run root `pnpm test`).
 
-Printable `{ checks, reason }` from the gate must match what unit tests of the worktree selector print for the same paths. A loop that only changes `ci-select` must not select root `pnpm test` / the full suite via a stale plugin.
+A loop that only changes CI selection (or any product loop with a worktree) must not select root `pnpm test` via a stale plugin. After changing selection code, **rebuild + `pnpm link-plugin` from the loop worktree** so the Cursor MCP (`~/.cursor/plugins/local/prgenie/mcp/server.cjs`) actually runs `resolveCiSelection` — editing worktree TS alone does not update the running gate until relink (or Cursor reloads the MCP).
+
+Printable `{ checks, reason }` from the gate must match what unit tests of the worktree selector print for the same paths.
 
 ### Worktree deps (RAD-92)
 

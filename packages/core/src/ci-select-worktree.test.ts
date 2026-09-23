@@ -210,6 +210,44 @@ describe("ci-select-worktree (RAD-123)", () => {
     );
   });
 
+  it("always uses worktree when module loads even if plans match and paths do not touch selection", async () => {
+    clearWorktreeCiSelectCache();
+    const paths = ["packages/core/src/git.ts"];
+    assert.equal(touchesCiSelectionSource(paths), false);
+    const installed = selectCiChecks(paths);
+    const result = await resolveCiSelection({
+      changedPaths: paths,
+      worktreePath: repoRoot(),
+      installedSelect: () => installed,
+      primaryPath: repoRoot(),
+    });
+    assert.equal(result.source, "worktree");
+    assert.equal(result.diverged, false);
+    assert.deepEqual(result.selection.checks, installed.checks);
+    assert.ok(result.selection.reason.some((r) => /RAD-123: using worktree ci-select/.test(r)));
+  });
+
+  it("refuses when worktree load fails and installed plan looks like a stale full suite", async () => {
+    await assert.rejects(
+      () =>
+        resolveCiSelection({
+          changedPaths: ["packages/core/src/git.ts"],
+          worktreePath: process.cwd(),
+          installedSelect: () => ({
+            checks: [...DEFAULT_CI_CHECKS],
+            reason: ["core source/test changed — format, lint, typecheck, test, build"],
+            mapping: [],
+            uncertain: false,
+            changedPaths: ["packages/core/src/git.ts"],
+            packageScoped: false,
+            skipped: false,
+          }),
+          loadWorktreeSelect: async () => null,
+        }),
+      /Refusing stale installed CI selection|full suite/,
+    );
+  });
+
   it("prefer worktree when plans match but diff touches ci-select", async () => {
     clearWorktreeCiSelectCache();
     const paths = ["packages/core/src/ci-select.ts"];

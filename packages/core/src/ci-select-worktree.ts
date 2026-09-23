@@ -5,7 +5,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
-import { normalizeCiPath, selectCiChecks, type CiCheckSelection } from "./ci-select.js";
+import {
+  normalizeCiPath,
+  selectCiChecks,
+  DEFAULT_CI_CHECKS,
+  type CiCheckSelection,
+} from "./ci-select.js";
 import { loopWorktreeIdentity } from "./worktrees.js";
 
 /** Paths whose edits change CI selection / runner behavior (RAD-123). */
@@ -306,8 +311,28 @@ function withWorktreeProvenance(selection: CiCheckSelection, diverged: boolean):
 }
 
 /**
- * Resolve the CI plan for a loop: prefer worktree `selectCiChecks` when the
- * diff touches selection modules or when the installed plan diverges (RAD-123).
+ * True when a plan looks like the pre-RAD-119 / stale-plugin root suite
+ * (`format:check`…`build` including root `test`) that dogfood must never run locally.
+ */
+export function looksLikeStaleFullSuitePlan(selection: CiCheckSelection): boolean {
+  const checks = selection.checks ?? [];
+  if (checks.includes("test") || checks.includes("build")) return true;
+  if (
+    checks.length === DEFAULT_CI_CHECKS.length &&
+    DEFAULT_CI_CHECKS.every((c, i) => checks[i] === c)
+  ) {
+    return true;
+  }
+  return (selection.reason ?? []).some((r) =>
+    /source\/test changed — format,\s*lint,\s*typecheck,\s*test,\s*build/i.test(r),
+  );
+}
+
+/**
+ * Resolve the CI plan for a loop: always evaluate `selectCiChecks` from the
+ * loop worktree source when that module loads (RAD-123). Installed-plugin plans
+ * are compared for dogfood; divergence is warned loudly and refused (worktree wins).
+ * Never fall back to a stale root `pnpm test` / full-suite installed plan.
  */
 export async function resolveCiSelection(
   options: ResolveCiSelectionOptions,
@@ -318,13 +343,17 @@ export async function resolveCiSelection(
   const worktreePath = options.worktreePath?.trim() ? path.resolve(options.worktreePath) : null;
   const touches = touchesCiSelectionSource(paths);
   const refuseOnTouch = options.refuseStaleOnTouch !== false;
+  const installedLooksStale = looksLikeStaleFullSuitePlan(installed);
 
   if (!worktreePath || !existsSync(worktreeCiSelectModulePath(worktreePath))) {
-    if (touches && refuseOnTouch) {
+    if ((touches && refuseOnTouch) || installedLooksStale) {
       throw new Error(
-        `Refusing stale installed CI selection: loop diff touches ci-select/ci-runner but worktree ` +
-          `ci-select module is missing (${worktreePath ?? "no worktree"}). ` +
-          `Export/run_ci must evaluate selectCiChecks from the loop worktree source (RAD-123).`,
+        `Refusing stale installed CI selection: worktree ci-select module missing ` +
+          `(${worktreePath ?? "no worktree"}). ` +
+          `Export/run_ci must evaluate selectCiChecks from the loop worktree source (RAD-123).` +
+          (installedLooksStale
+            ? ` Installed plan looks like a full suite: checks=${JSON.stringify(installed.checks)} reason=${JSON.stringify(installed.reason)}`
+            : ""),
       );
     }
     return { selection: installed, source: "installed", diverged: false };
@@ -339,9 +368,12 @@ export async function resolveCiSelection(
     worktreeSelect = await loader(worktreePath);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    if (touches && refuseOnTouch) {
+    if ((touches && refuseOnTouch) || installedLooksStale) {
       throw new Error(
-        `Refusing stale installed CI selection: failed to load worktree ci-select from ${worktreePath}: ${detail}`,
+        `Refusing stale installed CI selection: failed to load worktree ci-select from ${worktreePath}: ${detail}` +
+          (installedLooksStale
+            ? ` Installed plan looks like a full suite: checks=${JSON.stringify(installed.checks)}`
+            : ""),
         { cause: err },
       );
     }
@@ -355,10 +387,13 @@ export async function resolveCiSelection(
   }
 
   if (!worktreeSelect) {
-    if (touches && refuseOnTouch) {
+    if ((touches && refuseOnTouch) || installedLooksStale) {
       throw new Error(
         `Refusing stale installed CI selection: could not load worktree selectCiChecks from ${worktreePath} ` +
-          `(tsx unavailable?). Loop edits ci-select/ci-runner — gate must use worktree source (RAD-123).`,
+          `(tsx unavailable?). Gate must use worktree source — never root pnpm test (RAD-123).` +
+          (installedLooksStale
+            ? ` Installed plan looks like a full suite: checks=${JSON.stringify(installed.checks)} reason=${JSON.stringify(installed.reason)}`
+            : ""),
       );
     }
     return { selection: installed, source: "installed", diverged: false };
@@ -369,7 +404,7 @@ export async function resolveCiSelection(
 
   if (diverged) {
     const warning =
-      `CI selection DIVERGED: installed plugin vs worktree. Using worktree. ` +
+      `CI selection DIVERGED: installed plugin vs worktree. Using worktree (refusing stale installed plan). ` +
       `installed={checks:${JSON.stringify(installed.checks)},reason:${JSON.stringify(installed.reason)}} ` +
       `worktree={checks:${JSON.stringify(worktreePlan.checks)},reason:${JSON.stringify(worktreePlan.reason)}}`;
     warnLoud(`RAD-123: ${warning}`);
@@ -381,17 +416,13 @@ export async function resolveCiSelection(
     };
   }
 
-  if (touches) {
-    // Diff edits selection itself — always prefer worktree even when plans match
-    // so the gate is gated by the branch under review (not a stale install).
-    return {
-      selection: withWorktreeProvenance(worktreePlan, false),
-      source: "worktree",
-      diverged: false,
-    };
-  }
-
-  return { selection: installed, source: "installed", diverged: false };
+  // Worktree module loaded — always gate with it (even when plans match) so a
+  // loop cannot silently run an older in-memory selector after a future edit.
+  return {
+    selection: withWorktreeProvenance(worktreePlan, false),
+    source: "worktree",
+    diverged: false,
+  };
 }
 
 /** Read worktree module text (tests / diagnostics). */
