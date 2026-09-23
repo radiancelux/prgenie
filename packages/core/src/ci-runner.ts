@@ -689,9 +689,7 @@ export async function runLoopCi(
     const paths = options.changedPaths ?? (await changedPathsForCi(ciCwd, id));
     throwIfAborted(controller.signal);
     const selection = options.selection ?? selectCiChecks(paths);
-    const requestedFailing = (options.failingChecks ?? [])
-      .map((n) => n.trim())
-      .filter(Boolean);
+    const requestedFailing = (options.failingChecks ?? []).map((n) => n.trim()).filter(Boolean);
     const extra = expandFailingChecks(requestedFailing, selection);
     let checks = options.checks ?? [...new Set([...selection.checks, ...extra])];
     let runSelection = selection;

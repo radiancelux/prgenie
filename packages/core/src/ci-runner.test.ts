@@ -96,8 +96,7 @@ describe("runCiChecks", () => {
       assert.ok(selectionFail);
       assert.equal(selectionFail.passed, false);
       assert.ok(
-        selectionFail.error?.includes("skipped=true") ||
-          selectionFail.error?.includes("refusing"),
+        selectionFail.error?.includes("skipped=true") || selectionFail.error?.includes("refusing"),
       );
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
