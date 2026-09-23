@@ -160,7 +160,7 @@ export async function getTrackedFiles(cwd: string, onlyPaths?: string[]): Promis
   } catch (err) {
     if (scopedCandidates) {
       const detail = err instanceof Error ? err.message : String(err);
-      throw new Error(`git ls-files failed for scoped format paths: ${detail}`);
+      throw new Error(`git ls-files failed for scoped format paths: ${detail}`, { cause: err });
     }
     // Not a git repo (unit fixtures) or ls-files failed — caller falls back to package script.
     return [];
