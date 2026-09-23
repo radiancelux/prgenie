@@ -32,9 +32,14 @@ export function worktreeCiSelectModulePath(worktreePath: string): string {
 }
 
 export function ciSelectionPlansEqual(a: CiCheckSelection, b: CiCheckSelection): boolean {
+  // Flag drift (skipped / uncertain / packageScoped) changes runner behavior even when
+  // checks + reason text match — treat as divergence so worktree wins (RAD-123).
   return (
     JSON.stringify(a.checks) === JSON.stringify(b.checks) &&
-    JSON.stringify([...a.reason].sort()) === JSON.stringify([...b.reason].sort())
+    JSON.stringify([...a.reason].sort()) === JSON.stringify([...b.reason].sort()) &&
+    Boolean(a.skipped) === Boolean(b.skipped) &&
+    Boolean(a.uncertain) === Boolean(b.uncertain) &&
+    Boolean(a.packageScoped) === Boolean(b.packageScoped)
   );
 }
 
@@ -44,7 +49,7 @@ export type ResolveCiSelectionResult = {
   selection: CiCheckSelection;
   /** Where the winning plan came from. */
   source: "installed" | "worktree";
-  /** True when installed and worktree plans disagreed on checks or reasons. */
+  /** True when installed and worktree plans disagreed on checks, reasons, or flags. */
   diverged: boolean;
   /** Loud dogfood warning when plans diverge (also mirrored on stderr). */
   warning?: string;

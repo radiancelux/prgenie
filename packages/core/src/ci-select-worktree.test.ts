@@ -5,12 +5,14 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { DEFAULT_CI_CHECKS, selectCiChecks } from "./ci-select.js";
 import {
+  ciSelectionPlansEqual,
   clearWorktreeCiSelectCache,
   isCiSelectionSourcePath,
   loadWorktreeSelectCiChecks,
   resolveCiSelection,
   touchesCiSelectionSource,
 } from "./ci-select-worktree.js";
+import type { CiCheckSelection } from "./ci-select.js";
 
 function repoRoot(): string {
   return process.cwd();
@@ -37,6 +39,40 @@ describe("ci-select-worktree (RAD-123)", () => {
       true,
     );
     assert.equal(touchesCiSelectionSource(["packages/core/src/git.ts"]), false);
+  });
+
+  it("ciSelectionPlansEqual treats skipped/uncertain/packageScoped drift as unequal", () => {
+    const base: CiCheckSelection = {
+      checks: [],
+      reason: ["skip local CI"],
+      mapping: [],
+      uncertain: true,
+      changedPaths: ["assets/logo.png"],
+      packageScoped: false,
+      skipped: true,
+    };
+    assert.equal(ciSelectionPlansEqual(base, { ...base }), true);
+    assert.equal(ciSelectionPlansEqual(base, { ...base, skipped: false }), false);
+    assert.equal(ciSelectionPlansEqual(base, { ...base, uncertain: false }), false);
+    assert.equal(
+      ciSelectionPlansEqual(
+        {
+          ...base,
+          checks: ["format:check"],
+          skipped: false,
+          uncertain: false,
+          packageScoped: true,
+        },
+        {
+          ...base,
+          checks: ["format:check"],
+          skipped: false,
+          uncertain: false,
+          packageScoped: false,
+        },
+      ),
+      false,
+    );
   });
 
   it("uses worktree plan when installed plugin returns the stale full suite (ci-select-only loop)", async () => {
@@ -93,6 +129,69 @@ describe("ci-select-worktree (RAD-123)", () => {
         "test:core",
       ]);
       assert.ok(result.selection.reason.some((r) => /RAD-123.*diverged/.test(r)));
+    } finally {
+      clearWorktreeCiSelectCache();
+      await rm(wt, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers worktree on diverge when diff does not touch selection sources (git.ts only)", async () => {
+    clearWorktreeCiSelectCache();
+    const wt = await mkdtemp(path.join(tmpdir(), "prgenie-rad123-nt-"));
+    try {
+      await writeFakeWorktreeSelect(
+        wt,
+        `export function selectCiChecks(changedPaths: string[]) {
+  return {
+    checks: ["format:check", "lint:core", "typecheck:core", "test:core"],
+    reason: [
+      "packages/core/** → per-package format + lint + typecheck + unit tests",
+      "confident mapping — not full monorepo pnpm test",
+      "worktree stub non-touch diverge",
+    ],
+    mapping: [],
+    uncertain: false,
+    changedPaths,
+    packageScoped: true,
+    skipped: false,
+  };
+}
+`,
+      );
+
+      const paths = ["packages/core/src/git.ts"];
+      assert.equal(touchesCiSelectionSource(paths), false);
+
+      const staleInstalled = () => ({
+        checks: [...DEFAULT_CI_CHECKS],
+        reason: ["cli+core source/test changed — format, lint, typecheck, test, build"],
+        mapping: [],
+        uncertain: false,
+        changedPaths: paths,
+        packageScoped: false,
+        skipped: false,
+      });
+
+      const result = await resolveCiSelection({
+        changedPaths: paths,
+        worktreePath: wt,
+        installedSelect: staleInstalled,
+        primaryPath: repoRoot(),
+      });
+
+      assert.equal(result.source, "worktree");
+      assert.equal(result.diverged, true);
+      assert.ok(result.warning);
+      assert.ok(!result.selection.checks.includes("test"));
+      assert.ok(!result.selection.checks.includes("build"));
+      assert.notDeepEqual(result.selection.checks, [...DEFAULT_CI_CHECKS]);
+      assert.equal(result.selection.packageScoped, true);
+      assert.deepEqual(result.selection.checks, [
+        "format:check",
+        "lint:core",
+        "typecheck:core",
+        "test:core",
+      ]);
     } finally {
       clearWorktreeCiSelectCache();
       await rm(wt, { recursive: true, force: true });
