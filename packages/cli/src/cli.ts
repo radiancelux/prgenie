@@ -418,7 +418,7 @@ export async function run(argv: string[]): Promise<number> {
       return 1;
     }
     const exportVerbose = flag(rest, "--verbose") || flag(rest, "-v");
-    process.stdout.write("Export: CI → push → create PR (5 min/check). Ctrl+C to cancel.\n");
+    process.stdout.write("Export: CI → push → create PR (20 min/check). Ctrl+C to cancel.\n");
     const ac = new AbortController();
     const detach = attachInterrupt(ac);
     let result: Awaited<ReturnType<typeof exportLocalPr>>;
@@ -586,7 +586,7 @@ export async function run(argv: string[]): Promise<number> {
       return 0;
     }
     const verbose = flag(rest, "--verbose") || flag(rest, "-v");
-    process.stdout.write("Shepherd: local CI (5 min/check). Ctrl+C to cancel.\n");
+    process.stdout.write("Shepherd: local CI (20 min/check). Ctrl+C to cancel.\n");
     const ac = new AbortController();
     const detach = attachInterrupt(ac);
     const card = createProgressCardSink((line) => process.stdout.write(`${line}\n`));
