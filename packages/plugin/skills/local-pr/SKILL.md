@@ -83,11 +83,12 @@ On completion:
 
 1. Loop exists, `body` is a real summary, HEAD matches the work.
 2. Run MCP `run_ci` `{ id }` or `prgenie ci <id>` (path-scoped checks from the loop diff — `docs/ci-checks.md`). **Print** `{ checks, reason }` from the result. Prefer fix-before-ready over discover-via-gate. When mapping is confident, **forbid** substituting whole-repo `pnpm test`; use the selected scoped cmds only. When `skipped` / empty `checks`, **forbid** full suite — use the printed skip reason or manual touched-package tests only. On host repos, trust path-scoped `eslint …` / turbo `--filter` from the progress card — do not escalate to `eslint .`. Fail-fast stops after the first package suite fail. Skip only if the toolchain cannot run — say so in the Review requested comment — or when a human gives an **explicit skip reason** (RAD-97), or when selection itself skipped with a reason.
-3. On CI-resume (export gate blocked): re-run at least the failing check(s) (`prgenie ci <id> --failing lint,test`) and only return when they pass.
-4. `set_status` `ready`.
-5. `add_comment` `role=agent`: `Review requested.`
-6. **Stop.** If a **steward** (`/steward`) is driving this loop, it will Task the reviewer. Do not start listen. Do not review this loop yourself.
-7. When review is done, status is `changes_requested` (findings) or `reviewed` (review cleared — steward runs the export gate). Treat `pendingComments` as the brief only after `changes_requested`. Do not wait for a DM; the loop is the channel. Do not start on comments while the loop is still `ready`. Do not say ready-for-human until `handoff_human`.
+3. **On red CI (RAD-121):** print `{ checks, reason }`, open the failing log (progress card / `.git/agent-console/ci-logs/<check>.log`), fix the named assertion or file, then re-run **only that file** (or that **one** check name) once per edit. **Do not** relaunch the multi-check scoped plan after a known failure. **Do not** overlap `run_ci` copies. Still format the files you edited — the ban is full-suite / plan relaunch, not `format:check` on the diff. Wrong-vs-right: `docs/ci-checks.md` (Red CI retry).
+4. On CI-resume (export gate blocked): re-run at least the failing check(s) (`prgenie ci <id> --failing lint,test`) — not a fresh full scoped plan — and only return when they pass. Same red-CI file/check unit of retry as above.
+5. `set_status` `ready`.
+6. `add_comment` `role=agent`: `Review requested.`
+7. **Stop.** If a **steward** (`/steward`) is driving this loop, it will Task the reviewer. Do not start listen. Do not review this loop yourself.
+8. When review is done, status is `changes_requested` (findings) or `reviewed` (review cleared — steward runs the export gate). Treat `pendingComments` as the brief only after `changes_requested`. Do not wait for a DM; the loop is the channel. Do not start on comments while the loop is still `ready`. Do not say ready-for-human until `handoff_human`.
 
 `/export` is the developer cutting the GitHub PR at origin.
 

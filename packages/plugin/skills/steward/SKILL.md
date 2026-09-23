@@ -45,7 +45,8 @@ Task `generalPurpose` (or `computerUse` only if the work needs a browser). Promp
 
 - implement this loop only; `/local-pr` rules; do not review yourself; do not push
 - commit on the loop branch; refresh `body`
-- **Before** `set_status ready` / Review requested: run MCP `run_ci` `{ id }` or `prgenie ci <id>` (path-scoped from changed paths — `docs/ci-checks.md`). Instruct the implementor to **print** `{ checks, reason }`, fix failures in-worktree, and **not** run whole-repo `pnpm test` when mapping is confident. If mapping **skips**, do not escalate to full suite — skip reason or touched-package tests only (RAD-119). Fail-fast: stop after first package suite fail. Prefer fix-before-ready over discover-via-gate.
+- **Before** `set_status ready` / Review requested: run MCP `run_ci` `{ id }` or `prgenie ci <id>` (path-scoped from changed paths — `docs/ci-checks.md`). Instruct the implementor to **print** `{ checks, reason }`, and **not** run whole-repo `pnpm test` when mapping is confident. If mapping **skips**, do not escalate to full suite — skip reason or touched-package tests only (RAD-119). Fail-fast: stop after first package suite fail. Prefer fix-before-ready over discover-via-gate.
+- **On red CI (RAD-121):** instruct the implementor to open the failing log, fix the named assertion/file, and re-run **only that file** (or that one check name) once per edit — **not** relaunch the multi-check scoped plan, and **not** overlap `run_ci` copies. Still format edited files. See `docs/ci-checks.md` (Red CI retry).
 - Skip CI only if the toolchain cannot run (say so in the comment). Do not skip a red check.
 - then `set_status ready` + `add_comment` role=agent **Review requested.**
 - Include the loop id, title, and body.
@@ -65,7 +66,7 @@ Resume unless `steward_next` already said spawn (missing/failed/restart). If the
 Prompt on resume:
 
 - `changes_requested` — `pendingComments` is the brief. Address each (`address_comment`). Last open finding sets `ready` only after `run_ci` is green.
-- Export-gate blocked (CI-resume) — `decision.failingCheck` is the brief. Re-run **at least those failing checks** (`prgenie ci <id> --failing <names>` / MCP `run_ci` `failingChecks`). Fix in-worktree. **Only return when they pass locally.** Steward will `evaluate_export_gate` again. Do **not** expect Push to origin. Do **not** spawn or resume a reviewer just because CI failed.
+- Export-gate blocked (CI-resume) — `decision.failingCheck` is the brief. Re-run **at least those failing checks** (`prgenie ci <id> --failing <names>` / MCP `run_ci` `failingChecks`) — not a fresh full scoped plan (RAD-121). Open the log, fix the named file/assertion, retry that unit once per edit. Fix in-worktree. **Only return when they pass locally.** Steward will `evaluate_export_gate` again. Do **not** expect Push to origin. Do **not** spawn or resume a reviewer just because CI failed.
 
 ### `spawn_reviewer` / `resume_reviewer`
 
