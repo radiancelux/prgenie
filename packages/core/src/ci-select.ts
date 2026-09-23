@@ -163,11 +163,27 @@ export function resolveScopedTestFiles(
   const testFiles = new Set<string>();
   for (const p of srcPaths) {
     if (TEST_FILE_RE.test(p)) {
-      if (exists(p)) testFiles.add(p);
+      // Changed test path must exist — otherwise keep the package glob (do not
+      // file-scope to whichever other siblings happened to exist).
+      if (!exists(p)) {
+        return {
+          files: null,
+          reason: `${p} missing on disk → test:${pkg} package glob (packages/${pkg}/src/*.test.ts)`,
+        };
+      }
+      testFiles.add(p);
       continue;
     }
     const sibling = siblingTestPath(p);
-    if (sibling && exists(sibling)) testFiles.add(sibling);
+    // Any source leaf without an existing sibling → package glob for the whole
+    // package (mixed diffs must not under-scope to the subset that exists).
+    if (!sibling || !exists(sibling)) {
+      return {
+        files: null,
+        reason: `${p} has no covering *.test.ts → test:${pkg} package glob (packages/${pkg}/src/*.test.ts)`,
+      };
+    }
+    testFiles.add(sibling);
   }
 
   if (testFiles.size === 0) {

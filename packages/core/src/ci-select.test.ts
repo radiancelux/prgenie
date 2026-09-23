@@ -292,6 +292,24 @@ describe("selectCiChecks", () => {
     assert.ok(cliLeaf.reason.some((r) => /no covering \*\.test\.ts/.test(r)));
   });
 
+  it("keeps package glob for mixed leaves when any sibling is missing (RAD-127)", () => {
+    // progress.ts has a sibling; github-ops.ts does not — must not under-scope to
+    // progress.test.ts only (would skip coverage that may exercise github-ops).
+    const mixed = selectCiChecks([
+      "packages/core/src/progress.ts",
+      "packages/core/src/github-ops.ts",
+    ]);
+    assert.equal(mixed.packageScoped, true);
+    assert.equal(mixed.testFiles?.["test:core"], undefined);
+    assert.ok(mixed.reason.some((r) => /github-ops\.ts/.test(r)));
+    assert.ok(mixed.reason.some((r) => /no covering \*\.test\.ts/.test(r)));
+    assert.ok(mixed.reason.some((r) => /package glob/.test(r)));
+    assert.equal(
+      ciCheckCommand("test:core", mixed.testFiles?.["test:core"]),
+      "pnpm exec tsx --test packages/core/src/*.test.ts",
+    );
+  });
+
   it("resolveCiCwd prefers the loop worktree over primary/plugin cwd", async () => {
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
