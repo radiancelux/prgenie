@@ -14,11 +14,11 @@ import {
   envFlag,
   formatCiSelectionReason,
   resolveCiCwd,
-  selectCiChecks,
   shouldScopeFormatCheck,
   expandFailingChecks,
   type CiCheckSelection,
 } from "./ci-select.js";
+import { resolveCiSelection } from "./ci-select-worktree.js";
 import {
   hostScopeFailClosedReason,
   prettierPathsFromChanged,
@@ -688,7 +688,16 @@ export async function runLoopCi(
     const ciCwd = resolveCiCwd(cwd, pr.worktreePath);
     const paths = options.changedPaths ?? (await changedPathsForCi(ciCwd, id));
     throwIfAborted(controller.signal);
-    const selection = options.selection ?? selectCiChecks(paths);
+    // RAD-123: when the loop edits ci-select/ci-runner (or installed plan diverges),
+    // evaluate selection from the worktree source — never a stale installed plugin.
+    const selection =
+      options.selection ??
+      (
+        await resolveCiSelection({
+          changedPaths: paths,
+          worktreePath: pr.worktreePath ?? ciCwd,
+        })
+      ).selection;
     const requestedFailing = (options.failingChecks ?? []).map((n) => n.trim()).filter(Boolean);
     const extra = expandFailingChecks(requestedFailing, selection);
     let checks = options.checks ?? [...new Set([...selection.checks, ...extra])];

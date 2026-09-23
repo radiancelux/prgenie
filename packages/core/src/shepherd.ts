@@ -2,12 +2,8 @@ import { getLocalPr, isArchivedPr, pendingReviewComments } from "./prs.js";
 import { runPreflight } from "./learnings.js";
 import { ensureRepoGithub } from "./github-ops.js";
 import { runCiChecks, type CiCheckResult } from "./ci-runner.js";
-import {
-  changedPathsForCi,
-  resolveCiCwd,
-  selectCiChecks,
-  type CiCheckSelection,
-} from "./ci-select.js";
+import { changedPathsForCi, resolveCiCwd, type CiCheckSelection } from "./ci-select.js";
+import { resolveCiSelection } from "./ci-select-worktree.js";
 import { isAbortError, throwIfAborted, type ProgressCallback } from "./progress.js";
 
 export type ShepherdStatus = "ready" | "blocked";
@@ -175,7 +171,16 @@ export async function shepherdStatus(
       ciCwd = resolvedCwd;
       const paths = options.changedPaths ?? (await changedPathsForCi(resolvedCwd, id));
       // Caller-forced selection (tests / resume) wins — never re-select and empty a real plan.
-      const selection = options.selection ?? selectCiChecks(paths);
+      // RAD-123: otherwise prefer worktree selectCiChecks when the loop edits CI selection
+      // (or when the installed plugin plan diverges from the worktree module).
+      const selection =
+        options.selection ??
+        (
+          await resolveCiSelection({
+            changedPaths: paths,
+            worktreePath: pr.worktreePath ?? resolvedCwd,
+          })
+        ).selection;
       const checks =
         options.selection && options.selection.checks.length > 0
           ? options.selection.checks

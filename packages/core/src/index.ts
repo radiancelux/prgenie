@@ -336,6 +336,20 @@ export {
 } from "./ci-select.js";
 export type { CiCheckMapping, CiCheckSelection, CiPathKind, ScopablePackage } from "./ci-select.js";
 export {
+  ciSelectionPlansEqual,
+  clearWorktreeCiSelectCache,
+  isCiSelectionSourcePath,
+  loadWorktreeSelectCiChecks,
+  resolveCiSelection,
+  touchesCiSelectionSource,
+  worktreeCiSelectModulePath,
+} from "./ci-select-worktree.js";
+export type {
+  CiSelectFn,
+  ResolveCiSelectionOptions,
+  ResolveCiSelectionResult,
+} from "./ci-select-worktree.js";
+export {
   detectMonorepoWideScript,
   eslintPathsFromChanged,
   hostScopeFailClosedReason,
