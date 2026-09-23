@@ -45,7 +45,7 @@ Task `generalPurpose` (or `computerUse` only if the work needs a browser). Promp
 
 - implement this loop only; `/local-pr` rules; do not review yourself; do not push
 - commit on the loop branch; refresh `body`
-- **Before** `set_status ready` / Review requested: run MCP `run_ci` `{ id }` or `prgenie ci <id>` (path-scoped from changed paths — `docs/ci-checks.md`). Instruct the implementor to **print** `{ checks, reason }`, fix failures in-worktree, and **not** run whole-repo `pnpm test` when mapping is confident. Fail-fast: stop after first package suite fail. Prefer fix-before-ready over discover-via-gate.
+- **Before** `set_status ready` / Review requested: run MCP `run_ci` `{ id }` or `prgenie ci <id>` (path-scoped from changed paths — `docs/ci-checks.md`). Instruct the implementor to **print** `{ checks, reason }`, fix failures in-worktree, and **not** run whole-repo `pnpm test` when mapping is confident. If mapping **skips**, do not escalate to full suite — skip reason or touched-package tests only (RAD-119). Fail-fast: stop after first package suite fail. Prefer fix-before-ready over discover-via-gate.
 - Skip CI only if the toolchain cannot run (say so in the comment). Do not skip a red check.
 - then `set_status ready` + `add_comment` role=agent **Review requested.**
 - Include the loop id, title, and body.

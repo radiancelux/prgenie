@@ -45,13 +45,13 @@ If create refuses because primary has dirty tracked plugin build artifacts (`pac
 While coding (not only at the end):
 
 1. After each **substantive edit batch**, run **targeted** lint/format/type on the paths you touched (or MCP `run_ci` / `prgenie ci` so smart CI scopes them). Prefer the scoped command the progress card shows (`eslint path1 path2`, `lint:core`, turbo `--filter`, …).
-2. **Forbid** “implement everything → one surprise full `pnpm lint` / `pnpm test` / `eslint .`” when a scoped command exists. Do not widen eslint ignores or disable rules unless the ticket says so — fix to existing project rules.
-3. Ready / Review requested only after **green** `run_ci` or an **explicit skip reason** (RAD-97).
+2. **Forbid** “implement everything → one surprise full `pnpm lint` / `pnpm test` / `eslint .`” when a scoped command exists. Do not widen eslint ignores or disable rules unless the ticket says so — fix to existing project rules. **Scoped only:** if `run_ci` cannot confidently scope, it **skips** with a printable reason — then skip or manually run only touched-package tests; **never** escalate to root monorepo `pnpm test` / full suite (RAD-119).
+3. Ready / Review requested only after **green** `run_ci`, a **skip plan** with printed reason, or an **explicit skip reason** (RAD-97).
 
 Then:
 
 1. Commit on this branch **in the exclusive worktree** if needed. Do not push. Do not commit on primary.
 2. Refresh `body` to a reviewer summary: why, what changed, how to test (keep the ticket link).
-3. Run MCP `run_ci` / `prgenie ci <id>` (path-scoped checks from changed files vs base — see `docs/ci-checks.md`). **Print** the returned `{ checks, reason }` plan in chat. Fix failures in this worktree. When mapping is confident (`packageScoped` / reasons say so), do **not** run whole-repo `pnpm test` as a substitute. On host repos, when progress shows path-scoped `eslint …`, do **not** replace it with root `eslint .`. Fail-fast stops after the first package suite fail — do not keep running later packages. Skip only if the toolchain cannot run — say so.
+3. Run MCP `run_ci` / `prgenie ci <id>` (path-scoped checks from changed files vs base — see `docs/ci-checks.md`). **Print** the returned `{ checks, reason }` plan in chat. Fix failures in this worktree. When mapping is confident (`packageScoped` / reasons say so), do **not** run whole-repo `pnpm test` as a substitute. When mapping **skips** (`skipped` / empty `checks`), do **not** run full suite — record the skip reason or manually run only touched-package tests (RAD-119). On host repos, when progress shows path-scoped `eslint …`, do **not** replace it with root `eslint .`. Fail-fast stops after the first package suite fail — do not keep running later packages. Skip only if the toolchain cannot run or selection skipped — say so.
 4. `set_status` `ready` and `add_comment` `role=agent` **Review requested.**
 5. **Stop.** If a steward (`/steward`) is driving this loop, it will Task the reviewer. If the user used `/start` alone, tell them to run `/steward` on this packet (or `/review`) — do not review it yourself and do not start listen.

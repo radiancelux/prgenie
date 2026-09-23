@@ -2,9 +2,9 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { git } from "./git.js";
 import { isPluginBuildArtifact } from "./plugin-dirt.js";
-import { getLocalPrNameStatus } from "./prs.js";
+import { getLocalPr, getLocalPrNameStatus, refreshLocalPrHead } from "./prs.js";
 
-/** Default local CI suite (shepherd / implementor preflight) when mapping is uncertain or config-wide. */
+/** Default local CI suite names (legacy / host callers). Local run_ci never selects this full set (RAD-119). */
 export const DEFAULT_CI_CHECKS = ["format:check", "lint", "typecheck", "test", "build"] as const;
 
 /** Packages that support path-scoped lint / typecheck / unit tests (not full-monorepo `pnpm test`). */
@@ -19,15 +19,17 @@ export interface CiCheckMapping {
 }
 
 export interface CiCheckSelection {
-  /** Check names to run (`format:check`, `lint:core`, `test`, …). */
+  /** Check names to run (`format:check`, `lint:core`, `test`, …). Empty when skipped. */
   checks: string[];
-  /** Why this plan was chosen (print these; RAD-105). */
+  /** Why this plan was chosen (print these; RAD-105 / RAD-119). */
   reason: string[];
   mapping: CiCheckMapping[];
   uncertain: boolean;
   changedPaths: string[];
   /** True when checks are per-package scoped (not root `pnpm test` / full suite). */
   packageScoped?: boolean;
+  /** True when local CI is intentionally empty (printable skip — never silent). */
+  skipped?: boolean;
 }
 
 const CONFIG_BASENAMES = new Set([
@@ -55,6 +57,9 @@ const CONFIG_BASENAMES = new Set([
 
 const SCOPABLE_SET = new Set<string>(SCOPABLE_PACKAGES);
 
+/** Plugin manifest / MCP / hooks metadata — not monorepo toolchain config (RAD-119). */
+const INCIDENTAL_PLUGIN_META = new Set(["plugin.json", "mcp.json", "hooks.json"]);
+
 export function normalizeCiPath(filePath: string): string {
   return filePath.replace(/\\/g, "/").replace(/^\.\//, "");
 }
@@ -64,11 +69,30 @@ function basename(filePath: string): string {
   return parts[parts.length - 1] ?? filePath;
 }
 
-/** Classify one changed path for smart CI. Unknown → full suite (never silent skip). */
+/** True for routine plugin packaging metadata that must not force config → full suite. */
+export function isIncidentalPluginMeta(filePath: string): boolean {
+  const p = normalizeCiPath(filePath);
+  if (!p.startsWith("packages/plugin/")) return false;
+  const base = basename(p);
+  if (INCIDENTAL_PLUGIN_META.has(base)) return true;
+  if (p.startsWith("packages/plugin/.cursor-plugin/")) return true;
+  return false;
+}
+
+export function isPluginPackagePath(filePath: string): boolean {
+  return normalizeCiPath(filePath).startsWith("packages/plugin/");
+}
+
+/** Classify one changed path for smart CI. Unknown → skip local CI (never silent; never full suite). */
 export function classifyCiPath(filePath: string): CiPathKind {
   const p = normalizeCiPath(filePath);
   const base = basename(p);
   const lower = p.toLowerCase();
+
+  // Incidental plugin manifests are format-able style, not hard toolchain config.
+  if (isIncidentalPluginMeta(p)) {
+    return "style";
+  }
 
   if (
     CONFIG_BASENAMES.has(base) ||
@@ -140,15 +164,24 @@ export function formatCiSelectionReason(reason: string | string[] | undefined): 
  * When the plan is package-scoped, root `test`/`lint`/`typecheck` (from an older
  * full-suite gate) expand to the matching `*:core|cli|extension` checks so resume
  * does not force whole-monorepo `pnpm test`.
+ * Skip plans never reinflate root suite names (RAD-119).
  */
 export function expandFailingChecks(
   failingChecks: string[],
   selection: CiCheckSelection,
 ): string[] {
   const out: string[] = [];
+  const rootSuite = new Set(["test", "lint", "typecheck", "build", "format:check"]);
   for (const raw of failingChecks) {
     const name = raw.trim();
     if (!name) continue;
+    if (
+      (selection.skipped === true || selection.checks.length === 0) &&
+      rootSuite.has(name)
+    ) {
+      // Never reinflate full-suite names onto a skip plan.
+      continue;
+    }
     if (
       selection.packageScoped === true &&
       (name === "test" || name === "lint" || name === "typecheck")
@@ -166,27 +199,27 @@ export function expandFailingChecks(
 
 /**
  * RAD-117: confident package-scoped or docs/style-only plans format only changed
- * prettier-able paths (git blobs). Uncertain / config / full suite keep the full tree.
+ * prettier-able paths (git blobs). Skip / uncertain keep format off the plan (empty checks).
  */
 export function shouldScopeFormatCheck(selection: CiCheckSelection | undefined): boolean {
-  if (!selection || selection.uncertain) return false;
+  if (!selection || selection.uncertain || selection.skipped) return false;
   if (selection.packageScoped === true) return true;
   return selection.checks.length === 1 && selection.checks[0] === "format:check";
 }
 
-function fullSuite(reasons: string[], paths: string[], uncertain: boolean): CiCheckSelection {
-  const reason = reasons.length ? reasons : ["uncertain → full suite"];
-  const mapping: CiCheckMapping[] = DEFAULT_CI_CHECKS.map((check) => ({
-    check,
-    reason: reason.join("; "),
-  }));
+/** Intentional empty plan — printable skip, never root `pnpm test` (RAD-119). */
+function skipCi(reasons: string[], paths: string[], uncertain: boolean): CiCheckSelection {
+  const reason = reasons.length
+    ? reasons
+    : ["unmappable paths → skip local CI", "never full monorepo pnpm test"];
   return {
-    checks: [...DEFAULT_CI_CHECKS],
+    checks: [],
     reason,
-    mapping,
+    mapping: [],
     uncertain,
     changedPaths: paths,
     packageScoped: false,
+    skipped: true,
   };
 }
 
@@ -199,67 +232,29 @@ function packageSuiteChecks(pkgs: ScopablePackage[]): string[] {
   return checks;
 }
 
-/**
- * Path-aware check selection for implementor preflight and shepherd/export.
- * Confident package mapping → scoped lint/typecheck/unit (never root `pnpm test`).
- * Uncertain mapping always returns the full configured suite with an explicit reason.
- */
-export function selectCiChecks(changedPaths: string[]): CiCheckSelection {
-  const paths = [...new Set(changedPaths.map(normalizeCiPath).filter(Boolean))];
-  if (paths.length === 0) {
-    return fullSuite(["no changed paths", "uncertain → full suite"], paths, true);
-  }
+function thinPluginSuite(paths: string[], extraReasons: string[] = []): CiCheckSelection {
+  const reason = [
+    "packages/plugin/** → thin plugin suite (format:check only)",
+    "confident mapping — not full monorepo pnpm test",
+    ...extraReasons,
+  ];
+  return {
+    checks: ["format:check"],
+    reason,
+    mapping: [
+      {
+        check: "format:check",
+        reason: `${reason.join("; ")}; scoped to changed prettier paths`,
+      },
+    ],
+    uncertain: false,
+    changedPaths: paths,
+    packageScoped: false,
+    skipped: false,
+  };
+}
 
-  const kinds = paths.map(classifyCiPath);
-  if (kinds.some((kind) => kind === "unknown")) {
-    return fullSuite(["uncertain path mapping", "uncertain → full suite"], paths, true);
-  }
-  if (kinds.some((kind) => kind === "config")) {
-    return fullSuite(["config/CI scripts changed; running full suite"], paths, false);
-  }
-
-  const onlyDocsOrStyle = kinds.every((kind) => kind === "docs" || kind === "style");
-  if (onlyDocsOrStyle) {
-    const reason = kinds.every((kind) => kind === "docs")
-      ? ["docs/markdown-only → format:check", "skip units/lint/typecheck/build (confident)"]
-      : ["docs/style-only → format:check", "skip units/lint/typecheck/build (confident)"];
-    return {
-      checks: ["format:check"],
-      reason,
-      mapping: [
-        {
-          check: "format:check",
-          reason: `${reason.join("; ")}; scoped to changed prettier paths`,
-        },
-      ],
-      uncertain: false,
-      changedPaths: paths,
-      packageScoped: false,
-    };
-  }
-
-  const codePaths = paths.filter((_, i) => kinds[i] === "source" || kinds[i] === "test");
-  const pkgs = new Set<ScopablePackage>();
-  let unscoping = false;
-  for (const p of codePaths) {
-    // Bundled plugin MCP/hooks outputs track core changes; they must not force uncertain → full suite.
-    if (isPluginBuildArtifact(p)) continue;
-    const name = packageFromCiPath(p);
-    if (name && isScopablePackage(name)) {
-      pkgs.add(name);
-    } else {
-      unscoping = true;
-    }
-  }
-
-  if (unscoping || pkgs.size === 0) {
-    return fullSuite(
-      ["changed paths outside scopable packages/core|cli|extension", "uncertain → full suite"],
-      paths,
-      true,
-    );
-  }
-
+function packageScopedSelection(pkgs: Set<ScopablePackage>, paths: string[]): CiCheckSelection {
   const ordered = SCOPABLE_PACKAGES.filter((p) => pkgs.has(p));
   const checks = packageSuiteChecks(ordered);
   const pkgList = ordered.map((p) => `packages/${p}/**`).join(" + ");
@@ -289,7 +284,206 @@ export function selectCiChecks(changedPaths: string[]): CiCheckSelection {
     uncertain: false,
     changedPaths: paths,
     packageScoped: true,
+    skipped: false,
   };
+}
+
+/** Root / repo-wide toolchain config (not package-local, not incidental plugin meta). */
+export function isHardConfigPath(filePath: string): boolean {
+  const p = normalizeCiPath(filePath);
+  if (isIncidentalPluginMeta(p)) return false;
+  if (classifyCiPath(p) !== "config") return false;
+  const pkg = packageFromCiPath(p);
+  // packages/core|cli|extension package.json / tsconfig → scope to that package.
+  if (pkg && isScopablePackage(pkg)) return false;
+  return true;
+}
+
+/** Package-local config under a scopable package contributes that package to the plan. */
+function scopablePackageFromConfigPath(filePath: string): ScopablePackage | null {
+  const p = normalizeCiPath(filePath);
+  if (isIncidentalPluginMeta(p)) return null;
+  if (classifyCiPath(p) !== "config") return null;
+  const pkg = packageFromCiPath(p);
+  if (pkg && isScopablePackage(pkg)) return pkg;
+  return null;
+}
+
+/**
+ * Path-aware check selection for implementor preflight and shepherd/export.
+ * Confident package mapping → scoped lint/typecheck/unit (never root `pnpm test`).
+ * Uncertain / hard-config mapping → skip with an explicit reason (RAD-119) — never full suite.
+ */
+export function selectCiChecks(changedPaths: string[]): CiCheckSelection {
+  const paths = [...new Set(changedPaths.map(normalizeCiPath).filter(Boolean))];
+  if (paths.length === 0) {
+    return skipCi(
+      [
+        "no changed paths",
+        "skip local CI — agent may run touched-package tests manually",
+        "never full monorepo pnpm test",
+      ],
+      paths,
+      true,
+    );
+  }
+
+  const kinds = paths.map(classifyCiPath);
+  if (kinds.some((kind) => kind === "unknown")) {
+    return skipCi(
+      [
+        "uncertain path mapping",
+        "skip local CI — agent may run touched-package tests manually",
+        "never full monorepo pnpm test",
+      ],
+      paths,
+      true,
+    );
+  }
+
+  const hardConfig = paths.filter(isHardConfigPath);
+  if (hardConfig.length > 0) {
+    return skipCi(
+      [
+        "config/CI scripts changed; cannot confidently scope",
+        "skip local CI — origin is the cleanliness bar; agent may run touched-package tests",
+        "never full monorepo pnpm test",
+      ],
+      paths,
+      false,
+    );
+  }
+
+  const onlyDocsOrStyle = kinds.every((kind) => kind === "docs" || kind === "style");
+  if (onlyDocsOrStyle) {
+    const reason = kinds.every((kind) => kind === "docs")
+      ? ["docs/markdown-only → format:check", "skip units/lint/typecheck/build (confident)"]
+      : ["docs/style-only → format:check", "skip units/lint/typecheck/build (confident)"];
+    return {
+      checks: ["format:check"],
+      reason,
+      mapping: [
+        {
+          check: "format:check",
+          reason: `${reason.join("; ")}; scoped to changed prettier paths`,
+        },
+      ],
+      uncertain: false,
+      changedPaths: paths,
+      packageScoped: false,
+      skipped: false,
+    };
+  }
+
+  const pkgs = new Set<ScopablePackage>();
+  let hasPluginWork = false;
+  let onlyPluginArtifacts = true;
+  let unscoping = false;
+
+  for (let i = 0; i < paths.length; i++) {
+    const p = paths[i]!;
+    const kind = kinds[i]!;
+
+    const fromConfig = scopablePackageFromConfigPath(p);
+    if (fromConfig) {
+      pkgs.add(fromConfig);
+      onlyPluginArtifacts = false;
+      continue;
+    }
+
+    if (kind !== "source" && kind !== "test") {
+      // docs/style (including incidental plugin meta) ride along with scoped plans.
+      if (isPluginPackagePath(p) && !isPluginBuildArtifact(p)) {
+        hasPluginWork = true;
+        onlyPluginArtifacts = false;
+      } else if (!isPluginBuildArtifact(p)) {
+        onlyPluginArtifacts = false;
+      }
+      continue;
+    }
+
+    // Bundled plugin MCP/hooks outputs track core changes; they must not force unscoping.
+    if (isPluginBuildArtifact(p)) continue;
+
+    onlyPluginArtifacts = false;
+    const name = packageFromCiPath(p);
+    if (name && isScopablePackage(name)) {
+      pkgs.add(name);
+    } else if (isPluginPackagePath(p) || name === "plugin") {
+      hasPluginWork = true;
+    } else {
+      unscoping = true;
+    }
+  }
+
+  if (unscoping) {
+    return skipCi(
+      [
+        "changed paths outside scopable packages/core|cli|extension",
+        "skip local CI — agent may run touched-package tests manually",
+        "never full monorepo pnpm test",
+      ],
+      paths,
+      true,
+    );
+  }
+
+  if (pkgs.size > 0) {
+    return packageScopedSelection(pkgs, paths);
+  }
+
+  if (hasPluginWork) {
+    return thinPluginSuite(paths);
+  }
+
+  // Build artifacts alone (or with docs/style) must not force a suite — format if anything prettier-able remains.
+  const nonArtifactKinds = paths
+    .filter((p) => !isPluginBuildArtifact(p))
+    .map((p) => classifyCiPath(p));
+  if (
+    nonArtifactKinds.length > 0 &&
+    nonArtifactKinds.every((kind) => kind === "docs" || kind === "style")
+  ) {
+    return {
+      checks: ["format:check"],
+      reason: [
+        "docs/style (+ ignored plugin build artifacts) → format:check",
+        "confident mapping — not full monorepo pnpm test",
+      ],
+      mapping: [
+        {
+          check: "format:check",
+          reason: "format:check scoped to changed prettier paths",
+        },
+      ],
+      uncertain: false,
+      changedPaths: paths,
+      packageScoped: false,
+      skipped: false,
+    };
+  }
+
+  if (onlyPluginArtifacts || nonArtifactKinds.length === 0) {
+    return skipCi(
+      [
+        "plugin build artifacts only; no product package scope",
+        "skip local CI — rebuild artifacts are not a local suite trigger",
+        "never full monorepo pnpm test",
+      ],
+      paths,
+      true,
+    );
+  }
+
+  return skipCi(
+    [
+      "no scopable package changes",
+      "skip local CI — agent may run touched-package tests manually",
+      "never full monorepo pnpm test",
+    ],
+    paths,
+    true,
+  );
 }
 
 /** Normalize for plugin-install / worktree path compares (Windows-safe). */
@@ -341,13 +535,29 @@ function addSplitPaths(set: Set<string>, raw: string): void {
   if (file) set.add(normalizeCiPath(file));
 }
 
+async function addDiffNameOnly(set: Set<string>, cwd: string, range: string): Promise<void> {
+  const result = await git(cwd, ["diff", "--name-only", range], { allowFail: true });
+  if (result.code !== 0) return;
+  for (const line of result.stdout.split("\n")) {
+    if (line.trim()) addSplitPaths(set, line.trim());
+  }
+}
+
 /** Committed loop diff plus dirty/untracked files in cwd (implementor worktree). */
 export async function changedPathsForCi(cwd: string, id?: string): Promise<string[]> {
   const paths = new Set<string>();
   if (id) {
     try {
+      // Prefer refreshed loop name-status (base…head), then base…HEAD / baseRef…HEAD fallbacks.
       for (const file of await getLocalPrNameStatus(cwd, id)) {
         addSplitPaths(paths, file.path);
+      }
+      if (paths.size === 0) {
+        const pr = await refreshLocalPrHead(cwd, id).catch(() => getLocalPr(cwd, id));
+        await addDiffNameOnly(paths, cwd, `${pr.baseSha}...HEAD`);
+        if (paths.size === 0 && pr.baseRef) {
+          await addDiffNameOnly(paths, cwd, `${pr.baseRef}...HEAD`);
+        }
       }
     } catch {
       // Packet missing or no git — fall through to dirty tree.

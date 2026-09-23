@@ -584,20 +584,16 @@ describe("runCiChecks", () => {
     }
   });
 
-  it("RAD-117: uncertain/config keeps full tracked prettier tree", async () => {
+  it("RAD-117: skip/config plans do not scope format; caller full-tree format still works", async () => {
     const repo = await initFormatScopeRepo();
     try {
       const full = await resolveFormatCheckFiles(repo, { formatScoped: false });
 
       const configPaths = ["package.json"];
       const configSel = selectCiChecks(configPaths);
+      assert.equal(configSel.skipped, true);
+      assert.deepEqual(configSel.checks, []);
       assert.equal(shouldScopeFormatCheck(configSel), false);
-      const configFiles = await resolveFormatCheckFiles(repo, {
-        changedPaths: configPaths,
-        formatScoped: shouldScopeFormatCheck(configSel),
-      });
-      assert.equal(configFiles.formatScoped, false);
-      assert.equal(configFiles.files.length, full.files.length);
 
       const uncertainPaths = ["assets/logo.png"];
       // Create the unknown path as an untracked non-prettier file so selection stays uncertain.
@@ -605,17 +601,24 @@ describe("runCiChecks", () => {
       await writeFile(join(repo, "assets", "logo.png"), "x");
       const uncertainSel = selectCiChecks(uncertainPaths);
       assert.equal(uncertainSel.uncertain, true);
+      assert.equal(uncertainSel.skipped, true);
       assert.equal(shouldScopeFormatCheck(uncertainSel), false);
-      const uncertainFiles = await resolveFormatCheckFiles(repo, {
-        changedPaths: uncertainPaths,
-        formatScoped: false,
-      });
-      assert.equal(uncertainFiles.files.length, full.files.length);
 
+      // Caller may still run full-tree format explicitly (not via selectCiChecks full suite).
       const result = await runCiChecks(repo, {
         checks: ["format:check"],
         changedPaths: configPaths,
-        selection: configSel,
+        selection: {
+          ...configSel,
+          checks: ["format:check"],
+          skipped: false,
+          mapping: [
+            {
+              check: "format:check",
+              reason: `full tree ${full.files.length} file(s) (caller override)`,
+            },
+          ],
+        },
         skipCache: true,
         skipToolchainEnsure: true,
         timeout: 15000,

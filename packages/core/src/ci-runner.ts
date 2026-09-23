@@ -442,6 +442,7 @@ async function runOneCheck(
  * RAD-77: fail-fast (default), parallel independent checks, smart selection via caller.
  * RAD-92: junction/link primary node_modules into worktree before running checks.
  * RAD-117: confident package-/docs-scoped plans format only changed prettier paths (blobs).
+ * RAD-119: empty selection checks = intentional skip (never inflate to full suite).
  */
 export async function runCiChecks(
   cwd: string,
@@ -519,6 +520,27 @@ export async function runCiChecks(
       selectionReason: options.changedPaths ? "caller-provided check list" : "configured suite",
       cwd,
     });
+  }
+
+  // RAD-119: intentional empty plan (skip with reason) — never inflate to full suite.
+  if (checks.length === 0) {
+    const skipReason =
+      formatCiSelectionReason(selection?.reason) || "skip local CI — empty check plan";
+    onProgress?.({
+      phase: "ci",
+      state: "skip",
+      selectedChecks: [],
+      selectionReason: skipReason,
+      message: skipReason,
+      cwd,
+    });
+    return {
+      allPassed: true,
+      checks: [],
+      selection,
+      cwd,
+      toolchain,
+    };
   }
 
   const results: CiCheckResult[] = [];
