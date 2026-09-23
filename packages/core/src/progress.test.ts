@@ -70,6 +70,8 @@ describe("progress helpers", () => {
       formatProgressStep({ phase: "preflight", state: "cached" }, "export"),
       "Reusing green gate",
     );
+    assert.equal(formatProgressStep({ phase: "preflight", state: "start" }, "export"), "Preflight");
+    assert.equal(formatProgressStep({ phase: "preflight", state: "pass" }, "export"), "Preflight");
   });
 
   it("formats a multi-check progress card with why and elapsed", () => {

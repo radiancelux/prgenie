@@ -64,6 +64,7 @@ import {
 } from "./sidebarPoller.js";
 import {
   STATUS_PANEL_TITLE,
+  exportBusyHelper,
   statusPanelGuidanceForLoop,
   statusPanelIdleBody,
 } from "./statusPanel.js";
@@ -2106,9 +2107,11 @@ function panelHtml(webview: vscode.Webview): string {
     bindCiModal();
     const COMPOSER_HINT = ${JSON.stringify(HUMAN_EXPORT_COMPOSER_HINT)};
     const EXPORT_PRIMARY = ${JSON.stringify(HUMAN_EXPORT_PRIMARY_ACTION)};
+    // Injected from statusPanel.exportBusyHelper (single source of truth — RAD-124).
+    const EXPORT_BUSY_TEMPLATE = ${JSON.stringify(exportBusyHelper("{{STEP}}"))};
     function exportBusyHintFor(step) {
       const label = (step && String(step).trim()) || "export in progress";
-      return "Open on GitHub unavailable — " + label;
+      return EXPORT_BUSY_TEMPLATE.split("{{STEP}}").join(label);
     }
     let layoutId = null;
     let serverSum = "";

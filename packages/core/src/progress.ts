@@ -139,7 +139,11 @@ export function formatProgressStep(event: ProgressEvent, kind: ProgressKind = "g
         ? `Re-running gate CI → ${shortCheckName(event.check)}`
         : "Re-running gate CI";
     }
-    if (event.phase === "preflight") return "Reusing green gate";
+    if (event.phase === "preflight") {
+      // Only the optimistic reuse path in exportLoop uses state "cached".
+      // Live shepherd preflight (start/pass/fail) must not say "Reusing green gate".
+      return event.state === "cached" ? "Reusing green gate" : "Preflight";
+    }
     if (event.phase === "review") return "Review check";
     if (event.phase === "github") return "GitHub bind";
     return "Exporting";
