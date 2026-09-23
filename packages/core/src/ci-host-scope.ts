@@ -1,24 +1,10 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import {
-  classifyCiPath,
-  normalizeCiPath,
-  packageFromScopedCheck,
-} from "./ci-select.js";
+import { classifyCiPath, normalizeCiPath, packageFromScopedCheck } from "./ci-select.js";
 import { ciCheckCommand } from "./progress.js";
 
 /** Extensions eslint (and similar JS linters) can take as path args. */
-const ESLINT_EXTS = new Set([
-  ".js",
-  ".jsx",
-  ".ts",
-  ".tsx",
-  ".mjs",
-  ".cjs",
-  ".mts",
-  ".cts",
-  ".vue",
-]);
+const ESLINT_EXTS = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".vue"]);
 
 export type HostScopeTool = "eslint" | "prettier" | "turbo" | "pnpm-recursive";
 
@@ -102,10 +88,7 @@ export function tokenizeScript(script: string): string[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(script)) !== null) {
     let tok = m[0];
-    if (
-      (tok.startsWith('"') && tok.endsWith('"')) ||
-      (tok.startsWith("'") && tok.endsWith("'"))
-    ) {
+    if ((tok.startsWith('"') && tok.endsWith('"')) || (tok.startsWith("'") && tok.endsWith("'"))) {
       tok = tok.slice(1, -1);
     }
     tokens.push(tok);
@@ -158,9 +141,7 @@ export function detectMonorepoWideScript(script: string): MonorepoWideScript | n
   // (-w runs the script at the workspace root, not across every package).
   if (tokens[0] === "pnpm" || tokens[0] === "yarn") {
     const recursive =
-      tokens.includes("-r") ||
-      tokens.includes("--recursive") ||
-      tokens.includes("recursive");
+      tokens.includes("-r") || tokens.includes("--recursive") || tokens.includes("recursive");
     const hasFilter = tokens.some((t) => t === "--filter" || t.startsWith("--filter="));
     if (recursive && !hasFilter) {
       return { tool: "pnpm-recursive", script: trimmed, args: tokens.slice(1) };
@@ -243,7 +224,12 @@ function flagsOnly(args: string[]): string[] {
     flags.push(t);
     // Keep values for --ext .ts etc. when next token is not a flag/path-dot.
     const next = args[i + 1];
-    if (next && !next.startsWith("-") && !isDotPathToken(next) && !ESLINT_EXTS.has(path.posix.extname(next))) {
+    if (
+      next &&
+      !next.startsWith("-") &&
+      !isDotPathToken(next) &&
+      !ESLINT_EXTS.has(path.posix.extname(next))
+    ) {
       // --ext .ts,.tsx — value starts with .
       if (next.startsWith(".") && next !== "." && next !== "./") {
         flags.push(next);
@@ -284,7 +270,9 @@ export function resolveCiCheckCommand(options: ResolveCiCheckCommandOptions): Re
 
   const closed =
     options.failClosedReason ??
-    (options.failClosed ? "fail-closed → full script" : hostScopeFailClosedReason(options.changedPaths));
+    (options.failClosed
+      ? "fail-closed → full script"
+      : hostScopeFailClosedReason(options.changedPaths));
   if (closed) {
     return { command: fallback, hostScoped: false, reason: closed };
   }
@@ -367,9 +355,10 @@ export function resolveCiCheckCommand(options: ResolveCiCheckCommandOptions): Re
       (t) => t !== "-r" && t !== "--recursive" && t !== "recursive",
     );
     // withoutRecursive starts with pnpm
-    const rest = withoutRecursive[0] === "pnpm" || withoutRecursive[0] === "yarn"
-      ? withoutRecursive.slice(1)
-      : withoutRecursive;
+    const rest =
+      withoutRecursive[0] === "pnpm" || withoutRecursive[0] === "yarn"
+        ? withoutRecursive.slice(1)
+        : withoutRecursive;
     const filterArgs = filters.flatMap((f) => ["--filter", f]);
     const command = joinCommand(["pnpm", ...filterArgs, ...rest]);
     return {

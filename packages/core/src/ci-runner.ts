@@ -17,10 +17,7 @@ import {
   selectCiChecks,
   type CiCheckSelection,
 } from "./ci-select.js";
-import {
-  hostScopeFailClosedReason,
-  resolveCiCheckCommand,
-} from "./ci-host-scope.js";
+import { hostScopeFailClosedReason, resolveCiCheckCommand } from "./ci-host-scope.js";
 import { requestCiAbort, watchCiAbort } from "./ci-abort.js";
 import { getLocalPr } from "./prs.js";
 import {

@@ -19,7 +19,9 @@ describe("detectMonorepoWideScript", () => {
 
   it("does not treat already path-scoped eslint as monorepo-wide (RAD-105)", () => {
     assert.equal(
-      detectMonorepoWideScript("eslint packages/core/src packages/cli/src packages/extension/src scripts"),
+      detectMonorepoWideScript(
+        "eslint packages/core/src packages/cli/src packages/extension/src scripts",
+      ),
       null,
     );
   });

@@ -8,10 +8,10 @@ PR Genie selects local checks from the loop diff (implementor preflight **and** 
 
 ## Two scoping modes
 
-| Mode | When | What runs |
-| ---- | ---- | --------- |
-| **PR Genie package-scoped** (RAD-105) | Changed paths stay under `packages/core\|cli\|extension` | Check names like `lint:core` → `pnpm exec eslint packages/core/src` (never root `pnpm test`) |
-| **Host-repo path-scoped** (RAD-120) | Root checks selected on a host monorepo (Phoenix-style) whose `package.json` scripts are monorepo-wide (`eslint .`, `turbo run lint`, `pnpm -r …`) | Same root check names (`lint`, …) but **execution** rewrites to changed-path args or `--filter` — progress shows `eslint path1 path2`, not bare `pnpm lint` |
+| Mode                                  | When                                                                                                                                               | What runs                                                                                                                                                   |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **PR Genie package-scoped** (RAD-105) | Changed paths stay under `packages/core\|cli\|extension`                                                                                           | Check names like `lint:core` → `pnpm exec eslint packages/core/src` (never root `pnpm test`)                                                                |
+| **Host-repo path-scoped** (RAD-120)   | Root checks selected on a host monorepo (Phoenix-style) whose `package.json` scripts are monorepo-wide (`eslint .`, `turbo run lint`, `pnpm -r …`) | Same root check names (`lint`, …) but **execution** rewrites to changed-path args or `--filter` — progress shows `eslint path1 path2`, not bare `pnpm lint` |
 
 RAD-105 package scoping is unchanged. Host-repo scoping does **not** invent `lint:core` on foreign repos; it keeps root check names and scopes the **command**.
 
@@ -44,18 +44,18 @@ Loop checkouts under `../<repo>.loops/<id>` usually have **no** `node_modules`. 
 
 Fix path when setup fails: `pnpm install` once in the **primary** checkout, then re-run `prgenie ci` / shepherd (junction recreates). Manual worktree install: `cd ../<repo>.loops/<id> && pnpm install`. See [troubleshooting.md](troubleshooting.md#worktree-ci-toolchain-windows).
 
-| Changed paths                                                                                             | Checks                                                     | `reason[]` (concept)                                |
-| --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------- |
-| Empty / unclassifiable (binaries, unknown extensions)                                                     | Full suite                                                 | `uncertain path mapping` / `uncertain → full suite` |
-| Config / CI (`package.json`, lockfiles, `tsconfig*`, eslint, prettier config, `.github/**`, `scripts/**`) | Full suite                                                 | `config/CI scripts changed; running full suite`     |
-| Docs / markdown only (`*.md`, `*.mdc`, `docs/**`, LICENSE, README, `*.txt`)                               | `format:check` only                                        | `docs/markdown-only → format:check`; skip units     |
-| Docs + style (`*.css`, non-config `*.json`)                                                               | `format:check` only                                        | format; skip lint/test/build                        |
-| `packages/core/**` source/tests (+ optional docs)                                                         | `format:check`, `lint:core`, `typecheck:core`, `test:core` | confident — **not** full monorepo `pnpm test`       |
-| `packages/cli/**` / `packages/extension/**` (same pattern)                                                | `format:check` + `lint\|typecheck\|test:<pkg>`             | per-package unit + typecheck/lint                   |
-| Multiple scopable packages                                                                                | format + each package’s lint→typecheck→test in order       | fail-fast stops after first package suite fail      |
-| Bundled `packages/plugin/hooks\|mcp/*.cjs` + scopable core/cli/extension                                  | Same as the scopable package row(s)                        | build artifacts ignored for scoping                 |
-| Other `packages/plugin/**` code, or only those `.cjs` with no scopable package                            | Full suite                                                 | `uncertain → full suite`                            |
-| Host repo paths outside prgenie SCOPABLE_PACKAGES (e.g. `apps/mobile/**`) + root `lint: "eslint ."`     | Full suite **names**; lint **exec** → `eslint <changed>`   | host-repo path scope (RAD-120); config → full script |
+| Changed paths                                                                                             | Checks                                                     | `reason[]` (concept)                                 |
+| --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------------------- |
+| Empty / unclassifiable (binaries, unknown extensions)                                                     | Full suite                                                 | `uncertain path mapping` / `uncertain → full suite`  |
+| Config / CI (`package.json`, lockfiles, `tsconfig*`, eslint, prettier config, `.github/**`, `scripts/**`) | Full suite                                                 | `config/CI scripts changed; running full suite`      |
+| Docs / markdown only (`*.md`, `*.mdc`, `docs/**`, LICENSE, README, `*.txt`)                               | `format:check` only                                        | `docs/markdown-only → format:check`; skip units      |
+| Docs + style (`*.css`, non-config `*.json`)                                                               | `format:check` only                                        | format; skip lint/test/build                         |
+| `packages/core/**` source/tests (+ optional docs)                                                         | `format:check`, `lint:core`, `typecheck:core`, `test:core` | confident — **not** full monorepo `pnpm test`        |
+| `packages/cli/**` / `packages/extension/**` (same pattern)                                                | `format:check` + `lint\|typecheck\|test:<pkg>`             | per-package unit + typecheck/lint                    |
+| Multiple scopable packages                                                                                | format + each package’s lint→typecheck→test in order       | fail-fast stops after first package suite fail       |
+| Bundled `packages/plugin/hooks\|mcp/*.cjs` + scopable core/cli/extension                                  | Same as the scopable package row(s)                        | build artifacts ignored for scoping                  |
+| Other `packages/plugin/**` code, or only those `.cjs` with no scopable package                            | Full suite                                                 | `uncertain → full suite`                             |
+| Host repo paths outside prgenie SCOPABLE_PACKAGES (e.g. `apps/mobile/**`) + root `lint: "eslint ."`       | Full suite **names**; lint **exec** → `eslint <changed>`   | host-repo path scope (RAD-120); config → full script |
 
 Bundled MCP/hooks `.cjs` outputs (`isPluginBuildArtifact`) are skipped when collecting package scopes so a rebuild beside `packages/core|cli|extension` does not force full suite. Alone, or with other unscoping plugin paths, mapping stays uncertain → full suite.
 
