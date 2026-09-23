@@ -24,6 +24,7 @@ import {
   resolveCiCheckCommand,
 } from "./ci-host-scope.js";
 import { requestCiAbort, watchCiAbort } from "./ci-abort.js";
+import { git } from "./git.js";
 import { getLocalPr } from "./prs.js";
 import {
   abortError,
@@ -138,101 +139,95 @@ export interface CiRunnerOptions {
  * Filters to only include files prettier can check.
  *
  * When `onlyPaths` is set (RAD-117 scoped format), only those candidates are
- * considered — never the whole tracked tree.
+ * considered — never the whole tracked tree. Uses argv-form `git` (no shell).
+ *
+ * Scoped resolution errors must not return [] (that greenwashed format:check).
+ * Unscoped failures still return [] so non-git fixtures fall through to the package script.
  */
 export async function getTrackedFiles(cwd: string, onlyPaths?: string[]): Promise<string[]> {
+  if (onlyPaths && onlyPaths.length === 0) {
+    return [];
+  }
+
+  const scopedCandidates = Boolean(onlyPaths && onlyPaths.length > 0);
+  let files: string[];
   try {
-    let files: string[];
-    if (onlyPaths && onlyPaths.length > 0) {
-      // Ask git which of the candidates are tracked (avoids full ls-files).
-      const quoted = onlyPaths.map((p) => p.replace(/"/g, '\\"'));
-      const { stdout } = await execAsync(
-        `git ls-files --exclude-standard -- ${quoted.map((p) => `"${p}"`).join(" ")}`,
-        {
-          cwd,
-          encoding: "utf8",
-          maxBuffer: 8 * 1024 * 1024,
-        },
-      );
-      files = stdout.trim().split("\n").filter(Boolean);
-    } else if (onlyPaths && onlyPaths.length === 0) {
-      return [];
-    } else {
-      // Get all tracked files, excluding submodules and symlinks
-      const { stdout } = await execAsync("git ls-files --exclude-standard", {
-        cwd,
-        encoding: "utf8",
-        maxBuffer: 8 * 1024 * 1024,
-      });
-      files = stdout.trim().split("\n").filter(Boolean);
+    const args = scopedCandidates
+      ? (["ls-files", "--exclude-standard", "--", ...onlyPaths!] as string[])
+      : (["ls-files", "--exclude-standard"] as string[]);
+    const { stdout } = await git(cwd, args);
+    files = stdout.trim().split("\n").filter(Boolean);
+  } catch (err) {
+    if (scopedCandidates) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(`git ls-files failed for scoped format paths: ${detail}`);
     }
-
-    // Filter out files that prettier can't or shouldn't check
-    const fs = await import("node:fs/promises");
-    const pathMod = await import("node:path");
-    const validFiles: string[] = [];
-
-    // Files/patterns prettier can't parse or that are typically ignored
-    const skipFiles = new Set([
-      ".gitignore",
-      ".prettierignore",
-      ".eslintignore",
-      ".dockerignore",
-      "pnpm-lock.yaml",
-      "package-lock.json",
-      "yarn.lock",
-    ]);
-
-    // Common extensions prettier can format (to avoid passing files it can't parse)
-    const prettierExts = new Set([
-      ".js",
-      ".jsx",
-      ".ts",
-      ".tsx",
-      ".mjs",
-      ".cjs",
-      ".json",
-      ".css",
-      ".scss",
-      ".less",
-      ".html",
-      ".md",
-      ".yml",
-      ".yaml",
-      ".xml",
-    ]);
-
-    for (const file of files) {
-      const basename = pathMod.basename(file);
-      const ext = pathMod.extname(file).toLowerCase();
-
-      // Skip files prettier explicitly can't parse
-      if (skipFiles.has(basename)) {
-        continue;
-      }
-
-      // Only include files with extensions prettier knows about
-      if (!prettierExts.has(ext)) {
-        continue;
-      }
-
-      try {
-        const fullPath = pathMod.join(cwd, file);
-        const stats = await fs.stat(fullPath);
-        // Only include regular files (not symlinks, directories, etc)
-        if (stats.isFile()) {
-          validFiles.push(file.replace(/\\/g, "/"));
-        }
-      } catch {
-        // Skip files we can't stat
-      }
-    }
-
-    return validFiles;
-  } catch {
     // Not a git repo (unit fixtures) or ls-files failed — caller falls back to package script.
     return [];
   }
+
+  // Filter out files that prettier can't or shouldn't check
+  const fs = await import("node:fs/promises");
+  const pathMod = await import("node:path");
+  const validFiles: string[] = [];
+
+  // Files/patterns prettier can't parse or that are typically ignored
+  const skipFiles = new Set([
+    ".gitignore",
+    ".prettierignore",
+    ".eslintignore",
+    ".dockerignore",
+    "pnpm-lock.yaml",
+    "package-lock.json",
+    "yarn.lock",
+  ]);
+
+  // Common extensions prettier can format (to avoid passing files it can't parse)
+  const prettierExts = new Set([
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".json",
+    ".css",
+    ".scss",
+    ".less",
+    ".html",
+    ".md",
+    ".yml",
+    ".yaml",
+    ".xml",
+  ]);
+
+  for (const file of files) {
+    const basename = pathMod.basename(file);
+    const ext = pathMod.extname(file).toLowerCase();
+
+    // Skip files prettier explicitly can't parse
+    if (skipFiles.has(basename)) {
+      continue;
+    }
+
+    // Only include files with extensions prettier knows about
+    if (!prettierExts.has(ext)) {
+      continue;
+    }
+
+    try {
+      const fullPath = pathMod.join(cwd, file);
+      const stats = await fs.stat(fullPath);
+      // Only include regular files (not symlinks, directories, etc)
+      if (stats.isFile()) {
+        validFiles.push(file.replace(/\\/g, "/"));
+      }
+    } catch {
+      // Skip files we can't stat
+    }
+  }
+
+  return validFiles;
 }
 
 /**

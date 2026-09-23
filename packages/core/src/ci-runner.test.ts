@@ -615,6 +615,59 @@ describe("runCiChecks", () => {
     }
   });
 
+  it("RAD-117: scoped format does not pass when ls-files fails with non-empty candidates", async () => {
+    // Non-git cwd: scoped candidates are non-empty, but argv git ls-files fails.
+    // Must not treat that as "scoped 0 files" success (fail-open greenwash).
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-rad117-lsfail-"));
+    try {
+      await mkdir(join(repo, "packages", "core", "src"), { recursive: true });
+      await writeFile(join(repo, "packages", "core", "src", "util.ts"), "export const u = 1;\n");
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            // Even a green package script must not be the only safety net — resolution must fail.
+            "format:check": "exit 0",
+          },
+        }),
+      );
+
+      const changedPaths = ["packages/core/src/util.ts"];
+      const selection = selectCiChecks(changedPaths);
+      assert.equal(selection.packageScoped, true);
+      assert.equal(shouldScopeFormatCheck(selection), true);
+
+      await assert.rejects(
+        () =>
+          resolveFormatCheckFiles(repo, {
+            changedPaths,
+            formatScoped: true,
+          }),
+        /git ls-files failed for scoped format paths/,
+      );
+
+      const result = await runCiChecks(repo, {
+        checks: ["format:check"],
+        changedPaths,
+        selection,
+        skipCache: true,
+        skipToolchainEnsure: true,
+        timeout: 10000,
+      });
+      assert.equal(result.allPassed, false, "ls-files failure must not greenwash format:check");
+      const formatCheck = result.checks.find((c) => c.name === "format:check");
+      assert.ok(formatCheck);
+      assert.equal(formatCheck.passed, false);
+      assert.match(
+        `${formatCheck.error ?? ""}\n${formatCheck.excerpt ?? ""}`,
+        /ls-files failed for scoped format paths|git ls-files/i,
+      );
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
   // Cross-platform delay for package.json scripts (Windows has no `sleep`).
   const nodeSleep = (ms: number) => `node -e "setTimeout(() => process.exit(0), ${ms})"`;
 
