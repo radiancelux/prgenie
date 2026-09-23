@@ -197,7 +197,7 @@ describe("selectCiChecks", () => {
     assert.equal(shouldScopeFormatCheck(undefined), false);
   });
 
-  it("expandFailingChecks maps root test/lint to package scopes; skip plans drop root suite", () => {
+  it("expandFailingChecks maps root test/lint to package scopes; skip plans keep resume names", () => {
     const core = selectCiChecks(["packages/core/src/ci-select.ts"]);
     assert.deepEqual(expandFailingChecks(["test"], core), ["test:core"]);
     assert.deepEqual(expandFailingChecks(["lint", "typecheck"], core), [
@@ -206,7 +206,12 @@ describe("selectCiChecks", () => {
     ]);
     const skipped = selectCiChecks(["package.json"]);
     assert.equal(skipped.skipped, true);
-    assert.deepEqual(expandFailingChecks(["test", "lint"], skipped), []);
+    // CI-resume must keep named checks on a skip plan (not greenwash via empty + skipped).
+    assert.deepEqual(expandFailingChecks(["test", "lint", "format:check"], skipped), [
+      "test",
+      "lint",
+      "format:check",
+    ]);
   });
 
   it("formats reason arrays for cards and maps scoped commands away from pnpm test", () => {

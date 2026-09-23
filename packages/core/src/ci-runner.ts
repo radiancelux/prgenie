@@ -689,13 +689,44 @@ export async function runLoopCi(
     const paths = options.changedPaths ?? (await changedPathsForCi(ciCwd, id));
     throwIfAborted(controller.signal);
     const selection = options.selection ?? selectCiChecks(paths);
-    const extra = expandFailingChecks(options.failingChecks ?? [], selection);
-    const checks = options.checks ?? [...new Set([...selection.checks, ...extra])];
+    const requestedFailing = (options.failingChecks ?? [])
+      .map((n) => n.trim())
+      .filter(Boolean);
+    const extra = expandFailingChecks(requestedFailing, selection);
+    let checks = options.checks ?? [...new Set([...selection.checks, ...extra])];
+    let runSelection = selection;
+    // CI-resume on a skip plan: keep/restore named checks and clear skipped so
+    // runCiChecks cannot silent-pass an empty intentional skip.
+    if (requestedFailing.length > 0 && selection.skipped === true) {
+      if (checks.length === 0) {
+        checks = [...new Set(requestedFailing)];
+      }
+      if (checks.length > 0) {
+        const priorReason = Array.isArray(selection.reason)
+          ? selection.reason
+          : selection.reason
+            ? [selection.reason]
+            : [];
+        runSelection = {
+          ...selection,
+          skipped: false,
+          checks,
+          reason: [
+            ...priorReason,
+            "CI-resume failingChecks override skip — must re-run named checks",
+          ],
+          mapping: checks.map((check) => ({
+            check,
+            reason: "CI-resume failingChecks",
+          })),
+        };
+      }
+    }
     throwIfAborted(controller.signal);
     return await runCiChecks(ciCwd, {
       ...options,
       checks,
-      selection,
+      selection: runSelection,
       changedPaths: paths,
       signal: controller.signal,
     });

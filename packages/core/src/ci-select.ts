@@ -164,21 +164,18 @@ export function formatCiSelectionReason(reason: string | string[] | undefined): 
  * When the plan is package-scoped, root `test`/`lint`/`typecheck` (from an older
  * full-suite gate) expand to the matching `*:core|cli|extension` checks so resume
  * does not force whole-monorepo `pnpm test`.
- * Skip plans never reinflate root suite names (RAD-119).
+ * Skip plans still keep named resume checks (CI-resume contract) — that is not a full-suite
+ * reinflation; only the requested names run. Dropping them would empty the plan and
+ * greenwash via `skipped: true` + `allPassed: true` (RAD-119).
  */
 export function expandFailingChecks(
   failingChecks: string[],
   selection: CiCheckSelection,
 ): string[] {
   const out: string[] = [];
-  const rootSuite = new Set(["test", "lint", "typecheck", "build", "format:check"]);
   for (const raw of failingChecks) {
     const name = raw.trim();
     if (!name) continue;
-    if ((selection.skipped === true || selection.checks.length === 0) && rootSuite.has(name)) {
-      // Never reinflate full-suite names onto a skip plan.
-      continue;
-    }
     if (
       selection.packageScoped === true &&
       (name === "test" || name === "lint" || name === "typecheck")
