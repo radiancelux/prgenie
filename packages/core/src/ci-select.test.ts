@@ -249,7 +249,10 @@ describe("selectCiChecks", () => {
     assert.equal(prs.testFiles?.["test:core"], undefined);
     assert.ok(prs.reason.some((r) => /shared module surface/.test(r)));
     assert.ok(prs.reason.some((r) => /\*\.test\.ts/.test(r)));
-    assert.equal(ciCheckCommand("test:core", prs.testFiles?.["test:core"]), ciCheckCommand("test:core"));
+    assert.equal(
+      ciCheckCommand("test:core", prs.testFiles?.["test:core"]),
+      ciCheckCommand("test:core"),
+    );
 
     const gate = selectCiChecks(["packages/core/src/export-gate.ts"]);
     assert.equal(gate.testFiles?.["test:core"], undefined);
@@ -259,9 +262,7 @@ describe("selectCiChecks", () => {
       "packages/core/src/progress.ts",
       "packages/core/src/progress.test.ts",
     ]);
-    assert.deepEqual(leafPlusTest.testFiles?.["test:core"], [
-      "packages/core/src/progress.test.ts",
-    ]);
+    assert.deepEqual(leafPlusTest.testFiles?.["test:core"], ["packages/core/src/progress.test.ts"]);
   });
 
   it("resolveCiCwd prefers the loop worktree over primary/plugin cwd", async () => {

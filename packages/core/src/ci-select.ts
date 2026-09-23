@@ -159,7 +159,9 @@ export function resolveScopedTestFiles(
 
   const files = [...testFiles].sort();
   const preview =
-    files.length <= 3 ? files.join(", ") : `${files.slice(0, 3).join(", ")} …(+${files.length - 3})`;
+    files.length <= 3
+      ? files.join(", ")
+      : `${files.slice(0, 3).join(", ")} …(+${files.length - 3})`;
   return {
     files,
     reason: `${pkgPrefix}leaf → file-scoped test:${pkg} (${files.length} file(s), not package glob): ${preview}`,
