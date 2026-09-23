@@ -153,14 +153,14 @@ export function detectMonorepoWideScript(script: string): MonorepoWideScript | n
   if (!bin) return null;
   const rest = tokens.slice(i + 1);
 
-  // pnpm -r / recursive / -r --filter=* style (whole workspace).
+  // pnpm/yarn recursive only: -r / --recursive / `recursive` subcommand.
+  // Do NOT treat -w / --workspace-root / --workspace-concurrency as recursive
+  // (-w runs the script at the workspace root, not across every package).
   if (tokens[0] === "pnpm" || tokens[0] === "yarn") {
     const recursive =
       tokens.includes("-r") ||
       tokens.includes("--recursive") ||
-      tokens.includes("recursive") ||
-      tokens.includes("-w") ||
-      tokens.includes("--workspace-concurrency");
+      tokens.includes("recursive");
     const hasFilter = tokens.some((t) => t === "--filter" || t.startsWith("--filter="));
     if (recursive && !hasFilter) {
       return { tool: "pnpm-recursive", script: trimmed, args: tokens.slice(1) };
@@ -209,13 +209,27 @@ export function eslintPathsFromChanged(changedPaths: string[]): string[] {
   return [...new Set(out)];
 }
 
-/** Package directory filters (`./packages/foo`) from changed paths. */
+/**
+ * Package directory filters (`./packages/foo`, `./packages/@scope/ui`) from changed paths.
+ * Scoped npm dirs (`@scope/pkg`) keep two segments under packages|apps|services.
+ */
 export function packageFiltersFromChanged(changedPaths: string[]): string[] {
   const filters = new Set<string>();
   for (const file of changedPaths) {
     const p = normalizeCiPath(file);
-    const m = p.match(/^(packages|apps|services)\/([^/]+)\//);
-    if (m) filters.add(`./${m[1]}/${m[2]}`);
+    const parts = p.split("/");
+    if (parts.length < 3) continue;
+    const root = parts[0];
+    if (root !== "packages" && root !== "apps" && root !== "services") continue;
+    const name = parts[1];
+    if (name.startsWith("@")) {
+      // packages/@scope/ui/src/x.ts → ./packages/@scope/ui
+      if (parts.length < 4 || !parts[2]) continue;
+      filters.add(`./${root}/${name}/${parts[2]}`);
+    } else {
+      // packages/foo/src/x.ts → ./packages/foo
+      filters.add(`./${root}/${name}`);
+    }
   }
   return [...filters];
 }
@@ -243,10 +257,6 @@ function flagsOnly(args: string[]): string[] {
   return flags;
 }
 
-function prettierFlagsOnly(args: string[]): string[] {
-  return args.filter((t) => t.startsWith("-") || t.startsWith("--"));
-}
-
 /**
  * Map a smart-CI check name to the shell command that will run.
  * Package-scoped names stay on {@link ciCheckCommand}.
@@ -260,6 +270,16 @@ export function resolveCiCheckCommand(options: ResolveCiCheckCommandOptions): Re
   // RAD-105 package scopes — never rewrite.
   if (packageFromScopedCheck(check)) {
     return { command: fallback, hostScoped: false };
+  }
+
+  // RAD-117 out of scope: format:check still runs checkFormatFromBlobs over all
+  // tracked files. Keep `pnpm format:check` so the progress card matches.
+  if (check === "format:check") {
+    return {
+      command: fallback,
+      hostScoped: false,
+      reason: "format:check uses blob path (RAD-117) → no host rewrite",
+    };
   }
 
   const closed =
@@ -285,6 +305,15 @@ export function resolveCiCheckCommand(options: ResolveCiCheckCommandOptions): Re
     };
   }
 
+  // Do not rewrite bare prettier scripts (same honesty as format:check / RAD-117).
+  if (wide.tool === "prettier") {
+    return {
+      command: fallback,
+      hostScoped: false,
+      reason: "prettier host rewrite deferred (RAD-117) → pnpm check",
+    };
+  }
+
   const paths = (options.changedPaths ?? []).map(normalizeCiPath);
 
   if (wide.tool === "eslint") {
@@ -302,30 +331,6 @@ export function resolveCiCheckCommand(options: ResolveCiCheckCommandOptions): Re
       command,
       hostScoped: true,
       reason: `host-repo eslint scoped to ${lintPaths.length} changed path(s)`,
-    };
-  }
-
-  if (wide.tool === "prettier") {
-    const prettyPaths = paths.filter((p) => {
-      const kind = classifyCiPath(p);
-      return kind === "source" || kind === "test" || kind === "docs" || kind === "style";
-    });
-    if (prettyPaths.length === 0) {
-      return {
-        command: fallback,
-        hostScoped: false,
-        reason: "no prettier-able changed paths → full script",
-      };
-    }
-    const flags = prettierFlagsOnly(wide.args);
-    // Preserve --check / --write from the script when present.
-    const hasMode = flags.some((f) => f === "--check" || f === "--write" || f === "-c" || f === "-w");
-    const mode: string[] = hasMode ? [] : ["--check"];
-    const command = joinCommand(["pnpm", "exec", "prettier", ...flags, ...mode, ...prettyPaths]);
-    return {
-      command,
-      hostScoped: true,
-      reason: `host-repo prettier scoped to ${prettyPaths.length} changed path(s)`,
     };
   }
 

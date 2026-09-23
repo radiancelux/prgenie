@@ -29,6 +29,13 @@ describe("detectMonorepoWideScript", () => {
     assert.equal(detectMonorepoWideScript("turbo run lint --filter=./apps/web"), null);
     assert.equal(detectMonorepoWideScript("pnpm -r lint")?.tool, "pnpm-recursive");
   });
+
+  it("does not treat pnpm -w / --workspace-root / --workspace-concurrency as recursive", () => {
+    assert.equal(detectMonorepoWideScript("pnpm -w lint"), null);
+    assert.equal(detectMonorepoWideScript("pnpm run -w build"), null);
+    assert.equal(detectMonorepoWideScript("pnpm --workspace-root lint"), null);
+    assert.equal(detectMonorepoWideScript("pnpm --workspace-concurrency=4 lint"), null);
+  });
 });
 
 describe("hostScopeFailClosedReason", () => {
@@ -109,12 +116,42 @@ describe("resolveCiCheckCommand host-repo fixtures", () => {
     assert.match(resolved.command, /--filter \.\/packages\/ui/);
   });
 
-  it("maps eslint path helpers", () => {
+  it("fail-closes pnpm -w lint to pnpm lint (not --filter rewrite)", () => {
+    const resolved = resolveCiCheckCommand({
+      check: "lint",
+      cwd: "/tmp/host",
+      changedPaths: ["apps/mobile/src/badge.ts"],
+      scripts: { lint: "pnpm -w lint" },
+    });
+    assert.equal(resolved.hostScoped, false);
+    assert.equal(resolved.command, "pnpm lint");
+    assert.doesNotMatch(resolved.command, /--filter/);
+  });
+
+  it("keeps format:check as pnpm format:check (RAD-117; matches blob runner)", () => {
+    const resolved = resolveCiCheckCommand({
+      check: "format:check",
+      cwd: "/tmp/host",
+      changedPaths: ["apps/mobile/src/badge.ts"],
+      scripts: hostScripts,
+    });
+    assert.equal(resolved.hostScoped, false);
+    assert.equal(resolved.command, "pnpm format:check");
+    assert.match(resolved.reason ?? "", /RAD-117|blob/);
+  });
+
+  it("maps eslint path helpers and scoped package filters", () => {
     assert.deepEqual(eslintPathsFromChanged(["apps/a.ts", "README.md", "apps/a.png"]), [
       "apps/a.ts",
     ]);
     assert.deepEqual(packageFiltersFromChanged(["apps/mobile/src/x.ts", "docs/a.md"]), [
       "./apps/mobile",
+    ]);
+    assert.deepEqual(packageFiltersFromChanged(["packages/@scope/pkg/src/x.ts"]), [
+      "./packages/@scope/pkg",
+    ]);
+    assert.deepEqual(packageFiltersFromChanged(["packages/@scope/ui/src/button.ts"]), [
+      "./packages/@scope/ui",
     ]);
   });
 });
