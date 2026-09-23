@@ -123,3 +123,23 @@ Panel + lane + agent-chat progress card list **which** checks were selected and 
 ## CI-resume (locked)
 
 After a blocked export gate: steward `resume_implementor` → implementor fixes and re-runs failing checks → steward `evaluate_export_gate` **again**. Do **not** auto-spawn a reviewer because CI failed. Reviewer still owns product findings (`changes_requested`). Ready-for-human / Push language only on `handoff_human`.
+
+## Red CI retry (RAD-121)
+
+After the **first** `run_ci` / `prgenie ci` plan is selected, print `{ checks, reason }`. If a check goes red:
+
+1. Open the failing log (progress card / `.git/agent-console/ci-logs/<check>.log`).
+2. Fix the named assertion or file.
+3. Re-run **only that file** (e.g. `pnpm exec tsx --test path/to/file.test.ts`) or **that one check name** (`prgenie ci <id> --failing test:core`) once per edit.
+4. Still format the files you edited (`format:check` on the diff / Prettier on touched paths). The ban is **not** “skip format.”
+
+**Do not** relaunch the multi-check scoped plan after a known failure. **Do not** start a second overlapping `run_ci` while one is still running (kill/retry of the whole plan burned ~40 min on RAD-119 dogfood).
+
+### Wrong vs right (RAD-119 dogfood, `lp-a2478356`)
+
+|           | Action                                                                                                                                                                                                                         |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Wrong** | `test:core` fails → relaunch entire scoped plan (`format:check` + lint/typecheck/test for core+cli). That pulls every `packages/core/src/*.test.ts`; export-gate fixtures alone are ~5 min. Overlapping `run_ci` + kill/retry. |
+| **Right** | Print `{ checks, reason }` → open the log → fix the named file → run **only that test file** once → format the edited files → when green, continue (or `--failing` that one check).                                            |
+
+Local full-suite / root `pnpm test` remains banned (RAD-119).
