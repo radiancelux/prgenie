@@ -9,6 +9,20 @@ import { git } from "./git.js";
 import { createLocalPr, setLocalPrStatus, addLocalPrComment } from "./prs.js";
 import { addLearnings } from "./learnings.js";
 import type { Learning } from "./types.js";
+import type { CiCheckSelection } from "./ci-select.js";
+
+/** Test-only: force root check names so fixtures that stub package.json scripts still exercise the runner. */
+function fixtureRootSelection(checks: string[], paths: string[] = ["test.txt"]): CiCheckSelection {
+  return {
+    checks,
+    reason: ["test fixture: caller-forced root checks (not selectCiChecks)"],
+    mapping: checks.map((check) => ({ check, reason: "fixture" })),
+    uncertain: false,
+    changedPaths: paths,
+    packageScoped: false,
+    skipped: false,
+  };
+}
 
 /**
  * Create a cross-platform symlink to node_modules.
@@ -456,8 +470,9 @@ describe("shepherdStatus", () => {
       const full = await shepherdStatus(repo, pr.id, {
         skipGithubCheck: true,
         skipToolchainEnsure: true,
+        selection: fixtureRootSelection(["format:check", "lint", "typecheck", "test", "build"]),
       });
-      assert.equal(full.status, "blocked", "CLI/default path still runs full CI");
+      assert.equal(full.status, "blocked", "CLI/default path still runs CI when plan is forced");
       assert.ok(full.reasons.some((r) => r.check === "ci"));
     } finally {
       await rm(repo, { recursive: true, force: true });
@@ -532,6 +547,7 @@ describe("shepherdStatus", () => {
       const result = await shepherdStatus(repo, pr.id, {
         skipGithubCheck: true,
         skipToolchainEnsure: true,
+        selection: fixtureRootSelection(["format:check", "lint", "typecheck", "test", "build"]),
         onProgress: (event) => events.push(event),
       });
       assert.equal(result.status, "blocked");
@@ -590,6 +606,7 @@ describe("shepherdStatus", () => {
       const result = await shepherdStatus(repo, pr.id, {
         skipGithubCheck: true,
         skipToolchainEnsure: true,
+        selection: fixtureRootSelection(["format:check", "lint", "typecheck", "test", "build"]),
         onProgress: (event) => events.push(event),
       });
       assert.equal(result.status, "blocked");

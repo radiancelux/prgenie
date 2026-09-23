@@ -522,21 +522,51 @@ export async function runCiChecks(
     });
   }
 
-  // RAD-119: intentional empty plan (skip with reason) — never inflate to full suite.
+  // RAD-119: intentional empty plan (selectCiChecks skip) — never inflate to full suite.
+  // Only `skipped: true` may pass with zero checks. An empty list without that flag is a
+  // bug / lost selection — fail closed so the export gate cannot lie that CI ran green.
   if (checks.length === 0) {
     const skipReason =
       formatCiSelectionReason(selection?.reason) || "skip local CI — empty check plan";
+    if (selection?.skipped === true) {
+      onProgress?.({
+        phase: "ci",
+        state: "skip",
+        selectedChecks: [],
+        selectionReason: skipReason,
+        message: skipReason,
+        cwd,
+      });
+      return {
+        allPassed: true,
+        checks: [],
+        selection,
+        cwd,
+        toolchain,
+      };
+    }
     onProgress?.({
       phase: "ci",
-      state: "skip",
+      state: "fail",
       selectedChecks: [],
       selectionReason: skipReason,
-      message: skipReason,
+      message: "empty check plan without skipped:true — refusing silent pass",
       cwd,
     });
     return {
-      allPassed: true,
-      checks: [],
+      allPassed: false,
+      checks: [
+        {
+          name: "selection",
+          passed: false,
+          error:
+            "Empty CI check plan without selection.skipped=true — refusing to treat as green. " +
+            (skipReason ? `Reason: ${skipReason}` : ""),
+          excerpt: skipReason,
+          reason: skipReason,
+          kind: "product",
+        },
+      ],
       selection,
       cwd,
       toolchain,

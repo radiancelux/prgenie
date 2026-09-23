@@ -94,6 +94,10 @@ export async function evaluateAndStoreExportGate(
     /** Forwarded to shepherd/CI (tests): avoid process.env races under parallel node:test. */
     failFast?: boolean;
     parallel?: boolean;
+    /** Override smart-CI path list (tests). */
+    changedPaths?: string[];
+    /** Override smart-CI plan (tests). */
+    selection?: import("./ci-select.js").CiCheckSelection;
   } = {},
 ): Promise<ShepherdResult> {
   const controller = new AbortController();
@@ -176,6 +180,8 @@ export async function evaluateAndStoreExportGate(
             hardBlockCiEnv: options.hardBlockCiEnv,
             failFast: options.failFast,
             parallel: options.parallel,
+            changedPaths: options.changedPaths,
+            selection: options.selection,
           });
         } catch (err) {
           if (isAbortError(err) || controller.signal.aborted) throw abortError();
@@ -337,7 +343,19 @@ export async function validateExport(
     return { ok: true, issues: [] };
   }
 
-  // Same shepherd run the UI gate persists — never skip CI/GitHub in production.
+  // Prefer a complete stored gate for this HEAD (RAD-71 / RAD-119). Re-running
+  // selectCiChecks can intentionally skip local CI while a prior blocked plan
+  // still names the failing check — do not greenwash or drop those reasons.
+  const pr = await refreshLocalPrHead(cwd, id);
+  if (snapshotIsComplete(pr.exportGate, pr.headSha) && pr.exportGate) {
+    const fromStore = shepherdFromSnapshot(pr.exportGate);
+    if (fromStore.status === "ready") {
+      return { ok: true, issues: [] };
+    }
+    return { ok: false, issues: issuesFromShepherd(fromStore) };
+  }
+
+  // No stored gate yet — same shepherd run the UI gate persists.
   const shepherd = await evaluateAndStoreExportGate(cwd, id, {
     onProgress: options.onProgress,
     signal: options.signal,

@@ -30,6 +30,20 @@ import {
   retainExportReadyNotified,
 } from "./export-gate.js";
 import type { LocalPr } from "./types.js";
+import type { CiCheckSelection } from "./ci-select.js";
+
+/** Test-only: force root check names so fixtures that stub package.json scripts still exercise the runner. */
+function fixtureRootSelection(checks: string[], paths: string[] = ["test.txt"]): CiCheckSelection {
+  return {
+    checks,
+    reason: ["test fixture: caller-forced root checks (not selectCiChecks)"],
+    mapping: checks.map((check) => ({ check, reason: "fixture" })),
+    uncertain: false,
+    changedPaths: paths,
+    packageScoped: false,
+    skipped: false,
+  };
+}
 
 function reviewedPr(overrides: Partial<LocalPr> = {}): LocalPr {
   return {
@@ -245,6 +259,7 @@ describe("evaluateAndStoreExportGate", () => {
       await setLocalPrStatus(repo, pr.id, "reviewed");
       const shepherd = await evaluateAndStoreExportGate(repo, pr.id, {
         skipGithubCheck: true,
+        selection: fixtureRootSelection(["format:check", "lint", "typecheck", "test", "build"]),
       });
       assert.equal(shepherd.status, "blocked");
       assert.ok(shepherd.reasons.some((r) => r.check === "ci" && r.message.includes("test")));
@@ -302,11 +317,13 @@ describe("evaluateAndStoreExportGate", () => {
         evaluateAndStoreExportGate(repo, pr.id, {
           skipGithubCheck: true,
           skipToolchainEnsure: true,
+          selection: fixtureRootSelection(["format:check", "lint", "typecheck", "test", "build"]),
           onProgress: (e) => a.push(e),
         }),
         evaluateAndStoreExportGate(repo, pr.id, {
           skipGithubCheck: true,
           skipToolchainEnsure: true,
+          selection: fixtureRootSelection(["format:check", "lint", "typecheck", "test", "build"]),
           onProgress: (e) => b.push(e),
         }),
       ]);
@@ -360,6 +377,7 @@ describe("evaluateAndStoreExportGate", () => {
             skipToolchainEnsure: true,
             failFast: false,
             parallel: false,
+            selection: fixtureRootSelection(["lint"], ["code.ts"]),
             onProgress: (e) => {
               if (armedAt) return;
               // Arm only once lint is running — suite/format start is too early for this assert.
@@ -414,6 +432,7 @@ describe("evaluateAndStoreExportGate", () => {
             signal: ac.signal,
             skipGithubCheck: true,
             skipToolchainEnsure: true,
+            selection: fixtureRootSelection(["lint"], ["code.ts"]),
           }),
         (err: unknown) => isAbortError(err),
       );
