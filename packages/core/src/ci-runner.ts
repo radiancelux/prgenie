@@ -140,10 +140,7 @@ export interface CiRunnerOptions {
  * When `onlyPaths` is set (RAD-117 scoped format), only those candidates are
  * considered — never the whole tracked tree.
  */
-export async function getTrackedFiles(
-  cwd: string,
-  onlyPaths?: string[],
-): Promise<string[]> {
+export async function getTrackedFiles(cwd: string, onlyPaths?: string[]): Promise<string[]> {
   try {
     let files: string[];
     if (onlyPaths && onlyPaths.length > 0) {

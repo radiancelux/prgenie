@@ -291,7 +291,12 @@ export type {
   ShepherdResult,
   ShepherdStatus,
 } from "./shepherd.js";
-export { runCiChecks, runLoopCi, resolveFormatCheckFiles, resolvePrettierFromCwd } from "./ci-runner.js";
+export {
+  runCiChecks,
+  runLoopCi,
+  resolveFormatCheckFiles,
+  resolvePrettierFromCwd,
+} from "./ci-runner.js";
 export type { CiCheckResult, CiRunnerOptions, CiRunnerResult, LoopCiOptions } from "./ci-runner.js";
 export {
   REQUIRED_CI_BINS,

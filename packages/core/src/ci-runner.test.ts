@@ -7,7 +7,12 @@ import { createRequire } from "node:module";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { abortExportGate } from "./export-validation.js";
-import { resolvePrettierFromCwd, resolveFormatCheckFiles, runCiChecks, runLoopCi } from "./ci-runner.js";
+import {
+  resolvePrettierFromCwd,
+  resolveFormatCheckFiles,
+  runCiChecks,
+  runLoopCi,
+} from "./ci-runner.js";
 import { selectCiChecks, shouldScopeFormatCheck } from "./ci-select.js";
 import { git } from "./git.js";
 import { isAbortError } from "./progress.js";
@@ -492,10 +497,7 @@ describe("runCiChecks", () => {
       const full = await resolveFormatCheckFiles(repo, { formatScoped: false });
       assert.ok(full.files.length >= 10, `expected a wide tracked tree, got ${full.files.length}`);
 
-      await writeFile(
-        join(repo, "packages", "core", "src", "util.ts"),
-        "export const u = 2;\n",
-      );
+      await writeFile(join(repo, "packages", "core", "src", "util.ts"), "export const u = 2;\n");
       await execAsync("pnpm exec prettier --write packages/core/src/util.ts", { cwd: repo });
       await execAsync("git add packages/core/src/util.ts", { cwd: repo });
       await execAsync('git commit -m "core tweak"', { cwd: repo });

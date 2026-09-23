@@ -120,10 +120,7 @@ describe("selectCiChecks", () => {
   });
 
   it("shouldScopeFormatCheck is true for package-scoped and docs-only plans only", () => {
-    assert.equal(
-      shouldScopeFormatCheck(selectCiChecks(["packages/core/src/ci-select.ts"])),
-      true,
-    );
+    assert.equal(shouldScopeFormatCheck(selectCiChecks(["packages/core/src/ci-select.ts"])), true);
     assert.equal(shouldScopeFormatCheck(selectCiChecks(["docs/ci-checks.md"])), true);
     assert.equal(shouldScopeFormatCheck(selectCiChecks(["package.json"])), false);
     assert.equal(shouldScopeFormatCheck(selectCiChecks(["assets/logo.png"])), false);
