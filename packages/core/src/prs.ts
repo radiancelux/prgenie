@@ -920,7 +920,9 @@ export async function getLocalPrNameStatus(
   cwd: string,
   id: string,
 ): Promise<{ status: string; path: string }[]> {
-  const pr = await getLocalPr(cwd, id);
+  // Refresh headSha before diffing — stale packet SHAs (still equal to base after
+  // create, or behind new commits) yield an empty name-status and false full-suite CI.
+  const pr = await refreshLocalPrHead(cwd, id);
   const { stdout } = await git(cwd, ["diff", "--name-status", `${pr.baseSha}...${pr.headSha}`]);
   return stdout
     .split("\n")

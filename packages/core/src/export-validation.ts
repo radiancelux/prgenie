@@ -1,5 +1,5 @@
 import { acquireCiLock, requestCiAbort, watchCiAbort } from "./ci-abort.js";
-import { getLocalPr, setLocalPrExportGate } from "./prs.js";
+import { getLocalPr, refreshLocalPrHead, setLocalPrExportGate } from "./prs.js";
 import { shepherdStatus, type ShepherdResult } from "./shepherd.js";
 import {
   abortError,
@@ -7,6 +7,7 @@ import {
   onAbort,
   throwIfAborted,
   type ProgressCallback,
+  type ProgressEvent,
   type RunProgressOptions,
 } from "./progress.js";
 import type { ExportGateSnapshot } from "./types.js";
@@ -90,6 +91,9 @@ export async function evaluateAndStoreExportGate(
     skipGithubCheck?: boolean;
     skipCiCheck?: boolean;
     hardBlockCiEnv?: boolean;
+    /** Forwarded to shepherd/CI (tests): avoid process.env races under parallel node:test. */
+    failFast?: boolean;
+    parallel?: boolean;
   } = {},
 ): Promise<ShepherdResult> {
   const controller = new AbortController();
@@ -101,7 +105,10 @@ export async function evaluateAndStoreExportGate(
   const stopWatch = watchCiAbort(cwd, id, controller);
   try {
     throwIfAborted(controller.signal);
-    const pr = await getLocalPr(cwd, id);
+    // Refresh HEAD before keying the flight / storing the gate — otherwise a
+    // commit made just before shepherd leaves exportGate.headSha stale while
+    // changedPathsForCi already sees the new tip (RAD-117 CI-resume).
+    const pr = await refreshLocalPrHead(cwd, id);
     throwIfAborted(controller.signal);
     const key = gateKey(cwd, id, pr.headSha);
     const existing = inflight.get(key);
@@ -121,8 +128,11 @@ export async function evaluateAndStoreExportGate(
     }
 
     const listeners = new Set<ProgressCallback>();
+    /** Replay buffer so a concurrent joiner still sees CI starts that already fired. */
+    const recent: ProgressEvent[] = [];
     if (options.onProgress) listeners.add(options.onProgress);
     const emit: ProgressCallback = (event) => {
+      recent.push(event);
       for (const cb of listeners) cb(event);
     };
 
@@ -132,12 +142,16 @@ export async function evaluateAndStoreExportGate(
       addListener: (cb) => {
         if (!cb) return () => undefined;
         listeners.add(cb);
+        for (const event of recent) cb(event);
         return () => {
           listeners.delete(cb);
         };
       },
     };
 
+    // Claim the flight before any await in `run` so a concurrent caller joins
+    // instead of starting a second evaluation (JS can interleave at the first await).
+    inflight.set(key, flight);
     const run = (async () => {
       let lock = await acquireCiLock(cwd, id, pr.headSha, controller.signal);
       try {
@@ -160,6 +174,8 @@ export async function evaluateAndStoreExportGate(
             skipGithubCheck: options.skipGithubCheck,
             skipCiCheck: options.skipCiCheck,
             hardBlockCiEnv: options.hardBlockCiEnv,
+            failFast: options.failFast,
+            parallel: options.parallel,
           });
         } catch (err) {
           if (isAbortError(err) || controller.signal.aborted) throw abortError();
@@ -195,7 +211,6 @@ export async function evaluateAndStoreExportGate(
     })();
 
     flight.promise = run;
-    inflight.set(key, flight);
     try {
       return await run;
     } finally {

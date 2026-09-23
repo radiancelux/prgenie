@@ -105,7 +105,8 @@ function delay(ms: number): Promise<void> {
 export async function withFileLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
   const lock = `${file}.lock`;
   let lastErr: unknown;
-  for (let i = 0; i < 100; i++) {
+  // ~30s under Windows suite load: claim holders may stay inside fn() for seconds.
+  for (let i = 0; i < 300; i++) {
     try {
       const handle = await open(lock, "wx");
       try {
@@ -116,7 +117,7 @@ export async function withFileLock<T>(file: string, fn: () => Promise<T>): Promi
       }
     } catch (err) {
       lastErr = err;
-      await delay(50);
+      await delay(100);
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(`Timed out locking ${file}`);

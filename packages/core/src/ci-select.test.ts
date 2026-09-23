@@ -7,6 +7,8 @@ import {
   isPackageScopedCheck,
   packageFromCiPath,
   selectCiChecks,
+  shouldScopeFormatCheck,
+  expandFailingChecks,
 } from "./ci-select.js";
 import { ciCheckCommand } from "./progress.js";
 
@@ -116,6 +118,26 @@ describe("selectCiChecks", () => {
     assert.equal(packageFromCiPath("packages/core/src/ci-select.ts"), "core");
     assert.equal(isPackageScopedCheck("lint:core"), true);
     assert.equal(isPackageScopedCheck("test"), false);
+  });
+
+  it("shouldScopeFormatCheck is true for package-scoped and docs-only plans only", () => {
+    assert.equal(shouldScopeFormatCheck(selectCiChecks(["packages/core/src/ci-select.ts"])), true);
+    assert.equal(shouldScopeFormatCheck(selectCiChecks(["docs/ci-checks.md"])), true);
+    assert.equal(shouldScopeFormatCheck(selectCiChecks(["package.json"])), false);
+    assert.equal(shouldScopeFormatCheck(selectCiChecks(["assets/logo.png"])), false);
+    assert.equal(shouldScopeFormatCheck(selectCiChecks([])), false);
+    assert.equal(shouldScopeFormatCheck(undefined), false);
+  });
+
+  it("expandFailingChecks maps root test/lint to package scopes on confident plans", () => {
+    const core = selectCiChecks(["packages/core/src/ci-select.ts"]);
+    assert.deepEqual(expandFailingChecks(["test"], core), ["test:core"]);
+    assert.deepEqual(expandFailingChecks(["lint", "typecheck"], core), [
+      "lint:core",
+      "typecheck:core",
+    ]);
+    const full = selectCiChecks(["package.json"]);
+    assert.deepEqual(expandFailingChecks(["test"], full), ["test"]);
   });
 
   it("formats reason arrays for cards and maps scoped commands away from pnpm test", () => {

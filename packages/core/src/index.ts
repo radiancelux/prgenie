@@ -291,7 +291,12 @@ export type {
   ShepherdResult,
   ShepherdStatus,
 } from "./shepherd.js";
-export { runCiChecks, runLoopCi } from "./ci-runner.js";
+export {
+  runCiChecks,
+  runLoopCi,
+  resolveFormatCheckFiles,
+  resolvePrettierFromCwd,
+} from "./ci-runner.js";
 export type { CiCheckResult, CiRunnerOptions, CiRunnerResult, LoopCiOptions } from "./ci-runner.js";
 export {
   REQUIRED_CI_BINS,
@@ -323,6 +328,8 @@ export {
   resolveCiCwd,
   SCOPABLE_PACKAGES,
   selectCiChecks,
+  shouldScopeFormatCheck,
+  expandFailingChecks,
 } from "./ci-select.js";
 export type { CiCheckMapping, CiCheckSelection, CiPathKind, ScopablePackage } from "./ci-select.js";
 export {
@@ -330,6 +337,7 @@ export {
   eslintPathsFromChanged,
   hostScopeFailClosedReason,
   packageFiltersFromChanged,
+  prettierPathsFromChanged,
   readPackageScripts,
   resolveCiCheckCommand,
 } from "./ci-host-scope.js";

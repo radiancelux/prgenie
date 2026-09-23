@@ -7,7 +7,13 @@ import { createRequire } from "node:module";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { abortExportGate } from "./export-validation.js";
-import { resolvePrettierFromCwd, runCiChecks, runLoopCi } from "./ci-runner.js";
+import {
+  resolvePrettierFromCwd,
+  resolveFormatCheckFiles,
+  runCiChecks,
+  runLoopCi,
+} from "./ci-runner.js";
+import { selectCiChecks, shouldScopeFormatCheck } from "./ci-select.js";
 import { git } from "./git.js";
 import { isAbortError } from "./progress.js";
 import { createLocalPr } from "./prs.js";
@@ -62,7 +68,7 @@ describe("resolvePrettierFromCwd", () => {
       const requireFromPlugin = createRequire(join(fakePlugin, "mcp", "server.cjs"));
       assert.throws(() => requireFromPlugin.resolve("prettier"), /Cannot find module/);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
       await rm(fakePlugin, { recursive: true, force: true });
     }
   });
@@ -72,7 +78,8 @@ describe("runCiChecks", () => {
   it("returns all passed when all checks succeed", async () => {
     const repo = await initTestRepo();
     try {
-      const result = await runCiChecks(repo, { timeout: 5000 });
+      // Generous timeout: under parallel node:test load, spawning five shells can exceed 5s.
+      const result = await runCiChecks(repo, { timeout: 60_000, parallel: false });
 
       assert.equal(result.allPassed, true);
       assert.equal(result.checks.length, 5);
@@ -85,7 +92,7 @@ describe("runCiChecks", () => {
       assert.ok(checkNames.includes("test"));
       assert.ok(checkNames.includes("build"));
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -107,7 +114,11 @@ describe("runCiChecks", () => {
         }),
       );
 
-      const result = await runCiChecks(repo, { timeout: 5000, failFast: false, parallel: false });
+      const result = await runCiChecks(repo, {
+        timeout: 60_000,
+        failFast: false,
+        parallel: false,
+      });
 
       assert.equal(result.allPassed, false);
       const lintCheck = result.checks.find((c) => c.name === "lint");
@@ -117,9 +128,12 @@ describe("runCiChecks", () => {
 
       // Other checks should still pass when fail-fast is off
       const passedChecks = result.checks.filter((c) => c.name !== "lint");
-      assert.ok(passedChecks.every((c) => c.passed));
+      assert.ok(
+        passedChecks.every((c) => c.passed),
+        `expected non-lint checks to pass, got ${JSON.stringify(passedChecks)}`,
+      );
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -140,7 +154,11 @@ describe("runCiChecks", () => {
         }),
       );
 
-      const result = await runCiChecks(repo, { timeout: 5000, failFast: false, parallel: false });
+      const result = await runCiChecks(repo, {
+        timeout: 60_000,
+        failFast: false,
+        parallel: false,
+      });
 
       assert.equal(result.allPassed, false);
 
@@ -152,7 +170,7 @@ describe("runCiChecks", () => {
       assert.ok(failedNames.includes("typecheck"));
       assert.ok(failedNames.includes("build"));
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -179,7 +197,7 @@ describe("runCiChecks", () => {
       assert.equal(result.checks[0].name, "custom-check");
       assert.equal(result.checks[0].passed, true);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -204,7 +222,7 @@ describe("runCiChecks", () => {
       assert.equal(result.checks[0].passed, false);
       assert.ok(result.checks[0].error);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -276,7 +294,7 @@ describe("runCiChecks", () => {
       assert.ok(formatCheck);
       assert.equal(formatCheck.passed, true);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -350,7 +368,7 @@ describe("runCiChecks", () => {
         /bad\.js|Prettier format check failed/,
       );
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -437,7 +455,228 @@ describe("runCiChecks", () => {
       assert.ok(formatCheck);
       assert.equal(formatCheck.passed, true);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  // RAD-117: scoped format:check only blob-checks changed prettier paths
+  async function initFormatScopeRepo(): Promise<string> {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-rad117-"));
+    await execAsync("git init", { cwd: repo });
+    await execAsync('git config user.email "test@test.com"', { cwd: repo });
+    await execAsync('git config user.name "Test"', { cwd: repo });
+    await writeFile(join(repo, ".gitignore"), "node_modules\n");
+    await writeFile(join(repo, ".prettierignore"), ".gitignore\nnode_modules\n");
+    await writeFile(
+      join(repo, ".prettierrc.json"),
+      JSON.stringify({ semi: true, singleQuote: false, trailingComma: "all", endOfLine: "lf" }),
+    );
+    await writeFile(
+      join(repo, "package.json"),
+      JSON.stringify({
+        name: "test-repo",
+        packageManager: "pnpm@10.33.0",
+        scripts: {
+          "format:check": "exit 0",
+          lint: "exit 0",
+          typecheck: "exit 0",
+          test: "exit 0",
+          build: "exit 0",
+        },
+      }),
+    );
+    await linkNodeModules(repo, join(process.cwd(), "node_modules"));
+    // Many tracked prettier files (full-tree would check all of these).
+    await mkdir(join(repo, "packages", "core", "src"), { recursive: true });
+    await mkdir(join(repo, "packages", "cli", "src"), { recursive: true });
+    await mkdir(join(repo, "docs"), { recursive: true });
+    for (let i = 0; i < 8; i++) {
+      await writeFile(join(repo, `filler-${i}.js`), `const n${i} = ${i};\n`);
+    }
+    await writeFile(join(repo, "packages", "core", "src", "util.ts"), "export const u = 1;\n");
+    await writeFile(join(repo, "packages", "cli", "src", "cli.ts"), "export const c = 1;\n");
+    await writeFile(join(repo, "docs", "guide.md"), "# Guide\n");
+    await writeFile(join(repo, "README.md"), "# Root\n");
+    await execAsync("pnpm exec prettier --write .", { cwd: repo });
+    await execAsync("git add .", { cwd: repo });
+    await execAsync('git commit -m "init"', { cwd: repo });
+    return repo;
+  }
+
+  it("RAD-117: core-only change formats N changed files, not the whole repo", async () => {
+    const repo = await initFormatScopeRepo();
+    try {
+      const full = await resolveFormatCheckFiles(repo, { formatScoped: false });
+      assert.ok(full.files.length >= 10, `expected a wide tracked tree, got ${full.files.length}`);
+
+      await writeFile(join(repo, "packages", "core", "src", "util.ts"), "export const u = 2;\n");
+      await execAsync("pnpm exec prettier --write packages/core/src/util.ts", { cwd: repo });
+      await execAsync("git add packages/core/src/util.ts", { cwd: repo });
+      await execAsync('git commit -m "core tweak"', { cwd: repo });
+
+      const changedPaths = ["packages/core/src/util.ts"];
+      const selection = selectCiChecks(changedPaths);
+      assert.equal(selection.packageScoped, true);
+
+      const scoped = await resolveFormatCheckFiles(repo, {
+        changedPaths,
+        formatScoped: true,
+      });
+      assert.equal(scoped.formatScoped, true);
+      assert.deepEqual(scoped.files, ["packages/core/src/util.ts"]);
+      assert.ok(
+        scoped.files.length < full.files.length,
+        `scoped ${scoped.files.length} must be less than full ${full.files.length}`,
+      );
+
+      const commands: string[] = [];
+      const result = await runCiChecks(repo, {
+        checks: ["format:check"],
+        changedPaths,
+        selection,
+        skipCache: true,
+        skipToolchainEnsure: true,
+        timeout: 15000,
+        onProgress: (event) => {
+          if (event.check === "format:check" && event.command) commands.push(event.command);
+        },
+      });
+      assert.equal(result.allPassed, true);
+      const formatCheck = result.checks.find((c) => c.name === "format:check");
+      assert.ok(formatCheck?.reason?.includes("scoped 1 changed file"));
+      assert.ok(commands.some((c) => /format:check \(blobs\)/.test(c)));
+      assert.ok(commands.some((c) => /packages\/core\/src\/util\.ts/.test(c)));
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("RAD-117: docs-only formats changed markdown only", async () => {
+    const repo = await initFormatScopeRepo();
+    try {
+      await writeFile(join(repo, "docs", "guide.md"), "# Guide updated\n");
+      await execAsync("pnpm exec prettier --write docs/guide.md", { cwd: repo });
+      await execAsync("git add docs/guide.md", { cwd: repo });
+      await execAsync('git commit -m "docs"', { cwd: repo });
+
+      const changedPaths = ["docs/guide.md"];
+      const selection = selectCiChecks(changedPaths);
+      assert.deepEqual(selection.checks, ["format:check"]);
+
+      const scoped = await resolveFormatCheckFiles(repo, {
+        changedPaths,
+        formatScoped: true,
+      });
+      assert.deepEqual(scoped.files, ["docs/guide.md"]);
+
+      const result = await runCiChecks(repo, {
+        checks: ["format:check"],
+        changedPaths,
+        selection,
+        skipCache: true,
+        skipToolchainEnsure: true,
+        timeout: 15000,
+      });
+      assert.equal(result.allPassed, true);
+      assert.ok(result.checks[0]?.reason?.includes("scoped 1 changed file"));
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("RAD-117: uncertain/config keeps full tracked prettier tree", async () => {
+    const repo = await initFormatScopeRepo();
+    try {
+      const full = await resolveFormatCheckFiles(repo, { formatScoped: false });
+
+      const configPaths = ["package.json"];
+      const configSel = selectCiChecks(configPaths);
+      assert.equal(shouldScopeFormatCheck(configSel), false);
+      const configFiles = await resolveFormatCheckFiles(repo, {
+        changedPaths: configPaths,
+        formatScoped: shouldScopeFormatCheck(configSel),
+      });
+      assert.equal(configFiles.formatScoped, false);
+      assert.equal(configFiles.files.length, full.files.length);
+
+      const uncertainPaths = ["assets/logo.png"];
+      // Create the unknown path as an untracked non-prettier file so selection stays uncertain.
+      await mkdir(join(repo, "assets"), { recursive: true });
+      await writeFile(join(repo, "assets", "logo.png"), "x");
+      const uncertainSel = selectCiChecks(uncertainPaths);
+      assert.equal(uncertainSel.uncertain, true);
+      assert.equal(shouldScopeFormatCheck(uncertainSel), false);
+      const uncertainFiles = await resolveFormatCheckFiles(repo, {
+        changedPaths: uncertainPaths,
+        formatScoped: false,
+      });
+      assert.equal(uncertainFiles.files.length, full.files.length);
+
+      const result = await runCiChecks(repo, {
+        checks: ["format:check"],
+        changedPaths: configPaths,
+        selection: configSel,
+        skipCache: true,
+        skipToolchainEnsure: true,
+        timeout: 15000,
+      });
+      assert.equal(result.allPassed, true);
+      assert.ok(result.checks[0]?.reason?.includes(`full tree ${full.files.length} file`));
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("RAD-117: scoped format does not pass when ls-files fails with non-empty candidates", async () => {
+    // Non-git cwd: scoped candidates are non-empty, but argv git ls-files fails.
+    // Must not treat that as "scoped 0 files" success (fail-open greenwash).
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-rad117-lsfail-"));
+    try {
+      await mkdir(join(repo, "packages", "core", "src"), { recursive: true });
+      await writeFile(join(repo, "packages", "core", "src", "util.ts"), "export const u = 1;\n");
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            // Even a green package script must not be the only safety net — resolution must fail.
+            "format:check": "exit 0",
+          },
+        }),
+      );
+
+      const changedPaths = ["packages/core/src/util.ts"];
+      const selection = selectCiChecks(changedPaths);
+      assert.equal(selection.packageScoped, true);
+      assert.equal(shouldScopeFormatCheck(selection), true);
+
+      await assert.rejects(
+        () =>
+          resolveFormatCheckFiles(repo, {
+            changedPaths,
+            formatScoped: true,
+          }),
+        /git ls-files failed for scoped format paths/,
+      );
+
+      const result = await runCiChecks(repo, {
+        checks: ["format:check"],
+        changedPaths,
+        selection,
+        skipCache: true,
+        skipToolchainEnsure: true,
+        timeout: 10000,
+      });
+      assert.equal(result.allPassed, false, "ls-files failure must not greenwash format:check");
+      const formatCheck = result.checks.find((c) => c.name === "format:check");
+      assert.ok(formatCheck);
+      assert.equal(formatCheck.passed, false);
+      assert.match(
+        `${formatCheck.error ?? ""}\n${formatCheck.excerpt ?? ""}`,
+        /ls-files failed for scoped format paths|git ls-files/i,
+      );
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -490,7 +729,7 @@ describe("runCiChecks", () => {
         }),
       );
 
-      // Run with default timeout (300s) - should pass
+      // Run with default timeout (20m) - should pass
       const result = await runCiChecks(repo, {
         checks: ["test"],
         // Don't specify timeout, use default
@@ -565,7 +804,7 @@ describe("runCiChecks", () => {
       const result3 = await runCiChecks(repo, { checks: ["lint"], timeout: 5000 });
       assert.equal(result3.allPassed, true, "Third run should pass via cache (HEAD unchanged)");
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -618,7 +857,7 @@ describe("runCiChecks", () => {
       const result2 = await runCiChecks(repo, { checks: ["lint"], timeout: 5000 });
       assert.equal(result2.allPassed, false, "Cache should be invalid after file change");
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -709,7 +948,7 @@ describe("runCiChecks", () => {
       });
       assert.equal(result4.allPassed, false, "skipCache should force execution");
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -753,7 +992,7 @@ describe("runCiChecks", () => {
       assert.equal(result2.allPassed, true);
       // All checks should pass via cache
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -824,7 +1063,7 @@ describe("runCiChecks", () => {
       } catch {
         // Ignore cleanup errors
       }
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -864,7 +1103,7 @@ describe("runCiChecks", () => {
       assert.ok(failed?.error?.includes("pnpm test"));
       assert.ok(failed?.excerpt, "failing check should carry a short excerpt");
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -911,7 +1150,7 @@ describe("runCiChecks", () => {
       assert.match(events[0]?.message ?? "", /widget renders/);
       assert.ok(events[0]?.logPath);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -957,7 +1196,7 @@ describe("runCiChecks", () => {
       assert.match(build?.excerpt ?? "", /esbuild failed/);
       assert.ok(!(lint?.excerpt ?? "").startsWith("Command failed"));
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1054,7 +1293,7 @@ describe("runCiChecks", () => {
       assert.equal(result.checks.find((c) => c.name === "test")?.skipped, true);
       assert.equal(result.checks.find((c) => c.name === "build")?.skipped, true);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1075,7 +1314,7 @@ describe("runCiChecks", () => {
       assert.equal(result.allPassed, true);
       assert.deepEqual(new Set(started), new Set(["lint", "test"]));
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1125,7 +1364,7 @@ describe("runCiChecks", () => {
       assert.notEqual(commands[0], "pnpm lint");
       // Fixture may lack a working eslint bin; scoped command string is the contract.
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1160,7 +1399,7 @@ describe("runCiChecks", () => {
       assert.equal(commands[0], "pnpm lint");
       assert.ok(result.checks[0]?.reason?.includes("config/CI"));
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 });
@@ -1210,7 +1449,33 @@ describe("runLoopCi", () => {
       assert.ok(names.includes("test"), "failingChecks merge test");
       assert.ok(result.selection);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("maps CI-resume failingChecks test to test:core on package-scoped plans", async () => {
+    const repo = await initGitRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await mkdir(join(repo, "packages", "core", "src"), { recursive: true });
+      await writeFile(join(repo, "packages", "core", "src", "util.ts"), "export const u = 1;\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "core"]);
+      const pr = await createLocalPr(repo, { title: "Core", body: "Body", base: "main" });
+      const result = await runLoopCi(repo, pr.id, {
+        failingChecks: ["test"],
+        skipCache: true,
+        timeout: 5000,
+        skipToolchainEnsure: true,
+        // Only run the resume-mapped check; scripts exit 0 via package.json from initGitRepo.
+        checks: undefined,
+      });
+      const names = result.checks.map((c) => c.name);
+      assert.ok(names.includes("test:core"), "resume test → test:core");
+      assert.ok(!names.includes("test"), "must not force root pnpm test");
+      assert.equal(result.selection?.packageScoped, true);
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1250,7 +1515,7 @@ describe("runLoopCi", () => {
       );
       assert.ok(Date.now() - started < 8000);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1277,7 +1542,7 @@ describe("runLoopCi", () => {
       assert.equal(norm(result.cwd), norm(pr.worktreePath));
       assert.ok(seen.some((p) => norm(p) === norm(pr.worktreePath!)));
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 });

@@ -327,13 +327,10 @@ describe("evaluateAndStoreExportGate", () => {
 
   it("abortExportGate file token cancels another caller without a shared AbortSignal", async () => {
     const repo = await initRepo();
-    const prevFailFast = process.env.PRGENIE_CI_FAIL_FAST;
-    const prevParallel = process.env.PRGENIE_CI_PARALLEL;
     try {
-      // Serial + no fail-fast: format:check uses Prettier API (not package.json exit 0).
-      // On Linux a format fail would otherwise cancel lint before the abort token lands.
-      process.env.PRGENIE_CI_FAIL_FAST = "0";
-      process.env.PRGENIE_CI_PARALLEL = "0";
+      // Serial + no fail-fast via options (not process.env): parallel node:test files
+      // race env mutations. format:check uses Prettier API (not package.json exit 0);
+      // on Linux a format fail would otherwise cancel lint before the abort token lands.
       await git(repo, ["checkout", "-b", "feature"]);
       await writeFile(
         join(repo, "package.json"),
@@ -341,7 +338,8 @@ describe("evaluateAndStoreExportGate", () => {
           name: "test-repo",
           scripts: {
             "format:check": "exit 0",
-            lint: 'node -e "setTimeout(() => {}, 30000)"',
+            // Long sleep: waiting out must miss the post-arm budget below.
+            lint: 'node -e "setTimeout(() => process.exit(0), 60000)"',
             typecheck: "exit 0",
             test: "exit 0",
             build: "exit 0",
@@ -354,17 +352,19 @@ describe("evaluateAndStoreExportGate", () => {
       await git(repo, ["commit", "-m", "Add slow lint"]);
       const pr = await createLocalPr(repo, { title: "File abort", body: "Body", base: "main" });
       await setLocalPrStatus(repo, pr.id, "reviewed");
-      const started = Date.now();
-      let armed = false;
+      let armedAt = 0;
       await assert.rejects(
         () =>
           evaluateAndStoreExportGate(repo, pr.id, {
             skipGithubCheck: true,
             skipToolchainEnsure: true,
+            failFast: false,
+            parallel: false,
             onProgress: (e) => {
-              if (armed) return;
-              if (e.phase === "ci" && (e.state === "start" || e.check === "lint")) {
-                armed = true;
+              if (armedAt) return;
+              // Arm only once lint is running — suite/format start is too early for this assert.
+              if (e.phase === "ci" && e.check === "lint" && e.state === "start") {
+                armedAt = Date.now();
                 // Omit headSha so abort hits even if inflight key races.
                 abortExportGate(repo, pr.id);
               }
@@ -372,14 +372,14 @@ describe("evaluateAndStoreExportGate", () => {
           }),
         (err: unknown) => isAbortError(err),
       );
-      assert.ok(Date.now() - started < 25000, "file abort should not wait out the check");
+      assert.ok(armedAt > 0, "expected lint to start so abort could arm");
+      assert.ok(
+        Date.now() - armedAt < 20000,
+        "file abort should not wait out the lint check after arming",
+      );
       const stored = await getLocalPr(repo, pr.id);
       assert.notEqual(stored.exportGate?.status, "ready");
     } finally {
-      if (prevFailFast === undefined) delete process.env.PRGENIE_CI_FAIL_FAST;
-      else process.env.PRGENIE_CI_FAIL_FAST = prevFailFast;
-      if (prevParallel === undefined) delete process.env.PRGENIE_CI_PARALLEL;
-      else process.env.PRGENIE_CI_PARALLEL = prevParallel;
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
