@@ -175,10 +175,7 @@ export function expandFailingChecks(
   for (const raw of failingChecks) {
     const name = raw.trim();
     if (!name) continue;
-    if (
-      (selection.skipped === true || selection.checks.length === 0) &&
-      rootSuite.has(name)
-    ) {
+    if ((selection.skipped === true || selection.checks.length === 0) && rootSuite.has(name)) {
       // Never reinflate full-suite names onto a skip plan.
       continue;
     }

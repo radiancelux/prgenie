@@ -17,7 +17,7 @@ RAD-105 package scoping is unchanged. Host-repo scoping does **not** invent `lin
 
 ### Host-repo fail-closed
 
-Keep the **full `pnpm <check>` script body** for a *single* root check name (with an explicit reason) when host-scoping that check:
+Keep the **full `pnpm <check>` script body** for a _single_ root check name (with an explicit reason) when host-scoping that check:
 
 - Config / CI / toolchain files changed (`package.json`, eslint config, lockfiles, …)
 - Paths are empty or unclassifiable
@@ -46,34 +46,34 @@ Loop checkouts under `../<repo>.loops/<id>` usually have **no** `node_modules`. 
 
 Fix path when setup fails: `pnpm install` once in the **primary** checkout, then re-run `prgenie ci` / shepherd (junction recreates). Manual worktree install: `cd ../<repo>.loops/<id> && pnpm install`. See [troubleshooting.md](troubleshooting.md#worktree-ci-toolchain-windows).
 
-| Changed paths                                                                                             | Checks                                                        | `reason[]` (concept)                                              |
-| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Empty after name-status + base…HEAD + dirty tree                                                          | **Skip** (empty plan)                                         | `no changed paths` / `skip local CI` — never `uncertain → full` |
-| Unclassifiable (binaries, unknown extensions)                                                             | **Skip**                                                      | `uncertain path mapping` / `skip local CI`                        |
-| Hard config / CI (`package.json` root, lockfiles, `tsconfig*` root, eslint, `.github/**`, `scripts/**`)   | **Skip**                                                      | `config/CI scripts changed; cannot confidently scope`             |
-| Docs / markdown only (`*.md`, `*.mdc`, `docs/**`, LICENSE, README, `*.txt`)                               | `format:check` only (changed prettier paths)                  | `docs/markdown-only → format:check`; skip units                   |
-| Docs + style (`*.css`, non-config `*.json`, incidental plugin meta)                                       | `format:check` only (changed prettier paths)                  | format; skip lint/test/build                                      |
-| `packages/core/**` source/tests (+ optional docs / incidental plugin meta)                                | `format:check` (changed paths) + `lint\|typecheck\|test:core` | confident — **not** full monorepo `pnpm test`                     |
-| `packages/cli/**` / `packages/extension/**` (same pattern)                                                | `format:check` + `lint\|typecheck\|test:<pkg>`                | per-package unit + typecheck/lint                                 |
-| Package-local `packages/{core\|cli\|extension}/package.json` (or tsconfig)                                | Same as that package’s scoped row                             | package-local config → scope, not hard-config skip                |
-| Multiple scopable packages                                                                                | format + each package’s lint→typecheck→test in order          | fail-fast stops after first package suite fail                    |
-| Bundled `packages/plugin/hooks\|mcp/*.cjs` + scopable core/cli/extension                                  | Same as the scopable package row(s)                           | build artifacts ignored for scoping                               |
-| Bundled plugin `.cjs` alone                                                                               | **Skip**                                                      | `plugin build artifacts only`                                     |
-| Routine `packages/plugin/**` source (skills, hooks `.mjs`, rules) without core/cli/extension              | Thin plugin suite: `format:check` only                        | `packages/plugin/** → thin plugin suite`                          |
-| Incidental `plugin.json` / `mcp.json` / `hooks.json` under `packages/plugin/**` + scoped package          | Same as the scopable package row(s)                           | meta is not `config → full suite`                                 |
-| Host repo paths outside prgenie SCOPABLE_PACKAGES (e.g. `apps/mobile/**`)                                 | **Skip** locally (RAD-119); origin CI is the bar              | printable skip — agent may run touched-package tests              |
-| Host repo + caller-provided single root check (RAD-120)                                                   | That check’s **exec** may path-scope (`eslint <changed>`)     | host-repo path scope; config → full **script** for that check     |
+| Changed paths                                                                                           | Checks                                                        | `reason[]` (concept)                                            |
+| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------------------- |
+| Empty after name-status + base…HEAD + dirty tree                                                        | **Skip** (empty plan)                                         | `no changed paths` / `skip local CI` — never `uncertain → full` |
+| Unclassifiable (binaries, unknown extensions)                                                           | **Skip**                                                      | `uncertain path mapping` / `skip local CI`                      |
+| Hard config / CI (`package.json` root, lockfiles, `tsconfig*` root, eslint, `.github/**`, `scripts/**`) | **Skip**                                                      | `config/CI scripts changed; cannot confidently scope`           |
+| Docs / markdown only (`*.md`, `*.mdc`, `docs/**`, LICENSE, README, `*.txt`)                             | `format:check` only (changed prettier paths)                  | `docs/markdown-only → format:check`; skip units                 |
+| Docs + style (`*.css`, non-config `*.json`, incidental plugin meta)                                     | `format:check` only (changed prettier paths)                  | format; skip lint/test/build                                    |
+| `packages/core/**` source/tests (+ optional docs / incidental plugin meta)                              | `format:check` (changed paths) + `lint\|typecheck\|test:core` | confident — **not** full monorepo `pnpm test`                   |
+| `packages/cli/**` / `packages/extension/**` (same pattern)                                              | `format:check` + `lint\|typecheck\|test:<pkg>`                | per-package unit + typecheck/lint                               |
+| Package-local `packages/{core\|cli\|extension}/package.json` (or tsconfig)                              | Same as that package’s scoped row                             | package-local config → scope, not hard-config skip              |
+| Multiple scopable packages                                                                              | format + each package’s lint→typecheck→test in order          | fail-fast stops after first package suite fail                  |
+| Bundled `packages/plugin/hooks\|mcp/*.cjs` + scopable core/cli/extension                                | Same as the scopable package row(s)                           | build artifacts ignored for scoping                             |
+| Bundled plugin `.cjs` alone                                                                             | **Skip**                                                      | `plugin build artifacts only`                                   |
+| Routine `packages/plugin/**` source (skills, hooks `.mjs`, rules) without core/cli/extension            | Thin plugin suite: `format:check` only                        | `packages/plugin/** → thin plugin suite`                        |
+| Incidental `plugin.json` / `mcp.json` / `hooks.json` under `packages/plugin/**` + scoped package        | Same as the scopable package row(s)                           | meta is not `config → full suite`                               |
+| Host repo paths outside prgenie SCOPABLE_PACKAGES (e.g. `apps/mobile/**`)                               | **Skip** locally (RAD-119); origin CI is the bar              | printable skip — agent may run touched-package tests            |
+| Host repo + caller-provided single root check (RAD-120)                                                 | That check’s **exec** may path-scope (`eslint <changed>`)     | host-repo path scope; config → full **script** for that check   |
 
 ### Audited dogfood cases (RAD-119) — former `uncertain → full suite` / `config → full suite`
 
-| Dogfood trigger                                                                 | Old outcome              | New outcome                                      |
-| ------------------------------------------------------------------------------- | ------------------------ | ------------------------------------------------ |
-| Empty / incomplete path discovery mid-loop                                      | `uncertain → full suite` | Prefer name-status + `base…HEAD`; else **skip**  |
-| Only generated `packages/plugin/hooks\|mcp/*.cjs`                               | full suite               | **skip** (`plugin build artifacts only`)         |
-| Plugin skills / hooks `.mjs` / rules without core/cli/extension                 | full suite               | thin plugin `format:check`                       |
-| `plugin.json` / `mcp.json` / `hooks.json` beside a core/cli/extension edit      | `config → full suite`    | ignore meta; keep package-scoped plan            |
-| Root `package.json` / `.github` / eslint config on a product loop               | `config → full suite`    | **skip** (origin is the bar)                     |
-| `packages/core/package.json` (+ core source)                                    | full suite               | scoped `*:core`                                  |
+| Dogfood trigger                                                            | Old outcome              | New outcome                                     |
+| -------------------------------------------------------------------------- | ------------------------ | ----------------------------------------------- |
+| Empty / incomplete path discovery mid-loop                                 | `uncertain → full suite` | Prefer name-status + `base…HEAD`; else **skip** |
+| Only generated `packages/plugin/hooks\|mcp/*.cjs`                          | full suite               | **skip** (`plugin build artifacts only`)        |
+| Plugin skills / hooks `.mjs` / rules without core/cli/extension            | full suite               | thin plugin `format:check`                      |
+| `plugin.json` / `mcp.json` / `hooks.json` beside a core/cli/extension edit | `config → full suite`    | ignore meta; keep package-scoped plan           |
+| Root `package.json` / `.github` / eslint config on a product loop          | `config → full suite`    | **skip** (origin is the bar)                    |
+| `packages/core/package.json` (+ core source)                               | full suite               | scoped `*:core`                                 |
 
 Bundled MCP/hooks `.cjs` outputs (`isPluginBuildArtifact`) are skipped when collecting package scopes so a rebuild beside `packages/core|cli|extension` does not force a skip or thin suite by itself. Alone, mapping skips with an explicit reason.
 
