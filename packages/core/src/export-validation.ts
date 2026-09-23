@@ -1,4 +1,6 @@
 import { acquireCiLock, requestCiAbort, watchCiAbort } from "./ci-abort.js";
+import { exportGateSnapshotIsAdoptable, pendingExportGate } from "./export-gate.js";
+import { looksLikeStaleFullSuitePlan } from "./ci-select-worktree.js";
 import { getLocalPr, refreshLocalPrHead, setLocalPrExportGate } from "./prs.js";
 import { shepherdStatus, type ShepherdResult } from "./shepherd.js";
 import {
@@ -43,16 +45,12 @@ function requestAbortQuiet(cwd: string, id: string): void {
   }
 }
 
-function snapshotIsComplete(
+function snapshotIsAdoptable(
   snap: ExportGateSnapshot | null | undefined,
   headSha: string,
-): snap is ExportGateSnapshot {
-  return Boolean(
-    snap &&
-    snap.headSha === headSha &&
-    snap.evaluatedAt &&
-    (snap.status === "ready" || snap.status === "blocked"),
-  );
+): boolean {
+  // RAD-123: never peer-replay / validate-from-store a stale root full-suite plan.
+  return exportGateSnapshotIsAdoptable(snap, headSha);
 }
 
 function shepherdFromSnapshot(snap: ExportGateSnapshot): ShepherdResult {
@@ -162,8 +160,28 @@ export async function evaluateAndStoreExportGate(
         while (lock.peerDone) {
           throwIfAborted(controller.signal);
           const latest = await getLocalPr(cwd, id);
-          if (snapshotIsComplete(latest.exportGate, pr.headSha)) {
-            return shepherdFromSnapshot(latest.exportGate);
+          const peerSnap = latest.exportGate;
+          if (peerSnap && snapshotIsAdoptable(peerSnap, pr.headSha)) {
+            return shepherdFromSnapshot(peerSnap);
+          }
+          // Peer wrote a stale full-suite plan (or incomplete gate) — invalidate and re-run (RAD-123).
+          const peerPlan = peerSnap?.ciPlan ?? null;
+          if (
+            peerSnap != null &&
+            peerSnap.headSha === pr.headSha &&
+            peerPlan != null &&
+            looksLikeStaleFullSuitePlan({
+              checks: peerPlan.checks,
+              reason: peerPlan.reason,
+            })
+          ) {
+            emit({
+              phase: "ci",
+              state: "fail",
+              message:
+                "RAD-123: refusing peer snapshot with stale full-suite CI plan — re-running with worktree selectCiChecks",
+            });
+            await setLocalPrExportGate(cwd, id, pendingExportGate(pr.headSha));
           }
           lock.release();
           lock = await acquireCiLock(cwd, id, pr.headSha, controller.signal);
@@ -193,6 +211,24 @@ export async function evaluateAndStoreExportGate(
                 message: `Failed to check shepherd status: ${err instanceof Error ? err.message : String(err)}`,
               },
             ],
+          };
+        }
+        // Never persist a stale root full-suite plan for peer replay (RAD-123).
+        if (result.ciPlan && looksLikeStaleFullSuitePlan(result.ciPlan) && !options.selection) {
+          result = {
+            status: "blocked",
+            reasons: [
+              {
+                check: "ci",
+                message:
+                  `Refusing stale full-suite CI plan (RAD-123): checks=${JSON.stringify(result.ciPlan.checks)} ` +
+                  `reason=${JSON.stringify(result.ciPlan.reason)}. Export gate must use worktree selectCiChecks ` +
+                  `(scoped core/cli — never root pnpm test). Rebuild/relink the plugin from the loop worktree.`,
+              },
+            ],
+            ciPlan: undefined,
+            ciChecks: undefined,
+            ciCwd: result.ciCwd,
           };
         }
         await setLocalPrExportGate(cwd, id, {
@@ -346,8 +382,9 @@ export async function validateExport(
   // Prefer a complete stored gate for this HEAD (RAD-71 / RAD-119). Re-running
   // selectCiChecks can intentionally skip local CI while a prior blocked plan
   // still names the failing check — do not greenwash or drop those reasons.
+  // RAD-123: never adopt a stale full-suite snapshot (forces re-evaluate).
   const pr = await refreshLocalPrHead(cwd, id);
-  if (snapshotIsComplete(pr.exportGate, pr.headSha) && pr.exportGate) {
+  if (pr.exportGate && snapshotIsAdoptable(pr.exportGate, pr.headSha)) {
     const fromStore = shepherdFromSnapshot(pr.exportGate);
     if (fromStore.status === "ready") {
       return { ok: true, issues: [] };

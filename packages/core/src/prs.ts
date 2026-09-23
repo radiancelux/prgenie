@@ -81,8 +81,12 @@ async function withPrLock(
   return withFileLock(file, async () => {
     const pr = await readPrFile(file);
     await fn(pr);
+    // Persist live worktree overlay so packet worktreePath / ciCwd are not null on disk (RAD-123).
+    if (resolved.worktreePath) {
+      pr.worktreePath = resolved.worktreePath;
+    }
     await writePr(cwd, pr);
-    pr.worktreePath = resolved.worktreePath;
+    pr.worktreePath = resolved.worktreePath ?? pr.worktreePath;
     return pr;
   });
 }

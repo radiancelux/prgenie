@@ -1,3 +1,4 @@
+import { looksLikeStaleFullSuitePlan } from "./ci-select-worktree.js";
 import type { ShepherdResult } from "./shepherd.js";
 import type {
   ExportGateCiCheck,
@@ -166,6 +167,37 @@ export function exportGateForHead(
   return gate;
 }
 
+/**
+ * True when a stored export-gate CI plan is the pre-RAD-119 / stale-plugin root
+ * suite (root `test`/`build` or classic reason). Peer replay must not reuse it (RAD-123).
+ */
+export function exportGateHasStaleFullSuiteCiPlan(
+  gate: ExportGateSnapshot | null | undefined,
+): boolean {
+  if (!gate?.ciPlan) return false;
+  return looksLikeStaleFullSuitePlan({
+    checks: gate.ciPlan.checks,
+    reason: gate.ciPlan.reason,
+  });
+}
+
+/**
+ * Complete ready/blocked snapshot for this HEAD that is safe to adopt (not a
+ * stale full-suite dogfood plan).
+ */
+export function exportGateSnapshotIsAdoptable(
+  snap: ExportGateSnapshot | null | undefined,
+  headSha: string,
+): boolean {
+  return Boolean(
+    snap &&
+    snap.headSha === headSha &&
+    snap.evaluatedAt &&
+    (snap.status === "ready" || snap.status === "blocked") &&
+    !exportGateHasStaleFullSuiteCiPlan(snap),
+  );
+}
+
 export function needsExportGateEvaluation(pr: {
   status: string;
   headSha: string;
@@ -173,7 +205,10 @@ export function needsExportGateEvaluation(pr: {
 }): boolean {
   if (pr.status !== "reviewed") return false;
   const gate = exportGateForHead(pr);
-  return !gate || gate.status === "pending";
+  if (!gate || gate.status === "pending") return true;
+  // Stale full-suite snapshot must be re-run with worktree selectCiChecks (RAD-123).
+  if (exportGateHasStaleFullSuiteCiPlan(gate)) return true;
+  return false;
 }
 
 export function humanExportState(

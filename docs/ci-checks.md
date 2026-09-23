@@ -38,11 +38,12 @@ RAD-112 fixed **cwd**. Selection still used to come from the **in-memory / insta
 
 `run_ci`, shepherd, and the export gate now call `resolveCiSelection`:
 
-1. When the loop worktree has `packages/core/src/ci-select.ts`, **always** evaluate `selectCiChecks` from that **worktree source** (via `tsx` `tsImport`, with a CLI fallback) — not the in-memory install.
+1. When the loop worktree has `packages/core/src/ci-select.ts`, **always** evaluate `selectCiChecks` from that **worktree source** (via `tsx` `tsImport`, with a CLI fallback) — not the in-memory install. Persist `ciCwd` = the loop worktree and keep `worktreePath` on the packet.
 2. Compare `{ checks, reason, skipped, uncertain, packageScoped }` to the installed plugin. On divergence: **warn loudly** on stderr and **use the worktree plan** (refuse the stale installed plan). Classic stale reasons like `core source/test changed — format, lint, typecheck, test, build` / root `test`+`build` are treated as a full-suite plan and **refused** if the worktree module cannot load.
 3. If the worktree module is missing/unloadable and the installed plan looks like that full suite → **throw** (do not silently run root `pnpm test`).
+4. **Peer / stored-gate replay:** a ready/blocked snapshot for the same HEAD that still carries that stale full-suite `ciPlan` is **not adoptable**. `evaluateAndStoreExportGate` invalidates it and re-runs with worktree selection; `needsExportGateEvaluation` stays true until a non-stale plan is stored. Shepherd/`run_ci` also refuse to execute a resolved stale plan (except explicit test fixtures that pass `selection`).
 
-A loop that only changes CI selection (or any product loop with a worktree) must not select root `pnpm test` via a stale plugin. After changing selection code, **rebuild + `pnpm link-plugin` from the loop worktree** so the Cursor MCP (`~/.cursor/plugins/local/prgenie/mcp/server.cjs`) actually runs `resolveCiSelection` — editing worktree TS alone does not update the running gate until relink (or Cursor reloads the MCP).
+A loop that only changes CI selection (or any product loop with a worktree) must not select root `pnpm test` via a stale plugin **or** via replaying a peer’s old gate. After changing selection code, **rebuild + `pnpm link-plugin` from the loop worktree** so the Cursor MCP (`~/.cursor/plugins/local/prgenie/mcp/server.cjs`) actually runs `resolveCiSelection`.
 
 Printable `{ checks, reason }` from the gate must match what unit tests of the worktree selector print for the same paths.
 

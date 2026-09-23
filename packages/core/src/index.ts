@@ -226,6 +226,8 @@ export type {
 export {
   displayShepherdStatus,
   exportGateForHead,
+  exportGateHasStaleFullSuiteCiPlan,
+  exportGateSnapshotIsAdoptable,
   exportReadyEnterKey,
   formatExportBlockLabel,
   HUMAN_EXPORT_COMPOSER_HINT,

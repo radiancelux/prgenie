@@ -20,6 +20,8 @@ import {
 import { isAbortError, type ProgressEvent } from "./progress.js";
 import {
   displayShepherdStatus,
+  exportGateHasStaleFullSuiteCiPlan,
+  exportGateSnapshotIsAdoptable,
   exportReadyEnterKey,
   formatExportBlockLabel,
   HUMAN_EXPORT_HINT,
@@ -154,6 +156,26 @@ describe("humanExportState", () => {
     assert.equal(ui.pillText, "blocked");
     assert.match(ui.hint, /test/);
     assert.equal(needsExportGateEvaluation(pr), false);
+  });
+
+  it("forces re-evaluation when stored gate has a stale full-suite CI plan (RAD-123)", () => {
+    const pr = reviewedPr({
+      exportGate: {
+        status: "blocked",
+        reasons: [{ check: "ci", message: "CI check failed: test — pnpm test" }],
+        headSha: "abc123",
+        evaluatedAt: "2026-01-01T00:00:00.000Z",
+        ciPlan: {
+          checks: ["format:check", "lint", "typecheck", "test", "build"],
+          reason: ["core source/test changed — format, lint, typecheck, test, build"],
+          uncertain: false,
+        },
+        ciCwd: null,
+      },
+    });
+    assert.equal(exportGateHasStaleFullSuiteCiPlan(pr.exportGate), true);
+    assert.equal(exportGateSnapshotIsAdoptable(pr.exportGate, "abc123"), false);
+    assert.equal(needsExportGateEvaluation(pr), true);
   });
 
   it("does not treat draft/ready as human-exportable", () => {

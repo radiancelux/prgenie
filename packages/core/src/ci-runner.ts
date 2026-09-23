@@ -18,7 +18,7 @@ import {
   expandFailingChecks,
   type CiCheckSelection,
 } from "./ci-select.js";
-import { resolveCiSelection } from "./ci-select-worktree.js";
+import { resolveCiSelection, looksLikeStaleFullSuitePlan } from "./ci-select-worktree.js";
 import {
   hostScopeFailClosedReason,
   prettierPathsFromChanged,
@@ -696,8 +696,15 @@ export async function runLoopCi(
         await resolveCiSelection({
           changedPaths: paths,
           worktreePath: pr.worktreePath ?? ciCwd,
+          primaryPath: cwd,
         })
       ).selection;
+    if (!options.selection && looksLikeStaleFullSuitePlan(selection)) {
+      throw new Error(
+        `Refusing stale full-suite CI plan (RAD-123): checks=${JSON.stringify(selection.checks)} ` +
+          `reason=${JSON.stringify(selection.reason)}. run_ci must use worktree selectCiChecks — never root pnpm test.`,
+      );
+    }
     const requestedFailing = (options.failingChecks ?? []).map((n) => n.trim()).filter(Boolean);
     const extra = expandFailingChecks(requestedFailing, selection);
     let checks = options.checks ?? [...new Set([...selection.checks, ...extra])];

@@ -311,21 +311,40 @@ function withWorktreeProvenance(selection: CiCheckSelection, diverged: boolean):
 }
 
 /**
- * True when a plan looks like the pre-RAD-119 / stale-plugin root suite
- * (`format:check`…`build` including root `test`) that dogfood must never run locally.
+ * True when a plan looks like the pre-RAD-119 / stale-plugin root suite that
+ * dogfood must never run or peer-replay locally.
+ *
+ * Matches the classic reason string and/or exact `DEFAULT_CI_CHECKS` without a
+ * modern scoped/skip/fixture stamp. Does **not** flag caller-forced test
+ * fixtures that use root check names with an explicit fixture reason.
  */
-export function looksLikeStaleFullSuitePlan(selection: CiCheckSelection): boolean {
+export function looksLikeStaleFullSuitePlan(
+  selection: Pick<CiCheckSelection, "checks" | "reason"> | { checks?: string[]; reason?: string[] },
+): boolean {
   const checks = selection.checks ?? [];
-  if (checks.includes("test") || checks.includes("build")) return true;
+  const reasons = selection.reason ?? [];
   if (
-    checks.length === DEFAULT_CI_CHECKS.length &&
-    DEFAULT_CI_CHECKS.every((c, i) => checks[i] === c)
+    reasons.some((r) =>
+      /source\/test changed — format,\s*lint,\s*typecheck,\s*test,\s*build/i.test(r),
+    )
   ) {
     return true;
   }
-  return (selection.reason ?? []).some((r) =>
-    /source\/test changed — format,\s*lint,\s*typecheck,\s*test,\s*build/i.test(r),
-  );
+  const isDefaultSuite =
+    checks.length === DEFAULT_CI_CHECKS.length &&
+    DEFAULT_CI_CHECKS.every((c, i) => checks[i] === c);
+  if (!isDefaultSuite) return false;
+  // Exact default suite, but stamped as fixture / RAD-119 skip / worktree — not dogfood stale.
+  if (
+    reasons.some((r) =>
+      /fixture|RAD-123|worktree ci-select|per-package|confident mapping|skip local CI|caller-forced/i.test(
+        r,
+      ),
+    )
+  ) {
+    return false;
+  }
+  return true;
 }
 
 /**
