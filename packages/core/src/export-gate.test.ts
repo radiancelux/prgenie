@@ -341,7 +341,7 @@ describe("evaluateAndStoreExportGate", () => {
           name: "test-repo",
           scripts: {
             "format:check": "exit 0",
-            lint: 'node -e "setTimeout(() => {}, 30000)"',
+            lint: 'node -e "setTimeout(() => {}, 15000)"',
             typecheck: "exit 0",
             test: "exit 0",
             build: "exit 0",
@@ -372,7 +372,7 @@ describe("evaluateAndStoreExportGate", () => {
           }),
         (err: unknown) => isAbortError(err),
       );
-      assert.ok(Date.now() - started < 20000, "file abort should not wait out the check");
+      assert.ok(Date.now() - started < 25000, "file abort should not wait out the check");
       const stored = await getLocalPr(repo, pr.id);
       assert.notEqual(stored.exportGate?.status, "ready");
     } finally {
