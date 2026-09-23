@@ -90,6 +90,9 @@ export async function evaluateAndStoreExportGate(
     skipGithubCheck?: boolean;
     skipCiCheck?: boolean;
     hardBlockCiEnv?: boolean;
+    /** Forwarded to shepherd/CI (tests): avoid process.env races under parallel node:test. */
+    failFast?: boolean;
+    parallel?: boolean;
   } = {},
 ): Promise<ShepherdResult> {
   const controller = new AbortController();
@@ -160,6 +163,8 @@ export async function evaluateAndStoreExportGate(
             skipGithubCheck: options.skipGithubCheck,
             skipCiCheck: options.skipCiCheck,
             hardBlockCiEnv: options.hardBlockCiEnv,
+            failFast: options.failFast,
+            parallel: options.parallel,
           });
         } catch (err) {
           if (isAbortError(err) || controller.signal.aborted) throw abortError();

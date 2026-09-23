@@ -341,6 +341,7 @@ async function runOneCheck(
   if (!skipCache) {
     const cached = await getCachedResult(cwd, check);
     if (cached) {
+      throwIfAborted(signal);
       onProgress?.({ phase: "ci", check, state: "cached", command: progressCommand, elapsedMs: 0 });
       return { name: check, passed: true, elapsedMs: 0, reason: reason || options.reason };
     }
