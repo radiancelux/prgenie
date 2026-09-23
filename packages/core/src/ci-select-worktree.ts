@@ -220,13 +220,25 @@ main().catch((e) => { console.error(e); process.exit(1); });
   }
 }
 
+export type LoadWorktreeSelectOptions = {
+  /** Primary checkout override for resolving `tsx` (tests / plugin cwd). */
+  primaryPath?: string | null;
+  /**
+   * Injectable for tests: when set, used instead of `loadTsxApi().tsImport`.
+   * Throw (e.g. "The service is no longer running") to exercise CLI fallback.
+   */
+  tsImport?: (specifier: string, parent: string) => Promise<Record<string, unknown>>;
+};
+
 /**
  * Load `selectCiChecks` from the loop worktree source (not the installed plugin).
- * Prefers in-process `tsx` `tsImport`; falls back to a one-shot `tsx` CLI eval.
+ * Prefers in-process `tsx` `tsImport`; falls back to a one-shot `tsx` CLI eval
+ * when the API is missing **or** when `tsImport` throws (dead tsx service).
+ * Never caches a failed in-process import.
  */
 export async function loadWorktreeSelectCiChecks(
   worktreePath: string,
-  options: { primaryPath?: string | null } = {},
+  options: LoadWorktreeSelectOptions = {},
 ): Promise<CiSelectFn | null> {
   const modulePath = worktreeCiSelectModulePath(worktreePath);
   if (!existsSync(modulePath)) return null;
@@ -242,24 +254,38 @@ export async function loadWorktreeSelectCiChecks(
   const cached = worktreeSelectCache.get(cacheKey);
   if (cached && cached.mtimeMs === mtimeMs) return cached.select;
 
-  const api = await loadTsxApi(worktreePath, options.primaryPath);
-  if (api) {
-    const parent = pathToFileURL(path.join(worktreePath, "package.json")).href;
-    const mod = await api.tsImport(pathToFileURL(modulePath).href, parent);
-    const select = mod.selectCiChecks;
-    if (typeof select !== "function") {
-      throw new Error(
-        `Worktree ci-select at ${modulePath} did not export selectCiChecks (keys: ${Object.keys(mod).join(", ")})`,
+  let tsImportFn = options.tsImport;
+  if (!tsImportFn) {
+    const api = await loadTsxApi(worktreePath, options.primaryPath);
+    if (api) tsImportFn = api.tsImport;
+  }
+
+  if (tsImportFn) {
+    try {
+      const parent = pathToFileURL(path.join(worktreePath, "package.json")).href;
+      const mod = await tsImportFn(pathToFileURL(modulePath).href, parent);
+      const select = mod.selectCiChecks;
+      if (typeof select !== "function") {
+        throw new Error(
+          `Worktree ci-select at ${modulePath} did not export selectCiChecks (keys: ${Object.keys(mod).join(", ")})`,
+        );
+      }
+      const rawSelect = select as (
+        changedPaths: string[],
+        options?: SelectCiChecksOptions,
+      ) => CiCheckSelection;
+      const fn: CiSelectFn = (changedPaths, selectOptions) =>
+        rawSelect(changedPaths, { cwd: worktreePath, ...selectOptions });
+      worktreeSelectCache.set(cacheKey, { mtimeMs, select: fn });
+      return fn;
+    } catch (err) {
+      // Dead / crashed tsx service must not refuse the gate — fall through to CLI.
+      // Do not cache the failure (mtime cache only stores successful selects).
+      const detail = err instanceof Error ? err.message : String(err);
+      warnLoud(
+        `RAD-123: in-process tsImport failed (${detail}); falling back to tsx CLI for worktree ci-select`,
       );
     }
-    const rawSelect = select as (
-      changedPaths: string[],
-      options?: SelectCiChecksOptions,
-    ) => CiCheckSelection;
-    const fn: CiSelectFn = (changedPaths, options) =>
-      rawSelect(changedPaths, { cwd: worktreePath, ...options });
-    worktreeSelectCache.set(cacheKey, { mtimeMs, select: fn });
-    return fn;
   }
 
   const roots = await resolveTsxSearchRoots(worktreePath, options.primaryPath);

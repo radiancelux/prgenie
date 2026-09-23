@@ -248,6 +248,77 @@ describe("ci-select-worktree (RAD-123)", () => {
     );
   });
 
+  it("falls back to tsx CLI when in-process tsImport throws (dead service)", async () => {
+    clearWorktreeCiSelectCache();
+    const wt = await mkdtemp(path.join(tmpdir(), "prgenie-rad123-tsx-dead-"));
+    try {
+      await writeFakeWorktreeSelect(
+        wt,
+        `export function selectCiChecks(changedPaths: string[]) {
+  return {
+    checks: ["format:check", "lint:core", "typecheck:core", "test:core"],
+    reason: [
+      "packages/core/** → per-package format + lint + typecheck + unit tests",
+      "confident mapping — not full monorepo pnpm test",
+      "worktree stub after dead tsImport",
+    ],
+    mapping: [],
+    uncertain: false,
+    changedPaths,
+    packageScoped: true,
+    skipped: false,
+  };
+}
+`,
+      );
+
+      const loaded = await loadWorktreeSelectCiChecks(wt, {
+        primaryPath: repoRoot(),
+        tsImport: async () => {
+          throw new Error("The service is no longer running");
+        },
+      });
+      assert.ok(loaded, "expected CLI fallback selectCiChecks, not null/refuse");
+      const fromCli = loaded!(["packages/core/src/ci-select.ts"]);
+      assert.deepEqual(fromCli.checks, [
+        "format:check",
+        "lint:core",
+        "typecheck:core",
+        "test:core",
+      ]);
+      assert.equal(fromCli.packageScoped, true);
+
+      // Diff touches ci-select + stale installed full suite must still resolve via CLI, not refuse.
+      const result = await resolveCiSelection({
+        changedPaths: ["packages/core/src/ci-select.ts"],
+        worktreePath: wt,
+        installedSelect: () => ({
+          checks: [...DEFAULT_CI_CHECKS],
+          reason: ["cli+core source/test changed — format, lint, typecheck, test, build"],
+          mapping: [],
+          uncertain: false,
+          changedPaths: ["packages/core/src/ci-select.ts"],
+          packageScoped: false,
+          skipped: false,
+        }),
+        primaryPath: repoRoot(),
+        loadWorktreeSelect: (p) =>
+          loadWorktreeSelectCiChecks(p, {
+            primaryPath: repoRoot(),
+            tsImport: async () => {
+              throw new Error("The service is no longer running");
+            },
+          }),
+      });
+      assert.equal(result.source, "worktree");
+      assert.ok(!result.selection.checks.includes("test"));
+      assert.notDeepEqual(result.selection.checks, [...DEFAULT_CI_CHECKS]);
+    } finally {
+      clearWorktreeCiSelectCache();
+      await rm(wt, { recursive: true, force: true });
+    }
+  });
+
   it("prefer worktree when plans match but diff touches ci-select", async () => {
     clearWorktreeCiSelectCache();
     const paths = ["packages/core/src/ci-select.ts"];
