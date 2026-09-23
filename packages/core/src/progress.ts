@@ -125,18 +125,24 @@ export function formatProgressLine(event: ProgressEvent): string {
   return `[${label}] pass${elapsed}`;
 }
 
-/** Sidebar step: gate = "CI checks → test"; export = "CI → push → create PR". */
+/**
+ * Sidebar step labels.
+ * Gate = "CI checks → test". Export distinguishes re-gate CI vs push vs create PR
+ * (RAD-124 — do not leave the step on bare "CI" for the whole push).
+ */
 export function formatProgressStep(event: ProgressEvent, kind: ProgressKind = "gate"): string {
   if (kind === "export") {
-    if (event.phase === "create_pr") return "CI → push → create PR";
-    if (event.phase === "push") return "CI → push";
+    if (event.phase === "create_pr") return "Creating PR";
+    if (event.phase === "push") return "Pushing";
     if (event.phase === "ci") {
-      return event.check ? `CI → ${shortCheckName(event.check)}` : "CI";
+      return event.check
+        ? `Re-running gate CI → ${shortCheckName(event.check)}`
+        : "Re-running gate CI";
     }
-    if (event.phase === "review") return "CI → review";
-    if (event.phase === "preflight") return "CI → preflight";
-    if (event.phase === "github") return "CI → GitHub";
-    return "CI";
+    if (event.phase === "preflight") return "Reusing green gate";
+    if (event.phase === "review") return "Review check";
+    if (event.phase === "github") return "GitHub bind";
+    return "Exporting";
   }
   if (event.phase === "ci") {
     return event.check ? `CI checks → ${shortCheckName(event.check)}` : "CI checks";

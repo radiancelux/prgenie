@@ -55,12 +55,20 @@ describe("progress helpers", () => {
     assert.equal(formatProgressStep({ phase: "review", state: "start" }, "gate"), "Review");
     assert.equal(
       formatProgressStep({ phase: "ci", check: "test", state: "start" }, "export"),
-      "CI → test",
+      "Re-running gate CI → test",
     );
-    assert.equal(formatProgressStep({ phase: "push", state: "start" }, "export"), "CI → push");
+    assert.equal(
+      formatProgressStep({ phase: "ci", state: "start" }, "export"),
+      "Re-running gate CI",
+    );
+    assert.equal(formatProgressStep({ phase: "push", state: "start" }, "export"), "Pushing");
     assert.equal(
       formatProgressStep({ phase: "create_pr", state: "start" }, "export"),
-      "CI → push → create PR",
+      "Creating PR",
+    );
+    assert.equal(
+      formatProgressStep({ phase: "preflight", state: "cached" }, "export"),
+      "Reusing green gate",
     );
   });
 
