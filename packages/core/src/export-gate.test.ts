@@ -4,7 +4,13 @@ import { mkdtemp, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git } from "./git.js";
-import { completeLocalPrReview, createLocalPr, getLocalPr, setLocalPrStatus } from "./prs.js";
+import {
+  completeLocalPrReview,
+  createLocalPr,
+  getLocalPr,
+  setLocalPrExportGate,
+  setLocalPrStatus,
+} from "./prs.js";
 import {
   abortExportGate,
   evaluateAndStoreExportGate,
@@ -30,6 +36,20 @@ import {
   retainExportReadyNotified,
 } from "./export-gate.js";
 import type { LocalPr } from "./types.js";
+import type { CiCheckSelection } from "./ci-select.js";
+
+/** Test-only: force root check names so fixtures that stub package.json scripts still exercise the runner. */
+function fixtureRootSelection(checks: string[], paths: string[] = ["test.txt"]): CiCheckSelection {
+  return {
+    checks,
+    reason: ["test fixture: caller-forced root checks (not selectCiChecks)"],
+    mapping: checks.map((check) => ({ check, reason: "fixture" })),
+    uncertain: false,
+    changedPaths: paths,
+    packageScoped: false,
+    skipped: false,
+  };
+}
 
 function reviewedPr(overrides: Partial<LocalPr> = {}): LocalPr {
   return {
@@ -245,6 +265,7 @@ describe("evaluateAndStoreExportGate", () => {
       await setLocalPrStatus(repo, pr.id, "reviewed");
       const shepherd = await evaluateAndStoreExportGate(repo, pr.id, {
         skipGithubCheck: true,
+        selection: fixtureRootSelection(["format:check", "lint", "typecheck", "test", "build"]),
       });
       assert.equal(shepherd.status, "blocked");
       assert.ok(shepherd.reasons.some((r) => r.check === "ci" && r.message.includes("test")));
@@ -302,11 +323,13 @@ describe("evaluateAndStoreExportGate", () => {
         evaluateAndStoreExportGate(repo, pr.id, {
           skipGithubCheck: true,
           skipToolchainEnsure: true,
+          selection: fixtureRootSelection(["format:check", "lint", "typecheck", "test", "build"]),
           onProgress: (e) => a.push(e),
         }),
         evaluateAndStoreExportGate(repo, pr.id, {
           skipGithubCheck: true,
           skipToolchainEnsure: true,
+          selection: fixtureRootSelection(["format:check", "lint", "typecheck", "test", "build"]),
           onProgress: (e) => b.push(e),
         }),
       ]);
@@ -360,6 +383,7 @@ describe("evaluateAndStoreExportGate", () => {
             skipToolchainEnsure: true,
             failFast: false,
             parallel: false,
+            selection: fixtureRootSelection(["lint"], ["code.ts"]),
             onProgress: (e) => {
               if (armedAt) return;
               // Arm only once lint is running — suite/format start is too early for this assert.
@@ -414,6 +438,7 @@ describe("evaluateAndStoreExportGate", () => {
             signal: ac.signal,
             skipGithubCheck: true,
             skipToolchainEnsure: true,
+            selection: fixtureRootSelection(["lint"], ["code.ts"]),
           }),
         (err: unknown) => isAbortError(err),
       );
@@ -423,6 +448,61 @@ describe("evaluateAndStoreExportGate", () => {
         !stored.exportGate ||
           stored.exportGate.status === "pending" ||
           stored.exportGate.evaluatedAt === null,
+      );
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("validateExport reuses stored blocked gate when fresh select would skip (RAD-119)", async () => {
+    const repo = await initRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(join(repo, "test.txt"), "test\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "Add test"]);
+      const pr = await createLocalPr(repo, { title: "Stored block", body: "Body", base: "main" });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      // Persist a blocked gate for this HEAD (as if CI test failed earlier).
+      await setLocalPrExportGate(repo, pr.id, {
+        status: "blocked",
+        reasons: [
+          {
+            check: "ci",
+            message: 'CI check "test" failed: widget renders',
+          },
+        ],
+        headSha: pr.headSha,
+        evaluatedAt: new Date().toISOString(),
+        ciPlan: {
+          checks: ["format:check", "lint", "typecheck", "test", "build"],
+          reason: ["fixture blocked gate"],
+          uncertain: false,
+        },
+        ciChecks: [
+          {
+            name: "test",
+            passed: false,
+            excerpt: "widget renders",
+          },
+        ],
+        ciCwd: pr.worktreePath ?? repo,
+      });
+      // Dirt that would make selectCiChecks skip if validate re-ran selection.
+      assert.ok(pr.worktreePath);
+      await writeFile(
+        join(pr.worktreePath, "package.json"),
+        JSON.stringify({ name: "test-repo", scripts: { test: "exit 0" } }),
+      );
+      const validation = await validateExport(repo, pr.id);
+      assert.equal(validation.ok, false);
+      assert.ok(
+        validation.issues.some((issue) => issue.includes("CI") && issue.includes("test")),
+        `expected stored CI block in ${validation.issues.join(" | ")}`,
+      );
+      assert.ok(
+        validation.issues.some((issue) => issue.includes("widget renders")),
+        `expected toast excerpt in ${validation.issues.join(" | ")}`,
       );
     } finally {
       await rm(repo, { recursive: true, force: true });

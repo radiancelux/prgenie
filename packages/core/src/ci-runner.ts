@@ -442,6 +442,7 @@ async function runOneCheck(
  * RAD-77: fail-fast (default), parallel independent checks, smart selection via caller.
  * RAD-92: junction/link primary node_modules into worktree before running checks.
  * RAD-117: confident package-/docs-scoped plans format only changed prettier paths (blobs).
+ * RAD-119: empty selection checks = intentional skip (never inflate to full suite).
  */
 export async function runCiChecks(
   cwd: string,
@@ -519,6 +520,57 @@ export async function runCiChecks(
       selectionReason: options.changedPaths ? "caller-provided check list" : "configured suite",
       cwd,
     });
+  }
+
+  // RAD-119: intentional empty plan (selectCiChecks skip) — never inflate to full suite.
+  // Only `skipped: true` may pass with zero checks. An empty list without that flag is a
+  // bug / lost selection — fail closed so the export gate cannot lie that CI ran green.
+  if (checks.length === 0) {
+    const skipReason =
+      formatCiSelectionReason(selection?.reason) || "skip local CI — empty check plan";
+    if (selection?.skipped === true) {
+      onProgress?.({
+        phase: "ci",
+        state: "skip",
+        selectedChecks: [],
+        selectionReason: skipReason,
+        message: skipReason,
+        cwd,
+      });
+      return {
+        allPassed: true,
+        checks: [],
+        selection,
+        cwd,
+        toolchain,
+      };
+    }
+    onProgress?.({
+      phase: "ci",
+      state: "fail",
+      selectedChecks: [],
+      selectionReason: skipReason,
+      message: "empty check plan without skipped:true — refusing silent pass",
+      cwd,
+    });
+    return {
+      allPassed: false,
+      checks: [
+        {
+          name: "selection",
+          passed: false,
+          error:
+            "Empty CI check plan without selection.skipped=true — refusing to treat as green. " +
+            (skipReason ? `Reason: ${skipReason}` : ""),
+          excerpt: skipReason,
+          reason: skipReason,
+          kind: "product",
+        },
+      ],
+      selection,
+      cwd,
+      toolchain,
+    };
   }
 
   const results: CiCheckResult[] = [];
@@ -637,13 +689,42 @@ export async function runLoopCi(
     const paths = options.changedPaths ?? (await changedPathsForCi(ciCwd, id));
     throwIfAborted(controller.signal);
     const selection = options.selection ?? selectCiChecks(paths);
-    const extra = expandFailingChecks(options.failingChecks ?? [], selection);
-    const checks = options.checks ?? [...new Set([...selection.checks, ...extra])];
+    const requestedFailing = (options.failingChecks ?? []).map((n) => n.trim()).filter(Boolean);
+    const extra = expandFailingChecks(requestedFailing, selection);
+    let checks = options.checks ?? [...new Set([...selection.checks, ...extra])];
+    let runSelection = selection;
+    // CI-resume on a skip plan: keep/restore named checks and clear skipped so
+    // runCiChecks cannot silent-pass an empty intentional skip.
+    if (requestedFailing.length > 0 && selection.skipped === true) {
+      if (checks.length === 0) {
+        checks = [...new Set(requestedFailing)];
+      }
+      if (checks.length > 0) {
+        const priorReason = Array.isArray(selection.reason)
+          ? selection.reason
+          : selection.reason
+            ? [selection.reason]
+            : [];
+        runSelection = {
+          ...selection,
+          skipped: false,
+          checks,
+          reason: [
+            ...priorReason,
+            "CI-resume failingChecks override skip — must re-run named checks",
+          ],
+          mapping: checks.map((check) => ({
+            check,
+            reason: "CI-resume failingChecks",
+          })),
+        };
+      }
+    }
     throwIfAborted(controller.signal);
     return await runCiChecks(ciCwd, {
       ...options,
       checks,
-      selection,
+      selection: runSelection,
       changedPaths: paths,
       signal: controller.signal,
     });

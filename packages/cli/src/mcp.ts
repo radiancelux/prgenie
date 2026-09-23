@@ -845,7 +845,7 @@ export const tools = [
   {
     name: "run_ci",
     description:
-      "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; confident package paths → scoped lint/typecheck/unit; uncertain → full suite). Runs in the loop worktreePath (never a stale Cursor plugin install). Returns allPassed, checks, selection `{ checks[], reason[] }` (print both), cwd (path CI ran in), and a progressCard. When selection is confident/packageScoped, do not substitute whole-repo pnpm test. Fail-fast stops after the first package suite fail. Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run — say so; do not skip a flaky failure.",
+      "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; confident package paths → scoped lint/typecheck/unit; unmappable/hard-config → skip with printable reason — never root monorepo pnpm test / full suite). Runs in the loop worktreePath (never a stale Cursor plugin install). Returns allPassed, checks, selection `{ checks[], reason[] }` (print both; empty checks + skipped means intentional skip), cwd (path CI ran in), and a progressCard. When selection is confident/packageScoped, do not substitute whole-repo pnpm test. When skipped, do not escalate to full suite — record the reason or run touched-package tests only. Fail-fast stops after the first package suite fail. Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run or selection skipped — say so; do not skip a flaky failure.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -887,7 +887,7 @@ export const tools = [
   {
     name: "shepherd_status",
     description:
-      "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, gh bind, and smart local CI (path-selected; uncertain → full suite). Persists the result as the human-export gate. Streams a CI progress card (check names + running/pass/fail) on stderr — cancel is abort_ci / loop panel Cancel (shared abort token; one suite per id+HEAD). Returns ready or blocked with reasons, ciPlan, ciChecks, and progressCard. Fail-closed: any unknown/missing piece returns blocked.",
+      "Check shepherd status for a local PR: aggregates review status (reviewed/approved, no pending findings), Learn #18 preflight clean, gh bind, and smart local CI (path-selected; confident scoped plans; unmappable → skip with reason — never uncertain → full suite). Persists the result as the human-export gate. Streams a CI progress card (check names + running/pass/fail) on stderr — cancel is abort_ci / loop panel Cancel (shared abort token; one suite per id+HEAD). Returns ready or blocked with reasons, ciPlan, ciChecks, and progressCard. Fail-closed: any unknown/missing piece returns blocked.",
     inputSchema: {
       type: "object",
       required: ["id"],

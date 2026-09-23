@@ -46,6 +46,8 @@ export interface ShepherdOptions {
   signal?: AbortSignal;
   /** Override smart-CI path list (tests). */
   changedPaths?: string[];
+  /** Override smart-CI plan (tests) — must not be used to reintroduce full-suite as product default. */
+  selection?: CiCheckSelection;
   failFast?: boolean;
   parallel?: boolean;
   /**
@@ -172,10 +174,17 @@ export async function shepherdStatus(
       const resolvedCwd = resolveCiCwd(cwd, pr.worktreePath);
       ciCwd = resolvedCwd;
       const paths = options.changedPaths ?? (await changedPathsForCi(resolvedCwd, id));
-      const selection = selectCiChecks(paths);
+      // Caller-forced selection (tests / resume) wins — never re-select and empty a real plan.
+      const selection = options.selection ?? selectCiChecks(paths);
+      const checks =
+        options.selection && options.selection.checks.length > 0
+          ? options.selection.checks
+          : selection.checks;
       const ciResult = await runCiChecks(resolvedCwd, {
-        checks: selection.checks,
+        checks,
         selection,
+        // Prefer selection's own paths when a caller forced the plan (fixtures stub scripts).
+        changedPaths: options.selection?.changedPaths ?? paths,
         onProgress,
         signal,
         failFast: options.failFast,
