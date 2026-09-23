@@ -1441,6 +1441,32 @@ describe("runLoopCi", () => {
     }
   });
 
+  it("maps CI-resume failingChecks test to test:core on package-scoped plans", async () => {
+    const repo = await initGitRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await mkdir(join(repo, "packages", "core", "src"), { recursive: true });
+      await writeFile(join(repo, "packages", "core", "src", "util.ts"), "export const u = 1;\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "core"]);
+      const pr = await createLocalPr(repo, { title: "Core", body: "Body", base: "main" });
+      const result = await runLoopCi(repo, pr.id, {
+        failingChecks: ["test"],
+        skipCache: true,
+        timeout: 5000,
+        skipToolchainEnsure: true,
+        // Only run the resume-mapped check; scripts exit 0 via package.json from initGitRepo.
+        checks: undefined,
+      });
+      const names = result.checks.map((c) => c.name);
+      assert.ok(names.includes("test:core"), "resume test → test:core");
+      assert.ok(!names.includes("test"), "must not force root pnpm test");
+      assert.equal(result.selection?.packageScoped, true);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
   it("aborts when abortExportGate bumps the shared token", async () => {
     const repo = await initGitRepo();
     try {

@@ -16,6 +16,7 @@ import {
   resolveCiCwd,
   selectCiChecks,
   shouldScopeFormatCheck,
+  expandFailingChecks,
   type CiCheckSelection,
 } from "./ci-select.js";
 import {
@@ -635,7 +636,7 @@ export async function runLoopCi(
     const paths = options.changedPaths ?? (await changedPathsForCi(ciCwd, id));
     throwIfAborted(controller.signal);
     const selection = options.selection ?? selectCiChecks(paths);
-    const extra = (options.failingChecks ?? []).map((name) => name.trim()).filter(Boolean);
+    const extra = expandFailingChecks(options.failingChecks ?? [], selection);
     const checks = options.checks ?? [...new Set([...selection.checks, ...extra])];
     throwIfAborted(controller.signal);
     return await runCiChecks(ciCwd, {

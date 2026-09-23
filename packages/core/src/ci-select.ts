@@ -136,6 +136,35 @@ export function formatCiSelectionReason(reason: string | string[] | undefined): 
 }
 
 /**
+ * Map CI-resume failing check names onto the smart plan.
+ * When the plan is package-scoped, root `test`/`lint`/`typecheck` (from an older
+ * full-suite gate) expand to the matching `*:core|cli|extension` checks so resume
+ * does not force whole-monorepo `pnpm test`.
+ */
+export function expandFailingChecks(
+  failingChecks: string[],
+  selection: CiCheckSelection,
+): string[] {
+  const out: string[] = [];
+  for (const raw of failingChecks) {
+    const name = raw.trim();
+    if (!name) continue;
+    if (
+      selection.packageScoped === true &&
+      (name === "test" || name === "lint" || name === "typecheck")
+    ) {
+      const scoped = selection.checks.filter((c) => c === name || c.startsWith(`${name}:`));
+      if (scoped.length > 0) {
+        out.push(...scoped);
+        continue;
+      }
+    }
+    out.push(name);
+  }
+  return [...new Set(out)];
+}
+
+/**
  * RAD-117: confident package-scoped or docs/style-only plans format only changed
  * prettier-able paths (git blobs). Uncertain / config / full suite keep the full tree.
  */

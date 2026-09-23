@@ -329,6 +329,7 @@ export {
   SCOPABLE_PACKAGES,
   selectCiChecks,
   shouldScopeFormatCheck,
+  expandFailingChecks,
 } from "./ci-select.js";
 export type { CiCheckMapping, CiCheckSelection, CiPathKind, ScopablePackage } from "./ci-select.js";
 export {
