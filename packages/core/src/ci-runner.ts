@@ -100,7 +100,7 @@ export interface CiRunnerResult {
 export interface CiRunnerOptions {
   /** Override the default CI checks */
   checks?: string[];
-  /** Timeout per check in milliseconds. Default 600000 (10 minutes) */
+  /** Timeout per check in milliseconds. Default 1200000 (20 minutes) */
   timeout?: number;
   /** Skip cache and force all checks to run (for testing). Default false. */
   skipCache?: boolean;
@@ -447,7 +447,7 @@ export async function runCiChecks(
   options: CiRunnerOptions = {},
 ): Promise<CiRunnerResult> {
   const checks = options.checks ?? ["format:check", "lint", "typecheck", "test", "build"];
-  const timeout = options.timeout ?? 600000;
+  const timeout = options.timeout ?? 1_200_000;
   const skipCache = options.skipCache ?? false;
   const onProgress = options.onProgress;
   const signal = options.signal;

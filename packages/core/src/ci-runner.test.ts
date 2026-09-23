@@ -717,7 +717,7 @@ describe("runCiChecks", () => {
         }),
       );
 
-      // Run with default timeout (300s) - should pass
+      // Run with default timeout (20m) - should pass
       const result = await runCiChecks(repo, {
         checks: ["test"],
         // Don't specify timeout, use default
@@ -936,7 +936,7 @@ describe("runCiChecks", () => {
       });
       assert.equal(result4.allPassed, false, "skipCache should force execution");
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 

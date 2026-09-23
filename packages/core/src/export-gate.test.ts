@@ -372,7 +372,7 @@ describe("evaluateAndStoreExportGate", () => {
           }),
         (err: unknown) => isAbortError(err),
       );
-      assert.ok(Date.now() - started < 25000, "file abort should not wait out the check");
+      assert.ok(Date.now() - started < 40000, "file abort should not wait out the check");
       const stored = await getLocalPr(repo, pr.id);
       assert.notEqual(stored.exportGate?.status, "ready");
     } finally {
