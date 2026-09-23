@@ -1,5 +1,5 @@
 import { acquireCiLock, requestCiAbort, watchCiAbort } from "./ci-abort.js";
-import { getLocalPr, setLocalPrExportGate } from "./prs.js";
+import { getLocalPr, refreshLocalPrHead, setLocalPrExportGate } from "./prs.js";
 import { shepherdStatus, type ShepherdResult } from "./shepherd.js";
 import {
   abortError,
@@ -104,7 +104,10 @@ export async function evaluateAndStoreExportGate(
   const stopWatch = watchCiAbort(cwd, id, controller);
   try {
     throwIfAborted(controller.signal);
-    const pr = await getLocalPr(cwd, id);
+    // Refresh HEAD before keying the flight / storing the gate — otherwise a
+    // commit made just before shepherd leaves exportGate.headSha stale while
+    // changedPathsForCi already sees the new tip (RAD-117 CI-resume).
+    const pr = await refreshLocalPrHead(cwd, id);
     throwIfAborted(controller.signal);
     const key = gateKey(cwd, id, pr.headSha);
     const existing = inflight.get(key);
