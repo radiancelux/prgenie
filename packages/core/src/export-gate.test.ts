@@ -477,7 +477,6 @@ describe("evaluateAndStoreExportGate", () => {
           {
             name: "test",
             passed: false,
-            error: "widget renders",
             excerpt: "widget renders",
           },
         ],
