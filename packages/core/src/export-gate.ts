@@ -226,7 +226,14 @@ export function isHumanExportable(pr: Pick<LocalPr, "status" | "headSha" | "expo
 }
 
 /** Prefer CI check names (format/lint/typecheck/test/build); else first gate. */
-export function formatExportBlockLabel(reasons: ExportGateReason[]): string {
+export function formatExportBlockLabel(
+  reasons: ExportGateReason[],
+  gate?: ExportGateSnapshot | null,
+): string {
+  // RAD-126: stale/refused plans must not label failingCheck as root `test`.
+  if (exportGateHasStaleFullSuiteCiPlan(gate) || reasonsLookLikeSelectionRefusal(reasons)) {
+    return "ci-select";
+  }
   const ciNames = reasons
     .filter((r) => r.check === "ci")
     .map((r) => {
@@ -237,6 +244,15 @@ export function formatExportBlockLabel(reasons: ExportGateReason[]): string {
   const first = reasons[0];
   if (!first) return "export";
   return first.check;
+}
+
+/** Messages from refuse-stale / worktree-select paths (RAD-123 / RAD-119 / RAD-126). */
+export function reasonsLookLikeSelectionRefusal(reasons: ExportGateReason[]): boolean {
+  return reasons.some((r) =>
+    /refusing stale|stale full-suite|worktree select|selectCiChecks|selection.?refus|never root pnpm test/i.test(
+      r.message,
+    ),
+  );
 }
 
 export function humanExportUi(pr: LocalPr): HumanExportUi {
@@ -276,7 +292,7 @@ export function humanExportUi(pr: LocalPr): HumanExportUi {
     };
   }
   if (state.kind === "blocked") {
-    const blockedLabel = formatExportBlockLabel(state.reasons);
+    const blockedLabel = formatExportBlockLabel(state.reasons, pr.exportGate);
     return {
       kind: "blocked",
       yourTurn: false,

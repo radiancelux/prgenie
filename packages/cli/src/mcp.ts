@@ -35,6 +35,7 @@ import {
   listWorktrees,
   pendingReviewComments,
   isArchivedPr,
+  refreshLocalPrHead,
   reopenLocalPr,
   resolveLocalPrComment,
   runPreflight,
@@ -177,7 +178,8 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
         body: typeof args.body === "string" ? args.body : undefined,
       });
     case "get_local_pr": {
-      const pr = await getLocalPr(cwd, String(args.id ?? ""));
+      // RAD-125: persist tip refresh so headSha matches worktree (invalidate reviewed on move).
+      const pr = await refreshLocalPrHead(cwd, String(args.id ?? ""));
       return withCommentViews(pr);
     }
     case "set_status":
