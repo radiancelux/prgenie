@@ -48,9 +48,9 @@ Fix path when setup fails: `pnpm install` once in the **primary** checkout, then
 | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------------------- |
 | Empty / unclassifiable (binaries, unknown extensions)                                                     | Full suite                                                 | `uncertain path mapping` / `uncertain → full suite`  |
 | Config / CI (`package.json`, lockfiles, `tsconfig*`, eslint, prettier config, `.github/**`, `scripts/**`) | Full suite                                                 | `config/CI scripts changed; running full suite`      |
-| Docs / markdown only (`*.md`, `*.mdc`, `docs/**`, LICENSE, README, `*.txt`)                               | `format:check` only                                        | `docs/markdown-only → format:check`; skip units      |
-| Docs + style (`*.css`, non-config `*.json`)                                                               | `format:check` only                                        | format; skip lint/test/build                         |
-| `packages/core/**` source/tests (+ optional docs)                                                         | `format:check`, `lint:core`, `typecheck:core`, `test:core` | confident — **not** full monorepo `pnpm test`        |
+| Docs / markdown only (`*.md`, `*.mdc`, `docs/**`, LICENSE, README, `*.txt`)                               | `format:check` only (changed prettier paths)               | `docs/markdown-only → format:check`; skip units      |
+| Docs + style (`*.css`, non-config `*.json`)                                                               | `format:check` only (changed prettier paths)               | format; skip lint/test/build                         |
+| `packages/core/**` source/tests (+ optional docs)                                                         | `format:check` (changed paths) + `lint\|typecheck\|test:core` | confident — **not** full monorepo `pnpm test`     |
 | `packages/cli/**` / `packages/extension/**` (same pattern)                                                | `format:check` + `lint\|typecheck\|test:<pkg>`             | per-package unit + typecheck/lint                    |
 | Multiple scopable packages                                                                                | format + each package’s lint→typecheck→test in order       | fail-fast stops after first package suite fail       |
 | Bundled `packages/plugin/hooks\|mcp/*.cjs` + scopable core/cli/extension                                  | Same as the scopable package row(s)                        | build artifacts ignored for scoping                  |
@@ -70,8 +70,10 @@ Uncertain mapping **always** runs the full configured suite **names** and includ
 - **Fail-fast** (default): stop remaining checks after the first failure. Disable with `failFast: false` or `PRGENIE_CI_FAIL_FAST=0`.
 - **Package suites**: implementor preflight runs package-scoped checks **sequentially** so fail-fast **stops after the first package suite fail** (do not continue lint/typecheck/test for later packages).
 - **Parallel** (default for full suite): independent root checks may run concurrently. Disable with `parallel: false` or `PRGENIE_CI_PARALLEL=0`.
+- **format:check scope** (RAD-117): confident package-scoped or docs/style-only plans blob-check **only changed prettier-able paths** (loop diff + dirty/untracked in the CI cwd). Uncertain / config / full suite still format the **full tracked prettier tree** (origin cleanliness bar). Always git blob content (LF) — never working-tree CRLF (RAD-46). Progress shows `format:check (blobs) <paths>` when scoped, or `pnpm format:check` for the full tree. Host `prettier --check .` rewrite stays deferred (blob runner owns format).
+- **Host-repo vs package**: RAD-105 rewrites check **names** (`lint:core`). RAD-120 rewrites host **commands** (`eslint <changed>`). Format scoping is independent: it filters the blob file list from `changedPaths`, not a prettier CLI rewrite.
 - **Cache** (RAD-35): unchanged HEAD inputs reuse `.git/agent-console/ci-cache`.
-- Progress UI shows **elapsed time per check** and the **actual command** (including path args).
+- Progress UI shows **elapsed time per check** and the **actual command** (including path args / blob scope).
 
 ## Who runs what
 

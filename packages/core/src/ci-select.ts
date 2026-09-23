@@ -135,6 +135,16 @@ export function formatCiSelectionReason(reason: string | string[] | undefined): 
   return reason;
 }
 
+/**
+ * RAD-117: confident package-scoped or docs/style-only plans format only changed
+ * prettier-able paths (git blobs). Uncertain / config / full suite keep the full tree.
+ */
+export function shouldScopeFormatCheck(selection: CiCheckSelection | undefined): boolean {
+  if (!selection || selection.uncertain) return false;
+  if (selection.packageScoped === true) return true;
+  return selection.checks.length === 1 && selection.checks[0] === "format:check";
+}
+
 function fullSuite(reasons: string[], paths: string[], uncertain: boolean): CiCheckSelection {
   const reason = reasons.length ? reasons : ["uncertain → full suite"];
   const mapping: CiCheckMapping[] = DEFAULT_CI_CHECKS.map((check) => ({
@@ -187,7 +197,12 @@ export function selectCiChecks(changedPaths: string[]): CiCheckSelection {
     return {
       checks: ["format:check"],
       reason,
-      mapping: [{ check: "format:check", reason: reason.join("; ") }],
+      mapping: [
+        {
+          check: "format:check",
+          reason: `${reason.join("; ")}; scoped to changed prettier paths`,
+        },
+      ],
       uncertain: false,
       changedPaths: paths,
       packageScoped: false,
@@ -226,7 +241,10 @@ export function selectCiChecks(changedPaths: string[]): CiCheckSelection {
   ];
   const mapping: CiCheckMapping[] = checks.map((check) => {
     if (check === "format:check") {
-      return { check, reason: "shared format check before package suites" };
+      return {
+        check,
+        reason: "format:check scoped to changed prettier paths before package suites",
+      };
     }
     const pkg = packageFromScopedCheck(check);
     return {

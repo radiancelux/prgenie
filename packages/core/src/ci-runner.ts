@@ -15,13 +15,19 @@ import {
   formatCiSelectionReason,
   resolveCiCwd,
   selectCiChecks,
+  shouldScopeFormatCheck,
   type CiCheckSelection,
 } from "./ci-select.js";
-import { hostScopeFailClosedReason, resolveCiCheckCommand } from "./ci-host-scope.js";
+import {
+  hostScopeFailClosedReason,
+  prettierPathsFromChanged,
+  resolveCiCheckCommand,
+} from "./ci-host-scope.js";
 import { requestCiAbort, watchCiAbort } from "./ci-abort.js";
 import { getLocalPr } from "./prs.js";
 import {
   abortError,
+  ciCheckCommand,
   isAbortError,
   onAbort,
   throwIfAborted,
@@ -130,20 +136,43 @@ export interface CiRunnerOptions {
  * Get list of git-tracked files for format checking.
  * This ensures local CI matches remote CI (clean checkout).
  * Filters to only include files prettier can check.
+ *
+ * When `onlyPaths` is set (RAD-117 scoped format), only those candidates are
+ * considered — never the whole tracked tree.
  */
-async function getTrackedFiles(cwd: string): Promise<string[]> {
+export async function getTrackedFiles(
+  cwd: string,
+  onlyPaths?: string[],
+): Promise<string[]> {
   try {
-    // Get all tracked files, excluding submodules and symlinks
-    const { stdout } = await execAsync("git ls-files --exclude-standard", {
-      cwd,
-      encoding: "utf8",
-      maxBuffer: 8 * 1024 * 1024,
-    });
-    const files = stdout.trim().split("\n").filter(Boolean);
+    let files: string[];
+    if (onlyPaths && onlyPaths.length > 0) {
+      // Ask git which of the candidates are tracked (avoids full ls-files).
+      const quoted = onlyPaths.map((p) => p.replace(/"/g, '\\"'));
+      const { stdout } = await execAsync(
+        `git ls-files --exclude-standard -- ${quoted.map((p) => `"${p}"`).join(" ")}`,
+        {
+          cwd,
+          encoding: "utf8",
+          maxBuffer: 8 * 1024 * 1024,
+        },
+      );
+      files = stdout.trim().split("\n").filter(Boolean);
+    } else if (onlyPaths && onlyPaths.length === 0) {
+      return [];
+    } else {
+      // Get all tracked files, excluding submodules and symlinks
+      const { stdout } = await execAsync("git ls-files --exclude-standard", {
+        cwd,
+        encoding: "utf8",
+        maxBuffer: 8 * 1024 * 1024,
+      });
+      files = stdout.trim().split("\n").filter(Boolean);
+    }
 
     // Filter out files that prettier can't or shouldn't check
     const fs = await import("node:fs/promises");
-    const path = await import("node:path");
+    const pathMod = await import("node:path");
     const validFiles: string[] = [];
 
     // Files/patterns prettier can't parse or that are typically ignored
@@ -177,8 +206,8 @@ async function getTrackedFiles(cwd: string): Promise<string[]> {
     ]);
 
     for (const file of files) {
-      const basename = path.basename(file);
-      const ext = path.extname(file).toLowerCase();
+      const basename = pathMod.basename(file);
+      const ext = pathMod.extname(file).toLowerCase();
 
       // Skip files prettier explicitly can't parse
       if (skipFiles.has(basename)) {
@@ -191,11 +220,11 @@ async function getTrackedFiles(cwd: string): Promise<string[]> {
       }
 
       try {
-        const fullPath = path.join(cwd, file);
+        const fullPath = pathMod.join(cwd, file);
         const stats = await fs.stat(fullPath);
         // Only include regular files (not symlinks, directories, etc)
         if (stats.isFile()) {
-          validFiles.push(file);
+          validFiles.push(file.replace(/\\/g, "/"));
         }
       } catch {
         // Skip files we can't stat
@@ -207,6 +236,26 @@ async function getTrackedFiles(cwd: string): Promise<string[]> {
     // Not a git repo (unit fixtures) or ls-files failed — caller falls back to package script.
     return [];
   }
+}
+
+/**
+ * Resolve which tracked prettier files format:check will blob-check.
+ * Scoped plans use changed prettier-able paths only; full suite uses every tracked file.
+ */
+export async function resolveFormatCheckFiles(
+  cwd: string,
+  options: {
+    changedPaths?: string[];
+    formatScoped: boolean;
+  },
+): Promise<{ files: string[]; formatScoped: boolean }> {
+  if (options.formatScoped) {
+    const candidates = prettierPathsFromChanged(options.changedPaths ?? []);
+    const files = await getTrackedFiles(cwd, candidates);
+    return { files, formatScoped: true };
+  }
+  const files = await getTrackedFiles(cwd);
+  return { files, formatScoped: false };
 }
 
 /**
@@ -276,38 +325,52 @@ async function runOneCheck(
     reason?: string;
     changedPaths?: string[];
     packageScripts?: Record<string, string> | null;
+    selection?: CiCheckSelection;
   },
 ): Promise<CiCheckResult> {
-  const { timeout, skipCache, onProgress, signal, changedPaths, packageScripts } = options;
+  const { timeout, skipCache, onProgress, signal, changedPaths, packageScripts, selection } =
+    options;
+  const formatScoped = check === "format:check" && shouldScopeFormatCheck(selection);
   const resolved = resolveCiCheckCommand({
     check,
     cwd,
     changedPaths,
     scripts: packageScripts,
     failClosedReason: hostScopeFailClosedReason(changedPaths) ?? undefined,
+    formatScoped,
   });
-  const command = resolved.command;
+  // Progress may show a descriptive blob-scope label; shell fallback stays pnpm <check>.
+  const progressCommand = resolved.command;
+  const shellCommand =
+    check === "format:check" && formatScoped ? ciCheckCommand(check) : resolved.command;
   const reason = [options.reason, resolved.reason].filter(Boolean).join("; ");
 
   if (!skipCache) {
     const cached = await getCachedResult(cwd, check);
     if (cached) {
-      onProgress?.({ phase: "ci", check, state: "cached", command, elapsedMs: 0 });
+      onProgress?.({ phase: "ci", check, state: "cached", command: progressCommand, elapsedMs: 0 });
       return { name: check, passed: true, elapsedMs: 0, reason: reason || options.reason };
     }
   }
 
   throwIfAborted(signal);
-  onProgress?.({ phase: "ci", check, state: "start", command });
+  onProgress?.({ phase: "ci", check, state: "start", command: progressCommand });
   const started = Date.now();
 
   try {
     if (check === "format:check") {
-      const tracked = await getTrackedFiles(cwd);
-      if (tracked.length > 0) {
+      const { files: tracked, formatScoped: scoped } = await resolveFormatCheckFiles(cwd, {
+        changedPaths,
+        formatScoped,
+      });
+      // Scoped with zero prettier-able tracked paths → pass (nothing to check).
+      // Unscoped empty list → fall through to package script (non-git fixtures).
+      if (scoped || tracked.length > 0) {
         let checkedBlobs = false;
         try {
-          await checkFormatFromBlobs(cwd, tracked, signal);
+          if (tracked.length > 0) {
+            await checkFormatFromBlobs(cwd, tracked, signal);
+          }
           checkedBlobs = true;
         } catch (err) {
           if (isAbortError(err) || signal?.aborted) throw abortError();
@@ -316,21 +379,29 @@ async function runOneCheck(
         }
         if (checkedBlobs) {
           const elapsedMs = Date.now() - started;
-          onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
+          onProgress?.({ phase: "ci", check, state: "pass", command: progressCommand, elapsedMs });
           try {
             await recordCheckPass(cwd, check);
           } catch {
             // Check passed; cache write failed — ignore and continue without cache
           }
-          return { name: check, passed: true, elapsedMs, reason: reason || options.reason };
+          const scopeNote = scoped
+            ? `scoped ${tracked.length} changed file(s)`
+            : `full tree ${tracked.length} file(s)`;
+          return {
+            name: check,
+            passed: true,
+            elapsedMs,
+            reason: [reason || options.reason, scopeNote].filter(Boolean).join("; "),
+          };
         }
       }
       // No tracked prettier files, not a git repo, or prettier is not installed in cwd.
     }
 
-    await execAsync(command, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });
+    await execAsync(shellCommand, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });
     const elapsedMs = Date.now() - started;
-    onProgress?.({ phase: "ci", check, state: "pass", command, elapsedMs });
+    onProgress?.({ phase: "ci", check, state: "pass", command: progressCommand, elapsedMs });
     try {
       await recordCheckPass(cwd, check);
     } catch {
@@ -341,15 +412,15 @@ async function runOneCheck(
     if (isAbortError(err) || signal?.aborted) throw abortError();
     const output = collectExecOutput(err);
     const excerpt = formatFailureExcerpt(check, output);
-    const logPath = await writeCiFailureLog(cwd, check, command, output, excerpt);
+    const logPath = await writeCiFailureLog(cwd, check, shellCommand, output, excerpt);
     const elapsedMs = Date.now() - started;
-    const error = formatCiCheckError({ command, excerpt, logPath });
+    const error = formatCiCheckError({ command: shellCommand, excerpt, logPath });
     const envFail = isCiEnvFailureOutput(output.firstLine);
     onProgress?.({
       phase: "ci",
       check,
       state: "fail",
-      command,
+      command: progressCommand,
       elapsedMs,
       message: excerpt,
       logPath: logPath ?? undefined,
@@ -376,6 +447,7 @@ async function runOneCheck(
  * RAD-46: format:check checks git blob (LF-normalized) content, not CRLF working tree.
  * RAD-77: fail-fast (default), parallel independent checks, smart selection via caller.
  * RAD-92: junction/link primary node_modules into worktree before running checks.
+ * RAD-117: confident package-/docs-scoped plans format only changed prettier paths (blobs).
  */
 export async function runCiChecks(
   cwd: string,
@@ -472,6 +544,7 @@ export async function runCiChecks(
           reason: reasonFor(check),
           changedPaths,
           packageScripts,
+          selection,
         }).then((result) => {
           if (!result.passed && failFast) child.abort();
           return result;
@@ -515,6 +588,7 @@ export async function runCiChecks(
             reason: reasonFor(check),
             changedPaths,
             packageScripts,
+            selection,
           }),
         );
       } catch (err) {

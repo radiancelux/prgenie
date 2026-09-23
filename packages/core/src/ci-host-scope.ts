@@ -6,6 +6,35 @@ import { ciCheckCommand } from "./progress.js";
 /** Extensions eslint (and similar JS linters) can take as path args. */
 const ESLINT_EXTS = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".vue"]);
 
+/** Extensions prettier commonly formats (aligned with ci-runner blob format filter). */
+const PRETTIER_EXTS = new Set([
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".mjs",
+  ".cjs",
+  ".json",
+  ".css",
+  ".scss",
+  ".less",
+  ".html",
+  ".md",
+  ".yml",
+  ".yaml",
+  ".xml",
+]);
+
+const PRETTIER_SKIP_BASENAMES = new Set([
+  ".gitignore",
+  ".prettierignore",
+  ".eslintignore",
+  ".dockerignore",
+  "pnpm-lock.yaml",
+  "package-lock.json",
+  "yarn.lock",
+]);
+
 export type HostScopeTool = "eslint" | "prettier" | "turbo" | "pnpm-recursive";
 
 export interface MonorepoWideScript {
@@ -38,6 +67,11 @@ export interface ResolveCiCheckCommandOptions {
   failClosedReason?: string;
   /** Optional pre-read scripts map (tests). */
   scripts?: Record<string, string> | null;
+  /**
+   * RAD-117: when true, format:check progress reflects changed-path blob scope
+   * (must match what checkFormatFromBlobs actually checks).
+   */
+  formatScoped?: boolean;
 }
 
 /** Read root package.json scripts, or null when missing/invalid. */
@@ -191,6 +225,23 @@ export function eslintPathsFromChanged(changedPaths: string[]): string[] {
 }
 
 /**
+ * Prettier-able paths from the loop diff / dirty tree (RAD-117 format scope).
+ * Does not require source/test classification — docs/style markdown and CSS count.
+ */
+export function prettierPathsFromChanged(changedPaths: string[]): string[] {
+  const out: string[] = [];
+  for (const file of changedPaths) {
+    const p = normalizeCiPath(file);
+    const base = path.posix.basename(p);
+    if (PRETTIER_SKIP_BASENAMES.has(base)) continue;
+    const ext = path.posix.extname(p).toLowerCase();
+    if (!PRETTIER_EXTS.has(ext)) continue;
+    out.push(p);
+  }
+  return [...new Set(out)];
+}
+
+/**
  * Package directory filters (`./packages/foo`, `./packages/@scope/ui`) from changed paths.
  * Scoped npm dirs (`@scope/pkg`) keep two segments under packages|apps|services.
  */
@@ -258,13 +309,27 @@ export function resolveCiCheckCommand(options: ResolveCiCheckCommandOptions): Re
     return { command: fallback, hostScoped: false };
   }
 
-  // RAD-117 out of scope: format:check still runs checkFormatFromBlobs over all
-  // tracked files. Keep `pnpm format:check` so the progress card matches.
+  // RAD-117: format:check always uses git-blob Prettier API (LF on Windows).
+  // Progress must match the blob runner — scoped vs full tracked tree.
   if (check === "format:check") {
+    if (options.formatScoped) {
+      const paths = prettierPathsFromChanged(options.changedPaths ?? []);
+      const preview =
+        paths.length === 0
+          ? "(no prettier-able changed paths)"
+          : paths.length <= 5
+            ? paths.join(" ")
+            : `${paths.slice(0, 5).join(" ")} …(+${paths.length - 5})`;
+      return {
+        command: `format:check (blobs) ${preview}`,
+        hostScoped: false,
+        reason: `format:check blobs scoped to ${paths.length} changed path(s)`,
+      };
+    }
     return {
       command: fallback,
       hostScoped: false,
-      reason: "format:check uses blob path (RAD-117) → no host rewrite",
+      reason: "format:check uses blob path over all tracked files",
     };
   }
 
@@ -293,12 +358,12 @@ export function resolveCiCheckCommand(options: ResolveCiCheckCommandOptions): Re
     };
   }
 
-  // Do not rewrite bare prettier scripts (same honesty as format:check / RAD-117).
+  // Host prettier CLI rewrite stays deferred — blob runner owns format:check (RAD-46 LF).
   if (wide.tool === "prettier") {
     return {
       command: fallback,
       hostScoped: false,
-      reason: "prettier host rewrite deferred (RAD-117) → pnpm check",
+      reason: "prettier host rewrite deferred → blob format:check",
     };
   }
 

@@ -7,7 +7,8 @@ import { createRequire } from "node:module";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { abortExportGate } from "./export-validation.js";
-import { resolvePrettierFromCwd, runCiChecks, runLoopCi } from "./ci-runner.js";
+import { resolvePrettierFromCwd, resolveFormatCheckFiles, runCiChecks, runLoopCi } from "./ci-runner.js";
+import { selectCiChecks, shouldScopeFormatCheck } from "./ci-select.js";
 import { git } from "./git.js";
 import { isAbortError } from "./progress.js";
 import { createLocalPr } from "./prs.js";
@@ -436,6 +437,177 @@ describe("runCiChecks", () => {
       const formatCheck = result.checks.find((c) => c.name === "format:check");
       assert.ok(formatCheck);
       assert.equal(formatCheck.passed, true);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  // RAD-117: scoped format:check only blob-checks changed prettier paths
+  async function initFormatScopeRepo(): Promise<string> {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-rad117-"));
+    await execAsync("git init", { cwd: repo });
+    await execAsync('git config user.email "test@test.com"', { cwd: repo });
+    await execAsync('git config user.name "Test"', { cwd: repo });
+    await writeFile(join(repo, ".gitignore"), "node_modules\n");
+    await writeFile(join(repo, ".prettierignore"), ".gitignore\nnode_modules\n");
+    await writeFile(
+      join(repo, ".prettierrc.json"),
+      JSON.stringify({ semi: true, singleQuote: false, trailingComma: "all", endOfLine: "lf" }),
+    );
+    await writeFile(
+      join(repo, "package.json"),
+      JSON.stringify({
+        name: "test-repo",
+        packageManager: "pnpm@10.33.0",
+        scripts: {
+          "format:check": "exit 0",
+          lint: "exit 0",
+          typecheck: "exit 0",
+          test: "exit 0",
+          build: "exit 0",
+        },
+      }),
+    );
+    await linkNodeModules(repo, join(process.cwd(), "node_modules"));
+    // Many tracked prettier files (full-tree would check all of these).
+    await mkdir(join(repo, "packages", "core", "src"), { recursive: true });
+    await mkdir(join(repo, "packages", "cli", "src"), { recursive: true });
+    await mkdir(join(repo, "docs"), { recursive: true });
+    for (let i = 0; i < 8; i++) {
+      await writeFile(join(repo, `filler-${i}.js`), `const n${i} = ${i};\n`);
+    }
+    await writeFile(join(repo, "packages", "core", "src", "util.ts"), "export const u = 1;\n");
+    await writeFile(join(repo, "packages", "cli", "src", "cli.ts"), "export const c = 1;\n");
+    await writeFile(join(repo, "docs", "guide.md"), "# Guide\n");
+    await writeFile(join(repo, "README.md"), "# Root\n");
+    await execAsync("pnpm exec prettier --write .", { cwd: repo });
+    await execAsync("git add .", { cwd: repo });
+    await execAsync('git commit -m "init"', { cwd: repo });
+    return repo;
+  }
+
+  it("RAD-117: core-only change formats N changed files, not the whole repo", async () => {
+    const repo = await initFormatScopeRepo();
+    try {
+      const full = await resolveFormatCheckFiles(repo, { formatScoped: false });
+      assert.ok(full.files.length >= 10, `expected a wide tracked tree, got ${full.files.length}`);
+
+      await writeFile(
+        join(repo, "packages", "core", "src", "util.ts"),
+        "export const u = 2;\n",
+      );
+      await execAsync("pnpm exec prettier --write packages/core/src/util.ts", { cwd: repo });
+      await execAsync("git add packages/core/src/util.ts", { cwd: repo });
+      await execAsync('git commit -m "core tweak"', { cwd: repo });
+
+      const changedPaths = ["packages/core/src/util.ts"];
+      const selection = selectCiChecks(changedPaths);
+      assert.equal(selection.packageScoped, true);
+
+      const scoped = await resolveFormatCheckFiles(repo, {
+        changedPaths,
+        formatScoped: true,
+      });
+      assert.equal(scoped.formatScoped, true);
+      assert.deepEqual(scoped.files, ["packages/core/src/util.ts"]);
+      assert.ok(
+        scoped.files.length < full.files.length,
+        `scoped ${scoped.files.length} must be less than full ${full.files.length}`,
+      );
+
+      const commands: string[] = [];
+      const result = await runCiChecks(repo, {
+        checks: ["format:check"],
+        changedPaths,
+        selection,
+        skipCache: true,
+        skipToolchainEnsure: true,
+        timeout: 15000,
+        onProgress: (event) => {
+          if (event.check === "format:check" && event.command) commands.push(event.command);
+        },
+      });
+      assert.equal(result.allPassed, true);
+      const formatCheck = result.checks.find((c) => c.name === "format:check");
+      assert.ok(formatCheck?.reason?.includes("scoped 1 changed file"));
+      assert.ok(commands.some((c) => /format:check \(blobs\)/.test(c)));
+      assert.ok(commands.some((c) => /packages\/core\/src\/util\.ts/.test(c)));
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-117: docs-only formats changed markdown only", async () => {
+    const repo = await initFormatScopeRepo();
+    try {
+      await writeFile(join(repo, "docs", "guide.md"), "# Guide updated\n");
+      await execAsync("pnpm exec prettier --write docs/guide.md", { cwd: repo });
+      await execAsync("git add docs/guide.md", { cwd: repo });
+      await execAsync('git commit -m "docs"', { cwd: repo });
+
+      const changedPaths = ["docs/guide.md"];
+      const selection = selectCiChecks(changedPaths);
+      assert.deepEqual(selection.checks, ["format:check"]);
+
+      const scoped = await resolveFormatCheckFiles(repo, {
+        changedPaths,
+        formatScoped: true,
+      });
+      assert.deepEqual(scoped.files, ["docs/guide.md"]);
+
+      const result = await runCiChecks(repo, {
+        checks: ["format:check"],
+        changedPaths,
+        selection,
+        skipCache: true,
+        skipToolchainEnsure: true,
+        timeout: 15000,
+      });
+      assert.equal(result.allPassed, true);
+      assert.ok(result.checks[0]?.reason?.includes("scoped 1 changed file"));
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-117: uncertain/config keeps full tracked prettier tree", async () => {
+    const repo = await initFormatScopeRepo();
+    try {
+      const full = await resolveFormatCheckFiles(repo, { formatScoped: false });
+
+      const configPaths = ["package.json"];
+      const configSel = selectCiChecks(configPaths);
+      assert.equal(shouldScopeFormatCheck(configSel), false);
+      const configFiles = await resolveFormatCheckFiles(repo, {
+        changedPaths: configPaths,
+        formatScoped: shouldScopeFormatCheck(configSel),
+      });
+      assert.equal(configFiles.formatScoped, false);
+      assert.equal(configFiles.files.length, full.files.length);
+
+      const uncertainPaths = ["assets/logo.png"];
+      // Create the unknown path as an untracked non-prettier file so selection stays uncertain.
+      await mkdir(join(repo, "assets"), { recursive: true });
+      await writeFile(join(repo, "assets", "logo.png"), "x");
+      const uncertainSel = selectCiChecks(uncertainPaths);
+      assert.equal(uncertainSel.uncertain, true);
+      assert.equal(shouldScopeFormatCheck(uncertainSel), false);
+      const uncertainFiles = await resolveFormatCheckFiles(repo, {
+        changedPaths: uncertainPaths,
+        formatScoped: false,
+      });
+      assert.equal(uncertainFiles.files.length, full.files.length);
+
+      const result = await runCiChecks(repo, {
+        checks: ["format:check"],
+        changedPaths: configPaths,
+        selection: configSel,
+        skipCache: true,
+        skipToolchainEnsure: true,
+        timeout: 15000,
+      });
+      assert.equal(result.allPassed, true);
+      assert.ok(result.checks[0]?.reason?.includes(`full tree ${full.files.length} file`));
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

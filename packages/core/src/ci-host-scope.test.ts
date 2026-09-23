@@ -5,6 +5,7 @@ import {
   eslintPathsFromChanged,
   hostScopeFailClosedReason,
   packageFiltersFromChanged,
+  prettierPathsFromChanged,
   resolveCiCheckCommand,
 } from "./ci-host-scope.js";
 
@@ -130,21 +131,40 @@ describe("resolveCiCheckCommand host-repo fixtures", () => {
     assert.doesNotMatch(resolved.command, /--filter/);
   });
 
-  it("keeps format:check as pnpm format:check (RAD-117; matches blob runner)", () => {
+  it("keeps format:check as pnpm format:check when not scoped (full tree blobs)", () => {
     const resolved = resolveCiCheckCommand({
       check: "format:check",
       cwd: "/tmp/host",
       changedPaths: ["apps/mobile/src/badge.ts"],
       scripts: hostScripts,
+      formatScoped: false,
     });
     assert.equal(resolved.hostScoped, false);
     assert.equal(resolved.command, "pnpm format:check");
-    assert.match(resolved.reason ?? "", /RAD-117|blob/);
+    assert.match(resolved.reason ?? "", /blob path over all tracked/);
+  });
+
+  it("shows blob-scoped format paths in progress when formatScoped (RAD-117)", () => {
+    const resolved = resolveCiCheckCommand({
+      check: "format:check",
+      cwd: "/tmp/host",
+      changedPaths: ["packages/core/src/ci-runner.ts", "README.md"],
+      scripts: hostScripts,
+      formatScoped: true,
+    });
+    assert.equal(resolved.hostScoped, false);
+    assert.match(resolved.command, /format:check \(blobs\)/);
+    assert.match(resolved.command, /packages\/core\/src\/ci-runner\.ts/);
+    assert.match(resolved.reason ?? "", /scoped to 2 changed path/);
   });
 
   it("maps eslint path helpers and scoped package filters", () => {
     assert.deepEqual(eslintPathsFromChanged(["apps/a.ts", "README.md", "apps/a.png"]), [
       "apps/a.ts",
+    ]);
+    assert.deepEqual(prettierPathsFromChanged(["apps/a.ts", "README.md", "apps/a.png"]), [
+      "apps/a.ts",
+      "README.md",
     ]);
     assert.deepEqual(packageFiltersFromChanged(["apps/mobile/src/x.ts", "docs/a.md"]), [
       "./apps/mobile",
