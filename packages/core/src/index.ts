@@ -226,6 +226,8 @@ export type {
 export {
   displayShepherdStatus,
   exportGateForHead,
+  exportGateHasStaleFullSuiteCiPlan,
+  exportGateSnapshotIsAdoptable,
   exportReadyEnterKey,
   formatExportBlockLabel,
   HUMAN_EXPORT_COMPOSER_HINT,
@@ -335,6 +337,21 @@ export {
   expandFailingChecks,
 } from "./ci-select.js";
 export type { CiCheckMapping, CiCheckSelection, CiPathKind, ScopablePackage } from "./ci-select.js";
+export {
+  ciSelectionPlansEqual,
+  clearWorktreeCiSelectCache,
+  isCiSelectionSourcePath,
+  loadWorktreeSelectCiChecks,
+  looksLikeStaleFullSuitePlan,
+  resolveCiSelection,
+  touchesCiSelectionSource,
+  worktreeCiSelectModulePath,
+} from "./ci-select-worktree.js";
+export type {
+  CiSelectFn,
+  ResolveCiSelectionOptions,
+  ResolveCiSelectionResult,
+} from "./ci-select-worktree.js";
 export {
   detectMonorepoWideScript,
   eslintPathsFromChanged,

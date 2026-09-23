@@ -32,6 +32,21 @@ Changed paths = committed `baseSha...headSha` plus dirty/untracked files in the 
 
 `run_ci` / shepherd always run in the loop’s `worktreePath` when that checkout exists. A Cursor plugin-install cwd (`~/.cursor/plugins/...`) is refused or redirected — never a silent format fail against a stale linked build. Progress cards, CLI, and export-gate snapshots cite `CI cwd: <path>`.
 
+### Worktree CI selection (RAD-123)
+
+RAD-112 fixed **cwd**. Selection still used to come from the **in-memory / installed plugin** `selectCiChecks`, so a loop that edits `ci-select` / `ci-runner` could not be gated by its own code until merge + relink.
+
+`run_ci`, shepherd, and the export gate now call `resolveCiSelection`:
+
+1. When the loop worktree has `packages/core/src/ci-select.ts`, **always** evaluate `selectCiChecks` from that **worktree source** (via `tsx` `tsImport`, with a CLI fallback) — not the in-memory install. Persist `ciCwd` = the loop worktree and keep `worktreePath` on the packet.
+2. Compare `{ checks, reason, skipped, uncertain, packageScoped }` to the installed plugin. On divergence: **warn loudly** on stderr and **use the worktree plan** (refuse the stale installed plan). Classic stale reasons like `core source/test changed — format, lint, typecheck, test, build` / root `test`+`build` are treated as a full-suite plan and **refused** if the worktree module cannot load.
+3. If the worktree module is missing/unloadable and the installed plan looks like that full suite → **throw** (do not silently run root `pnpm test`).
+4. **Peer / stored-gate replay:** a ready/blocked snapshot for the same HEAD that still carries that stale full-suite `ciPlan` is **not adoptable**. `evaluateAndStoreExportGate` invalidates it and re-runs with worktree selection; `needsExportGateEvaluation` stays true until a non-stale plan is stored. Shepherd/`run_ci` also refuse to execute a resolved stale plan (except explicit test fixtures that pass `selection`).
+
+A loop that only changes CI selection (or any product loop with a worktree) must not select root `pnpm test` via a stale plugin **or** via replaying a peer’s old gate. After changing selection code, **rebuild + `pnpm link-plugin` from the loop worktree** so the Cursor MCP (`~/.cursor/plugins/local/prgenie/mcp/server.cjs`) actually runs `resolveCiSelection`.
+
+Printable `{ checks, reason }` from the gate must match what unit tests of the worktree selector print for the same paths.
+
 ### Worktree deps (RAD-92)
 
 Loop checkouts under `../<repo>.loops/<id>` usually have **no** `node_modules`. Before checks run, PR Genie **junctions** (Windows) or **symlinks** (macOS/Linux) `node_modules` from the primary checkout into the worktree so `pnpm exec eslint|tsc|tsx|prettier` resolve. Package-local `packages/*/node_modules` are linked the same way when present on primary.

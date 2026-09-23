@@ -2,12 +2,8 @@ import { getLocalPr, isArchivedPr, pendingReviewComments } from "./prs.js";
 import { runPreflight } from "./learnings.js";
 import { ensureRepoGithub } from "./github-ops.js";
 import { runCiChecks, type CiCheckResult } from "./ci-runner.js";
-import {
-  changedPathsForCi,
-  resolveCiCwd,
-  selectCiChecks,
-  type CiCheckSelection,
-} from "./ci-select.js";
+import { changedPathsForCi, resolveCiCwd, type CiCheckSelection } from "./ci-select.js";
+import { looksLikeStaleFullSuitePlan, resolveCiSelection } from "./ci-select-worktree.js";
 import { isAbortError, throwIfAborted, type ProgressCallback } from "./progress.js";
 
 export type ShepherdStatus = "ready" | "blocked";
@@ -175,7 +171,26 @@ export async function shepherdStatus(
       ciCwd = resolvedCwd;
       const paths = options.changedPaths ?? (await changedPathsForCi(resolvedCwd, id));
       // Caller-forced selection (tests / resume) wins — never re-select and empty a real plan.
-      const selection = options.selection ?? selectCiChecks(paths);
+      // RAD-123: otherwise prefer worktree selectCiChecks when the loop edits CI selection
+      // (or when the installed plugin plan diverges from the worktree module).
+      const selection =
+        options.selection ??
+        (
+          await resolveCiSelection({
+            changedPaths: paths,
+            worktreePath: pr.worktreePath ?? resolvedCwd,
+            primaryPath: cwd,
+          })
+        ).selection;
+      // Never run root pnpm test / full suite from a stale installed or replayed plan.
+      // Caller-forced `options.selection` is allowed for unit fixtures only.
+      if (!options.selection && looksLikeStaleFullSuitePlan(selection)) {
+        throw new Error(
+          `Refusing stale full-suite CI plan (RAD-123): checks=${JSON.stringify(selection.checks)} ` +
+            `reason=${JSON.stringify(selection.reason)}. Shepherd must use worktree selectCiChecks ` +
+            `(scoped packages — never root pnpm test).`,
+        );
+      }
       const checks =
         options.selection && options.selection.checks.length > 0
           ? options.selection.checks
@@ -193,6 +208,7 @@ export async function shepherdStatus(
       });
       ciPlan = selection;
       ciChecks = ciResult.checks;
+      ciCwd = resolvedCwd;
 
       const productFails = ciResult.checks.filter(
         (check) => !check.passed && !check.skipped && check.kind !== "env",
