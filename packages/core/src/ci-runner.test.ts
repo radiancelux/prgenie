@@ -68,7 +68,7 @@ describe("resolvePrettierFromCwd", () => {
       const requireFromPlugin = createRequire(join(fakePlugin, "mcp", "server.cjs"));
       assert.throws(() => requireFromPlugin.resolve("prettier"), /Cannot find module/);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
       await rm(fakePlugin, { recursive: true, force: true });
     }
   });
@@ -91,7 +91,7 @@ describe("runCiChecks", () => {
       assert.ok(checkNames.includes("test"));
       assert.ok(checkNames.includes("build"));
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -125,7 +125,7 @@ describe("runCiChecks", () => {
       const passedChecks = result.checks.filter((c) => c.name !== "lint");
       assert.ok(passedChecks.every((c) => c.passed));
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -158,7 +158,7 @@ describe("runCiChecks", () => {
       assert.ok(failedNames.includes("typecheck"));
       assert.ok(failedNames.includes("build"));
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -185,7 +185,7 @@ describe("runCiChecks", () => {
       assert.equal(result.checks[0].name, "custom-check");
       assert.equal(result.checks[0].passed, true);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -210,7 +210,7 @@ describe("runCiChecks", () => {
       assert.equal(result.checks[0].passed, false);
       assert.ok(result.checks[0].error);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -282,7 +282,7 @@ describe("runCiChecks", () => {
       assert.ok(formatCheck);
       assert.equal(formatCheck.passed, true);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -356,7 +356,7 @@ describe("runCiChecks", () => {
         /bad\.js|Prettier format check failed/,
       );
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -443,7 +443,7 @@ describe("runCiChecks", () => {
       assert.ok(formatCheck);
       assert.equal(formatCheck.passed, true);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -535,7 +535,7 @@ describe("runCiChecks", () => {
       assert.ok(commands.some((c) => /format:check \(blobs\)/.test(c)));
       assert.ok(commands.some((c) => /packages\/core\/src\/util\.ts/.test(c)));
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -568,7 +568,7 @@ describe("runCiChecks", () => {
       assert.equal(result.allPassed, true);
       assert.ok(result.checks[0]?.reason?.includes("scoped 1 changed file"));
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -611,7 +611,7 @@ describe("runCiChecks", () => {
       assert.equal(result.allPassed, true);
       assert.ok(result.checks[0]?.reason?.includes(`full tree ${full.files.length} file`));
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -664,7 +664,7 @@ describe("runCiChecks", () => {
         /ls-files failed for scoped format paths|git ls-files/i,
       );
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -792,7 +792,7 @@ describe("runCiChecks", () => {
       const result3 = await runCiChecks(repo, { checks: ["lint"], timeout: 5000 });
       assert.equal(result3.allPassed, true, "Third run should pass via cache (HEAD unchanged)");
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -845,7 +845,7 @@ describe("runCiChecks", () => {
       const result2 = await runCiChecks(repo, { checks: ["lint"], timeout: 5000 });
       assert.equal(result2.allPassed, false, "Cache should be invalid after file change");
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -980,7 +980,7 @@ describe("runCiChecks", () => {
       assert.equal(result2.allPassed, true);
       // All checks should pass via cache
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1051,7 +1051,7 @@ describe("runCiChecks", () => {
       } catch {
         // Ignore cleanup errors
       }
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1091,7 +1091,7 @@ describe("runCiChecks", () => {
       assert.ok(failed?.error?.includes("pnpm test"));
       assert.ok(failed?.excerpt, "failing check should carry a short excerpt");
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1138,7 +1138,7 @@ describe("runCiChecks", () => {
       assert.match(events[0]?.message ?? "", /widget renders/);
       assert.ok(events[0]?.logPath);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1184,7 +1184,7 @@ describe("runCiChecks", () => {
       assert.match(build?.excerpt ?? "", /esbuild failed/);
       assert.ok(!(lint?.excerpt ?? "").startsWith("Command failed"));
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1281,7 +1281,7 @@ describe("runCiChecks", () => {
       assert.equal(result.checks.find((c) => c.name === "test")?.skipped, true);
       assert.equal(result.checks.find((c) => c.name === "build")?.skipped, true);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1302,7 +1302,7 @@ describe("runCiChecks", () => {
       assert.equal(result.allPassed, true);
       assert.deepEqual(new Set(started), new Set(["lint", "test"]));
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1352,7 +1352,7 @@ describe("runCiChecks", () => {
       assert.notEqual(commands[0], "pnpm lint");
       // Fixture may lack a working eslint bin; scoped command string is the contract.
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1387,7 +1387,7 @@ describe("runCiChecks", () => {
       assert.equal(commands[0], "pnpm lint");
       assert.ok(result.checks[0]?.reason?.includes("config/CI"));
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 });
@@ -1437,7 +1437,7 @@ describe("runLoopCi", () => {
       assert.ok(names.includes("test"), "failingChecks merge test");
       assert.ok(result.selection);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1463,7 +1463,7 @@ describe("runLoopCi", () => {
       assert.ok(!names.includes("test"), "must not force root pnpm test");
       assert.equal(result.selection?.packageScoped, true);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1503,7 +1503,7 @@ describe("runLoopCi", () => {
       );
       assert.ok(Date.now() - started < 8000);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -1530,7 +1530,7 @@ describe("runLoopCi", () => {
       assert.equal(norm(result.cwd), norm(pr.worktreePath));
       assert.ok(seen.some((p) => norm(p) === norm(pr.worktreePath!)));
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 });
