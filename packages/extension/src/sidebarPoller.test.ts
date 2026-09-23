@@ -293,7 +293,7 @@ test("laneView Push to origin / export CTA use humanExport, not bare reviewed st
   );
 });
 
-test("laneView EXPORT quiet until reviewed; empty state; no vertical reason layout", () => {
+test("laneView STATUS quiet until reviewed; idle clear; no vertical reason layout", () => {
   const src = readFileSync(
     path.join(path.dirname(fileURLToPath(import.meta.url)), "laneView.ts"),
     "utf8",
@@ -303,15 +303,27 @@ test("laneView EXPORT quiet until reviewed; empty state; no vertical reason layo
     /selected\.status === "reviewed"\s*\?\s*displayShepherdStatus/,
     "cheap shepherd BLOCKED must not paint for draft/ready loops",
   );
-  assert.ok(src.includes("Export when ready"));
-  assert.ok(src.includes("No loops yet. Export appears here"));
+  assert.ok(src.includes("STATUS_PANEL_TITLE"));
+  assert.ok(src.includes("statusPanelGuidanceForLoop"));
+  assert.ok(src.includes("statusPanelIdleBody"));
+  assert.ok(src.includes("STATUS_PHASE"));
   assert.ok(src.includes("shepherdEmpty"));
+  assert.ok(src.includes("shepherd-header-row"));
   assert.ok(src.includes("flex-direction: column"));
+  assert.ok(src.includes("exportingId"));
+  assert.ok(src.includes("Reusing green gate"));
+  assert.ok(src.includes("Re-running gate CI"));
+  assert.ok(src.includes("exportBusyHint"));
   assert.match(src, /\.shepherd-reason \.ci-check\s*\{[^}]*width:\s*auto/s);
   assert.equal(
     /\.shepherd-reason \.message[^}]*overflow-wrap:\s*anywhere/.test(src),
     false,
     "overflow-wrap:anywhere + squeezed width stacked one char per line",
+  );
+  assert.equal(
+    /<span class="label">export<\/span>/.test(src),
+    false,
+    "section title must be STATUS, not export",
   );
 });
 
