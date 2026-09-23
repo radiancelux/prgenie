@@ -93,8 +93,11 @@ async function withPrLock(
     const pr = await readPrFile(file);
     await fn(pr);
     // Persist live worktree overlay so packet worktreePath / ciCwd are not null on disk (RAD-123).
+    // Also clear a stale on-disk path when the live overlay is null (pruned worktree).
     if (resolved.worktreePath) {
       pr.worktreePath = resolved.worktreePath;
+    } else if (pr.worktreePath) {
+      pr.worktreePath = null;
     }
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath ?? pr.worktreePath;
@@ -106,13 +109,16 @@ async function withPrLock(
  * Resolve loop tip from the exclusive worktree when present; else branch/HEAD in cwd.
  * Worktree commits update the shared branch, but reading HEAD in the worktree is the
  * authoritative tip for agent decisions (RAD-125).
+ *
+ * Only trust paths from `listWorktrees` / `worktreeForLoop`. Never fall back to the
+ * on-disk packet `worktreePath` — a pruned path throws and breaks refresh / steward_next.
  */
 async function resolveLoopHeadTip(
   cwd: string,
   pr: Pick<LocalPr, "id" | "headRef" | "worktreePath">,
 ): Promise<{ headRef: string; headSha: string }> {
   const trees = await listWorktrees(cwd);
-  const wt = worktreeForLoop(trees, pr) ?? pr.worktreePath ?? null;
+  const wt = worktreeForLoop(trees, pr);
   if (wt) {
     const headSha = await gitText(wt, ["rev-parse", "HEAD"]);
     const branch = await currentBranch(wt);

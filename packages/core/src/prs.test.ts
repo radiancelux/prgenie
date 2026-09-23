@@ -50,7 +50,8 @@ import {
   getRepoWatch,
   resumeWatch,
 } from "./index.js";
-import { prsDir } from "./store.js";
+import { prsDir, prFile, parseJsonObject, writeJsonFile } from "./store.js";
+import type { LocalPr } from "./types.js";
 
 let repo = "";
 
@@ -1019,4 +1020,32 @@ test("RAD-126: refreshLocalPrHead invalidates reviewed when tip moves", async ()
   assert.equal(refreshed.exportGate, null);
   assert.equal(refreshed.reviewRequestedSha, newSha);
   assert.equal(refreshed.reviewerNotifiedSha, null);
+});
+
+test("RAD-125: refreshLocalPrHead falls through when packet worktreePath is pruned", async () => {
+  const { refreshLocalPrHead } = await import("./prs.js");
+  git(["checkout", "main"]);
+  git(["checkout", "-b", "feat/rad-125-stale-wt"]);
+  await writeFile(path.join(repo, "stale-wt.txt"), "1\n");
+  git(["add", "."]);
+  git(["commit", "-m", "stale-wt one"]);
+  const pr = await createLocalPr(repo, { title: "RAD-125 stale wt", base: "main" });
+  assert.ok(pr.worktreePath);
+  const tipSha = pr.headSha;
+  const stalePath = pr.worktreePath;
+
+  // Remove the exclusive checkout but leave a dead path on the packet (reviewer MEDIUM).
+  git(["worktree", "remove", "--force", stalePath]);
+  const dir = await prsDir(repo);
+  const file = prFile(dir, pr.id);
+  const onDisk = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+  onDisk.worktreePath = stalePath;
+  await writeJsonFile(file, onDisk);
+
+  const refreshed = await refreshLocalPrHead(repo, pr.id);
+  assert.equal(refreshed.headSha, tipSha);
+  assert.equal(refreshed.worktreePath, null);
+  // Disk path cleared so a later refresh cannot try the pruned directory again.
+  const after = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+  assert.equal(after.worktreePath, null);
 });
