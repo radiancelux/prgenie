@@ -302,10 +302,12 @@ describe("shepherdStatus", () => {
 
       await setLocalPrStatus(repo, pr.id, "reviewed");
 
-      // Skip github check but allow CI check to run (exit-script fixture — no real bins)
+      // Skip github check but allow CI check to run (exit-script fixture — no real bins).
+      // Force the root plan: selectCiChecks would skip this fixture diff (RAD-119).
       const result = await shepherdStatus(repo, pr.id, {
         skipGithubCheck: true,
         skipToolchainEnsure: true,
+        selection: fixtureRootSelection(["format:check", "lint", "typecheck", "test", "build"]),
       });
 
       assert.equal(result.status, "blocked");
@@ -361,8 +363,10 @@ describe("shepherdStatus", () => {
 
       const result = await shepherdStatus(repo, pr.id, {
         skipGithubCheck: true,
+        skipToolchainEnsure: true,
         failFast: false,
         parallel: false,
+        selection: fixtureRootSelection(["format:check", "lint", "typecheck", "test", "build"]),
       });
 
       assert.equal(result.status, "blocked");
