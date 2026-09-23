@@ -45,6 +45,17 @@ import {
 const execAsync = promisify(exec);
 
 /**
+ * Env for CI shell checks. Strip Node's test-runner context so nested
+ * `tsx --test` / `node --test` (e.g. file-scoped test:core) report their own
+ * exit codes instead of joining the parent harness (RAD-127).
+ */
+function ciShellEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...process.env, ...extra };
+  delete env.NODE_TEST_CONTEXT;
+  return env;
+}
+
+/**
  * Resolve prettier from the CI repo cwd, not the MCP/CLI bundle location.
  * Bundles mark prettier external; linked-plugin installs under ~/.cursor/plugins
  * have no node_modules, so bare `import("prettier")` fails MODULE_NOT_FOUND.
@@ -426,10 +437,17 @@ async function runOneCheck(
           timeout,
           signal,
           maxBuffer: 2 * 1024 * 1024,
+          env: ciShellEnv(),
         });
       }
     } else {
-      await execAsync(shellCommand, { cwd, timeout, signal, maxBuffer: 2 * 1024 * 1024 });
+      await execAsync(shellCommand, {
+        cwd,
+        timeout,
+        signal,
+        maxBuffer: 2 * 1024 * 1024,
+        env: ciShellEnv(),
+      });
     }
     const elapsedMs = Date.now() - started;
     onProgress?.({ phase: "ci", check, state: "pass", command: progressCommand, elapsedMs });

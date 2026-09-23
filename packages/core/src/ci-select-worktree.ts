@@ -10,6 +10,7 @@ import {
   selectCiChecks,
   DEFAULT_CI_CHECKS,
   type CiCheckSelection,
+  type SelectCiChecksOptions,
 } from "./ci-select.js";
 import { loopWorktreeIdentity } from "./worktrees.js";
 
@@ -50,7 +51,10 @@ export function ciSelectionPlansEqual(a: CiCheckSelection, b: CiCheckSelection):
   );
 }
 
-export type CiSelectFn = (changedPaths: string[]) => CiCheckSelection;
+export type CiSelectFn = (
+  changedPaths: string[],
+  options?: SelectCiChecksOptions,
+) => CiCheckSelection;
 
 export type ResolveCiSelectionResult = {
   selection: CiCheckSelection;
@@ -188,7 +192,8 @@ function selectViaTsxCliSync(
     `import { pathToFileURL } from "node:url";
 async function main() {
   const m = await import(pathToFileURL(process.argv[2]).href);
-  process.stdout.write(JSON.stringify(m.selectCiChecks(JSON.parse(process.argv[3]))));
+  const paths = JSON.parse(process.argv[3]);
+  process.stdout.write(JSON.stringify(m.selectCiChecks(paths, { cwd: process.cwd() })));
 }
 main().catch((e) => { console.error(e); process.exit(1); });
 `,
@@ -247,7 +252,12 @@ export async function loadWorktreeSelectCiChecks(
         `Worktree ci-select at ${modulePath} did not export selectCiChecks (keys: ${Object.keys(mod).join(", ")})`,
       );
     }
-    const fn = select as CiSelectFn;
+    const rawSelect = select as (
+      changedPaths: string[],
+      options?: SelectCiChecksOptions,
+    ) => CiCheckSelection;
+    const fn: CiSelectFn = (changedPaths, options) =>
+      rawSelect(changedPaths, { cwd: worktreePath, ...options });
     worktreeSelectCache.set(cacheKey, { mtimeMs, select: fn });
     return fn;
   }
@@ -283,7 +293,8 @@ export async function selectCiChecksViaTsxCli(
     `import { pathToFileURL } from "node:url";
 async function main() {
   const m = await import(pathToFileURL(process.argv[2]).href);
-  process.stdout.write(JSON.stringify(m.selectCiChecks(JSON.parse(process.argv[3]))));
+  const paths = JSON.parse(process.argv[3]);
+  process.stdout.write(JSON.stringify(m.selectCiChecks(paths, { cwd: process.cwd() })));
 }
 main().catch((e) => { console.error(e); process.exit(1); });
 `,
@@ -359,9 +370,14 @@ export async function resolveCiSelection(
   options: ResolveCiSelectionOptions,
 ): Promise<ResolveCiSelectionResult> {
   const paths = options.changedPaths;
-  const installedSelect = options.installedSelect ?? selectCiChecks;
-  const installed = installedSelect(paths);
   const worktreePath = options.worktreePath?.trim() ? path.resolve(options.worktreePath) : null;
+  const selectOpts = worktreePath
+    ? { cwd: worktreePath }
+    : options.primaryPath?.trim()
+      ? { cwd: path.resolve(options.primaryPath) }
+      : undefined;
+  const installedSelect = options.installedSelect ?? selectCiChecks;
+  const installed = installedSelect(paths, selectOpts);
   const touches = touchesCiSelectionSource(paths);
   const refuseOnTouch = options.refuseStaleOnTouch !== false;
   const installedLooksStale = looksLikeStaleFullSuitePlan(installed);
@@ -420,7 +436,7 @@ export async function resolveCiSelection(
     return { selection: installed, source: "installed", diverged: false };
   }
 
-  const worktreePlan = worktreeSelect(paths);
+  const worktreePlan = worktreeSelect(paths, selectOpts);
   const diverged = !ciSelectionPlansEqual(installed, worktreePlan);
 
   if (diverged) {

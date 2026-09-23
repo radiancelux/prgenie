@@ -348,6 +348,7 @@ export type {
   CiPathKind,
   ScopablePackage,
   ScopedTestFilePlan,
+  SelectCiChecksOptions,
 } from "./ci-select.js";
 export {
   ciSelectionPlansEqual,

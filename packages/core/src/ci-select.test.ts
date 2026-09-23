@@ -265,6 +265,33 @@ describe("selectCiChecks", () => {
     assert.deepEqual(leafPlusTest.testFiles?.["test:core"], ["packages/core/src/progress.test.ts"]);
   });
 
+  it("keeps package glob when sibling *.test.ts does not exist (RAD-127)", () => {
+    // github-ops.ts has no github-ops.test.ts on disk — must not invent a phantom path.
+    const missing = selectCiChecks(["packages/core/src/github-ops.ts"]);
+    assert.equal(missing.packageScoped, true);
+    assert.equal(missing.testFiles?.["test:core"], undefined);
+    assert.ok(missing.reason.some((r) => /no covering \*\.test\.ts/.test(r)));
+    assert.ok(missing.reason.some((r) => /package glob/.test(r)));
+    assert.equal(
+      ciCheckCommand("test:core", missing.testFiles?.["test:core"]),
+      "pnpm exec tsx --test packages/core/src/*.test.ts",
+    );
+
+    // Injectable exists: pretend every sibling is missing → still glob.
+    const forced = selectCiChecks(["packages/core/src/progress.ts"], {
+      exists: () => false,
+    });
+    assert.equal(forced.testFiles?.["test:core"], undefined);
+    assert.ok(forced.reason.some((r) => /no covering \*\.test\.ts/.test(r)));
+
+    // CLI leaf without a sibling test file → glob (not version.test.ts phantom).
+    const cliLeaf = selectCiChecks(["packages/cli/src/version.ts"], {
+      exists: () => false,
+    });
+    assert.equal(cliLeaf.testFiles?.["test:cli"], undefined);
+    assert.ok(cliLeaf.reason.some((r) => /no covering \*\.test\.ts/.test(r)));
+  });
+
   it("resolveCiCwd prefers the loop worktree over primary/plugin cwd", async () => {
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
