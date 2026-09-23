@@ -58,6 +58,8 @@ One steward chat owns one loop. It does **not** implement or review in-chat. It:
 2. When status is `ready`, Tasks a reviewer and persists `reviewerTaskId`.
 3. On `changes_requested`, **resumes the same implementor Task id** (no twin) unless missing/failed or the user asks to restart.
 4. After Reviewer clear (`reviewed`), runs the full export gate (`evaluateAndStoreExportGate` / `steward_next`). Human-exportable / Push to origin only when the gate is **ready**. On **blocked** (especially CI), resume the implementor with `failingCheck`, then `evaluate_export_gate` **again**. Do **not** auto-spawn a reviewer because CI failed. See [ci-checks.md](ci-checks.md).
+5. **Packet HEAD ([RAD-125](https://linear.app/radiancelux/issue/RAD-125)):** `steward_next`, MCP/`prgenie show` `get_local_pr`, and `update_local_pr` refresh `headSha` from the loop worktree tip before gate / resume decisions — never match a blocked gate for a stale SHA. Core `getLocalPr` stays a non-locking disk read (used under locks); call `refreshLocalPrHead` at decision entrypoints. `list_local_prs` does not refresh every row.
+6. **HEAD moved after CLEAN ([RAD-126](https://linear.app/radiancelux/issue/RAD-126)):** if status is `reviewed` and tip moves, invalidate to `ready` (re-review) before Open on GitHub. Stale/refused CI plans label `failingCheck` as `ci-select`, not root `test`.
 
 CLI: `prgenie steward <id>`, `prgenie steward bind <id> --implementor <taskId>`. MCP: `steward_next`, `bind_steward`. Skill: `/steward`. There is no inbox/queue listen flywheel.
 

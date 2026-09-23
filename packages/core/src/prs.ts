@@ -69,21 +69,35 @@ async function readPrFile(file: string): Promise<LocalPr> {
   return pr;
 }
 
+/**
+ * Disk + worktree overlay lookup without refreshing headSha.
+ * Prefer {@link getLocalPr} for agent/MCP reads (RAD-125 refreshes tip).
+ */
+async function findLocalPr(cwd: string, id: string): Promise<LocalPr> {
+  const prs = await listLocalPrs(cwd);
+  const pr = prs.find((p) => p.id === id || p.id.startsWith(id));
+  if (!pr) throw new Error(`Local PR not found: ${id}`);
+  return pr;
+}
+
 /** Lock, re-read, mutate, write — so parallel chats cannot drop comments. */
 async function withPrLock(
   cwd: string,
   id: string,
   fn: (pr: LocalPr) => void | Promise<void>,
 ): Promise<LocalPr> {
-  const resolved = await getLocalPr(cwd, id);
+  const resolved = await findLocalPr(cwd, id);
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
     const pr = await readPrFile(file);
     await fn(pr);
     // Persist live worktree overlay so packet worktreePath / ciCwd are not null on disk (RAD-123).
+    // Also clear a stale on-disk path when the live overlay is null (pruned worktree).
     if (resolved.worktreePath) {
       pr.worktreePath = resolved.worktreePath;
+    } else if (pr.worktreePath) {
+      pr.worktreePath = null;
     }
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath ?? pr.worktreePath;
@@ -91,13 +105,60 @@ async function withPrLock(
   });
 }
 
-async function applyHeadRefresh(cwd: string, pr: LocalPr): Promise<void> {
-  const named = await git(cwd, ["rev-parse", "--verify", pr.headRef], { allowFail: true });
-  if (named.code !== 0) {
-    const branch = await currentBranch(cwd);
-    if (branch) pr.headRef = branch;
+/**
+ * Resolve loop tip from the exclusive worktree when present; else branch/HEAD in cwd.
+ * Worktree commits update the shared branch, but reading HEAD in the worktree is the
+ * authoritative tip for agent decisions (RAD-125).
+ *
+ * Only trust paths from `listWorktrees` / `worktreeForLoop`. Never fall back to the
+ * on-disk packet `worktreePath` — a pruned path throws and breaks refresh / steward_next.
+ */
+async function resolveLoopHeadTip(
+  cwd: string,
+  pr: Pick<LocalPr, "id" | "headRef" | "worktreePath">,
+): Promise<{ headRef: string; headSha: string }> {
+  const trees = await listWorktrees(cwd);
+  const wt = worktreeForLoop(trees, pr);
+  if (wt) {
+    const headSha = await gitText(wt, ["rev-parse", "HEAD"]);
+    const branch = await currentBranch(wt);
+    return { headRef: branch ?? pr.headRef, headSha };
   }
-  pr.headSha = await gitText(cwd, ["rev-parse", named.code === 0 ? pr.headRef : "HEAD"]);
+  const named = await git(cwd, ["rev-parse", "--verify", pr.headRef], { allowFail: true });
+  if (named.code === 0) {
+    return {
+      headRef: pr.headRef,
+      headSha: await gitText(cwd, ["rev-parse", pr.headRef]),
+    };
+  }
+  const branch = await currentBranch(cwd);
+  const headRef = branch ?? pr.headRef;
+  return {
+    headRef,
+    headSha: await gitText(cwd, ["rev-parse", "HEAD"]),
+  };
+}
+
+/**
+ * When a reviewed loop's tip moves, clear the review verdict until Reviewer
+ * re-clears that SHA (RAD-126). Default is re-review — no mechanical allowlist.
+ */
+export function invalidateReviewedOnHeadMove(pr: LocalPr, previousHeadSha: string): boolean {
+  if (pr.status !== "reviewed") return false;
+  if (!previousHeadSha || pr.headSha === previousHeadSha) return false;
+  pr.status = "ready";
+  pr.reviewRequestedSha = pr.headSha;
+  pr.reviewerNotifiedSha = null;
+  pr.exportGate = null;
+  return true;
+}
+
+async function applyHeadRefresh(cwd: string, pr: LocalPr): Promise<void> {
+  const previousHeadSha = pr.headSha;
+  const tip = await resolveLoopHeadTip(cwd, pr);
+  pr.headRef = tip.headRef;
+  pr.headSha = tip.headSha;
+  invalidateReviewedOnHeadMove(pr, previousHeadSha);
   pr.updatedAt = nowIso();
 }
 
@@ -246,11 +307,15 @@ export async function listLocalPrs(
   }
   return matched;
 }
+/**
+ * Show one local PR (disk + worktreePath overlay).
+ * Does **not** persist a tip refresh — that avoids nested file locks with `withPrLock`.
+ * For a tip that matches the worktree HEAD (and RAD-126 invalidate), use
+ * {@link refreshLocalPrHead} or MCP `get_local_pr` (which refreshes).
+ * `list_local_prs` also skips head refresh (read-only listing).
+ */
 export async function getLocalPr(cwd: string, id: string): Promise<LocalPr> {
-  const prs = await listLocalPrs(cwd);
-  const pr = prs.find((p) => p.id === id || p.id.startsWith(id));
-  if (!pr) throw new Error(`Local PR not found: ${id}`);
-  return pr;
+  return findLocalPr(cwd, id);
 }
 
 /** Export halt lasts until the next loop. Stop halt never auto-resumes, including one-sided stop. */
@@ -331,7 +396,7 @@ export async function updateLocalPr(
   id: string,
   patch: { title?: string; body?: string },
 ): Promise<LocalPr> {
-  return withPrLock(cwd, id, (pr) => {
+  return withPrLock(cwd, id, async (pr) => {
     if (patch.title !== undefined) {
       const title = patch.title.trim();
       if (!title) throw new Error("Title is empty");
@@ -340,7 +405,8 @@ export async function updateLocalPr(
     if (patch.body !== undefined) {
       pr.body = patch.body.trim();
     }
-    pr.updatedAt = nowIso();
+    // After implementor commits, refresh headSha without a manual JSON edit (RAD-125).
+    await applyHeadRefresh(cwd, pr);
   });
 }
 
@@ -1166,17 +1232,12 @@ export async function captureAgentWork(
     ? undefined
     : (await listLocalPrs(cwd)).find((pr) => pr.headRef === headRef && !isArchivedPr(pr));
   if (existing) {
-    const prevSha = existing.headSha;
     const updated = await withPrLock(cwd, existing.id, async (pr) => {
       if (input.source) pr.source = input.source;
       if (input.title?.trim()) pr.title = input.title.trim();
       if (input.body?.trim()) pr.body = input.body.trim();
+      // applyHeadRefresh invalidates reviewed → ready when tip moved (RAD-126).
       await applyHeadRefresh(cwd, pr);
-      if (pr.status === "reviewed" && pr.headSha !== prevSha) {
-        pr.status = "ready";
-        pr.reviewRequestedSha = pr.headSha;
-        pr.reviewerNotifiedSha = null;
-      }
     });
     updated.worktreePath = await ensureWorktreeForLoop(cwd, updated, {
       staleLoopIds: (await listLocalPrs(cwd))

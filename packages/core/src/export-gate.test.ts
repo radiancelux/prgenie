@@ -202,6 +202,35 @@ describe("formatExportBlockLabel", () => {
       "github",
     );
   });
+
+  it("labels stale/refused plans as ci-select, never root test (RAD-126)", () => {
+    assert.equal(
+      formatExportBlockLabel([
+        {
+          check: "ci",
+          message:
+            'Refusing stale full-suite CI plan (RAD-123): checks=["test"] reason=["uncertain → full suite"]. Export gate must use worktree selectCiChecks (scoped core/cli — never root pnpm test).',
+        },
+      ]),
+      "ci-select",
+    );
+    assert.equal(
+      formatExportBlockLabel(
+        [{ check: "ci", message: "CI check failed: test — Command failed: pnpm test" }],
+        {
+          status: "blocked",
+          reasons: [{ check: "ci", message: "CI check failed: test — Command failed: pnpm test" }],
+          headSha: "abc123",
+          evaluatedAt: "2026-01-01T00:00:00.000Z",
+          ciPlan: {
+            checks: ["format:check", "lint", "typecheck", "test", "build"],
+            reason: ["uncertain → full suite"],
+          },
+        },
+      ),
+      "ci-select",
+    );
+  });
 });
 
 describe("displayShepherdStatus", () => {

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { pendingExportGate } from "./export-gate.js";
-import { createLocalPr, setLocalPrExportGate, setLocalPrStatus } from "./prs.js";
+import { createLocalPr, getLocalPr, setLocalPrExportGate, setLocalPrStatus } from "./prs.js";
 import {
   bindSteward,
   clearStewardBinding,
@@ -19,8 +19,8 @@ import type { LocalPr } from "./types.js";
 
 let repo = "";
 
-function git(args: string[]): string {
-  return execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+function git(args: string[], cwd = repo): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
 function prStub(
@@ -244,4 +244,72 @@ test("abortCiForSteward returns stop_implementor when a Task is bound (RAD-112)"
   const alone = await abortCiForSteward(repo, pr.id);
   assert.equal(alone.implementorTaskId, null);
   assert.equal(alone.stewardAction, "abort_ci_only");
+});
+
+test("RAD-125: stewardNext refreshes headSha before matching a blocked gate", async () => {
+  git(["checkout", "main"]);
+  git(["checkout", "-b", "feat/rad-125-stale-head"]);
+  await writeFile(path.join(repo, "rad125.txt"), "a\n");
+  git(["add", "."]);
+  git(["commit", "-m", "rad125 a"]);
+
+  const pr = await createLocalPr(repo, { title: "RAD-125 refresh", base: "main" });
+  const oldSha = pr.headSha;
+  const tipCwd = pr.worktreePath ?? repo;
+  await bindSteward(repo, pr.id, { implementorTaskId: "task-impl-125" });
+  await setLocalPrStatus(repo, pr.id, "reviewed");
+  await setLocalPrExportGate(repo, pr.id, {
+    status: "blocked",
+    reasons: [{ check: "ci", message: "CI check failed: test — Command failed: pnpm test" }],
+    headSha: oldSha,
+    evaluatedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  await writeFile(path.join(tipCwd, "rad125.txt"), "b\n");
+  git(["add", "."], tipCwd);
+  git(["commit", "-m", "rad125 b"], tipCwd);
+  const newSha = git(["rev-parse", "HEAD"], tipCwd);
+  assert.notEqual(newSha, oldSha);
+
+  // Packet still has old headSha on disk until stewardNext refreshes.
+  const next = await stewardNext(repo, pr.id, { evaluateGate: false });
+  // RAD-126: tip moved after CLEAN → re-enter review (not resume for stale test).
+  assert.equal(next.status, "ready");
+  assert.equal(next.decision.kind, "spawn_reviewer");
+  assert.equal(next.decision.humanExportable, false);
+  assert.notEqual(next.decision.failingCheck, "test");
+  assert.equal(next.exportGate, null);
+  // stewardNext already refreshed; disk head matches tip.
+  const shown = await getLocalPr(repo, pr.id);
+  assert.equal(shown.headSha, newSha);
+  assert.equal(shown.status, "ready");
+});
+
+test("RAD-126: decideStewardAction labels refused plan as ci-select not test", () => {
+  const decided = decideStewardAction(
+    prStub({
+      status: "reviewed",
+      exportGate: {
+        status: "blocked",
+        reasons: [
+          {
+            check: "ci",
+            message:
+              'Refusing stale full-suite CI plan (RAD-123): checks=["test"] — never root pnpm test. Use worktree selectCiChecks.',
+          },
+        ],
+        headSha: "abc123",
+        evaluatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    }),
+    {
+      loopId: "lp-loop1",
+      implementorTaskId: "task-impl-1",
+      reviewerTaskId: "task-rev-1",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+  );
+  assert.equal(decided.kind, "resume_implementor");
+  assert.equal(decided.failingCheck, "ci-select");
+  assert.match(decided.reason, /worktree select|do not fix root pnpm test/i);
 });

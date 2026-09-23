@@ -3,7 +3,7 @@ import path from "node:path";
 import { formatExportBlockLabel, needsExportGateEvaluation } from "./export-gate.js";
 import { evaluateAndStoreExportGate } from "./export-validation.js";
 import { requireGitRoot } from "./git.js";
-import { getLocalPr, isArchivedPr, listLocalPrs } from "./prs.js";
+import { getLocalPr, isArchivedPr, listLocalPrs, refreshLocalPrHead } from "./prs.js";
 import type { ProgressCallback } from "./progress.js";
 import { consoleDir, parseJsonObject, withFileLock, writeJsonFile } from "./store.js";
 import type { ExportGateSnapshot, ExportGateStatus, LocalPr } from "./types.js";
@@ -239,7 +239,7 @@ export function decideStewardAction(
       };
     }
     if (gateStatus === "blocked") {
-      const failingCheck = formatExportBlockLabel(gate?.reasons ?? []);
+      const failingCheck = formatExportBlockLabel(gate?.reasons ?? [], gate);
       if (resumeImplementor) {
         return {
           kind: "resume_implementor",
@@ -251,7 +251,10 @@ export function decideStewardAction(
           yourTurn: false,
           failingCheck,
           gateStatus,
-          reason: `Export gate blocked (${failingCheck}). Resume the same implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer — do not show Push to origin.`,
+          reason:
+            failingCheck === "ci-select"
+              ? `Export gate blocked (${failingCheck}): stale/refused CI plan — re-run the gate with worktree select (do not fix root pnpm test). Resume the same implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer — do not show Push to origin.`
+              : `Export gate blocked (${failingCheck}). Resume the same implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer — do not show Push to origin.`,
         };
       }
       return {
@@ -264,7 +267,10 @@ export function decideStewardAction(
         yourTurn: false,
         failingCheck,
         gateStatus,
-        reason: `Export gate blocked (${failingCheck}). Spawn an implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer — do not show Push to origin.`,
+        reason:
+          failingCheck === "ci-select"
+            ? `Export gate blocked (${failingCheck}): stale/refused CI plan — re-run the gate with worktree select (do not fix root pnpm test). Spawn an implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer — do not show Push to origin.`
+            : `Export gate blocked (${failingCheck}). Spawn an implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer — do not show Push to origin.`,
       };
     }
     return {
@@ -389,7 +395,10 @@ export async function stewardNext(
   options: StewardNextOptions & BindStewardInput = {},
 ): Promise<StewardNextResult> {
   const root = await requireGitRoot(cwd);
-  let pr = await getLocalPr(root, id);
+  // RAD-125: refresh packet headSha from worktree/branch tip BEFORE reading
+  // exportGate / blocked-check labels (stale HEAD matched the wrong gate).
+  // RAD-126: refresh also invalidates reviewed → ready when tip moved.
+  let pr = await refreshLocalPrHead(root, id);
   // Persist ownership on first next-action so the legacy stop hook stays silent
   // even before implementor/reviewer Task ids are known.
   const binding = await bindSteward(root, pr.id, {
@@ -402,7 +411,7 @@ export async function stewardNext(
       onProgress: options.onProgress,
       signal: options.signal,
     });
-    pr = await getLocalPr(root, pr.id);
+    pr = await refreshLocalPrHead(root, pr.id);
   }
 
   return {

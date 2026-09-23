@@ -21,6 +21,7 @@ import {
   getLocalPr,
   getLocalPrDiff,
   getLocalPrNameStatus,
+  refreshLocalPrHead,
   getRepoGithubBind,
   getRepoWatch,
   formatWatchLane,
@@ -567,7 +568,7 @@ export async function run(argv: string[]): Promise<number> {
       process.stdout.write("prgenie show <id>\n\nShow detailed information about a local PR.\n");
       return 0;
     }
-    const pr = await getLocalPr(repo, id);
+    const pr = await refreshLocalPrHead(repo, id);
     process.stdout.write(
       JSON.stringify({ ...pr, pendingComments: pendingReviewComments(pr) }, null, 2) + "\n",
     );
