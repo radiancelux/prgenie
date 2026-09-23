@@ -7,6 +7,7 @@ import {
   onAbort,
   throwIfAborted,
   type ProgressCallback,
+  type ProgressEvent,
   type RunProgressOptions,
 } from "./progress.js";
 import type { ExportGateSnapshot } from "./types.js";
@@ -127,8 +128,11 @@ export async function evaluateAndStoreExportGate(
     }
 
     const listeners = new Set<ProgressCallback>();
+    /** Replay buffer so a concurrent joiner still sees CI starts that already fired. */
+    const recent: ProgressEvent[] = [];
     if (options.onProgress) listeners.add(options.onProgress);
     const emit: ProgressCallback = (event) => {
+      recent.push(event);
       for (const cb of listeners) cb(event);
     };
 
@@ -138,12 +142,16 @@ export async function evaluateAndStoreExportGate(
       addListener: (cb) => {
         if (!cb) return () => undefined;
         listeners.add(cb);
+        for (const event of recent) cb(event);
         return () => {
           listeners.delete(cb);
         };
       },
     };
 
+    // Claim the flight before any await in `run` so a concurrent caller joins
+    // instead of starting a second evaluation (JS can interleave at the first await).
+    inflight.set(key, flight);
     const run = (async () => {
       let lock = await acquireCiLock(cwd, id, pr.headSha, controller.signal);
       try {
@@ -203,7 +211,6 @@ export async function evaluateAndStoreExportGate(
     })();
 
     flight.promise = run;
-    inflight.set(key, flight);
     try {
       return await run;
     } finally {
