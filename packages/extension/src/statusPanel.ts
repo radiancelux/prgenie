@@ -30,7 +30,7 @@ export function statusPanelIdleBody(options: {
     return "No matching loops. Clear search to see status for a live loop.";
   }
   if (archived > 0) {
-    return "No active loops. Show archived to browse exported loops — STATUS stays idle until a live loop is selected.";
+    return "No active loops. Expand Archive below to browse exported loops — STATUS stays idle until a live loop is selected. Clear archived permanently deletes local packets, worktrees, and local loop branches; remotes stay.";
   }
   return "No loops yet. STATUS shows draft, review, CI, and export progress for the selected loop.";
 }

@@ -234,6 +234,88 @@ export type ReleaseArchivedLoopResult = {
   pruneError: string | null;
 };
 
+export type DeleteLocalLoopBranchResult = {
+  deleted: boolean;
+  /** Local branch name targeted (never a remote). */
+  branch: string | null;
+  error: string | null;
+};
+
+export type FinalizeArchivedLoopResult = ReleaseArchivedLoopResult & {
+  deletedBranch: boolean;
+  branch: string | null;
+  branchError: string | null;
+};
+
+/**
+ * Delete the local feature branch for an archived/cleared loop.
+ * Never touches remotes (`origin/*`). Refuses base branches and branches still checked out.
+ */
+export async function deleteLocalLoopBranch(
+  cwd: string,
+  loop: { id: string; headRef: string; baseRef?: string },
+): Promise<DeleteLocalLoopBranchResult> {
+  const branch = localBaseRef(loop.headRef);
+  if (!branch) {
+    return { deleted: false, branch: null, error: "empty headRef" };
+  }
+  if (loop.baseRef && isBaseBranch(branch, loop.baseRef)) {
+    return {
+      deleted: false,
+      branch,
+      error: `refusing to delete base branch ${branch}`,
+    };
+  }
+  for (const protectedName of ["main", "master"]) {
+    if (branch.toLowerCase() === protectedName) {
+      return {
+        deleted: false,
+        branch,
+        error: `refusing to delete protected branch ${branch}`,
+      };
+    }
+  }
+  if (!(await branchExists(cwd, branch))) {
+    return { deleted: true, branch, error: null };
+  }
+  const trees = await listWorktrees(cwd);
+  const held = trees.find((t) => t.branch === branch);
+  if (held) {
+    return {
+      deleted: false,
+      branch,
+      error: `branch ${branch} still checked out at ${held.path}`,
+    };
+  }
+  const removed = await git(cwd, ["branch", "-D", "--", branch], { allowFail: true });
+  if (removed.code !== 0) {
+    return {
+      deleted: false,
+      branch,
+      error: removed.stderr.trim() || `git branch -D ${branch} failed`,
+    };
+  }
+  return { deleted: true, branch, error: null };
+}
+
+/**
+ * After archive/export/delete: free primary off the loop branch, prune `.loops/<id>`,
+ * and delete the local loop branch. Remotes stay. (RAD-130)
+ */
+export async function finalizeArchivedLoop(
+  cwd: string,
+  loop: { id: string; headRef: string; baseRef: string; worktreePath: string | null },
+): Promise<FinalizeArchivedLoopResult> {
+  const released = await releaseArchivedLoop(cwd, loop);
+  const branchResult = await deleteLocalLoopBranch(cwd, loop);
+  return {
+    ...released,
+    deletedBranch: branchResult.deleted,
+    branch: branchResult.branch,
+    branchError: branchResult.error,
+  };
+}
+
 async function checkoutPrimaryOffLoop(
   primary: string,
   loop: { headRef: string; baseRef: string },

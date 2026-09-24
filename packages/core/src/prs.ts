@@ -13,9 +13,12 @@ import {
   userName,
   worktreeForLoop,
   ensureWorktreeForLoop,
-  releaseArchivedLoop,
+  finalizeArchivedLoop,
+  loopWorktreeDir,
+  primaryWorktreePath,
   sameFsPath,
 } from "./worktrees.js";
+import type { FinalizeArchivedLoopResult } from "./worktrees.js";
 import type {
   CaptureResult,
   CommentRole,
@@ -1091,13 +1094,13 @@ export async function getLocalPrDiff(
   return stdout;
 }
 
-/** Permanently remove a loop packet, its refs, and any sibling worktree. */
+/** Permanently remove a loop packet, its refs, sibling worktree, and local loop branch. */
 export async function deleteLocalPr(
   cwd: string,
   id: string,
-): Promise<{ id: string; deleted: true }> {
+): Promise<{ id: string; deleted: true; finalize: FinalizeArchivedLoopResult }> {
   const pr = await getLocalPr(cwd, id);
-  await releaseArchivedLoop(cwd, pr);
+  const finalize = await finalizeArchivedLoop(cwd, pr);
   const dir = await prsDir(cwd);
   const file = prFile(dir, pr.id);
   await withFileLock(file, async () => {
@@ -1105,7 +1108,84 @@ export async function deleteLocalPr(
   });
   await git(cwd, ["update-ref", "-d", `refs/local-pr/${pr.id}/head`], { allowFail: true });
   await git(cwd, ["update-ref", "-d", `refs/local-pr/${pr.id}/base`], { allowFail: true });
-  return { id: pr.id, deleted: true };
+  return { id: pr.id, deleted: true, finalize };
+}
+
+export type ArchiveLocalPrResult = {
+  pr: LocalPr;
+  finalize: FinalizeArchivedLoopResult;
+  /** Paths involved in disk cleanup (for toasts / confirm copy). */
+  worktreePath: string | null;
+};
+
+/**
+ * Archive one loop locally (RAD-130): set approved, prune `.loops/<id>`, delete local
+ * loop branch. Remote origin branch/PR untouched. Packet stays for Show/Reopen.
+ */
+export async function archiveLocalPr(cwd: string, id: string): Promise<ArchiveLocalPrResult> {
+  const before = await getLocalPr(cwd, id);
+  if (!isArchivedPr(before)) {
+    await setLocalPrStatus(cwd, id, "approved");
+  }
+  const pr = await getLocalPr(cwd, id);
+  const trees = await listWorktrees(cwd);
+  const primary = primaryWorktreePath(trees);
+  const dest = primary ? loopWorktreeDir(primary, pr.id) : pr.worktreePath;
+  const finalize = await finalizeArchivedLoop(cwd, pr);
+  return { pr, finalize, worktreePath: dest };
+}
+
+export type ClearArchivedFailure = {
+  id: string;
+  path: string | null;
+  error: string;
+};
+
+export type ClearArchivedLocalPrsResult = {
+  cleared: string[];
+  failed: ClearArchivedFailure[];
+};
+
+/**
+ * Bulk-delete every archived loop packet plus its worktree and local branch (RAD-130).
+ * Remotes stay. Partial failures name paths; does not claim full success when any fail.
+ */
+export async function clearArchivedLocalPrs(cwd: string): Promise<ClearArchivedLocalPrsResult> {
+  const archived = (await listLocalPrs(cwd)).filter(isArchivedPr);
+  const cleared: string[] = [];
+  const failed: ClearArchivedFailure[] = [];
+  for (const pr of archived) {
+    const trees = await listWorktrees(cwd);
+    const primary = primaryWorktreePath(trees);
+    const dest = primary ? loopWorktreeDir(primary, pr.id) : pr.worktreePath;
+    try {
+      const result = await deleteLocalPr(cwd, pr.id);
+      const errors: string[] = [];
+      if (!result.finalize.prunedWorktree && result.finalize.pruneError) {
+        errors.push(result.finalize.pruneError);
+      }
+      if (!result.finalize.deletedBranch && result.finalize.branchError) {
+        errors.push(result.finalize.branchError);
+      }
+      // Packet delete succeeded; leftover disk is still a partial failure.
+      if (errors.length) {
+        failed.push({
+          id: pr.id,
+          path: result.finalize.worktreeLeftoverPath ?? dest,
+          error: errors.join("; "),
+        });
+      } else {
+        cleared.push(pr.id);
+      }
+    } catch (err) {
+      failed.push({
+        id: pr.id,
+        path: dest,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return { cleared, failed };
 }
 
 /** Bring an archived loop back as changes_requested and recreate its worktree. */

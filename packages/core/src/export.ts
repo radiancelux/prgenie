@@ -2,7 +2,7 @@ import { exportPushArgs, ensureExportUpstream } from "./base-ref.js";
 import { git } from "./git.js";
 import { describeRepoGithubBind, ensureRepoGithub, runGh } from "./github-ops.js";
 import { getLocalPr, isArchivedPr, listLocalPrs, setLocalPrStatus } from "./prs.js";
-import { localBaseRef, releaseArchivedLoop } from "./worktrees.js";
+import { localBaseRef, finalizeArchivedLoop } from "./worktrees.js";
 import { haltWatch, resumeWatch } from "./watch.js";
 import { throwIfAborted, type RunProgressOptions } from "./progress.js";
 
@@ -56,7 +56,7 @@ export async function archiveLoopsMergedOnGithub(
     if (state !== "MERGED") continue;
     await setLocalPrStatus(cwd, pr.id, "approved");
     const archived = await getLocalPr(cwd, pr.id);
-    await releaseArchivedLoop(cwd, archived);
+    await finalizeArchivedLoop(cwd, archived);
     ids.push(pr.id);
   }
   return ids;
@@ -262,7 +262,7 @@ export async function exportLocalPr(
       await setLocalPrStatus(cwd, pr.id, "approved");
     }
     const archived = await getLocalPr(cwd, pr.id);
-    const released = await releaseArchivedLoop(cwd, archived);
+    const released = await finalizeArchivedLoop(cwd, archived);
 
     const partialFailure = exportPartialFailureFromRelease(url, released, archived.worktreePath);
 

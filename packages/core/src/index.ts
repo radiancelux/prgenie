@@ -48,16 +48,25 @@ export {
   ensureLoopFeatureBranch,
   findPeelStashRef,
   isBaseBranch,
+  loopWorktreeDir,
   loopWorktreeIdentity,
   peelStashMessage,
+  primaryWorktreePath,
   pruneArchivedLoopWorktree,
   pruneArchivedLoopWorktreeDetailed,
   pruneLoopWorktrees,
   refusePrimaryWorktreeIfParallel,
   releaseArchivedLoop,
+  finalizeArchivedLoop,
+  deleteLocalLoopBranch,
   sameFsPath,
 } from "./worktrees.js";
-export type { PruneArchivedLoopWorktreeResult, ReleaseArchivedLoopResult } from "./worktrees.js";
+export type {
+  PruneArchivedLoopWorktreeResult,
+  ReleaseArchivedLoopResult,
+  DeleteLocalLoopBranchResult,
+  FinalizeArchivedLoopResult,
+} from "./worktrees.js";
 export {
   assertNoDirtyPluginBuildArtifacts,
   dirtyPluginDoctorFix,
@@ -116,6 +125,8 @@ export {
   setLocalPrStatus,
   shouldSpawnReviewer,
   updateLocalPr,
+  archiveLocalPr,
+  clearArchivedLocalPrs,
 } from "./prs.js";
 export type {
   CompleteLocalPrReviewResult,
