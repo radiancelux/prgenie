@@ -33,7 +33,7 @@ import {
   updateLocalPr,
   exportLocalPr,
   formatExportPartialFailure,
-  abortExportGate,
+  abortCiForSteward,
   applyCiProgressEvent,
   emptyCiProgressSnapshot,
   evaluateAndStoreExportGate,
@@ -632,7 +632,18 @@ export class LaneHub implements vscode.Disposable {
       this.exportGate.cancel();
       const cancelCwd = await this.repoCwd({ warn: false });
       const cancelId = this.selectedId ?? this.liveProgress?.id;
-      if (cancelCwd && cancelId) abortExportGate(cancelCwd, cancelId);
+      // RAD-115: same path as MCP abort_ci — abort token + stewardAction when a Task is bound.
+      // Panel Cancel is the skip half; it does not kill the agent by itself.
+      if (cancelCwd && cancelId) {
+        try {
+          const result = await abortCiForSteward(cancelCwd, cancelId);
+          if (result.stewardAction === "stop_implementor_and_abort_ci") {
+            void vscode.window.showWarningMessage(result.message);
+          }
+        } catch (err) {
+          void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
+        }
+      }
       return;
     }
     if (msg.type === "openTerminal") {
