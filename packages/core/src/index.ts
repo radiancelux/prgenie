@@ -292,10 +292,12 @@ export {
   ensureRepoGithub,
   getRepoGithubBind,
   listGhAccounts,
+  githubPrCreateArgs,
   quoteGhArgsForSpawn,
   quoteWindowsShellArg,
   requireGithubBindForReviewed,
   switchGhUser,
+  withGhBodyFile,
 } from "./github-ops.js";
 export type { GithubBindStatus } from "./github-ops.js";
 export {

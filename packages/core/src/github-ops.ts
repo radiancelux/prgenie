@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { readFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { findGitRoot } from "./git.js";
 import { consoleDir, parseJsonObject, writeJsonFile } from "./store.js";
@@ -8,11 +9,20 @@ import { parseGhAuthStatus, type GhAccount, type RepoGithubBind } from "./github
 /**
  * Quote one argv for cmd.exe when Node spawn({ shell: true }) joins args with spaces.
  * Without this, `gh pr create --title "RAD-95 — Foo bar"` splits on spaces (RAD-95 dogfood).
+ *
+ * Multiline payloads must **not** go through cmd.exe argv: even inside quotes, cmd truncates
+ * at the first newline. Use `withGhBodyFile` + `gh --body-file` instead (RAD-129).
+ * `%` is never safe-unquoted — cmd expands `%VAR%` in unquoted tokens.
  */
 export function quoteWindowsShellArg(arg: string): string {
   if (arg.length === 0) return '""';
-  // Safe unquoted token — no whitespace or cmd metacharacters.
-  if (/^[A-Za-z0-9_./:\\@%+=,:-]+$/.test(arg)) return arg;
+  if (/[\r\n]/.test(arg)) {
+    throw new Error(
+      "Refusing to pass a multiline argument through Windows cmd.exe argv (RAD-129). Use --body-file instead.",
+    );
+  }
+  // Safe unquoted token — no whitespace, %, or cmd metacharacters.
+  if (/^[A-Za-z0-9_./:\\@+=,:-]+$/.test(arg)) return arg;
   return `"${arg.replace(/"/g, '""')}"`;
 }
 
@@ -20,6 +30,46 @@ export function quoteWindowsShellArg(arg: string): string {
 export function quoteGhArgsForSpawn(args: string[]): string[] {
   if (process.platform !== "win32") return args;
   return args.map(quoteWindowsShellArg);
+}
+
+/**
+ * Write `body` to a temp file, invoke `fn(bodyFilePath)`, then delete the file
+ * (success and failure). Prefer this over `gh --body` so newlines and `%VAR%`
+ * never travel through Windows cmd.exe argv (RAD-129).
+ */
+export async function withGhBodyFile<T>(
+  body: string,
+  fn: (bodyFilePath: string) => Promise<T>,
+): Promise<T> {
+  const dir = await mkdtemp(path.join(tmpdir(), "prgenie-gh-body-"));
+  const bodyFilePath = path.join(dir, "body.md");
+  await writeFile(bodyFilePath, body, "utf8");
+  try {
+    return await fn(bodyFilePath);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+/** `gh pr create` argv using `--body-file` (never `--body`). */
+export function githubPrCreateArgs(options: {
+  title: string;
+  bodyFile: string;
+  base: string;
+  head: string;
+}): string[] {
+  return [
+    "pr",
+    "create",
+    "--title",
+    options.title,
+    "--body-file",
+    options.bodyFile,
+    "--base",
+    options.base,
+    "--head",
+    options.head,
+  ];
 }
 
 function gh(

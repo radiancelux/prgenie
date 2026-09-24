@@ -1,6 +1,12 @@
 import { exportPushArgs, ensureExportUpstream } from "./base-ref.js";
 import { git } from "./git.js";
-import { describeRepoGithubBind, ensureRepoGithub, runGh } from "./github-ops.js";
+import {
+  describeRepoGithubBind,
+  ensureRepoGithub,
+  githubPrCreateArgs,
+  runGh,
+  withGhBodyFile,
+} from "./github-ops.js";
 import { getLocalPr, isArchivedPr, listLocalPrs, setLocalPrStatus } from "./prs.js";
 import { localBaseRef, releaseArchivedLoop } from "./worktrees.js";
 import { haltWatch, resumeWatch } from "./watch.js";
@@ -218,21 +224,19 @@ export async function exportLocalPr(
       url = existing.stdout.trim();
       alreadyExisted = true;
     } else {
-      // Title/body are separate argv entries; quoteWindowsShellArg keeps spaces intact on Win32.
-      const created = await runGh(
-        [
-          "pr",
-          "create",
-          "--title",
-          pr.title,
-          "--body",
-          pr.body.trim() || pr.title,
-          "--base",
-          ghBase(pr.baseRef),
-          "--head",
-          pr.headRef,
-        ],
-        { cwd, signal },
+      // Body via --body-file: cmd.exe truncates multiline --body even inside quotes (RAD-129).
+      // Audit: other runGh sites only pass view/json tokens — no multiline argv payloads.
+      const bodyText = pr.body.trim() || pr.title;
+      const created = await withGhBodyFile(bodyText, (bodyFile) =>
+        runGh(
+          githubPrCreateArgs({
+            title: pr.title,
+            bodyFile,
+            base: ghBase(pr.baseRef),
+            head: pr.headRef,
+          }),
+          { cwd, signal },
+        ),
       );
       if (created.code !== 0) {
         onProgress?.({
