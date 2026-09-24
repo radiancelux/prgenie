@@ -313,7 +313,7 @@ describe("evaluateAndStoreExportGate", () => {
         join(pr.worktreePath, "node_modules"),
         type,
       );
-      await setLocalPrStatus(repo, pr.id, "reviewed");
+      await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
       const shepherd = await evaluateAndStoreExportGate(repo, pr.id, {
         skipGithubCheck: true,
         selection: fixtureRootSelection(["format:check", "lint", "typecheck", "test", "build"]),
@@ -367,7 +367,7 @@ describe("evaluateAndStoreExportGate", () => {
           },
         }),
       );
-      await setLocalPrStatus(repo, pr.id, "reviewed");
+      await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
       const a: ProgressEvent[] = [];
       const b: ProgressEvent[] = [];
       const [first, second] = await Promise.all([
@@ -425,7 +425,7 @@ describe("evaluateAndStoreExportGate", () => {
       await git(repo, ["add", "."]);
       await git(repo, ["commit", "-m", "Add slow lint"]);
       const pr = await createLocalPr(repo, { title: "File abort", body: "Body", base: "main" });
-      await setLocalPrStatus(repo, pr.id, "reviewed");
+      await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
       let armedAt = 0;
       await assert.rejects(
         () =>
@@ -480,7 +480,7 @@ describe("evaluateAndStoreExportGate", () => {
       await git(repo, ["add", "."]);
       await git(repo, ["commit", "-m", "Add slow lint"]);
       const pr = await createLocalPr(repo, { title: "Abort", body: "Body", base: "main" });
-      await setLocalPrStatus(repo, pr.id, "reviewed");
+      await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
       const ac = new AbortController();
       setTimeout(() => ac.abort(), 80);
       await assert.rejects(
@@ -513,7 +513,7 @@ describe("evaluateAndStoreExportGate", () => {
       await git(repo, ["add", "."]);
       await git(repo, ["commit", "-m", "Add test"]);
       const pr = await createLocalPr(repo, { title: "Stored block", body: "Body", base: "main" });
-      await setLocalPrStatus(repo, pr.id, "reviewed");
+      await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
       // Persist a blocked gate for this HEAD (as if CI test failed earlier).
       await setLocalPrExportGate(repo, pr.id, {
         status: "blocked",

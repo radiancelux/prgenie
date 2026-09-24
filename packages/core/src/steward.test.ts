@@ -198,7 +198,7 @@ test("stewardNext gate-before-handoff: blocked CI resumes implementor, ready han
 
   const pr = await createLocalPr(repo, { title: "Steward gate handoff", base: "main" });
   await bindSteward(repo, pr.id, { implementorTaskId: "task-impl-ci" });
-  await setLocalPrStatus(repo, pr.id, "reviewed");
+  await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
   const stored = await setLocalPrExportGate(repo, pr.id, {
     status: "blocked",
     reasons: [{ check: "ci", message: "CI check failed: typecheck — tsc" }],
@@ -257,7 +257,7 @@ test("RAD-125: stewardNext refreshes headSha before matching a blocked gate", as
   const oldSha = pr.headSha;
   const tipCwd = pr.worktreePath ?? repo;
   await bindSteward(repo, pr.id, { implementorTaskId: "task-impl-125" });
-  await setLocalPrStatus(repo, pr.id, "reviewed");
+  await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
   await setLocalPrExportGate(repo, pr.id, {
     status: "blocked",
     reasons: [{ check: "ci", message: "CI check failed: test — Command failed: pnpm test" }],

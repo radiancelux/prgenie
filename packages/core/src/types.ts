@@ -95,6 +95,8 @@ export interface ExportGateSnapshot {
   ciChecks?: ExportGateCiCheck[] | null;
   /** Path local CI ran in (RAD-112). */
   ciCwd?: string | null;
+  /** Soft CI env/toolchain problem (RAD-92 / RAD-95) — first-class, not skipValidation-only. */
+  ciEnvUnhealthy?: { message: string; fixSteps?: string[] } | null;
 }
 
 export interface WorktreeInfo {

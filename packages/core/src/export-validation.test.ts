@@ -150,7 +150,7 @@ test("export validation blocks when Learn #18 preflight pattern matches", async 
     body: "Has debug statements",
     base: "main",
   });
-  await setLocalPrStatus(repo, pr.id, "reviewed");
+  await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
   assert.ok(pr.worktreePath);
 
   // Add a file with console.log on the exclusive loop worktree

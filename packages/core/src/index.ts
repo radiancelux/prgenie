@@ -49,12 +49,13 @@ export {
   loopWorktreeIdentity,
   peelStashMessage,
   pruneArchivedLoopWorktree,
+  pruneArchivedLoopWorktreeDetailed,
   pruneLoopWorktrees,
   refusePrimaryWorktreeIfParallel,
   releaseArchivedLoop,
   sameFsPath,
 } from "./worktrees.js";
-export type { ReleaseArchivedLoopResult } from "./worktrees.js";
+export type { PruneArchivedLoopWorktreeResult, ReleaseArchivedLoopResult } from "./worktrees.js";
 export {
   assertNoDirtyPluginBuildArtifacts,
   dirtyPluginDoctorFix,
@@ -175,9 +176,10 @@ export {
   exportLocalPr,
   exportPushRefspec,
   archiveLoopsMergedOnGithub,
+  formatExportPartialFailure,
   githubPrViewArgs,
 } from "./export.js";
-export type { GithubPrHeadState } from "./export.js";
+export type { ExportPartialFailure, GithubPrHeadState } from "./export.js";
 export {
   abortCiForSteward,
   abortExportGate,
@@ -260,11 +262,16 @@ export type { GhAccount, RepoGithubBind } from "./github.js";
 export {
   activeGhLogin,
   bindRepoGithub,
+  describeRepoGithubBind,
   ensureRepoGithub,
   getRepoGithubBind,
   listGhAccounts,
+  quoteGhArgsForSpawn,
+  quoteWindowsShellArg,
+  requireGithubBindForReviewed,
   switchGhUser,
 } from "./github-ops.js";
+export type { GithubBindStatus } from "./github-ops.js";
 export {
   checkReleaseVersions,
   collectPackageVersions,

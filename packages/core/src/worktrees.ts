@@ -1,5 +1,5 @@
 import { realpathSync, statSync, existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { findGitRoot, git, gitText } from "./git.js";
 import type { WorktreeInfo } from "./types.js";
@@ -228,6 +228,10 @@ export type ReleaseArchivedLoopResult = {
   primaryPath: string | null;
   /** This window is still the extra loop checkout; reopen primaryPath then prune. */
   reopen: boolean;
+  /** Directory still on disk after prune (git link may already be gone). */
+  worktreeLeftoverPath: string | null;
+  /** Why prune did not fully clear the worktree, when known. */
+  pruneError: string | null;
 };
 
 async function checkoutPrimaryOffLoop(
@@ -255,34 +259,123 @@ export async function pruneLoopWorktrees(cwd: string): Promise<void> {
   await git(cwd, ["worktree", "prune"], { allowFail: true });
 }
 
+export type PruneArchivedLoopWorktreeResult = {
+  pruned: boolean;
+  leftoverPath: string | null;
+  error: string | null;
+};
+
+/**
+ * Drop a sibling .loops checkout after export. Never remove the primary repo folder.
+ * Force-remove when possible; if git unregisters the worktree but leaves the directory
+ * (Windows dogfood), remove the orphaned folder or report leftoverPath (RAD-95).
+ */
+export async function pruneArchivedLoopWorktreeDetailed(
+  cwd: string,
+  loop: { id: string; worktreePath: string | null },
+  options: { keepPaths?: string[] } = {},
+): Promise<PruneArchivedLoopWorktreeResult> {
+  const trees = await listWorktrees(cwd);
+  const primary = primaryWorktreePath(trees);
+  if (!primary) {
+    return { pruned: false, leftoverPath: null, error: "no primary worktree" };
+  }
+  const dest = loopWorktreeDir(primary, loop.id);
+  const here = await findGitRoot(cwd);
+  if (here && sameFsPath(here, dest)) {
+    return {
+      pruned: false,
+      leftoverPath: dest,
+      error: "cwd is the loop worktree — reopen primary before prune",
+    };
+  }
+  if (sameFsPath(dest, primary)) {
+    return { pruned: false, leftoverPath: null, error: "refusing to prune primary checkout" };
+  }
+  const keep = options.keepPaths ?? [];
+  if (keep.some((p) => sameFsPath(p, dest))) {
+    return { pruned: false, leftoverPath: dest, error: "worktree kept for another live loop" };
+  }
+
+  const extra = trees.find((t) => sameFsPath(t.path, dest));
+  if (extra) {
+    const ident = loopWorktreeIdentity(extra.path);
+    if (ident && ident.id.toLowerCase() !== loop.id.toLowerCase()) {
+      return { pruned: false, leftoverPath: extra.path, error: "path belongs to another loop id" };
+    }
+    const otherLoops = trees.filter((t) => {
+      const other = loopWorktreeIdentity(t.path);
+      return other && other.id.toLowerCase() !== loop.id.toLowerCase();
+    });
+    if (otherLoops.some((t) => sameFsPath(t.path, extra.path))) {
+      return {
+        pruned: false,
+        leftoverPath: extra.path,
+        error: "shared with another loop worktree",
+      };
+    }
+    const removed = await git(cwd, ["worktree", "remove", "--force", "--", extra.path], {
+      allowFail: true,
+    });
+    if (removed.code !== 0) {
+      await git(cwd, ["worktree", "prune"], { allowFail: true });
+      // Fall through: may still be able to clear an orphaned directory.
+      if (existsSync(dest) && !(await listWorktrees(cwd)).some((t) => sameFsPath(t.path, dest))) {
+        // git link gone, folder remains — try filesystem remove
+      } else if (existsSync(dest)) {
+        return {
+          pruned: false,
+          leftoverPath: dest,
+          error: removed.stderr.trim() || "git worktree remove failed",
+        };
+      }
+    } else {
+      await git(cwd, ["worktree", "prune"], { allowFail: true });
+    }
+  } else {
+    await git(cwd, ["worktree", "prune"], { allowFail: true });
+  }
+
+  if (!existsSync(dest)) {
+    return { pruned: true, leftoverPath: null, error: null };
+  }
+
+  // Orphan directory: not registered (or just unregistered) but still on disk.
+  const stillRegistered = (await listWorktrees(cwd)).some((t) => sameFsPath(t.path, dest));
+  if (stillRegistered) {
+    return {
+      pruned: false,
+      leftoverPath: dest,
+      error: "worktree still registered after remove",
+    };
+  }
+  try {
+    await rm(dest, { recursive: true, force: true });
+  } catch (err) {
+    return {
+      pruned: false,
+      leftoverPath: dest,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+  if (existsSync(dest)) {
+    return {
+      pruned: false,
+      leftoverPath: dest,
+      error: "directory remained after filesystem remove (git link may already be gone)",
+    };
+  }
+  return { pruned: true, leftoverPath: null, error: null };
+}
+
 /** Drop a sibling .loops checkout after export. Never remove the primary repo folder. */
 export async function pruneArchivedLoopWorktree(
   cwd: string,
   loop: { id: string; worktreePath: string | null },
   options: { keepPaths?: string[] } = {},
 ): Promise<boolean> {
-  const trees = await listWorktrees(cwd);
-  const primary = primaryWorktreePath(trees);
-  if (!primary) return false;
-  const dest = loopWorktreeDir(primary, loop.id);
-  const extra = trees.find((t) => sameFsPath(t.path, dest));
-  if (!extra) return false;
-  const ident = loopWorktreeIdentity(extra.path);
-  if (ident && ident.id.toLowerCase() !== loop.id.toLowerCase()) return false;
-  const here = await findGitRoot(cwd);
-  if (here && sameFsPath(here, extra.path)) return false;
-  if (sameFsPath(extra.path, primary)) return false;
-  const keep = options.keepPaths ?? [];
-  if (keep.some((p) => sameFsPath(p, extra.path))) return false;
-  const otherLoops = trees.filter((t) => {
-    const other = loopWorktreeIdentity(t.path);
-    return other && other.id.toLowerCase() !== loop.id.toLowerCase();
-  });
-  if (otherLoops.some((t) => sameFsPath(t.path, extra.path))) return false;
-  const removed = await git(cwd, ["worktree", "remove", extra.path], { allowFail: true });
-  if (removed.code !== 0) return false;
-  await git(cwd, ["worktree", "prune"], { allowFail: true });
-  return true;
+  const result = await pruneArchivedLoopWorktreeDetailed(cwd, loop, options);
+  return result.pruned;
 }
 
 /** After export: take the loop branch off the main workspace and remove the extra worktree. */
@@ -299,14 +392,22 @@ export async function releaseArchivedLoop(
       return ident && ident.id.toLowerCase() !== loop.id.toLowerCase();
     })
     .map((t) => t.path);
-  const prunedWorktree = await pruneArchivedLoopWorktree(cwd, loop, { keepPaths });
+  const prune = await pruneArchivedLoopWorktreeDetailed(cwd, loop, { keepPaths });
   const here = await findGitRoot(cwd);
   const dest = primary ? loopWorktreeDir(primary, loop.id) : null;
   const stillExtra = dest
     ? (await listWorktrees(cwd)).some((t) => sameFsPath(t.path, dest))
     : false;
-  const reopen = Boolean(stillExtra && here && dest && sameFsPath(here, dest));
-  return { checkedOutBase, prunedWorktree, primaryPath: primary, reopen };
+  const leftoverOnDisk = Boolean(dest && existsSync(dest));
+  const reopen = Boolean((stillExtra || leftoverOnDisk) && here && dest && sameFsPath(here, dest));
+  return {
+    checkedOutBase,
+    prunedWorktree: prune.pruned,
+    primaryPath: primary,
+    reopen,
+    worktreeLeftoverPath: prune.leftoverPath,
+    pruneError: prune.error,
+  };
 }
 
 async function freeStaleLoopWorktree(cwd: string, treePath: string): Promise<void> {

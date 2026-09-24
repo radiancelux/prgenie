@@ -414,7 +414,7 @@ export async function setLocalPrStatus(
   cwd: string,
   id: string,
   status: LocalPrStatus,
-  options: { skipPreflight?: boolean } = {},
+  options: { skipPreflight?: boolean; skipBindCheck?: boolean } = {},
 ): Promise<LocalPr> {
   if (!STATUSES.includes(status)) {
     throw new Error(`Invalid status: ${status}`);
@@ -438,6 +438,11 @@ export async function setLocalPrStatus(
           `Preflight failed — ${preflight.issues.length} learned pattern(s) detected:\n\n${summary}\n\nAddress these patterns or disable the learnings, then try ready again. Use skipPreflight=true to bypass.`,
         );
       }
+    }
+    // RAD-95: prompt/require bind before reviewed so export does not fail late on unbound gh.
+    if (status === "reviewed" && !options.skipBindCheck) {
+      const { requireGithubBindForReviewed } = await import("./github-ops.js");
+      await requireGithubBindForReviewed(cwd);
     }
     pr.status = status;
     if (status === "ready") await armReviewRequest(cwd, pr);
@@ -869,7 +874,7 @@ export type CompleteLocalPrReviewResult = LocalPr & {
 export async function completeLocalPrReview(
   cwd: string,
   id: string,
-  options: { author?: string; body?: string; allowDrift?: boolean } = {},
+  options: { author?: string; body?: string; allowDrift?: boolean; skipBindCheck?: boolean } = {},
 ): Promise<CompleteLocalPrReviewResult> {
   const resolved = await getLocalPr(cwd, id);
   const dir = await prsDir(cwd);
@@ -902,6 +907,11 @@ export async function completeLocalPrReview(
       await addLearnings(cwd, learnings);
     }
     const handedToImplementor = open.length > 0;
+    // RAD-95: bind before clearing to reviewed (export would fail late unbound).
+    if (!handedToImplementor && !isArchivedPr(pr) && !options.skipBindCheck) {
+      const { requireGithubBindForReviewed } = await import("./github-ops.js");
+      await requireGithubBindForReviewed(cwd);
+    }
     pr.comments.push({
       id: newId("c"),
       body: (

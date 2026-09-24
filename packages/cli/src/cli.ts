@@ -18,11 +18,13 @@ import {
   findLocalPrForCurrentWorktree,
   formatClaimReview,
   formatDoctorReport,
+  formatExportPartialFailure,
   getLocalPr,
   getLocalPrDiff,
   getLocalPrNameStatus,
   refreshLocalPrHead,
   getRepoGithubBind,
+  describeRepoGithubBind,
   getRepoWatch,
   formatWatchLane,
   formatWatchStatus,
@@ -163,13 +165,30 @@ function printPr(pr: LocalPr): void {
     pr.exportGate?.ciCwd != null && pr.exportGate.ciCwd !== ""
       ? `\n  ci cwd: ${pr.exportGate.ciCwd}`
       : "";
+  const envNote =
+    pr.exportGate?.ciEnvUnhealthy?.message != null
+      ? `\n  ci env: unhealthy — ${pr.exportGate.ciEnvUnhealthy.message}`
+      : "";
   process.stdout.write(
-    `${pr.id}  ${pr.status.padEnd(18)}  ${pr.headRef} -> ${pr.baseRef}\n  ${pr.title}${filesNote}${summary}${exportNote}${ciCwdNote}\n`,
+    `${pr.id}  ${pr.status.padEnd(18)}  ${pr.headRef} -> ${pr.baseRef}\n  ${pr.title}${filesNote}${summary}${exportNote}${ciCwdNote}${envNote}\n`,
   );
   if (pr.worktreePath) {
     process.stdout.write(
       `  → Switch / open worktree before implementing (never commit on primary while this exists).\n`,
     );
+  }
+}
+
+async function printGithubBind(cwd: string): Promise<void> {
+  try {
+    const bind = await describeRepoGithubBind(cwd);
+    if (bind.bound) {
+      process.stdout.write(`  gh bind: ${bind.login} on ${bind.host}\n`);
+    } else if (bind.prompt) {
+      process.stdout.write(`  gh bind: unbound — ${bind.prompt}\n`);
+    }
+  } catch {
+    // ignore bind probe failures in print path
   }
 }
 
@@ -266,6 +285,7 @@ export async function run(argv: string[]): Promise<number> {
       head: arg(rest, "--head"),
     });
     printPr(pr);
+    await printGithubBind(repo);
     return 0;
   }
   if (sub === "attach") {
@@ -455,11 +475,13 @@ export async function run(argv: string[]): Promise<number> {
     if (result.prunedWorktree) {
       lines.push("Removed the extra loop worktree.");
     }
-    if (result.reopen && result.primaryPath) {
+    if (result.partialFailure) {
+      lines.push(formatExportPartialFailure(result.partialFailure));
+    } else if (result.reopen && result.primaryPath) {
       lines.push(`This window is still on the loop worktree. Reopen ${result.primaryPath}.`);
     }
     process.stdout.write(`${lines.join("\n")}\n`);
-    return 0;
+    return result.partialFailure ? 1 : 0;
   }
   if (sub === "learnings" || sub === "learn") {
     const { listLearnings } = await import("@prgenie/core");
@@ -569,8 +591,10 @@ export async function run(argv: string[]): Promise<number> {
       return 0;
     }
     const pr = await refreshLocalPrHead(repo, id);
+    const githubBind = await describeRepoGithubBind(repo);
     process.stdout.write(
-      JSON.stringify({ ...pr, pendingComments: pendingReviewComments(pr) }, null, 2) + "\n",
+      JSON.stringify({ ...pr, pendingComments: pendingReviewComments(pr), githubBind }, null, 2) +
+        "\n",
     );
     const files = await getLocalPrNameStatus(repo, pr.id);
     if (files.length) {
@@ -720,6 +744,7 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "ready") {
     printPr(await setLocalPrStatus(repo, id, "ready"));
+    await printGithubBind(repo);
     return 0;
   }
   if (sub === "request-changes") {
@@ -808,6 +833,7 @@ export async function run(argv: string[]): Promise<number> {
         );
       }
       printPr(done);
+      await printGithubBind(repo);
       return 0;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

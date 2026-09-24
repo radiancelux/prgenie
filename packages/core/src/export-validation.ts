@@ -18,6 +18,14 @@ export interface ExportValidationResult {
   ok: boolean;
   /** Empty when ok, otherwise reasons export is blocked. */
   issues: string[];
+  /**
+   * Soft env/toolchain problem from shepherd (RAD-92 / RAD-95).
+   * Surfaced even when export is otherwise ready so skipValidation is not required to see it.
+   */
+  ciEnvUnhealthy?: {
+    message: string;
+    fixSteps: string[];
+  };
 }
 
 export interface ExportValidationOptions extends RunProgressOptions {
@@ -71,6 +79,12 @@ function shepherdFromSnapshot(snap: ExportGateSnapshot): ShepherdResult {
       : undefined,
     ciChecks: snap.ciChecks ?? undefined,
     ciCwd: snap.ciCwd ?? undefined,
+    ciEnvUnhealthy: snap.ciEnvUnhealthy
+      ? {
+          message: snap.ciEnvUnhealthy.message,
+          fixSteps: snap.ciEnvUnhealthy.fixSteps ?? [],
+        }
+      : undefined,
   };
 }
 
@@ -245,6 +259,12 @@ export async function evaluateAndStoreExportGate(
             : null,
           ciChecks: result.ciChecks ?? null,
           ciCwd: result.ciCwd ?? null,
+          ciEnvUnhealthy: result.ciEnvUnhealthy
+            ? {
+                message: result.ciEnvUnhealthy.message,
+                fixSteps: result.ciEnvUnhealthy.fixSteps,
+              }
+            : null,
         });
         return result;
       } finally {
@@ -387,9 +407,13 @@ export async function validateExport(
   if (pr.exportGate && snapshotIsAdoptable(pr.exportGate, pr.headSha)) {
     const fromStore = shepherdFromSnapshot(pr.exportGate);
     if (fromStore.status === "ready") {
-      return { ok: true, issues: [] };
+      return { ok: true, issues: [], ciEnvUnhealthy: fromStore.ciEnvUnhealthy };
     }
-    return { ok: false, issues: issuesFromShepherd(fromStore) };
+    return {
+      ok: false,
+      issues: issuesFromShepherd(fromStore),
+      ciEnvUnhealthy: fromStore.ciEnvUnhealthy,
+    };
   }
 
   // No stored gate yet — same shepherd run the UI gate persists.
@@ -399,8 +423,12 @@ export async function validateExport(
   });
 
   if (shepherd.status === "ready") {
-    return { ok: true, issues: [] };
+    return { ok: true, issues: [], ciEnvUnhealthy: shepherd.ciEnvUnhealthy };
   }
 
-  return { ok: false, issues: issuesFromShepherd(shepherd) };
+  return {
+    ok: false,
+    issues: issuesFromShepherd(shepherd),
+    ciEnvUnhealthy: shepherd.ciEnvUnhealthy,
+  };
 }
