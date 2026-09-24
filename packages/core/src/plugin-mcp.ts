@@ -3,12 +3,24 @@ import path from "node:path";
 
 export const PRGENIE_MCP_NAME = "prgenie";
 
+/**
+ * Per-server `timeout` for mcp.json (seconds). Hosts that honor it (Cursor
+ * community field) should allow git+CI tools up to the CI wall (~20m) instead
+ * of dying at the default ~30–60s with `-32001 Request timed out` (RAD-100).
+ */
+export const MCP_SERVER_TIMEOUT_SEC = 1_200;
+
 export type McpServerEntry = {
   type?: string;
   command?: string;
   args?: string[];
   cwd?: string;
   env?: Record<string, string>;
+  /**
+   * Per-server tools/call timeout hint for hosts that honor it (Cursor community:
+   * seconds). RAD-100 pins {@link MCP_SERVER_TIMEOUT_SEC}.
+   */
+  timeout?: number;
 };
 
 export type McpFile = {
@@ -48,6 +60,8 @@ function asEntry(value: unknown): McpServerEntry | null {
     command: typeof rec.command === "string" ? rec.command : undefined,
     args,
     cwd: typeof rec.cwd === "string" ? rec.cwd : undefined,
+    timeout:
+      typeof rec.timeout === "number" && Number.isFinite(rec.timeout) ? rec.timeout : undefined,
   };
 }
 
@@ -116,12 +130,17 @@ export function pinPluginMcpJson(
   const serverPath = path.join(opts.pluginRoot, "mcp", "server.cjs").split(path.sep).join("/");
   const platform = opts.platform ?? process.platform;
   const spawn = windowsStdioSpawn(opts.nodeCommand, serverPath, platform);
+  const priorTimeout =
+    typeof servers[name].timeout === "number" && Number.isFinite(servers[name].timeout)
+      ? servers[name].timeout
+      : MCP_SERVER_TIMEOUT_SEC;
   servers[name] = {
     ...servers[name],
     type: "stdio",
     command: spawn.command,
     args: spawn.args,
     cwd: opts.pluginRoot.split(path.sep).join("/"),
+    timeout: priorTimeout && priorTimeout > 0 ? priorTimeout : MCP_SERVER_TIMEOUT_SEC,
   };
   cfg.mcpServers = servers;
   return `${JSON.stringify(cfg, null, 2)}\n`;

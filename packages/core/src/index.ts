@@ -159,6 +159,7 @@ export type {
 export { formatDoctorReport, runDoctor } from "./doctor.js";
 export type { DoctorReport, DoctorCheck } from "./doctor.js";
 export {
+  MCP_SERVER_TIMEOUT_SEC,
   PRGENIE_MCP_NAME,
   argHasUnresolvedPluginRoot,
   bufferHasUtf8Bom,

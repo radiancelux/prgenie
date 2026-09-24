@@ -13,7 +13,11 @@ Clean clone path: install → build → link-plugin → Customize → Plugins �
 
 If a PR still shows huge ±tens-of-thousands-line diffs on those `.cjs` files, you have a dirty local build against an old tracked copy, or you are on a pre-migration branch — rebuild or rebase; that is not product source.
 
-`mcp.json` uses `${CURSOR_PLUGIN_ROOT}/mcp/server.cjs` (Cursor does **not** expand `${PLUGIN_ROOT}`). A relative `./mcp/server.cjs` resolves against the **workspace**, which 404s. `link-plugin` rewrites the installed copy to an absolute `node.exe` + `server.cjs` (UTF-8, no BOM; `cmd /c` when the node path has spaces). **Do not ship** a workspace `.cursor/mcp.json` named `prgenie` — that creates a second Connected MCP row tagged with the folder name.
+`mcp.json` uses `${CURSOR_PLUGIN_ROOT}/mcp/server.cjs` (Cursor does **not** expand `${PLUGIN_ROOT}`). A relative `./mcp/server.cjs` resolves against the **workspace**, which 404s. `link-plugin` rewrites the installed copy to an absolute `node.exe` + `server.cjs` (UTF-8, no BOM; `cmd /c` when the node path has spaces) and pins `timeout: 1200` (seconds) for git+CI tools (RAD-100). **Do not ship** a workspace `.cursor/mcp.json` named `prgenie` — that creates a second Connected MCP row tagged with the folder name.
+
+**Windows CLI:** `link-plugin` does **not** put `prgenie` on PATH. Use `pnpm cli …` from the repo, or `node <absolute-repo>\packages\cli\dist\prgenie.cjs …`. Prefer MCP tools when available.
+
+**Parallel Tasks:** soft max **2** concurrent implementor Tasks. Product concurrency guardrails are RAD-84 — this plugin does not enforce a hard limit.
 
 Then **Developer: Reload Window** is not enough for MCP tools (Cursor caches the first tool list). In **Customize → Plugins**, disable and re-enable PR Genie. Confirm:
 

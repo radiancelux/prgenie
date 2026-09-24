@@ -54,6 +54,13 @@ import {
 } from "@prgenie/core";
 
 import { writeSync } from "node:fs";
+import {
+  assertMcpCiPlanNotFullSuite,
+  extractProgressToken,
+  isMcpHeavyTool,
+  withMcpProgress,
+  type McpProgressSession,
+} from "./mcp-progress.js";
 import { encodeMcpFrame, MCP_STDIO_READY, takeMcpMessages } from "./mcp-stdio.js";
 
 type Json = Record<string, unknown>;
@@ -75,6 +82,11 @@ function fail(id: unknown, code: number, message: string): void {
   writeMessage({ jsonrpc: "2.0", id, error: { code, message } });
 }
 
+type HandleToolOptions = {
+  /** Live MCP progress/heartbeat session for git+CI-heavy tools (RAD-100). */
+  mcpProgress?: McpProgressSession;
+};
+
 function withCommentViews(pr: LocalPr) {
   return {
     ...pr,
@@ -84,7 +96,12 @@ function withCommentViews(pr: LocalPr) {
   };
 }
 
-export async function handleTool(name: string, args: Json): Promise<unknown> {
+export async function handleTool(
+  name: string,
+  args: Json,
+  options: HandleToolOptions = {},
+): Promise<unknown> {
+  const mcpProgress = options.mcpProgress;
   if (name === "gh_list" || name === "github_list") {
     return listGhAccounts();
   }
@@ -95,6 +112,7 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
   switch (name) {
     case "gh_status":
     case "github_status":
+      mcpProgress?.report("resolving gh accounts / bind");
       return {
         accounts: await listGhAccounts(),
         bound: await getRepoGithubBind(cwd),
@@ -121,6 +139,7 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
     case "list_worktrees":
       return listWorktrees(cwd);
     case "list_local_prs": {
+      mcpProgress?.report("listing local PRs");
       await archiveLoopsMergedOnGithub(cwd).catch(() => []);
       const search =
         typeof args.search === "string"
@@ -179,6 +198,7 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
       });
     case "get_local_pr": {
       // RAD-125: persist tip refresh so headSha matches worktree (invalidate reviewed on move).
+      mcpProgress?.report("refreshing local PR head");
       const pr = await refreshLocalPrHead(cwd, String(args.id ?? ""));
       return withCommentViews(pr);
     }
@@ -272,6 +292,7 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
       return { ...pr, worktreePath: dest };
     }
     case "export_local_pr":
+      mcpProgress?.report("exporting local PR");
       return exportLocalPr(cwd, String(args.id ?? ""), {
         skipValidation: args.skipValidation === true,
       });
@@ -302,17 +323,34 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
           : Array.isArray(args.failingChecks)
             ? (args.failingChecks as unknown[]).filter((s): s is string => typeof s === "string")
             : [];
+      // Caller-forced full suite via args.checks — refuse at MCP boundary (RAD-100/119).
+      if (Array.isArray(args.checks)) {
+        const forced = (args.checks as unknown[]).filter((s): s is string => typeof s === "string");
+        assertMcpCiPlanNotFullSuite({
+          checks: forced,
+          reason: ["MCP args.checks"],
+        });
+      }
+      mcpProgress?.report("run_ci selecting checks");
       const card = createProgressCardSink((line) => process.stderr.write(`${line}\n`));
       const result = await runLoopCi(cwd, String(args.id ?? ""), {
         failingChecks: failing,
         failFast: args.failFast === false ? false : undefined,
         parallel: args.parallel === false ? false : undefined,
         skipCache: args.skipCache === true,
-        onProgress: card.onProgress,
+        onProgress: (event) => {
+          card.onProgress(event);
+          mcpProgress?.onCiProgress(event);
+        },
       });
+      // Reinforce after selection landed on the result (printable plan).
+      if (result.selection) {
+        assertMcpCiPlanNotFullSuite(result.selection);
+      }
       return { ...result, progressCard: card.card() };
     }
     case "abort_ci": {
+      mcpProgress?.report("aborting CI");
       return abortCiForSteward(
         cwd,
         String(args.id ?? ""),
@@ -320,10 +358,15 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
       );
     }
     case "shepherd_status": {
+      mcpProgress?.report("shepherd / export gate");
       const card = createProgressCardSink((line) => process.stderr.write(`${line}\n`));
       const result = await evaluateAndStoreExportGate(cwd, String(args.id ?? ""), {
-        onProgress: card.onProgress,
+        onProgress: (event) => {
+          card.onProgress(event);
+          mcpProgress?.onCiProgress(event);
+        },
       });
+      if (result.ciPlan) assertMcpCiPlanNotFullSuite(result.ciPlan);
       return { ...result, progressCard: card.card() };
     }
     case "bind_steward":
@@ -337,6 +380,7 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
       });
     case "steward_next": {
       if (!args.id) return listStewardBindings(cwd);
+      mcpProgress?.report("steward_next");
       const card = createProgressCardSink((line) => process.stderr.write(`${line}\n`));
       const result = await stewardNext(cwd, String(args.id), {
         implementorTaskId:
@@ -351,8 +395,12 @@ export async function handleTool(name: string, args: Json): Promise<unknown> {
         reviewerMissing: args.reviewerMissing === true,
         reviewerFailed: args.reviewerFailed === true,
         evaluateGate: args.evaluateGate === false ? false : undefined,
-        onProgress: card.onProgress,
+        onProgress: (event) => {
+          card.onProgress(event);
+          mcpProgress?.onCiProgress(event);
+        },
       });
+      if (result.exportGate?.ciPlan) assertMcpCiPlanNotFullSuite(result.exportGate.ciPlan);
       return { ...result, progressCard: card.snapshot().checks.length ? card.card() : undefined };
     }
     default:
@@ -847,7 +895,7 @@ export const tools = [
   {
     name: "run_ci",
     description:
-      "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; confident package paths → scoped lint/typecheck/unit; unmappable/hard-config → skip with printable reason — never root monorepo pnpm test / full suite). Runs in the loop worktreePath (never a stale Cursor plugin install). Returns allPassed, checks, selection `{ checks[], reason[] }` (print both; empty checks + skipped means intentional skip), cwd (path CI ran in), and a progressCard. When selection is confident/packageScoped, do not substitute whole-repo pnpm test. When skipped, do not escalate to full suite — record the reason or run touched-package tests only. Fail-fast stops after the first package suite fail. Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run or selection skipped — say so; do not skip a flaky failure.",
+      "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; confident package paths → scoped lint/typecheck/unit; unmappable/hard-config → skip with printable reason — never root monorepo pnpm test / full suite). Runs in the loop worktreePath (never a stale Cursor plugin install). Returns allPassed, checks, selection `{ checks[], reason[] }` (print both; empty checks + skipped means intentional skip), cwd (path CI ran in), and a progressCard. Streams MCP progress/heartbeats so long runs do not die with -32001 (RAD-100); refuses stale full-suite plans at the MCP boundary (RAD-119). When selection is confident/packageScoped, do not substitute whole-repo pnpm test. When skipped, do not escalate to full suite — record the reason or run touched-package tests only. Fail-fast stops after the first package suite fail. Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run or selection skipped — say so; do not skip a flaky failure.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -986,7 +1034,12 @@ async function onRequest(msg: Json): Promise<void> {
     if (method === "tools/call") {
       const name = String(params.name ?? "");
       const args = (params.arguments as Json) ?? {};
-      const result = await handleTool(name, args);
+      const progressToken = extractProgressToken(params);
+      const result = isMcpHeavyTool(name)
+        ? await withMcpProgress({ notify, toolName: name, progressToken }, (session) =>
+            handleTool(name, args, { mcpProgress: session }),
+          )
+        : await handleTool(name, args);
       ok(id, {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       });

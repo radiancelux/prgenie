@@ -3,7 +3,8 @@
     "prgenie": {
       "type": "stdio",
       "command": "node",
-      "args": ["${CURSOR_PLUGIN_ROOT}/mcp/server.cjs"]
+      "args": ["${CURSOR_PLUGIN_ROOT}/mcp/server.cjs"],
+      "timeout": 1200
     }
   }
 }

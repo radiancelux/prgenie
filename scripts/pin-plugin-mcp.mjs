@@ -33,12 +33,19 @@ if (!name || !servers[name]) {
 
 const nodeCommand = process.execPath;
 const useCmd = process.platform === "win32" && /\s/.test(nodeCommand);
+/** RAD-100: seconds — hosts that honor mcp.json timeout (Cursor community). Match CI ~20m. */
+const DEFAULT_TIMEOUT_SEC = 1200;
+const priorTimeout =
+  typeof servers[name].timeout === "number" && Number.isFinite(servers[name].timeout)
+    ? servers[name].timeout
+    : DEFAULT_TIMEOUT_SEC;
 servers[name] = {
   ...servers[name],
   type: "stdio",
   command: useCmd ? "cmd" : nodeCommand,
   args: useCmd ? ["/c", nodeCommand, serverPath] : [serverPath],
   cwd: dest.split(path.sep).join("/"),
+  timeout: priorTimeout && priorTimeout > 0 ? priorTimeout : DEFAULT_TIMEOUT_SEC,
 };
 cfg.mcpServers = servers;
 
