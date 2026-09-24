@@ -102,6 +102,11 @@ test("pinPluginMcpJson writes stdio + absolute node + absolute server (no BOM)",
     mcpServers: { prgenie: { type: string; command: string; args: string[] } };
   };
   assert.equal(parsed.mcpServers.prgenie.type, "stdio");
+  assert.equal(
+    (parsed.mcpServers.prgenie as { timeout?: number }).timeout,
+    1200,
+    "RAD-100: pin 20m tools/call timeout (seconds)",
+  );
   const expectCmd = process.platform === "win32" && /\s/.test(process.execPath);
   if (expectCmd) {
     assert.equal(parsed.mcpServers.prgenie.command, "cmd");
@@ -134,6 +139,46 @@ test("pinPluginMcpJson writes stdio + absolute node + absolute server (no BOM)",
   };
   assert.equal(win.mcpServers.prgenie.command, "cmd");
   assert.equal(win.mcpServers.prgenie.args[0], "/c");
+
+  const raised = pinPluginMcpJson(
+    JSON.stringify({
+      mcpServers: {
+        prgenie: {
+          command: "node",
+          args: ["${CURSOR_PLUGIN_ROOT}/mcp/server.cjs"],
+          timeout: 60,
+        },
+      },
+    }),
+    { pluginRoot, nodeCommand: process.execPath },
+  );
+  const raisedParsed = JSON.parse(raised) as {
+    mcpServers: { prgenie: { timeout?: number } };
+  };
+  assert.equal(
+    raisedParsed.mcpServers.prgenie.timeout,
+    1200,
+    "RAD-100: pin raises sub-1200 timeouts to the floor",
+  );
+
+  const keptHigh = pinPluginMcpJson(
+    JSON.stringify({
+      mcpServers: {
+        prgenie: {
+          command: "node",
+          args: ["${CURSOR_PLUGIN_ROOT}/mcp/server.cjs"],
+          timeout: 2400,
+        },
+      },
+    }),
+    { pluginRoot, nodeCommand: process.execPath },
+  );
+  assert.equal(
+    (JSON.parse(keptHigh) as { mcpServers: { prgenie: { timeout?: number } } }).mcpServers.prgenie
+      .timeout,
+    2400,
+    "RAD-100: explicit higher timeout still wins",
+  );
 });
 
 test("pin-plugin-mcp.mjs writes UTF-8 without BOM and pins execPath", async () => {
@@ -159,6 +204,11 @@ test("pin-plugin-mcp.mjs writes UTF-8 without BOM and pins execPath", async () =
     mcpServers: { prgenie: { command: string; type: string; args: string[] } };
   };
   assert.equal(pinned.mcpServers.prgenie.type, "stdio");
+  assert.equal(
+    (pinned.mcpServers.prgenie as { timeout?: number }).timeout,
+    1200,
+    "pin-plugin-mcp.mjs preserves/raises timeout (RAD-100)",
+  );
   const expectCmd = process.platform === "win32" && /\s/.test(process.execPath);
   if (expectCmd) {
     assert.equal(pinned.mcpServers.prgenie.command, "cmd");

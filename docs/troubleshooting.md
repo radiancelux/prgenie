@@ -158,6 +158,29 @@ Doctor `corrupt-prs` lists unparsable files under `.git/agent-console/prs/`. Cor
 - Bundled MCP/hook `.cjs` outputs are **gitignored** and produced by `pnpm build` / `link-plugin` / CI — not committed. Doctor `plugin-bundles` fails when they are missing or older than sources.
 - Dirty **tracked** plugin bundles on primary (pre-migration branch still tracking `packages/plugin/hooks|mcp/*.cjs`): doctor `plugin-dirt` / `create_local_pr` refuse until stash or `git restore`. Peel would otherwise carry that dirt into the new loop worktree. On current `main`, those paths should not appear in `git status` after a rebuild.
 
+## MCP timeouts / progress (RAD-100)
+
+**Symptoms:** `list_local_prs` / `get_local_pr` / `run_ci` / `export_local_pr` / `gh_status` (and CI siblings) fail with JSON-RPC `-32001 Request timed out`. Output → MCP Logs stays quiet during long git/CI work.
+
+**Fix (already in product after rebuild + `pnpm link-plugin`):**
+
+1. Installed `mcp.json` pins `timeout: 1200` (seconds) for hosts that honor it.
+2. Heavy tools stream `notifications/message` heartbeats and `notifications/progress` when the client sends `_meta.progressToken` — so the session does not look dead.
+3. MCP refuses a stale root full-suite `pnpm lint` / `test` / turbo plan (RAD-119) instead of blocking without progress.
+
+Default cwd stays with RAD-86 — pass `cwd` when the host lands in the wrong repo; do not re-solve cwd here.
+
+## Windows CLI not on PATH
+
+**Symptoms:** Task / review leaf runs `prgenie …` and gets `command not found` / not recognized.
+
+**Fix:** `link-plugin` pins the **MCP** `node.exe` + `server.cjs` only — it does **not** add the CLI to PATH. Use:
+
+- `pnpm cli <args>` from the monorepo root, or
+- `node C:\path\to\pr-genie\packages\cli\dist\prgenie.cjs <args>` (absolute path)
+
+Prefer MCP tools when the leaf has PR Genie MCP. Soft max **2** concurrent implementor Tasks; hard concurrency is RAD-84.
+
 ## Git missing from PATH (MCP / CLI spawn)
 
 **Symptoms:** MCP or CLI fails with `GitBinaryError` / `git is not resolvable from this process` (ENOENT on spawn).

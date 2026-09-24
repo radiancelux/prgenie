@@ -66,11 +66,13 @@ Stranger path after clone: **pull → `pnpm install` → `pnpm build` → `pnpm 
 
 Then:
 
-1. **CLI** — `pnpm cli --help` or `node packages/cli/dist/prgenie.cjs list`
+1. **CLI** — Prefer `pnpm cli --help` or an **absolute** path: `node <repo>\packages\cli\dist\prgenie.cjs list`. On Windows, `prgenie` is **not** on PATH after `link-plugin` (plugin MCP is pinned; the CLI is not globally linked). Do not assume a bare `prgenie` works in Task shells.
 2. **Cursor Plugin** (rules, `/local-pr`, MCP) — `link-plugin` copies to `%USERPROFILE%\.cursor\plugins\local\prgenie`. A reload often **does not** refresh the MCP tool list. In **Customize → Plugins**, turn PR Genie **off and on**. **Canonical MCP is the plugin** (`prgenie`). Do not add a workspace `.cursor/mcp.json` named `prgenie` — Connected MCPs will show two rows (tag Plugin + tag folder, e.g. pr-genie) and Local can stick on Connecting…. Enable **only one** `prgenie` entry.
 3. **Sidebar / Local PRs** — that is a **VS Code extension**, not the plugin. `link-plugin` does not update it. Run `pnpm link-extension`, then **quit Cursor fully and reopen** (or F5 `Run PR Genie Extension` for a debug host).
 
-`link-plugin` runs `pnpm build`, then pins MCP `command` to this machine's `node.exe` and `server.cjs` to the plugin folder (UTF-8, no BOM) so Cursor does not look for `mcp/server.cjs` in the workspace root.
+`link-plugin` runs `pnpm build`, then pins MCP `command` to this machine's `node.exe` and `server.cjs` to the plugin folder (UTF-8, no BOM) so Cursor does not look for `mcp/server.cjs` in the workspace root. It also pins `timeout: 1200` (seconds) so git+CI MCP tools are less likely to die with `-32001 Request timed out` (RAD-100); the server streams progress/heartbeats during those calls.
+
+**Parallel Tasks:** keep at most **2** concurrent implementor Tasks as a soft default. Hard concurrency / batching is [RAD-84](https://linear.app/radiancelux/issue/RAD-84) — do not invent a local steward guard here.
 
 ## CLI
 

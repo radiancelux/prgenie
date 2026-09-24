@@ -57,6 +57,8 @@ Persist the Task id as soon as you have it (at spawn, not after it finishes):
 
 Await this Task. You own the lifecycle. Do not let the implementor spawn a reviewer. Do not treat “implementor finished” as gate-ready without a green `run_ci` / export-gate result.
 
+**Parallelism (soft):** prefer at most **2** concurrent implementor Tasks across loops in this chat. Hard concurrency / batching is RAD-84 — do not invent a local guard or queue here.
+
 ### `resume_implementor`
 
 **Resume the same implementor Task id** (`decision.implementorTaskId`). Use Task `resume` with that id. Do **not** spawn a twin.
