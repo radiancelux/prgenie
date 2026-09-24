@@ -266,8 +266,8 @@ describe("selectCiChecks", () => {
   });
 
   it("keeps package glob when sibling *.test.ts does not exist (RAD-127)", () => {
-    // github-ops.ts has no github-ops.test.ts on disk — must not invent a phantom path.
-    const missing = selectCiChecks(["packages/core/src/github-ops.ts"]);
+    // session-reconcile.ts has no sibling test file — must not invent a phantom path.
+    const missing = selectCiChecks(["packages/core/src/session-reconcile.ts"]);
     assert.equal(missing.packageScoped, true);
     assert.equal(missing.testFiles?.["test:core"], undefined);
     assert.ok(missing.reason.some((r) => /no covering \*\.test\.ts/.test(r)));
@@ -293,15 +293,15 @@ describe("selectCiChecks", () => {
   });
 
   it("keeps package glob for mixed leaves when any sibling is missing (RAD-127)", () => {
-    // progress.ts has a sibling; github-ops.ts does not — must not under-scope to
-    // progress.test.ts only (would skip coverage that may exercise github-ops).
+    // progress.ts has a sibling; session-reconcile.ts does not — must not under-scope to
+    // progress.test.ts only (would skip coverage that may exercise session-reconcile).
     const mixed = selectCiChecks([
       "packages/core/src/progress.ts",
-      "packages/core/src/github-ops.ts",
+      "packages/core/src/session-reconcile.ts",
     ]);
     assert.equal(mixed.packageScoped, true);
     assert.equal(mixed.testFiles?.["test:core"], undefined);
-    assert.ok(mixed.reason.some((r) => /github-ops\.ts/.test(r)));
+    assert.ok(mixed.reason.some((r) => /session-reconcile\.ts/.test(r)));
     assert.ok(mixed.reason.some((r) => /no covering \*\.test\.ts/.test(r)));
     assert.ok(mixed.reason.some((r) => /package glob/.test(r)));
     assert.equal(
