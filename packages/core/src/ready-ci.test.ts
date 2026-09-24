@@ -6,6 +6,7 @@ import {
   parseCiSkipReason,
   readyCiBlockMessage,
   readyCiFromSkipReason,
+  tipScopedCiSkipReason,
   upsertReviewRequestedComment,
 } from "./ready-ci.js";
 import { formatSessionReconcileDigest, rowForLoop } from "./session-reconcile.js";
@@ -47,10 +48,31 @@ describe("RAD-97 ready CI / review interrupt", { concurrency: 1 }, () => {
     assert.equal(isReadyCiSatisfied(pr), true);
   });
 
-  test("CI skipped comment satisfies without readyCi field", () => {
+  test("unscoped CI skipped comment does not satisfy a new tip", () => {
     const pr = {
       id: "lp-x",
-      headSha: "abc",
+      headSha: "tip-b",
+      readyCi: readyCiFromSkipReason("tip-a", "old tip"),
+      comments: [
+        {
+          id: "c1",
+          body: "CI skipped: no toolchain",
+          createdAt: new Date().toISOString(),
+          author: "agent",
+          role: "agent",
+          status: "resolved",
+          // no forSha — historical / unscoped
+        },
+      ],
+    } as unknown as LocalPr;
+    assert.equal(isReadyCiSatisfied(pr, "tip-b"), false);
+    assert.equal(tipScopedCiSkipReason(pr, "tip-b"), null);
+  });
+
+  test("tip-scoped CI skipped comment is found only for matching forSha", () => {
+    const pr = {
+      id: "lp-x",
+      headSha: "tip-a",
       readyCi: null,
       comments: [
         {
@@ -60,10 +82,35 @@ describe("RAD-97 ready CI / review interrupt", { concurrency: 1 }, () => {
           author: "agent",
           role: "agent",
           status: "resolved",
+          forSha: "tip-a",
         },
       ],
     } as unknown as LocalPr;
-    assert.equal(isReadyCiSatisfied(pr), true);
+    // isReadyCiSatisfied requires readyCi — comments alone never pass.
+    assert.equal(isReadyCiSatisfied(pr, "tip-a"), false);
+    assert.equal(tipScopedCiSkipReason(pr, "tip-a"), "no toolchain");
+    assert.equal(tipScopedCiSkipReason(pr, "tip-b"), null);
+  });
+
+  test("skip on tip A then HEAD tip B is not satisfied", () => {
+    const pr = {
+      id: "lp-x",
+      headSha: "bbbbbbbb",
+      readyCi: readyCiFromSkipReason("aaaaaaaa", "toolchain"),
+      comments: [
+        {
+          id: "c1",
+          body: "CI skipped: toolchain",
+          createdAt: new Date().toISOString(),
+          author: "agent",
+          role: "agent",
+          status: "resolved",
+          forSha: "aaaaaaaa",
+        },
+      ],
+    } as unknown as LocalPr;
+    assert.equal(isReadyCiSatisfied(pr), false);
+    assert.match(readyCiBlockMessage(pr), /Ready blocked \(RAD-97\)/);
   });
 
   test("upsertReviewRequestedComment once per SHA", () => {

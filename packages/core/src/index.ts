@@ -277,6 +277,7 @@ export {
   readyCiBlockMessage,
   readyCiFromRunnerResult,
   readyCiFromSkipReason,
+  tipScopedCiSkipReason,
   upsertReviewRequestedComment,
 } from "./ready-ci.js";
 export { generateLearningDigest, formatLearningDigest } from "./learning.js";

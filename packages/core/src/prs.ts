@@ -40,6 +40,7 @@ import {
   normalizeReadyCi,
   parseCiSkipReason,
   readyCiFromSkipReason,
+  tipScopedCiSkipReason,
   upsertReviewRequestedComment,
 } from "./ready-ci.js";
 
@@ -482,13 +483,11 @@ function applyReadyCiGate(pr: LocalPr, ciSkipReason?: string): void {
     return;
   }
   if (isReadyCiSatisfied(pr)) return;
-  // Promote an existing "CI skipped: …" comment into readyCi for this tip.
-  for (const comment of pr.comments ?? []) {
-    const reason = parseCiSkipReason(comment.body);
-    if (reason) {
-      pr.readyCi = readyCiFromSkipReason(pr.headSha, reason);
-      return;
-    }
+  // Promote only tip-scoped "CI skipped: …" comments (forSha === HEAD) into readyCi.
+  const tipSkip = tipScopedCiSkipReason(pr, pr.headSha);
+  if (tipSkip) {
+    pr.readyCi = readyCiFromSkipReason(pr.headSha, tipSkip);
+    return;
   }
   assertReadyCiSatisfied(pr);
 }
@@ -799,7 +798,7 @@ export async function addLocalPrComment(
       return pr;
     }
 
-    // RAD-97: recording "CI skipped: <reason>" on the loop satisfies ready for this tip.
+    // RAD-97: "CI skipped: <reason>" stamps forSha and readyCi for this tip only.
     const skipReason = role === "agent" ? parseCiSkipReason(text) : null;
     if (skipReason && !options.replyTo) {
       await applyHeadRefresh(cwd, pr);
@@ -814,6 +813,9 @@ export async function addLocalPrComment(
       role,
       status: role === "agent" ? "resolved" : "open",
     };
+    if (skipReason && !options.replyTo) {
+      comment.forSha = pr.headSha;
+    }
     const loc = options.path?.trim();
     if (loc) comment.path = loc.replace(/\\/g, "/");
     if (options.line && options.line > 0) comment.line = Math.floor(options.line);
@@ -824,30 +826,18 @@ export async function addLocalPrComment(
       if (!target) throw new Error(`Comment not found: ${replyTo}`);
       comment.replyTo = target.id;
       comment.status = "resolved";
-    } else if (role === "agent" && !isReviewRequestBody(text)) {
+    } else if (role === "agent" && !isReviewRequestBody(text) && !skipReason) {
       const parent = lastFinding(pr);
       if (parent) comment.replyTo = parent.id;
     }
     pr.comments.push(comment);
     if (!isArchivedPr(pr) && comment.status === "open") {
       // Human findings always wake the implementor. Reviewer findings normally stay on
-      // ready until complete_review; if the loop is already reviewed, a new finding must
-      // flip to changes_requested or the implementor inbox never sees it.
-      if (
-        role === "human" ||
-        (role === "reviewer" && (pr.status === "reviewed" || pr.status === "review_interrupted"))
-      ) {
+      // ready / review_interrupted until complete_review; if the loop is already reviewed,
+      // a new finding must flip to changes_requested or the implementor inbox never sees it.
+      if (role === "human" || (role === "reviewer" && pr.status === "reviewed")) {
         pr.status = "changes_requested";
       }
-    }
-    // Reviewer findings on ready stay ready; on review_interrupted → treat like ready.
-    if (
-      !isArchivedPr(pr) &&
-      role === "reviewer" &&
-      comment.status === "open" &&
-      pr.status === "review_interrupted"
-    ) {
-      // Stay interrupted until complete_review / resume — findings still file.
     }
     pr.updatedAt = comment.createdAt;
     await writePr(cwd, pr);

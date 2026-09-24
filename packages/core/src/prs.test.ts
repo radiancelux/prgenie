@@ -45,6 +45,7 @@ import {
   shouldSpawnReviewer,
   markReviewRequested,
   markReviewerNotified,
+  markReviewInterrupted,
   updateLocalPr,
   haltWatch,
   haltWatchRole,
@@ -187,6 +188,26 @@ test("reviewer comments stay on ready until complete_review", async () => {
     finding.replies.some((r) => r.body === "Working on it."),
     true,
   );
+});
+
+test("reviewer comments stay on review_interrupted until complete_review", async () => {
+  const pr = await createLocalPr(repo, { title: "Interrupted review lane", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
+  await markReviewInterrupted(repo, pr.id, { reason: "auth failure" });
+  const filed = await addLocalPrComment(repo, pr.id, "Missing tests.", {
+    role: "reviewer",
+    author: "review-agent",
+  });
+  assert.equal(filed.status, "review_interrupted");
+  assert.equal(filed.comments.filter((c) => c.role === "reviewer" && !c.replyTo).length, 1);
+  assert.equal(pendingReviewComments(filed).length, 1);
+  assert.equal(formatReviewInbox(filed), null);
+
+  const replied = await addLocalPrComment(repo, pr.id, "Working on it.", {
+    role: "agent",
+  });
+  assert.equal(replied.status, "review_interrupted");
+  assert.equal(pendingReviewComments(replied).length, 1);
 });
 
 test("address_comment marks a finding addressed; reviewer resolve can hand off to human", async () => {

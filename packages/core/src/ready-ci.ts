@@ -39,21 +39,33 @@ export function normalizeReadyCi(raw: unknown): ReadyCiRecord | null {
   };
 }
 
-/** True when readyCi covers this tip as passed or skipped. */
+/** True when readyCi covers this tip as passed or skipped (RAD-97). */
 export function isReadyCiSatisfied(
   pr: Pick<LocalPr, "readyCi" | "headSha" | "comments">,
   headSha: string = pr.headSha,
 ): boolean {
   const record = normalizeReadyCi(pr.readyCi);
-  if (record && record.headSha === headSha) {
-    if (record.outcome === "passed") return true;
-    if (record.outcome === "skipped" && (record.skipReason?.trim() || true)) return true;
-  }
-  // Legacy / agent path: an explicit skip comment on the loop (any root).
-  for (const comment of pr.comments ?? []) {
-    if (parseCiSkipReason(comment.body)) return true;
-  }
+  if (!record || record.headSha !== headSha) return false;
+  if (record.outcome === "passed") return true;
+  if (record.outcome === "skipped") return true;
   return false;
+}
+
+/**
+ * Tip-scoped skip reason from an agent comment (RAD-97).
+ * Only comments stamped with forSha === headSha count — unscoped/legacy skips do not.
+ */
+export function tipScopedCiSkipReason(
+  pr: Pick<LocalPr, "comments">,
+  headSha: string,
+): string | null {
+  for (const comment of pr.comments ?? []) {
+    if (comment.replyTo) continue;
+    if (comment.forSha !== headSha) continue;
+    const reason = parseCiSkipReason(comment.body);
+    if (reason) return reason;
+  }
+  return null;
 }
 
 export function readyCiBlockMessage(pr: Pick<LocalPr, "id" | "headSha" | "readyCi">): string {
