@@ -44,7 +44,6 @@ import {
   setLocalPrStatus,
   markReviewInterrupted,
   resumeReview,
-  formatSessionReconnectDigest,
   formatSessionReconcileDigest,
   reconcileSessionLoops,
   reconcileOneLoop,
