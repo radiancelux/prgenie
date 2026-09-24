@@ -32,6 +32,7 @@ import {
   loopWorktreeIdentity,
   peelStashMessage,
   pruneArchivedLoopWorktree,
+  pruneArchivedLoopWorktreeDetailed,
   pruneLoopWorktrees,
   refusePrimaryWorktreeIfParallel,
   releaseArchivedLoop,
@@ -457,6 +458,31 @@ test("pruneArchivedLoopWorktree removes a sibling .loops checkout", async () => 
   assert.equal(still.id, pr.id);
 });
 
+test("prune clears orphan leftover directory after git link is gone (RAD-95)", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, {
+    title: "Orphan leftover",
+    base: "main",
+    head: "feat/widget",
+  });
+  assert.ok(pr.worktreePath);
+  // Simulate dogfood: git unregisters the worktree but leaves the folder.
+  git(["worktree", "remove", "--force", "--", pr.worktreePath]);
+  await mkdir(pr.worktreePath, { recursive: true });
+  await writeFile(path.join(pr.worktreePath, "leftover.txt"), "still here\n");
+  const detailed = await pruneArchivedLoopWorktreeDetailed(repo, pr);
+  assert.equal(detailed.pruned, true);
+  assert.equal(detailed.leftoverPath, null);
+  const { existsSync } = await import("node:fs");
+  assert.equal(existsSync(pr.worktreePath), false);
+});
+
+test("requireGithubBindForReviewed refuses unbound repos (RAD-95)", async () => {
+  git(["checkout", "main"]);
+  const { requireGithubBindForReviewed } = await import("./github-ops.js");
+  await assert.rejects(() => requireGithubBindForReviewed(repo), /unbound|gh use/i);
+});
+
 test("pruneArchivedLoopWorktree never removes the primary checkout", async () => {
   git(["checkout", "feat/widget"]);
   const pr = await createLocalPr(repo, { title: "Stay put", base: "main" });
@@ -487,7 +513,8 @@ test("releaseArchivedLoop checks the main workspace off the loop branch", async 
   git(["checkout", "feat/widget"]);
   const released = await releaseArchivedLoop(repo, { ...pr, worktreePath: repo });
   assert.equal(released.checkedOutBase, true);
-  assert.equal(released.prunedWorktree, false);
+  // Worktree already force-removed — end state is pruned (RAD-95).
+  assert.equal(released.prunedWorktree, true);
   assert.equal(released.reopen, false);
   assert.equal(git(["branch", "--show-current"]), "main");
   const still = await getLocalPr(repo, pr.id);

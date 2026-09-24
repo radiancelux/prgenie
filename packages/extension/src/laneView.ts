@@ -30,6 +30,7 @@ import {
   shepherdStatus,
   updateLocalPr,
   exportLocalPr,
+  formatExportPartialFailure,
   abortExportGate,
   applyCiProgressEvent,
   emptyCiProgressSnapshot,
@@ -510,13 +511,22 @@ export class LaneHub implements vscode.Disposable {
         });
         this.clearLiveProgress();
         await this.pushSnapshot(true);
-        const open = await vscode.window.showInformationMessage(
-          result.alreadyExisted
-            ? `GitHub PR already exists: ${result.url}`
-            : `Opened ${result.url}`,
-          "Open",
-        );
-        if (open === "Open") await vscode.env.openExternal(vscode.Uri.parse(result.url));
+        // RAD-95: prune/checkout incomplete after PR open is not a pure success.
+        if (result.partialFailure) {
+          const open = await vscode.window.showWarningMessage(
+            formatExportPartialFailure(result.partialFailure),
+            "Open PR",
+          );
+          if (open === "Open PR") await vscode.env.openExternal(vscode.Uri.parse(result.url));
+        } else {
+          const open = await vscode.window.showInformationMessage(
+            result.alreadyExisted
+              ? `GitHub PR already exists: ${result.url}`
+              : `Opened ${result.url}`,
+            "Open",
+          );
+          if (open === "Open") await vscode.env.openExternal(vscode.Uri.parse(result.url));
+        }
       } catch (err) {
         if (isAbortError(err)) {
           this.setLiveProgress({

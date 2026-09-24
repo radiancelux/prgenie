@@ -1,5 +1,5 @@
 import { git } from "./git.js";
-import { ensureRepoGithub, runGh } from "./github-ops.js";
+import { describeRepoGithubBind, ensureRepoGithub, runGh } from "./github-ops.js";
 import { getLocalPr, isArchivedPr, listLocalPrs, setLocalPrStatus } from "./prs.js";
 import { localBaseRef, releaseArchivedLoop } from "./worktrees.js";
 import { haltWatch, resumeWatch } from "./watch.js";
@@ -66,6 +66,58 @@ export function exportPushRefspec(pr: { headSha: string; headRef: string }): str
   return `${pr.headSha}:refs/heads/${pr.headRef}`;
 }
 
+/** Structured report when GitHub PR opened but local release/prune did not finish (RAD-95). */
+export type ExportPartialFailure = {
+  kind: "partial_failure";
+  message: string;
+  prOpened: true;
+  url: string;
+  worktreePath: string | null;
+  checkedOutBase: boolean;
+  prunedWorktree: boolean;
+  reopen: boolean;
+  pruneError: string | null;
+};
+
+export function formatExportPartialFailure(partial: ExportPartialFailure): string {
+  return partial.message;
+}
+
+/**
+ * Build the export partial-failure payload from a release result.
+ * Shared by `exportLocalPr` so the contract is unit-testable without push/gh.
+ */
+export function exportPartialFailureFromRelease(
+  url: string,
+  released: {
+    checkedOutBase: boolean;
+    prunedWorktree: boolean;
+    primaryPath: string | null;
+    reopen: boolean;
+    worktreeLeftoverPath: string | null;
+    pruneError: string | null;
+  },
+  archivedWorktreePath: string | null,
+): ExportPartialFailure | null {
+  if (released.prunedWorktree) return null;
+  const worktreePath =
+    released.worktreeLeftoverPath ?? archivedWorktreePath ?? released.primaryPath;
+  const reason = released.reopen
+    ? `reopen primary at ${released.primaryPath ?? "unknown"} then prune`
+    : (released.pruneError ?? "prune failed");
+  return {
+    kind: "partial_failure",
+    message: `PR opened; worktree still at ${worktreePath ?? "unknown"}; ${reason}`,
+    prOpened: true,
+    url,
+    worktreePath: worktreePath ?? null,
+    checkedOutBase: released.checkedOutBase,
+    prunedWorktree: released.prunedWorktree,
+    reopen: released.reopen,
+    pruneError: released.pruneError,
+  };
+}
+
 export async function exportLocalPr(
   cwd: string,
   id: string,
@@ -78,14 +130,35 @@ export async function exportLocalPr(
   prunedWorktree: boolean;
   primaryPath: string | null;
   reopen: boolean;
+  worktreeLeftoverPath: string | null;
+  pruneError: string | null;
+  partialFailure: ExportPartialFailure | null;
 }> {
   const { validateExport } = await import("./export-validation.js");
   const onProgress = options.onProgress;
   const signal = options.signal;
+
+  // RAD-95: fail unbound before expensive shepherd CI — not only after validation.
+  // File bind only (same as requireGithubBindForReviewed) so we do not hang on gh CLI.
+  throwIfAborted(signal);
+  const earlyBind = await describeRepoGithubBind(cwd);
+  if (!earlyBind.bound) {
+    throw new Error(
+      earlyBind.prompt ??
+        "This repo is not bound to a GitHub login. Ask which account, then prgenie gh use <login>.",
+    );
+  }
+
   const validation = await validateExport(cwd, id, options);
   if (!validation.ok) {
+    const envNote =
+      validation.ciEnvUnhealthy && !options.skipValidation
+        ? ` CI env unhealthy (first-class): ${validation.ciEnvUnhealthy.message}`
+        : "";
     throw new Error(
-      `Export blocked. ${validation.issues.join(" ")}${options.skipValidation ? "" : " Use --skip-validation to override (not recommended)."}`,
+      `Export blocked. ${validation.issues.join(" ")}${envNote}${
+        options.skipValidation ? "" : " Use --skip-validation to override (not recommended)."
+      }`,
     );
   }
 
@@ -141,6 +214,7 @@ export async function exportLocalPr(
       url = existing.stdout.trim();
       alreadyExisted = true;
     } else {
+      // Title/body are separate argv entries; quoteWindowsShellArg keeps spaces intact on Win32.
       const created = await runGh(
         [
           "pr",
@@ -185,7 +259,21 @@ export async function exportLocalPr(
     }
     const archived = await getLocalPr(cwd, pr.id);
     const released = await releaseArchivedLoop(cwd, archived);
-    return { url, id: pr.id, alreadyExisted, ...released };
+
+    const partialFailure = exportPartialFailureFromRelease(url, released, archived.worktreePath);
+
+    return {
+      url,
+      id: pr.id,
+      alreadyExisted,
+      checkedOutBase: released.checkedOutBase,
+      prunedWorktree: released.prunedWorktree,
+      primaryPath: released.primaryPath,
+      reopen: released.reopen,
+      worktreeLeftoverPath: released.worktreeLeftoverPath,
+      pruneError: released.pruneError,
+      partialFailure,
+    };
   } catch (err) {
     await resumeWatch(cwd);
     throw err;

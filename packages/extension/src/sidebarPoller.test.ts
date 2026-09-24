@@ -293,6 +293,21 @@ test("laneView Push to origin / export CTA use humanExport, not bare reviewed st
   );
 });
 
+test("laneView export surfaces partialFailure as warning (RAD-95)", () => {
+  const src = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "laneView.ts"),
+    "utf8",
+  );
+  assert.ok(src.includes("formatExportPartialFailure"));
+  assert.ok(src.includes("result.partialFailure"));
+  assert.ok(src.includes("showWarningMessage"));
+  // Success toast must not be the only path after exportLocalPr resolves.
+  assert.match(
+    src,
+    /if\s*\(\s*result\.partialFailure\s*\)[\s\S]*showWarningMessage[\s\S]*formatExportPartialFailure/,
+  );
+});
+
 test("laneView STATUS quiet until reviewed; idle clear; no vertical reason layout", () => {
   const src = readFileSync(
     path.join(path.dirname(fileURLToPath(import.meta.url)), "laneView.ts"),

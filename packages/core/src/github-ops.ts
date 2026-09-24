@@ -5,6 +5,23 @@ import { findGitRoot } from "./git.js";
 import { consoleDir, parseJsonObject, writeJsonFile } from "./store.js";
 import { parseGhAuthStatus, type GhAccount, type RepoGithubBind } from "./github.js";
 
+/**
+ * Quote one argv for cmd.exe when Node spawn({ shell: true }) joins args with spaces.
+ * Without this, `gh pr create --title "RAD-95 — Foo bar"` splits on spaces (RAD-95 dogfood).
+ */
+export function quoteWindowsShellArg(arg: string): string {
+  if (arg.length === 0) return '""';
+  // Safe unquoted token — no whitespace or cmd metacharacters.
+  if (/^[A-Za-z0-9_./:\\@%+=,:-]+$/.test(arg)) return arg;
+  return `"${arg.replace(/"/g, '""')}"`;
+}
+
+/** Apply Windows shell quoting when spawn will use shell:true. */
+export function quoteGhArgsForSpawn(args: string[]): string[] {
+  if (process.platform !== "win32") return args;
+  return args.map(quoteWindowsShellArg);
+}
+
 function gh(
   args: string[],
   options: { cwd?: string; signal?: AbortSignal } = {},
@@ -18,7 +35,9 @@ function gh(
     }
     // On Windows, spawn without shell resolves gh.exe and skips gh.cmd shims
     // (PATH mocks in tests, and some install layouts). shell:true uses PATHEXT.
-    const child = spawn("gh", args, {
+    // Quote args so titles/bodies with spaces are not split by cmd.exe (RAD-95).
+    const spawnArgs = quoteGhArgsForSpawn(args);
+    const child = spawn("gh", spawnArgs, {
       cwd: options.cwd,
       windowsHide: true,
       shell: process.platform === "win32",
@@ -135,6 +154,54 @@ export async function ensureRepoGithub(cwd: string): Promise<{
   }
   await switchGhUser(bind.login, bind.host);
   return { login: bind.login, switched: true, bound: true };
+}
+
+/** Early bind snapshot for create / ready / review (RAD-95). */
+export type GithubBindStatus = {
+  bound: boolean;
+  login: string | null;
+  activeLogin: string | null;
+  host: string;
+  /** Non-null when the agent/human should bind before reviewed or export. */
+  prompt: string | null;
+};
+
+/**
+ * Surface repo gh bind without switching accounts.
+ * Prefer this at create / ready / review so unbound is not discovered only at export.
+ * Reads github.json only (no `gh auth status`) so create/ready stay fast on Windows.
+ */
+export async function describeRepoGithubBind(cwd: string): Promise<GithubBindStatus> {
+  const bind = await getRepoGithubBind(cwd);
+  const host = bind?.host || "github.com";
+  if (!bind) {
+    return {
+      bound: false,
+      login: null,
+      activeLogin: null,
+      host,
+      prompt:
+        "Repo unbound. Bind before reviewed/export: prgenie gh use <login> (ask which account if unsure).",
+    };
+  }
+  return {
+    bound: true,
+    login: bind.login,
+    activeLogin: null,
+    host: bind.host,
+    prompt: null,
+  };
+}
+
+/** Refuse reviewed until the repo is bound (RAD-95). File bind only — no gh CLI. */
+export async function requireGithubBindForReviewed(cwd: string): Promise<GithubBindStatus> {
+  const status = await describeRepoGithubBind(cwd);
+  if (!status.bound) {
+    throw new Error(
+      status.prompt ?? "Repo unbound. Bind with prgenie gh use <login> before reviewed.",
+    );
+  }
+  return status;
 }
 
 export type { GhAccount, RepoGithubBind };

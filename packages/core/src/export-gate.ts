@@ -107,6 +107,19 @@ export function normalizeExportGate(raw: unknown): ExportGateSnapshot | null {
   }
   const ciPlan = normalizeCiPlan(g.ciPlan);
   const ciChecks = normalizeCiChecks(g.ciChecks);
+  const envRaw = g.ciEnvUnhealthy;
+  let ciEnvUnhealthy: ExportGateSnapshot["ciEnvUnhealthy"] = null;
+  if (
+    envRaw &&
+    typeof envRaw === "object" &&
+    typeof envRaw.message === "string" &&
+    envRaw.message
+  ) {
+    const fixSteps = Array.isArray(envRaw.fixSteps)
+      ? envRaw.fixSteps.filter((s): s is string => typeof s === "string")
+      : [];
+    ciEnvUnhealthy = { message: envRaw.message, fixSteps };
+  }
   return {
     status: g.status,
     reasons,
@@ -115,6 +128,7 @@ export function normalizeExportGate(raw: unknown): ExportGateSnapshot | null {
     ciPlan,
     ciChecks,
     ciCwd: typeof g.ciCwd === "string" && g.ciCwd ? g.ciCwd : null,
+    ciEnvUnhealthy,
   };
 }
 

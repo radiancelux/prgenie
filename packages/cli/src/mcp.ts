@@ -26,6 +26,8 @@ import {
   getLocalPrDiff,
   getLocalPrNameStatus,
   getRepoGithubBind,
+  describeRepoGithubBind,
+  requireGithubBindForReviewed,
   getRepoWatch,
   LISTEN_REMOVED_MESSAGE,
   listGhAccounts,
@@ -177,13 +179,16 @@ export async function handleTool(
         return true;
       });
     }
-    case "create_local_pr":
-      return createLocalPr(cwd, {
+    case "create_local_pr": {
+      const pr = await createLocalPr(cwd, {
         title: typeof args.title === "string" ? args.title : undefined,
         body: typeof args.body === "string" ? args.body : undefined,
         base: typeof args.base === "string" ? args.base : undefined,
         head: typeof args.head === "string" ? args.head : undefined,
       });
+      const githubBind = await describeRepoGithubBind(cwd);
+      return { ...withCommentViews(pr), githubBind };
+    }
     case "attach_local_pr":
       return attachLocalPr(cwd, {
         source: String(args.source ?? ""),
@@ -200,12 +205,20 @@ export async function handleTool(
       // RAD-125: persist tip refresh so headSha matches worktree (invalidate reviewed on move).
       mcpProgress?.report("refreshing local PR head");
       const pr = await refreshLocalPrHead(cwd, String(args.id ?? ""));
-      return withCommentViews(pr);
+      const githubBind = await describeRepoGithubBind(cwd);
+      return { ...withCommentViews(pr), githubBind };
     }
-    case "set_status":
-      return setLocalPrStatus(cwd, String(args.id ?? ""), args.status as LocalPrStatus, {
+    case "set_status": {
+      const status = args.status as LocalPrStatus;
+      if (status === "reviewed") {
+        await requireGithubBindForReviewed(cwd);
+      }
+      const pr = await setLocalPrStatus(cwd, String(args.id ?? ""), status, {
         skipPreflight: typeof args.skipPreflight === "boolean" ? args.skipPreflight : undefined,
       });
+      const githubBind = await describeRepoGithubBind(cwd);
+      return { ...withCommentViews(pr), githubBind };
+    }
     case "add_comment": {
       const role = typeof args.role === "string" ? (args.role as CommentRole) : undefined;
       const author = typeof args.author === "string" ? args.author : undefined;
@@ -246,12 +259,21 @@ export async function handleTool(
       );
     case "delete_comment":
       return deleteLocalPrComment(cwd, String(args.id ?? ""), String(args.commentId ?? ""));
-    case "complete_review":
-      return completeLocalPrReview(cwd, String(args.id ?? ""), {
+    case "complete_review": {
+      // Probe pending findings first so changes_requested path does not require bind.
+      const before = await refreshLocalPrHead(cwd, String(args.id ?? ""));
+      const openFindings = pendingReviewComments(before);
+      if (openFindings.length === 0 && !isArchivedPr(before)) {
+        await requireGithubBindForReviewed(cwd);
+      }
+      const done = await completeLocalPrReview(cwd, String(args.id ?? ""), {
         author: typeof args.author === "string" ? args.author : undefined,
         body: typeof args.body === "string" ? args.body : undefined,
         allowDrift: args.allowDrift === true,
       });
+      const githubBind = await describeRepoGithubBind(cwd);
+      return { ...withCommentViews(done), githubBind };
+    }
     case "get_diff": {
       const paths = Array.isArray(args.paths)
         ? args.paths.filter((p): p is string => typeof p === "string")
@@ -497,7 +519,7 @@ export const tools = [
   {
     name: "create_local_pr",
     description:
-      "Create a local PR (unpublished review loop) from the current branch or a named head. Only when the user asked for a local PR / loop / /start / /steward (or an existing live loop needs a packet). Always set body to a reviewer summary (why, what changed, how to test). After create, Switch/open the returned worktreePath (../<repo>.loops/<id>) and do all edits/commits/CI there — never in primary when an exclusive worktree exists. Refuses if primary has dirty tracked packages/plugin/hooks|mcp/*.cjs build artifacts (stash/restore first). Do not git push or gh pr create.",
+      "Create a local PR (unpublished review loop) from the current branch or a named head. Only when the user asked for a local PR / loop / /start / /steward (or an existing live loop needs a packet). Always set body to a reviewer summary (why, what changed, how to test). After create, Switch/open the returned worktreePath (../<repo>.loops/<id>) and do all edits/commits/CI there — never in primary when an exclusive worktree exists. Returns githubBind (bound/prompt) — bind before reviewed/export if unbound. Refuses if primary has dirty tracked packages/plugin/hooks|mcp/*.cjs build artifacts (stash/restore first). Do not git push or gh pr create.",
     inputSchema: {
       type: "object",
       properties: {
@@ -569,7 +591,7 @@ export const tools = [
   {
     name: "set_status",
     description:
-      "Set local PR status: draft, ready, changes_requested, reviewed, approved. reviewed means the automated reviewer cleared and the steward will run the export gate — not a human handoff. When setting to ready, a pattern preflight check runs automatically; pass skipPreflight=true to bypass. Before ready, also run MCP run_ci / prgenie ci and fix failures in-worktree.",
+      "Set local PR status: draft, ready, changes_requested, reviewed, approved. reviewed means the automated reviewer cleared and the steward will run the export gate — not a human handoff. Setting reviewed requires a repo gh bind (RAD-95); returns githubBind. When setting to ready, a pattern preflight check runs automatically; pass skipPreflight=true to bypass. Before ready, also run MCP run_ci / prgenie ci and fix failures in-worktree.",
     inputSchema: {
       type: "object",
       required: ["id", "status"],
@@ -673,7 +695,7 @@ export const tools = [
   {
     name: "complete_review",
     description:
-      "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed (review cleared; steward runs the export gate). Ready-for-human / Push language only after handoff_human. Resolves remaining addressed comments. Refuses when HEAD moved after Review requested unless allowDrift=true — re-diff and file findings first. Archived loops stay archived. Do not git push.",
+      "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed (review cleared; steward runs the export gate) and requires a repo gh bind (RAD-95) — returns githubBind with prompt if unbound. Ready-for-human / Push language only after handoff_human. Resolves remaining addressed comments. Refuses when HEAD moved after Review requested unless allowDrift=true — re-diff and file findings first. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -791,7 +813,7 @@ export const tools = [
   {
     name: "export_local_pr",
     description:
-      "Developer command: validate review status and preflight, then git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export. Export is blocked unless shepherd is ready (review complete, preflight clean, gh bound, local CI green). Use skipValidation only for emergency export.",
+      "Developer command: validate review status and preflight, then git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export. Export is blocked unless shepherd is ready (review complete, preflight clean, gh bound, local CI green). Unbound gh fails before CI. On prune/checkout failure after the GitHub PR opens, returns partialFailure { message, url, worktreePath } instead of silent half-success. Use skipValidation only for emergency export (env-unhealthy is first-class on the gate — do not invent a second CI selector).",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -801,7 +823,7 @@ export const tools = [
         skipValidation: {
           type: "boolean",
           description:
-            "Skip export validation (review status + preflight). Emergency override only.",
+            "Skip export validation (review status + preflight + CI). Emergency override only — prefer fixing CI env unhealthy via the existing worktree gate.",
         },
       },
     },
