@@ -122,7 +122,7 @@ Uncertain / hard-config mapping **skips** local CI with an explicit `skip local 
 
 Skip implementor preflight only when the toolchain cannot run (say so), mapping **skips** with a printable reason (RAD-119), or a human/steward gives an **explicit skip reason** (RAD-97). Do not skip a red scoped check. Do not “just `pnpm test` the whole repo” when `run_ci` already selected a confident scoped plan — and never escalate a skip/uncertain plan into full suite.
 
-When a human/steward **skips** CI: MCP `abort_ci` returns the bound `implementorTaskId` — stop/interrupt that Task in the same steward turn (abort alone leaves the implementor looping).
+When a human/steward **skips** CI (or hits panel **Cancel**): MCP `abort_ci` / panel Cancel both call `abortCiForSteward` and return the bound `implementorTaskId` — stop/interrupt that Task in the same steward turn. Cancel is the skip half; the panel alone does not kill the agent (abort alone leaves the implementor looping).
 
 ## Generated MCP bundle size
 
@@ -132,7 +132,12 @@ If you still see huge ±tens-of-thousands-line diffs on those paths in a PR, you
 
 ## Cancel (panel + chat)
 
-Loop panel **Cancel** and MCP `abort_ci` / a cancelled `run_ci` · `shepherd_status` · `steward_next` share one abort token at `.git/agent-console/ci-abort/<id>.json`. That stops the in-flight suite in every process. Export-gate evaluations also take a per id+HEAD lock (`.git/agent-console/ci-lock/`) so steward and the panel do not run two full suites; a waiter adopts the persisted snapshot or aborts with the owner.
+Loop panel **Cancel** and MCP `abort_ci` share one path: `abortCiForSteward` bumps the abort token at `.git/agent-console/ci-abort/<id>.json` (stops in-flight `run_ci` · `shepherd_status` · `steward_next` in every process) and returns `{ stewardAction, implementorTaskId }`.
+
+- **Bound implementor:** `stewardAction` is `stop_implementor_and_abort_ci`. Cancel is the **skip half** — abort CI and surface the Task id. Do **not** assume the panel alone kills the agent; the steward (or human) must still stop/interrupt that Task so it does not keep calling `run_ci`.
+- **No implementor bound:** `stewardAction` is `abort_ci_only` — abort token only.
+
+Export-gate evaluations also take a per id+HEAD lock (`.git/agent-console/ci-lock/`) so steward and the panel do not run two full suites; a waiter adopts the persisted snapshot or aborts with the owner.
 
 ## UI
 

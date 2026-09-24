@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -230,7 +231,7 @@ test("stewardNext gate-before-handoff: blocked CI resumes implementor, ready han
   assert.equal(await getStewardBinding(repo, pr.id), null);
 });
 
-test("abortCiForSteward returns stop_implementor when a Task is bound (RAD-112)", async () => {
+test("abortCiForSteward returns stop_implementor when a Task is bound (RAD-112 / RAD-115)", async () => {
   const { abortCiForSteward } = await import("./export-validation.js");
   const pr = await createLocalPr(repo, { title: "CI skip steward", base: "main" });
   await bindSteward(repo, pr.id, { implementorTaskId: "task-impl-skip" });
@@ -244,6 +245,17 @@ test("abortCiForSteward returns stop_implementor when a Task is bound (RAD-112)"
   const alone = await abortCiForSteward(repo, pr.id);
   assert.equal(alone.implementorTaskId, null);
   assert.equal(alone.stewardAction, "abort_ci_only");
+});
+
+test("laneView Cancel uses abortCiForSteward (RAD-115)", () => {
+  const src = readFileSync(new URL("../../extension/src/laneView.ts", import.meta.url), "utf8");
+  assert.match(src, /abortCiForSteward\(cancelCwd, cancelId\)/);
+  assert.match(src, /stop_implementor_and_abort_ci/);
+  assert.equal(
+    /abortExportGate\(cancelCwd, cancelId\)/.test(src),
+    false,
+    "panel Cancel must not call abortExportGate alone",
+  );
 });
 
 test("RAD-125: stewardNext refreshes headSha before matching a blocked gate", async () => {

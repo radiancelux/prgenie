@@ -255,7 +255,9 @@ test("laneView CI modal queries fresh nodes after loop switch (AC3)", () => {
   assert.match(src, /Query fresh #ciModal nodes/);
   assert.match(src, /getElementById\("ciModal"\)/);
   assert.match(src, /bindCiModal\(\);/);
-  assert.match(src, /abortExportGate\(cancelCwd, cancelId\)/);
+  assert.match(src, /abortCiForSteward\(cancelCwd, cancelId\)/);
+  assert.match(src, /stop_implementor_and_abort_ci/);
+  assert.match(src, /Panel Cancel is the skip half/);
   assert.match(src, /function formatElapsed/);
 });
 

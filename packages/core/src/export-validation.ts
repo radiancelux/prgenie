@@ -290,8 +290,9 @@ export async function evaluateAndStoreExportGate(
 
 /**
  * Cancel in-process gate CI and bump the file abort token so MCP `run_ci` /
- * `shepherd_status` / `steward_next` (other processes) stop too. Panel Cancel
- * and MCP `abort_ci` share this path.
+ * `shepherd_status` / `steward_next` (other processes) stop too.
+ * Prefer `abortCiForSteward` for panel Cancel / MCP `abort_ci` (RAD-115) — that
+ * also returns the bound implementor Task id for the skip half.
  */
 export function abortExportGate(cwd: string, id: string, headSha?: string): boolean {
   let hit = false;
@@ -335,7 +336,9 @@ export interface AbortCiResult {
 
 /**
  * Abort in-flight CI and return the steward action for a human/steward CI skip.
- * Callers must also stop/interrupt `implementorTaskId` when stewardAction says so.
+ * Loop panel Cancel and MCP `abort_ci` both call this (RAD-115). Cancel is the
+ * skip half — abort alone does not kill the agent; callers must still
+ * stop/interrupt `implementorTaskId` when stewardAction says so.
  */
 export async function abortCiForSteward(
   cwd: string,
