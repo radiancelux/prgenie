@@ -127,6 +127,7 @@ export {
   updateLocalPr,
   archiveLocalPr,
   clearArchivedLocalPrs,
+  clearArchivedDiskFailure,
 } from "./prs.js";
 export type {
   CompleteLocalPrReviewResult,

@@ -17,6 +17,7 @@ import {
   deleteLocalPrComment,
   archiveLocalPr,
   clearArchivedLocalPrs,
+  clearArchivedDiskFailure,
   editLocalPrComment,
   exportPushRefspec,
   findLocalPrForCurrentBranch,
@@ -953,6 +954,68 @@ test("clearArchivedLocalPrs removes packets worktrees and local branches (RAD-13
   await assert.rejects(() => getLocalPr(repo, b.id), /not found/i);
   const archivedLeft = (await listLocalPrs(repo)).filter(isArchivedPr);
   assert.equal(archivedLeft.length, 0);
+});
+
+test("clearArchivedDiskFailure fails closed when flags are false without error strings (RAD-130)", () => {
+  const both = clearArchivedDiskFailure(
+    {
+      prunedWorktree: false,
+      pruneError: null,
+      worktreeLeftoverPath: "/repo.loops/lp-empty-err",
+      deletedBranch: false,
+      branch: "lp-empty-err",
+      branchError: null,
+    },
+    "/fallback",
+  );
+  assert.ok(both);
+  assert.equal(both.path, "/repo.loops/lp-empty-err");
+  assert.match(both.error, /worktree not removed/);
+  assert.match(both.error, /local branch lp-empty-err not deleted/);
+
+  const pruneOnly = clearArchivedDiskFailure(
+    {
+      prunedWorktree: false,
+      pruneError: "",
+      worktreeLeftoverPath: null,
+      deletedBranch: true,
+      branch: "lp-ok",
+      branchError: null,
+    },
+    "/fallback-path",
+  );
+  assert.ok(pruneOnly);
+  assert.equal(pruneOnly.path, "/fallback-path");
+  assert.equal(pruneOnly.error, "worktree not removed");
+
+  const branchOnly = clearArchivedDiskFailure(
+    {
+      prunedWorktree: true,
+      pruneError: null,
+      worktreeLeftoverPath: null,
+      deletedBranch: false,
+      branch: null,
+      branchError: "   ",
+    },
+    null,
+  );
+  assert.ok(branchOnly);
+  assert.equal(branchOnly.error, "local loop branch not deleted");
+
+  assert.equal(
+    clearArchivedDiskFailure(
+      {
+        prunedWorktree: true,
+        pruneError: null,
+        worktreeLeftoverPath: null,
+        deletedBranch: true,
+        branch: "lp-ok",
+        branchError: null,
+      },
+      null,
+    ),
+    null,
+  );
 });
 
 test("edit and delete open findings", async () => {

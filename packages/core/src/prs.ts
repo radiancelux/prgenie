@@ -1147,6 +1147,36 @@ export type ClearArchivedLocalPrsResult = {
 };
 
 /**
+ * Fail closed on incomplete local disk cleanup after a packet delete (RAD-130).
+ * False prune/branch flags count even when error strings are empty/null.
+ */
+export function clearArchivedDiskFailure(
+  finalize: {
+    prunedWorktree: boolean;
+    pruneError: string | null;
+    worktreeLeftoverPath: string | null;
+    deletedBranch: boolean;
+    branch: string | null;
+    branchError: string | null;
+  },
+  fallbackPath: string | null,
+): Omit<ClearArchivedFailure, "id"> | null {
+  const errors: string[] = [];
+  if (!finalize.prunedWorktree) {
+    errors.push(finalize.pruneError?.trim() || "worktree not removed");
+  }
+  if (!finalize.deletedBranch) {
+    const name = finalize.branch ? `local branch ${finalize.branch}` : "local loop branch";
+    errors.push(finalize.branchError?.trim() || `${name} not deleted`);
+  }
+  if (!errors.length) return null;
+  return {
+    path: finalize.worktreeLeftoverPath ?? fallbackPath ?? finalize.branch,
+    error: errors.join("; "),
+  };
+}
+
+/**
  * Bulk-delete every archived loop packet plus its worktree and local branch (RAD-130).
  * Remotes stay. Partial failures name paths; does not claim full success when any fail.
  */
@@ -1160,20 +1190,10 @@ export async function clearArchivedLocalPrs(cwd: string): Promise<ClearArchivedL
     const dest = primary ? loopWorktreeDir(primary, pr.id) : pr.worktreePath;
     try {
       const result = await deleteLocalPr(cwd, pr.id);
-      const errors: string[] = [];
-      if (!result.finalize.prunedWorktree && result.finalize.pruneError) {
-        errors.push(result.finalize.pruneError);
-      }
-      if (!result.finalize.deletedBranch && result.finalize.branchError) {
-        errors.push(result.finalize.branchError);
-      }
+      const disk = clearArchivedDiskFailure(result.finalize, dest);
       // Packet delete succeeded; leftover disk is still a partial failure.
-      if (errors.length) {
-        failed.push({
-          id: pr.id,
-          path: result.finalize.worktreeLeftoverPath ?? dest,
-          error: errors.join("; "),
-        });
+      if (disk) {
+        failed.push({ id: pr.id, ...disk });
       } else {
         cleared.push(pr.id);
       }
