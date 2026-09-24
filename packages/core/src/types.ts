@@ -1,4 +1,17 @@
-export type LocalPrStatus = "draft" | "ready" | "changes_requested" | "reviewed" | "approved";
+export type LocalPrStatus =
+  "draft" | "ready" | "review_interrupted" | "changes_requested" | "reviewed" | "approved";
+
+/** Last implementor CI result for soft-blocking ready (RAD-97). */
+export type ReadyCiOutcome = "passed" | "skipped";
+
+export interface ReadyCiRecord {
+  headSha: string;
+  recordedAt: string;
+  outcome: ReadyCiOutcome;
+  /** Present when outcome is skipped — body form is "CI skipped: <reason>". */
+  skipReason?: string | null;
+  checks?: string[];
+}
 
 export type CommentRole = "human" | "agent" | "reviewer";
 
@@ -18,6 +31,8 @@ export interface LocalPrComment {
   replyTo?: string;
   resolvedAt?: string;
   resolvedBy?: string;
+  /** HEAD sha this review-request root was upserted for (RAD-97 dedupe). */
+  forSha?: string;
 }
 
 export interface CommentThread {
@@ -50,6 +65,11 @@ export interface LocalPr {
   reviewRequestedSha: string | null;
   /** HEAD sha we last told the implementor chat to spawn a reviewer for (once per HEAD). */
   reviewerNotifiedSha: string | null;
+  /**
+   * Last implementor `run_ci` / explicit skip for this tip (RAD-97).
+   * Soft-blocks `set_status ready` until passed or skipped for current headSha.
+   */
+  readyCi?: ReadyCiRecord | null;
   /**
    * Last full shepherd/export-gate snapshot (review + preflight + gh + CI).
    * Human-exportable UI is fail-closed: missing/stale/pending is not exportable.
@@ -124,6 +144,7 @@ export interface CaptureResult {
 export const STATUSES: LocalPrStatus[] = [
   "draft",
   "ready",
+  "review_interrupted",
   "changes_requested",
   "reviewed",
   "approved",

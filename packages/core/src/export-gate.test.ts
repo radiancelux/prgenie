@@ -268,7 +268,7 @@ describe("evaluateAndStoreExportGate", () => {
       await git(repo, ["add", "."]);
       await git(repo, ["commit", "-m", "Add test"]);
       const pr = await createLocalPr(repo, { title: "Clean", body: "Body", base: "main" });
-      await setLocalPrStatus(repo, pr.id, "ready");
+      await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
       const done = await completeLocalPrReview(repo, pr.id, { body: "LGTM" });
       assert.equal(done.status, "reviewed");
       assert.equal(done.exportGate?.status, "pending");

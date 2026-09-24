@@ -38,7 +38,7 @@ after(async () => {
 
 test("claimReview is exclusive for the same id+headSha", async () => {
   const pr = await createLocalPr(repo, { title: "Claim exclusive", base: "main" });
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
 
   const first = await claimReview(repo, pr.id, { source: "queue" });
   assert.equal(first.claimed, true);
@@ -66,7 +66,7 @@ test("claimReview serializes concurrent attempts to one winner", async () => {
   git(["add", "."]);
   git(["commit", "-m", "race"]);
   const pr = await createLocalPr(repo, { title: "Claim race", base: "main" });
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
 
   const results = await Promise.all([
     claimReview(repo, pr.id, { source: "queue" }),
@@ -94,7 +94,7 @@ test("claimReview refuses draft and allows a new HEAD after complete", async () 
   assert.equal(draft.reason, "not_ready");
   assert.match(formatClaimReview(draft), /^not_ready {2}/);
 
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   const ready = await claimReview(repo, pr.id, { source: "queue" });
   assert.equal(ready.claimed, true);
 
@@ -109,7 +109,7 @@ test("claimReview refuses draft and allows a new HEAD after complete", async () 
     false,
   );
 
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   const again = await claimReview(repo, pr.id, { source: "queue" });
   assert.equal(again.claimed, true);
   assert.equal(again.claim?.headSha, pr.headSha);

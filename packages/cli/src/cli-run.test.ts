@@ -185,7 +185,7 @@ test("cli create + ready + list --search round-trip", () => {
   const idMatch = created.stdout.match(/lp-[0-9a-f]{8}/);
   assert.ok(idMatch, created.stdout);
   const id = idMatch![0];
-  const ready = prgenie(["ready", id]);
+  const ready = prgenie(["ready", id, "--ci-skip", "test harness"]);
   assert.equal(ready.code, 0, ready.stderr);
   assert.match(ready.stdout, new RegExp(`${id}\\s+ready`));
   const listed = prgenie(["list", "--search", "CLI parse", "--in", "title"]);
@@ -207,7 +207,7 @@ test("cli claim-review is exclusive per HEAD", () => {
   const idMatch = created.stdout.match(/lp-[0-9a-f]{8}/);
   assert.ok(idMatch, created.stdout);
   const id = idMatch![0];
-  assert.equal(prgenie(["ready", id]).code, 0);
+  assert.equal(prgenie(["ready", id, "--ci-skip", "test harness"]).code, 0);
   const first = prgenie(["claim-review", id, "--source", "queue"]);
   assert.equal(first.code, 0, first.stderr);
   assert.match(first.stdout, /^claimed {2}/);
