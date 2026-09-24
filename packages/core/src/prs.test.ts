@@ -221,7 +221,10 @@ test("groupThreadsByRound splits on Review requested roots (RAD-114)", () => {
   assert.equal(rounds[1]!.round, 2);
   assert.equal(rounds[1]!.openCount, 1);
   assert.equal(rounds[1]!.resolvedCount, 0);
-  assert.equal(rounds[1]!.threads.some((t) => t.root.body === "Still flaky."), true);
+  assert.equal(
+    rounds[1]!.threads.some((t) => t.root.body === "Still flaky."),
+    true,
+  );
 });
 
 test("groupThreadsByRound keeps pre-review comments in round 1", () => {

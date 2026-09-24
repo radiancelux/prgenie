@@ -1039,9 +1039,7 @@ export class LaneHub implements vscode.Disposable {
           selectedId: this.selectedId ?? null,
           files,
           threads: selected ? commentThreads(selected.comments) : [],
-          rounds: selected
-            ? groupThreadsByRound(commentThreads(selected.comments))
-            : [],
+          rounds: selected ? groupThreadsByRound(commentThreads(selected.comments)) : [],
           repo: path.basename(root),
           freshIds,
           watching: true,
