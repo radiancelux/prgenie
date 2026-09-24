@@ -76,23 +76,61 @@ async function listLocalHeadBranches(cwd: string): Promise<string[]> {
 }
 
 /**
+ * Candidate names for stacked-parent detection (RAD-94).
+ *
+ * Only other **live local-PR headRefs** and `lp-*` loop tips. A WIP bookmark /
+ * `git branch` at HEAD~1 on the same first-parent walk has the same ancestry
+ * topology as a true linear stack — scanning every local tip false-positives
+ * correctly based loops. Arbitrary named feature parents without a live local
+ * PR are not flagged (set baseRef correctly, or open a loop for the parent;
+ * RAD-87 dependsOn will model explicit stacks).
+ */
+export async function stackedParentCandidateNames(
+  cwd: string,
+  pr: Pick<DeclaredBasePr, "id" | "headRef">,
+): Promise<string[]> {
+  const head = localBaseRef(pr.headRef);
+  const names = new Set<string>();
+  try {
+    const { isArchivedPr, listLocalPrs } = await import("./prs.js");
+    for (const other of await listLocalPrs(cwd)) {
+      if (other.id === pr.id) continue;
+      if (isArchivedPr(other)) continue;
+      const otherHead = localBaseRef(other.headRef);
+      if (!otherHead || refsAreSameBranch(otherHead, head)) continue;
+      names.add(otherHead);
+    }
+  } catch {
+    // No packet store / not a PR Genie repo — fall through to lp-* tips only.
+  }
+  for (const name of await listLocalHeadBranches(cwd)) {
+    const short = localBaseRef(name);
+    if (/^lp-[0-9a-f]{8}$/i.test(short) && !refsAreSameBranch(short, head)) {
+      names.add(short);
+    }
+  }
+  return [...names];
+}
+
+/**
  * Policy (RAD-94): ahead-of-base must not include commits that only exist because
- * this head is stacked on another local branch tip (strict ancestor of head, not
- * an ancestor of the declared base tip).
+ * this head is stacked on another **loop / live local-PR** tip (strict ancestor
+ * of head, not an ancestor of the declared base tip). See
+ * {@link stackedParentCandidateNames} for why plain intermediate bookmarks are
+ * ignored.
  *
  * RAD-87 seam: when that parent looks like another loop head (`lp-*`), the error
  * points at dependsOn / base = other loop head — full dependsOn UX is out of scope.
  */
 export async function findStackedParentBranch(
   cwd: string,
-  pr: Pick<DeclaredBasePr, "headRef" | "headSha" | "baseRef">,
+  pr: Pick<DeclaredBasePr, "id" | "headRef" | "headSha" | "baseRef">,
   baseTip: string,
 ): Promise<string | null> {
-  const head = localBaseRef(pr.headRef);
   const base = localBaseRef(pr.baseRef);
-  const branches = await listLocalHeadBranches(cwd);
-  for (const name of branches) {
-    if (refsAreSameBranch(name, head) || refsAreSameBranch(name, base)) continue;
+  const candidates = await stackedParentCandidateNames(cwd, pr);
+  for (const name of candidates) {
+    if (refsAreSameBranch(name, base)) continue;
     let tip: string;
     try {
       tip = await gitText(cwd, ["rev-parse", "--verify", name]);

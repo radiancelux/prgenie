@@ -12,6 +12,8 @@ import {
   type DeclaredBasePr,
 } from "./base-ref.js";
 import { createLocalPr, pruneLoopWorktrees, setLocalPrStatus } from "./index.js";
+import { prFile, prsDir, writeJsonFile } from "./store.js";
+import type { LocalPr } from "./types.js";
 
 /** Sequential: tests mutate a shared `repo` path via beforeEach-style helpers. */
 describe("RAD-94 declared baseRef", { concurrency: false }, () => {
@@ -33,6 +35,33 @@ describe("RAD-94 declared baseRef", { concurrency: false }, () => {
     await writeFile(path.join(repo, "README.md"), "hello\n");
     git(["add", "."]);
     git(["commit", "-m", "initial"]);
+  }
+
+  async function stubLivePr(
+    patch: Pick<LocalPr, "id" | "headRef" | "headSha" | "baseRef" | "baseSha"> & {
+      title?: string;
+    },
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    const pr: LocalPr = {
+      id: patch.id,
+      title: patch.title ?? patch.id,
+      body: "",
+      status: "draft",
+      headRef: patch.headRef,
+      baseRef: patch.baseRef,
+      headSha: patch.headSha,
+      baseSha: patch.baseSha,
+      worktreePath: null,
+      comments: [],
+      source: { kind: "cli" },
+      createdAt: now,
+      updatedAt: now,
+      reviewRequestedSha: null,
+      reviewerNotifiedSha: null,
+    };
+    const dir = await prsDir(repo);
+    await writeJsonFile(prFile(dir, pr.id), pr);
   }
 
   after(async () => {
@@ -98,7 +127,30 @@ describe("RAD-94 declared baseRef", { concurrency: false }, () => {
     await assert.rejects(() => assertDeclaredBaseAligned(repo, pr), /merge-base/);
   });
 
-  test("RAD-94: stacked on intermediate branch fails (RAD-87 seam)", async () => {
+  test("RAD-94: intermediate WIP bookmark must not fail alignment", async () => {
+    await freshRepo();
+    git(["checkout", "-b", "feat/bookmarked"]);
+    await writeFile(path.join(repo, "one.txt"), "1\n");
+    git(["add", "."]);
+    git(["commit", "-m", "first"]);
+    await writeFile(path.join(repo, "two.txt"), "2\n");
+    git(["add", "."]);
+    git(["commit", "-m", "second"]);
+    // Same first-parent topology as a linear stack, but not a live loop / lp-* tip.
+    git(["branch", "wip-bookmark", "HEAD~1"]);
+    const pr: DeclaredBasePr = {
+      id: "lp-book0001",
+      headRef: "feat/bookmarked",
+      headSha: git(["rev-parse", "HEAD"]),
+      baseRef: "main",
+      baseSha: git(["rev-parse", "main"]),
+    };
+    const check = await checkDeclaredBaseAlignment(repo, pr);
+    assert.equal(check.ok, true, "WIP bookmark on first-parent walk must not look stacked");
+    if (check.ok === false) assert.equal(check.stackedOn, null);
+  });
+
+  test("RAD-94: bare named parent without a live local PR is not stacked", async () => {
     await freshRepo();
     git(["checkout", "-b", "feat/parent"]);
     await writeFile(path.join(repo, "parent.txt"), "parent\n");
@@ -109,11 +161,46 @@ describe("RAD-94 declared baseRef", { concurrency: false }, () => {
     git(["add", "."]);
     git(["commit", "-m", "child feature"]);
     const pr: DeclaredBasePr = {
-      id: "lp-stack001",
+      id: "lp-bare0001",
       headRef: "feat/child",
       headSha: git(["rev-parse", "HEAD"]),
       baseRef: "main",
       baseSha: git(["rev-parse", "main"]),
+    };
+    const check = await checkDeclaredBaseAlignment(repo, pr);
+    assert.equal(
+      check.ok,
+      true,
+      "named feature parent without a live local PR is not auto-detected (RAD-87)",
+    );
+  });
+
+  test("RAD-94: stacked on a live local PR parent fails", async () => {
+    await freshRepo();
+    git(["checkout", "-b", "feat/parent"]);
+    await writeFile(path.join(repo, "parent.txt"), "parent\n");
+    git(["add", "."]);
+    git(["commit", "-m", "parent feature"]);
+    const parentSha = git(["rev-parse", "HEAD"]);
+    const mainSha = git(["rev-parse", "main"]);
+    await stubLivePr({
+      id: "lp-parent1",
+      headRef: "feat/parent",
+      headSha: parentSha,
+      baseRef: "main",
+      baseSha: mainSha,
+      title: "Parent loop",
+    });
+    git(["checkout", "-b", "feat/child"]);
+    await writeFile(path.join(repo, "child.txt"), "child\n");
+    git(["add", "."]);
+    git(["commit", "-m", "child feature"]);
+    const pr: DeclaredBasePr = {
+      id: "lp-stack001",
+      headRef: "feat/child",
+      headSha: git(["rev-parse", "HEAD"]),
+      baseRef: "main",
+      baseSha: mainSha,
     };
     const check = await checkDeclaredBaseAlignment(repo, pr);
     assert.equal(check.ok, false);
