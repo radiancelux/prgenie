@@ -940,6 +940,78 @@ test("archiveLocalPr prunes worktree and deletes local loop branch (RAD-130)", a
   assert.match(reopened.worktreePath.replace(/\\/g, "/"), /\.loops\//);
 });
 
+test("archived refresh keeps frozen head; reopen restores loop branch (RAD-130)", async () => {
+  const { refreshLocalPrHead } = await import("./prs.js");
+  git(["checkout", "main"]);
+  await writeFile(path.join(repo, "freeze-arch.txt"), "loop tip\n");
+  git(["add", "."]);
+  git(["commit", "-m", "freeze arch tip"]);
+  const pr = await createLocalPr(repo, { title: "Freeze archived head", base: "main" });
+  const frozenRef = pr.headRef;
+  const frozenSha = pr.headSha;
+  assert.match(frozenRef, /^lp-/);
+
+  await archiveLocalPr(repo, pr.id);
+
+  // Primary stays on / moves with main — refresh must not adopt it.
+  git(["checkout", "main"]);
+  await writeFile(path.join(repo, "main-after-archive.txt"), "main moved\n");
+  git(["add", "."]);
+  git(["commit", "-m", "main after archive"]);
+  const mainSha = git(["rev-parse", "HEAD"]);
+  assert.notEqual(mainSha, frozenSha);
+
+  const refreshed = await refreshLocalPrHead(repo, pr.id);
+  assert.equal(refreshed.status, "approved");
+  assert.equal(refreshed.headRef, frozenRef);
+  assert.equal(refreshed.headSha, frozenSha);
+  assert.notEqual(refreshed.headRef, "main");
+
+  // Second poll (getLocalPrNameStatus path) still frozen.
+  const polled = await refreshLocalPrHead(repo, pr.id);
+  assert.equal(polled.headRef, frozenRef);
+  assert.equal(polled.headSha, frozenSha);
+
+  const reopened = await reopenLocalPr(repo, pr.id);
+  assert.equal(reopened.status, "changes_requested");
+  assert.equal(reopened.headRef, frozenRef);
+  assert.equal(reopened.headSha, frozenSha);
+  assert.ok(reopened.worktreePath);
+  assert.match(reopened.worktreePath.replace(/\\/g, "/"), new RegExp(`\\.loops[/\\\\]${pr.id}$`));
+  assert.equal(git(["rev-parse", "--abbrev-ref", "HEAD"], reopened.worktreePath), frozenRef);
+  assert.equal(git(["rev-parse", "HEAD"], reopened.worktreePath), frozenSha);
+  execFileSync("git", ["rev-parse", "--verify", `refs/heads/${frozenRef}`], {
+    cwd: repo,
+    encoding: "utf8",
+  });
+});
+
+test("clear archived after refresh does not try to delete main (RAD-130)", async () => {
+  const { refreshLocalPrHead } = await import("./prs.js");
+  git(["checkout", "main"]);
+  git(["checkout", "-b", "feat/clear-after-refresh"]);
+  await writeFile(path.join(repo, "clear-refresh.txt"), "1\n");
+  git(["add", "."]);
+  git(["commit", "-m", "clear refresh tip"]);
+  const pr = await createLocalPr(repo, { title: "Clear after refresh", base: "main" });
+  const frozenRef = pr.headRef;
+  await archiveLocalPr(repo, pr.id);
+  git(["checkout", "main"]);
+  // Sidebar / show / steward_next all refresh — must leave headRef as lp-*, not main.
+  await refreshLocalPrHead(repo, pr.id);
+  const after = await getLocalPr(repo, pr.id);
+  assert.equal(after.headRef, frozenRef);
+  assert.notEqual(after.headRef, "main");
+
+  const result = await clearArchivedLocalPrs(repo);
+  assert.equal(result.failed.length, 0);
+  assert.ok(result.cleared.includes(pr.id));
+  assert.equal(
+    result.failed.some((f) => /refusing to delete (base|protected) branch main/i.test(f.error)),
+    false,
+  );
+});
+
 test("clearArchivedLocalPrs removes packets worktrees and local branches (RAD-130)", async () => {
   git(["checkout", "main"]);
   const a = await createLocalPr(repo, { title: "Clear A", base: "main" });

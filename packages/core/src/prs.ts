@@ -120,16 +120,19 @@ async function withPrLock(
 }
 
 /**
- * Resolve loop tip from the exclusive worktree when present; else branch/HEAD in cwd.
+ * Resolve loop tip from the exclusive worktree when present; else the loop branch tip.
  * Worktree commits update the shared branch, but reading HEAD in the worktree is the
  * authoritative tip for agent decisions (RAD-125).
  *
  * Only trust paths from `listWorktrees` / `worktreeForLoop`. Never fall back to the
  * on-disk packet `worktreePath` — a pruned path throws and breaks refresh / steward_next.
+ *
+ * Never adopt the primary checkout when the loop worktree/branch is missing (RAD-130):
+ * archive deletes the local branch; falling back rewrote archived packets to `main`.
  */
 async function resolveLoopHeadTip(
   cwd: string,
-  pr: Pick<LocalPr, "id" | "headRef" | "worktreePath">,
+  pr: Pick<LocalPr, "id" | "headRef" | "headSha" | "worktreePath">,
 ): Promise<{ headRef: string; headSha: string }> {
   const trees = await listWorktrees(cwd);
   const wt = worktreeForLoop(trees, pr);
@@ -145,12 +148,8 @@ async function resolveLoopHeadTip(
       headSha: await gitText(cwd, ["rev-parse", pr.headRef]),
     };
   }
-  const branch = await currentBranch(cwd);
-  const headRef = branch ?? pr.headRef;
-  return {
-    headRef,
-    headSha: await gitText(cwd, ["rev-parse", "HEAD"]),
-  };
+  // Keep the packet tip — do not read primary HEAD / currentBranch(cwd).
+  return { headRef: pr.headRef, headSha: pr.headSha };
 }
 
 /**
@@ -168,6 +167,8 @@ export function invalidateReviewedOnHeadMove(pr: LocalPr, previousHeadSha: strin
 }
 
 async function applyHeadRefresh(cwd: string, pr: LocalPr): Promise<void> {
+  // Archived loops freeze headRef/headSha at archive; poll/show must not re-resolve.
+  if (isArchivedPr(pr)) return;
   const previousHeadSha = pr.headSha;
   const tip = await resolveLoopHeadTip(cwd, pr);
   pr.headRef = tip.headRef;
