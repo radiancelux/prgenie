@@ -61,9 +61,12 @@ test("quoteWindowsShellArg keeps titles with spaces as one argv (RAD-95)", () =>
   assert.equal(quoteWindowsShellArg(""), `""`);
 });
 
-test("quoteWindowsShellArg quotes % tokens (RAD-129)", () => {
-  assert.equal(quoteWindowsShellArg("%TEMP%"), `"%TEMP%"`);
-  assert.equal(quoteWindowsShellArg("path%VAR%"), `"path%VAR%"`);
+test("quoteWindowsShellArg quotes percent env tokens (RAD-129)", () => {
+  // Build tokens at runtime so cmd.exe never sees %VAR% in argv of the test harness.
+  const percentTemp = `%${"TEMP"}%`;
+  const percentVar = `path%${"VAR"}%`;
+  assert.equal(quoteWindowsShellArg(percentTemp), `"${percentTemp}"`);
+  assert.equal(quoteWindowsShellArg(percentVar), `"${percentVar}"`);
   assert.equal(quoteWindowsShellArg("safe-token"), "safe-token");
 });
 
@@ -109,8 +112,9 @@ test("githubPrCreateArgs uses --body-file not --body (RAD-129)", () => {
   assert.equal(args.includes("--body"), false);
 });
 
-test("withGhBodyFile + runGh delivers full newline/% body via file path (RAD-129)", async () => {
-  const fullBody = "## Why\n\nUses %TEMP% and survives newlines.";
+test("withGhBodyFile + runGh delivers full newline and percent body via file path (RAD-129)", async () => {
+  const percentTemp = `%${"TEMP"}%`;
+  const fullBody = `## Why\n\nUses ${percentTemp} and survives newlines.`;
   const mockGhDir = await mkdtemp(path.join(tmpdir(), "mock-gh-body-"));
   const capturePath = path.join(mockGhDir, "capture.json");
   const mockGhPath = path.join(mockGhDir, "gh");
