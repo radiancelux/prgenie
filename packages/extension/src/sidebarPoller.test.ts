@@ -255,7 +255,9 @@ test("laneView CI modal queries fresh nodes after loop switch (AC3)", () => {
   assert.match(src, /Query fresh #ciModal nodes/);
   assert.match(src, /getElementById\("ciModal"\)/);
   assert.match(src, /bindCiModal\(\);/);
-  assert.match(src, /abortExportGate\(cancelCwd, cancelId\)/);
+  assert.match(src, /abortCiForSteward\(cancelCwd, cancelId\)/);
+  assert.match(src, /stop_implementor_and_abort_ci/);
+  assert.match(src, /Panel Cancel is the skip half/);
   assert.match(src, /function formatElapsed/);
 });
 
@@ -340,6 +342,22 @@ test("laneView STATUS quiet until reviewed; idle clear; no vertical reason layou
     false,
     "section title must be STATUS, not export",
   );
+});
+
+test("laneView COMMENTS wider + review rounds (RAD-114)", () => {
+  const src = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "laneView.ts"),
+    "utf8",
+  );
+  assert.match(src, /groupThreadsByRound/);
+  assert.match(src, /\.files \{[\s\S]*?width: 280px/);
+  assert.match(src, /\.comments \{[\s\S]*?flex: 1/);
+  assert.match(src, /file \.path/);
+  assert.match(src, /details\.round/);
+  assert.match(src, /isRoundExpanded/);
+  assert.match(src, /setRoundCollapsed/);
+  assert.match(src, /roundCollapsed/);
+  assert.match(src, /overflow-wrap: anywhere/);
 });
 
 test("export gate scheduler runs once per id+HEAD and ignores in-flight overlap", async () => {

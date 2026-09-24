@@ -82,7 +82,7 @@ On `changes_requested` after complete, `steward_next` will resume the **same** i
 
 ### `evaluate_export_gate`
 
-Reviewer cleared. Run the full export gate (RAD-71): MCP `steward_next` (default evaluates) or `shepherd_status` / `prgenie shepherd <id>`. **Surface the CI progress card** from the tool output in this chat (check names + running/pass/fail, why they were selected, elapsed). Cancel is the same abort as the loop panel Cancel — do not start a second gate. Do **not** tell the human it is their turn yet. Copy is **review cleared / running export gate**, not ready-for-human.
+Reviewer cleared. Run the full export gate (RAD-71): MCP `steward_next` (default evaluates) or `shepherd_status` / `prgenie shepherd <id>`. **Surface the CI progress card** from the tool output in this chat (check names + running/pass/fail, why they were selected, elapsed). Cancel (panel or `abort_ci`) is the skip half — abort token + `stewardAction`; if a Task is bound, stop/interrupt it immediately. Do not start a second gate. Do **not** tell the human it is their turn yet. Copy is **review cleared / running export gate**, not ready-for-human.
 
 ### `handoff_human`
 
@@ -105,12 +105,12 @@ If the user asks to restart the implementor, `steward_next` `{ restart: true }` 
 
 If the user says stop, stop Tasking and say so. There is no listen halt. `/export` is still the only publish step.
 
-## Human / steward CI skip (RAD-112)
+## Human / steward CI skip (RAD-112 / RAD-115)
 
-When the human tells you to skip CI (toolchain broken, known stale-plugin false red, etc.):
+When the human tells you to skip CI, or hits loop panel **Cancel** (toolchain broken, known stale-plugin false red, etc.):
 
-1. Call MCP `abort_ci` `{ id }` (or `prgenie ci` cancel / panel Cancel). Read `implementorTaskId` and `stewardAction` from the result.
+1. Call MCP `abort_ci` `{ id }` (or `prgenie ci` cancel). Panel Cancel already runs the same `abortCiForSteward` path. Read `implementorTaskId` and `stewardAction` from the result (or from the panel toast).
 2. If `stewardAction` is `stop_implementor_and_abort_ci`, **immediately** stop/interrupt that implementor Task (`Task` resume with `interrupt: true`, or end the await). Do **not** leave the implementor looping on `run_ci`.
 3. Tell the implementor (or next resume) that CI was skipped by human direction — they may `set_status ready` with `skipPreflight` only when the human said so; do not call `run_ci` again on that skip.
 
-`abort_ci` alone is not enough. Stopping the implementor and aborting CI are one steward action.
+**Cancel ≡ the skip half.** Panel Cancel aborts CI and surfaces the bound Task id; it does **not** kill the agent by itself. `abort_ci` alone is not enough. Stopping the implementor and aborting CI are one steward action.

@@ -12,6 +12,7 @@ import {
   createLocalPr,
   captureAgentWork,
   commentThreads,
+  groupThreadsByRound,
   completeLocalPrReview,
   deleteLocalPr,
   deleteLocalPrComment,
@@ -191,6 +192,68 @@ test("reviewer comments stay on ready until complete_review", async () => {
     finding.replies.some((r) => r.body === "Working on it."),
     true,
   );
+});
+
+test("groupThreadsByRound splits on Review requested roots (RAD-114)", () => {
+  const mk = (
+    id: string,
+    body: string,
+    role: "human" | "agent" | "reviewer",
+    status: "open" | "addressed" | "resolved" = "open",
+  ) => ({
+    id,
+    body,
+    role,
+    status,
+    author: role,
+    createdAt: "2026-09-22T00:00:00.000Z",
+  });
+  const rounds = groupThreadsByRound(
+    commentThreads([
+      mk("c-rr1", "Review requested.", "agent", "resolved"),
+      mk("c-f1", "Missing tests.", "reviewer", "resolved"),
+      { ...mk("c-a1", "Fixed tests.", "agent", "resolved"), replyTo: "c-f1" },
+      mk("c-rr2", "Review requested.", "agent", "resolved"),
+      mk("c-f2", "Still flaky.", "reviewer", "open"),
+    ]),
+  );
+  assert.equal(rounds.length, 2);
+  assert.equal(rounds[0]!.round, 1);
+  assert.equal(rounds[0]!.resolvedCount, 1);
+  assert.equal(rounds[0]!.openCount, 0);
+  assert.equal(rounds[1]!.round, 2);
+  assert.equal(rounds[1]!.openCount, 1);
+  assert.equal(rounds[1]!.resolvedCount, 0);
+  assert.equal(
+    rounds[1]!.threads.some((t) => t.root.body === "Still flaky."),
+    true,
+  );
+});
+
+test("groupThreadsByRound keeps pre-review comments in round 1", () => {
+  const mk = (
+    id: string,
+    body: string,
+    role: "human" | "agent" | "reviewer",
+    status: "open" | "addressed" | "resolved" = "open",
+  ) => ({
+    id,
+    body,
+    role,
+    status,
+    author: role,
+    createdAt: "2026-09-22T00:00:00.000Z",
+  });
+  const rounds = groupThreadsByRound(
+    commentThreads([
+      mk("c-h1", "Please also rename the helper.", "human", "open"),
+      mk("c-rr1", "Review requested.", "agent", "resolved"),
+      mk("c-f1", "Missing tests.", "reviewer", "open"),
+    ]),
+  );
+  assert.equal(rounds.length, 1);
+  assert.equal(rounds[0]!.threads.length, 3);
+  assert.equal(rounds[0]!.openCount, 2);
 });
 
 test("reviewer comments stay on review_interrupted until complete_review", async () => {
