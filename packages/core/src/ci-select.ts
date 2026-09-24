@@ -30,6 +30,178 @@ export interface CiCheckSelection {
   packageScoped?: boolean;
   /** True when local CI is intentionally empty (printable skip — never silent). */
   skipped?: boolean;
+  /**
+   * RAD-127: when set for `test:<pkg>`, run only these `*.test.ts` paths instead of
+   * the package glob. Absent / empty → `packages/<pkg>/src/*.test.ts`.
+   */
+  testFiles?: Record<string, string[]>;
+}
+
+/**
+ * Core modules whose diffs keep the package test glob (shared git-fixture /
+ * steward / export-gate / ci-runner surface — RAD-127). Leaf modules (e.g.
+ * `progress.ts`) file-scope to their sibling `*.test.ts` instead.
+ */
+export const CORE_PACKAGE_GLOB_MODULES = new Set([
+  "git",
+  "prs",
+  "store",
+  "steward",
+  "shepherd",
+  "export",
+  "export-gate",
+  "export-validation",
+  "ci-runner",
+  "ci-abort",
+  "worktrees",
+  "worktree-deps",
+  "index",
+  "types",
+]);
+
+const TEST_FILE_RE = /\.(test|spec)\.[cm]?[jt]sx?$/i;
+const SOURCE_EXT_RE = /\.([cm]?[jt]sx?)$/i;
+
+/** Stem under `packages/<pkg>/src/` (`progress.ts` / `progress.test.ts` → `progress`). */
+export function coreSrcModuleStem(filePath: string): string | null {
+  const p = normalizeCiPath(filePath);
+  const m = p.match(/^packages\/[^/]+\/src\/(.+)$/);
+  if (!m?.[1]) return null;
+  let rest = m[1];
+  rest = rest.replace(/\.(test|spec)\.([cm]?[jt]sx?)$/i, "");
+  rest = rest.replace(/\.([cm]?[jt]sx?)$/i, "");
+  return rest || null;
+}
+
+/** Map a source path to its conventional sibling test path. */
+export function siblingTestPath(filePath: string): string | null {
+  const p = normalizeCiPath(filePath);
+  if (TEST_FILE_RE.test(p)) return p;
+  if (!SOURCE_EXT_RE.test(p)) return null;
+  return p.replace(SOURCE_EXT_RE, ".test.$1");
+}
+
+export type ScopedTestFilePlan = {
+  /** Explicit test paths, or null to keep the package glob. */
+  files: string[] | null;
+  reason: string;
+};
+
+/** Options for path-aware CI selection (RAD-127 sibling exists checks). */
+export interface SelectCiChecksOptions {
+  /** Repo root for sibling `existsSync` (loop worktree when evaluating there). */
+  cwd?: string;
+  /**
+   * Injectable exists check for unit tests. Receives repo-relative posix paths
+   * (`packages/core/src/foo.test.ts`). Default: `existsSync` under `cwd` / `process.cwd()`.
+   */
+  exists?: (relativePath: string) => boolean;
+}
+
+function pathExistsUnderRepo(relativePath: string, options?: SelectCiChecksOptions): boolean {
+  if (options?.exists) return options.exists(normalizeCiPath(relativePath));
+  const root = options?.cwd?.trim() ? options.cwd : process.cwd();
+  return existsSync(path.join(root, ...normalizeCiPath(relativePath).split("/")));
+}
+
+/**
+ * RAD-127: pick covering `*.test.ts` files for a scopable package, or null to
+ * keep `packages/<pkg>/src/*.test.ts`. Shared-surface / package-config diffs
+ * always keep the glob with an explicit reason. Sibling paths are included
+ * only when they exist on disk (never invent phantom `*.test.ts`).
+ */
+export function resolveScopedTestFiles(
+  pkg: ScopablePackage,
+  changedPaths: string[],
+  options?: SelectCiChecksOptions,
+): ScopedTestFilePlan {
+  const pkgPrefix = `packages/${pkg}/`;
+  const srcPrefix = `${pkgPrefix}src/`;
+  const normalized = [...new Set(changedPaths.map(normalizeCiPath).filter(Boolean))];
+  const pkgPaths = normalized.filter((p) => p.startsWith(pkgPrefix));
+  const exists = (rel: string) => pathExistsUnderRepo(rel, options);
+
+  const packageConfig = pkgPaths.filter((p) => {
+    if (isIncidentalPluginMeta(p)) return false;
+    if (classifyCiPath(p) !== "config") return false;
+    return packageFromCiPath(p) === pkg;
+  });
+  if (packageConfig.length > 0) {
+    return {
+      files: null,
+      reason: `${pkgPrefix}package config changed → test:${pkg} package glob (packages/${pkg}/src/*.test.ts)`,
+    };
+  }
+
+  const srcPaths = pkgPaths.filter((p) => {
+    if (!p.startsWith(srcPrefix)) return false;
+    const kind = classifyCiPath(p);
+    return kind === "source" || kind === "test";
+  });
+
+  if (srcPaths.length === 0) {
+    return {
+      files: null,
+      reason: `no ${srcPrefix} source/test in diff → test:${pkg} package glob`,
+    };
+  }
+
+  if (pkg === "core") {
+    for (const p of srcPaths) {
+      const stem = coreSrcModuleStem(p);
+      // Flat `src/<name>.ts` or nested `src/<name>/…` — first segment is the module.
+      const moduleName = stem?.split("/")[0];
+      if (moduleName && CORE_PACKAGE_GLOB_MODULES.has(moduleName)) {
+        return {
+          files: null,
+          reason: `${p} touches shared module surface → test:core package glob (packages/core/src/*.test.ts)`,
+        };
+      }
+    }
+  }
+
+  const testFiles = new Set<string>();
+  for (const p of srcPaths) {
+    if (TEST_FILE_RE.test(p)) {
+      // Changed test path must exist — otherwise keep the package glob (do not
+      // file-scope to whichever other siblings happened to exist).
+      if (!exists(p)) {
+        return {
+          files: null,
+          reason: `${p} missing on disk → test:${pkg} package glob (packages/${pkg}/src/*.test.ts)`,
+        };
+      }
+      testFiles.add(p);
+      continue;
+    }
+    const sibling = siblingTestPath(p);
+    // Any source leaf without an existing sibling → package glob for the whole
+    // package (mixed diffs must not under-scope to the subset that exists).
+    if (!sibling || !exists(sibling)) {
+      return {
+        files: null,
+        reason: `${p} has no covering *.test.ts → test:${pkg} package glob (packages/${pkg}/src/*.test.ts)`,
+      };
+    }
+    testFiles.add(sibling);
+  }
+
+  if (testFiles.size === 0) {
+    return {
+      files: null,
+      reason: `${pkgPrefix}leaf paths have no covering *.test.ts → test:${pkg} package glob`,
+    };
+  }
+
+  const files = [...testFiles].sort();
+  const preview =
+    files.length <= 3
+      ? files.join(", ")
+      : `${files.slice(0, 3).join(", ")} …(+${files.length - 3})`;
+  return {
+    files,
+    reason: `${pkgPrefix}leaf → file-scoped test:${pkg} (${files.length} file(s), not package glob): ${preview}`,
+  };
 }
 
 const CONFIG_BASENAMES = new Set([
@@ -248,14 +420,28 @@ function thinPluginSuite(paths: string[], extraReasons: string[] = []): CiCheckS
   };
 }
 
-function packageScopedSelection(pkgs: Set<ScopablePackage>, paths: string[]): CiCheckSelection {
+function packageScopedSelection(
+  pkgs: Set<ScopablePackage>,
+  paths: string[],
+  options?: SelectCiChecksOptions,
+): CiCheckSelection {
   const ordered = SCOPABLE_PACKAGES.filter((p) => pkgs.has(p));
   const checks = packageSuiteChecks(ordered);
   const pkgList = ordered.map((p) => `packages/${p}/**`).join(" + ");
+  const testFiles: Record<string, string[]> = {};
+  const testScopeReasons: string[] = [];
+  for (const pkg of ordered) {
+    const plan = resolveScopedTestFiles(pkg, paths, options);
+    testScopeReasons.push(plan.reason);
+    if (plan.files?.length) {
+      testFiles[`test:${pkg}`] = plan.files;
+    }
+  }
   const reason = [
     `${pkgList} → per-package format + lint + typecheck + unit tests`,
     "confident mapping — not full monorepo pnpm test",
     "fail-fast: stop after first package suite fail",
+    ...testScopeReasons,
   ];
   const mapping: CiCheckMapping[] = checks.map((check) => {
     if (check === "format:check") {
@@ -265,6 +451,17 @@ function packageScopedSelection(pkgs: Set<ScopablePackage>, paths: string[]): Ci
       };
     }
     const pkg = packageFromScopedCheck(check);
+    if (check.startsWith("test:") && testFiles[check]?.length) {
+      const files = testFiles[check]!;
+      return {
+        check,
+        reason: `file-scoped ${check} (${files.length} file(s)): ${files.join(" ")}`,
+      };
+    }
+    if (check.startsWith("test:") && pkg) {
+      const plan = resolveScopedTestFiles(pkg, paths, options);
+      return { check, reason: plan.reason };
+    }
     return {
       check,
       reason: pkg ? `packages/${pkg}/** scoped ${check.split(":")[0]}` : reason.join("; "),
@@ -279,6 +476,7 @@ function packageScopedSelection(pkgs: Set<ScopablePackage>, paths: string[]): Ci
     changedPaths: paths,
     packageScoped: true,
     skipped: false,
+    ...(Object.keys(testFiles).length > 0 ? { testFiles } : {}),
   };
 }
 
@@ -308,7 +506,10 @@ function scopablePackageFromConfigPath(filePath: string): ScopablePackage | null
  * Confident package mapping → scoped lint/typecheck/unit (never root `pnpm test`).
  * Uncertain / hard-config mapping → skip with an explicit reason (RAD-119) — never full suite.
  */
-export function selectCiChecks(changedPaths: string[]): CiCheckSelection {
+export function selectCiChecks(
+  changedPaths: string[],
+  options?: SelectCiChecksOptions,
+): CiCheckSelection {
   const paths = [...new Set(changedPaths.map(normalizeCiPath).filter(Boolean))];
   if (paths.length === 0) {
     return skipCi(
@@ -423,7 +624,7 @@ export function selectCiChecks(changedPaths: string[]): CiCheckSelection {
   }
 
   if (pkgs.size > 0) {
-    return packageScopedSelection(pkgs, paths);
+    return packageScopedSelection(pkgs, paths, options);
   }
 
   if (hasPluginWork) {

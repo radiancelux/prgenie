@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { classifyCiPath, normalizeCiPath, packageFromScopedCheck } from "./ci-select.js";
+import type { CiCheckSelection } from "./ci-select.js";
 import { ciCheckCommand } from "./progress.js";
 
 /** Extensions eslint (and similar JS linters) can take as path args. */
@@ -72,6 +73,12 @@ export interface ResolveCiCheckCommandOptions {
    * (must match what checkFormatFromBlobs actually checks).
    */
   formatScoped?: boolean;
+  /**
+   * RAD-127: smart selection (carries `testFiles` for file-scoped package tests).
+   */
+  selection?: CiCheckSelection;
+  /** Explicit file list for `test:<pkg>` (overrides selection.testFiles). */
+  testFiles?: readonly string[];
 }
 
 /** Read root package.json scripts, or null when missing/invalid. */
@@ -302,10 +309,20 @@ function flagsOnly(args: string[]): string[] {
  */
 export function resolveCiCheckCommand(options: ResolveCiCheckCommandOptions): ResolvedCiCommand {
   const { check, cwd } = options;
-  const fallback = ciCheckCommand(check);
+  const scopedTestFiles =
+    options.testFiles ??
+    (check.startsWith("test:") ? options.selection?.testFiles?.[check] : undefined);
+  const fallback = ciCheckCommand(check, scopedTestFiles);
 
-  // RAD-105 package scopes — never rewrite.
+  // RAD-105 package scopes — never host-rewrite. RAD-127 may file-scope test:<pkg>.
   if (packageFromScopedCheck(check)) {
+    if (check.startsWith("test:") && scopedTestFiles && scopedTestFiles.length > 0) {
+      return {
+        command: fallback,
+        hostScoped: false,
+        reason: `file-scoped ${check} (${scopedTestFiles.length} file(s), not package glob)`,
+      };
+    }
     return { command: fallback, hostScoped: false };
   }
 

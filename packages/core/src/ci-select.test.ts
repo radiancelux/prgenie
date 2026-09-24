@@ -221,7 +221,93 @@ describe("selectCiChecks", () => {
     assert.equal(ciCheckCommand("lint:core"), "pnpm exec eslint packages/core/src");
     assert.equal(ciCheckCommand("typecheck:core"), "pnpm exec tsc -p packages/core --noEmit");
     assert.equal(ciCheckCommand("test:core"), "pnpm exec tsx --test packages/core/src/*.test.ts");
+    assert.equal(
+      ciCheckCommand("test:core", ["packages/core/src/progress.test.ts"]),
+      "pnpm exec tsx --test packages/core/src/progress.test.ts",
+    );
     assert.notEqual(ciCheckCommand("test:core"), "pnpm test");
+  });
+
+  it("file-scopes test:core for leaf progress.ts; keeps glob for prs/export-gate (RAD-127)", () => {
+    const leaf = selectCiChecks(["packages/core/src/progress.ts"]);
+    assert.equal(leaf.packageScoped, true);
+    assert.deepEqual(leaf.checks, ["format:check", "lint:core", "typecheck:core", "test:core"]);
+    assert.deepEqual(leaf.testFiles?.["test:core"], ["packages/core/src/progress.test.ts"]);
+    assert.ok(leaf.reason.some((r) => /file-scoped test:core/.test(r)));
+    assert.ok(leaf.reason.some((r) => /progress\.test\.ts/.test(r)));
+    assert.equal(
+      ciCheckCommand("test:core", leaf.testFiles?.["test:core"]),
+      "pnpm exec tsx --test packages/core/src/progress.test.ts",
+    );
+    // --failing test:core re-selects from the same paths → same file list.
+    const resume = selectCiChecks(["packages/core/src/progress.ts"]);
+    assert.deepEqual(expandFailingChecks(["test:core"], resume), ["test:core"]);
+    assert.deepEqual(resume.testFiles?.["test:core"], leaf.testFiles?.["test:core"]);
+
+    const prs = selectCiChecks(["packages/core/src/prs.ts"]);
+    assert.equal(prs.packageScoped, true);
+    assert.equal(prs.testFiles?.["test:core"], undefined);
+    assert.ok(prs.reason.some((r) => /shared module surface/.test(r)));
+    assert.ok(prs.reason.some((r) => /\*\.test\.ts/.test(r)));
+    assert.equal(
+      ciCheckCommand("test:core", prs.testFiles?.["test:core"]),
+      ciCheckCommand("test:core"),
+    );
+
+    const gate = selectCiChecks(["packages/core/src/export-gate.ts"]);
+    assert.equal(gate.testFiles?.["test:core"], undefined);
+    assert.ok(gate.reason.some((r) => /shared module surface/.test(r)));
+
+    const leafPlusTest = selectCiChecks([
+      "packages/core/src/progress.ts",
+      "packages/core/src/progress.test.ts",
+    ]);
+    assert.deepEqual(leafPlusTest.testFiles?.["test:core"], ["packages/core/src/progress.test.ts"]);
+  });
+
+  it("keeps package glob when sibling *.test.ts does not exist (RAD-127)", () => {
+    // github-ops.ts has no github-ops.test.ts on disk — must not invent a phantom path.
+    const missing = selectCiChecks(["packages/core/src/github-ops.ts"]);
+    assert.equal(missing.packageScoped, true);
+    assert.equal(missing.testFiles?.["test:core"], undefined);
+    assert.ok(missing.reason.some((r) => /no covering \*\.test\.ts/.test(r)));
+    assert.ok(missing.reason.some((r) => /package glob/.test(r)));
+    assert.equal(
+      ciCheckCommand("test:core", missing.testFiles?.["test:core"]),
+      "pnpm exec tsx --test packages/core/src/*.test.ts",
+    );
+
+    // Injectable exists: pretend every sibling is missing → still glob.
+    const forced = selectCiChecks(["packages/core/src/progress.ts"], {
+      exists: () => false,
+    });
+    assert.equal(forced.testFiles?.["test:core"], undefined);
+    assert.ok(forced.reason.some((r) => /no covering \*\.test\.ts/.test(r)));
+
+    // CLI leaf without a sibling test file → glob (not version.test.ts phantom).
+    const cliLeaf = selectCiChecks(["packages/cli/src/version.ts"], {
+      exists: () => false,
+    });
+    assert.equal(cliLeaf.testFiles?.["test:cli"], undefined);
+    assert.ok(cliLeaf.reason.some((r) => /no covering \*\.test\.ts/.test(r)));
+  });
+
+  it("keeps package glob for mixed leaves when any sibling is missing (RAD-127)", () => {
+    // progress.ts has a sibling; github-ops.ts does not — must not under-scope to
+    // progress.test.ts only (would skip coverage that may exercise github-ops).
+    const mixed = selectCiChecks([
+      "packages/core/src/progress.ts",
+      "packages/core/src/github-ops.ts",
+    ]);
+    assert.equal(mixed.packageScoped, true);
+    assert.equal(mixed.testFiles?.["test:core"], undefined);
+    assert.ok(mixed.reason.some((r) => /github-ops\.ts/.test(r)));
+    assert.ok(mixed.reason.some((r) => /no covering \*\.test\.ts/.test(r)));
+    assert.ok(mixed.reason.some((r) => /package glob/.test(r)));
+    assert.equal(
+      ciCheckCommand("test:core", mixed.testFiles?.["test:core"]),
+      "pnpm exec tsx --test packages/core/src/*.test.ts",
+    );
   });
 
   it("resolveCiCwd prefers the loop worktree over primary/plugin cwd", async () => {

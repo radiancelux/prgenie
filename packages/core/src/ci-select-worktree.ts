@@ -10,6 +10,7 @@ import {
   selectCiChecks,
   DEFAULT_CI_CHECKS,
   type CiCheckSelection,
+  type SelectCiChecksOptions,
 } from "./ci-select.js";
 import { loopWorktreeIdentity } from "./worktrees.js";
 
@@ -39,16 +40,21 @@ export function worktreeCiSelectModulePath(worktreePath: string): string {
 export function ciSelectionPlansEqual(a: CiCheckSelection, b: CiCheckSelection): boolean {
   // Flag drift (skipped / uncertain / packageScoped) changes runner behavior even when
   // checks + reason text match — treat as divergence so worktree wins (RAD-123).
+  // RAD-127: testFiles drift changes which unit files run.
   return (
     JSON.stringify(a.checks) === JSON.stringify(b.checks) &&
     JSON.stringify([...a.reason].sort()) === JSON.stringify([...b.reason].sort()) &&
+    JSON.stringify(a.testFiles ?? null) === JSON.stringify(b.testFiles ?? null) &&
     Boolean(a.skipped) === Boolean(b.skipped) &&
     Boolean(a.uncertain) === Boolean(b.uncertain) &&
     Boolean(a.packageScoped) === Boolean(b.packageScoped)
   );
 }
 
-export type CiSelectFn = (changedPaths: string[]) => CiCheckSelection;
+export type CiSelectFn = (
+  changedPaths: string[],
+  options?: SelectCiChecksOptions,
+) => CiCheckSelection;
 
 export type ResolveCiSelectionResult = {
   selection: CiCheckSelection;
@@ -186,7 +192,8 @@ function selectViaTsxCliSync(
     `import { pathToFileURL } from "node:url";
 async function main() {
   const m = await import(pathToFileURL(process.argv[2]).href);
-  process.stdout.write(JSON.stringify(m.selectCiChecks(JSON.parse(process.argv[3]))));
+  const paths = JSON.parse(process.argv[3]);
+  process.stdout.write(JSON.stringify(m.selectCiChecks(paths, { cwd: process.cwd() })));
 }
 main().catch((e) => { console.error(e); process.exit(1); });
 `,
@@ -213,13 +220,25 @@ main().catch((e) => { console.error(e); process.exit(1); });
   }
 }
 
+export type LoadWorktreeSelectOptions = {
+  /** Primary checkout override for resolving `tsx` (tests / plugin cwd). */
+  primaryPath?: string | null;
+  /**
+   * Injectable for tests: when set, used instead of `loadTsxApi().tsImport`.
+   * Throw (e.g. "The service is no longer running") to exercise CLI fallback.
+   */
+  tsImport?: (specifier: string, parent: string) => Promise<Record<string, unknown>>;
+};
+
 /**
  * Load `selectCiChecks` from the loop worktree source (not the installed plugin).
- * Prefers in-process `tsx` `tsImport`; falls back to a one-shot `tsx` CLI eval.
+ * Prefers in-process `tsx` `tsImport`; falls back to a one-shot `tsx` CLI eval
+ * when the API is missing **or** when `tsImport` throws (dead tsx service).
+ * Never caches a failed in-process import.
  */
 export async function loadWorktreeSelectCiChecks(
   worktreePath: string,
-  options: { primaryPath?: string | null } = {},
+  options: LoadWorktreeSelectOptions = {},
 ): Promise<CiSelectFn | null> {
   const modulePath = worktreeCiSelectModulePath(worktreePath);
   if (!existsSync(modulePath)) return null;
@@ -235,19 +254,38 @@ export async function loadWorktreeSelectCiChecks(
   const cached = worktreeSelectCache.get(cacheKey);
   if (cached && cached.mtimeMs === mtimeMs) return cached.select;
 
-  const api = await loadTsxApi(worktreePath, options.primaryPath);
-  if (api) {
-    const parent = pathToFileURL(path.join(worktreePath, "package.json")).href;
-    const mod = await api.tsImport(pathToFileURL(modulePath).href, parent);
-    const select = mod.selectCiChecks;
-    if (typeof select !== "function") {
-      throw new Error(
-        `Worktree ci-select at ${modulePath} did not export selectCiChecks (keys: ${Object.keys(mod).join(", ")})`,
+  let tsImportFn = options.tsImport;
+  if (!tsImportFn) {
+    const api = await loadTsxApi(worktreePath, options.primaryPath);
+    if (api) tsImportFn = api.tsImport;
+  }
+
+  if (tsImportFn) {
+    try {
+      const parent = pathToFileURL(path.join(worktreePath, "package.json")).href;
+      const mod = await tsImportFn(pathToFileURL(modulePath).href, parent);
+      const select = mod.selectCiChecks;
+      if (typeof select !== "function") {
+        throw new Error(
+          `Worktree ci-select at ${modulePath} did not export selectCiChecks (keys: ${Object.keys(mod).join(", ")})`,
+        );
+      }
+      const rawSelect = select as (
+        changedPaths: string[],
+        options?: SelectCiChecksOptions,
+      ) => CiCheckSelection;
+      const fn: CiSelectFn = (changedPaths, selectOptions) =>
+        rawSelect(changedPaths, { cwd: worktreePath, ...selectOptions });
+      worktreeSelectCache.set(cacheKey, { mtimeMs, select: fn });
+      return fn;
+    } catch (err) {
+      // Dead / crashed tsx service must not refuse the gate — fall through to CLI.
+      // Do not cache the failure (mtime cache only stores successful selects).
+      const detail = err instanceof Error ? err.message : String(err);
+      warnLoud(
+        `RAD-123: in-process tsImport failed (${detail}); falling back to tsx CLI for worktree ci-select`,
       );
     }
-    const fn = select as CiSelectFn;
-    worktreeSelectCache.set(cacheKey, { mtimeMs, select: fn });
-    return fn;
   }
 
   const roots = await resolveTsxSearchRoots(worktreePath, options.primaryPath);
@@ -281,7 +319,8 @@ export async function selectCiChecksViaTsxCli(
     `import { pathToFileURL } from "node:url";
 async function main() {
   const m = await import(pathToFileURL(process.argv[2]).href);
-  process.stdout.write(JSON.stringify(m.selectCiChecks(JSON.parse(process.argv[3]))));
+  const paths = JSON.parse(process.argv[3]);
+  process.stdout.write(JSON.stringify(m.selectCiChecks(paths, { cwd: process.cwd() })));
 }
 main().catch((e) => { console.error(e); process.exit(1); });
 `,
@@ -357,9 +396,14 @@ export async function resolveCiSelection(
   options: ResolveCiSelectionOptions,
 ): Promise<ResolveCiSelectionResult> {
   const paths = options.changedPaths;
-  const installedSelect = options.installedSelect ?? selectCiChecks;
-  const installed = installedSelect(paths);
   const worktreePath = options.worktreePath?.trim() ? path.resolve(options.worktreePath) : null;
+  const selectOpts = worktreePath
+    ? { cwd: worktreePath }
+    : options.primaryPath?.trim()
+      ? { cwd: path.resolve(options.primaryPath) }
+      : undefined;
+  const installedSelect = options.installedSelect ?? selectCiChecks;
+  const installed = installedSelect(paths, selectOpts);
   const touches = touchesCiSelectionSource(paths);
   const refuseOnTouch = options.refuseStaleOnTouch !== false;
   const installedLooksStale = looksLikeStaleFullSuitePlan(installed);
@@ -418,7 +462,7 @@ export async function resolveCiSelection(
     return { selection: installed, source: "installed", diverged: false };
   }
 
-  const worktreePlan = worktreeSelect(paths);
+  const worktreePlan = worktreeSelect(paths, selectOpts);
   const diverged = !ciSelectionPlansEqual(installed, worktreePlan);
 
   if (diverged) {

@@ -1650,3 +1650,135 @@ describe("runLoopCi", () => {
     }
   });
 });
+
+describe("runCiChecks file-scoped test:core (RAD-127)", () => {
+  async function initFileScopeRepo(): Promise<string> {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-filescope-"));
+    await writeFile(
+      join(repo, "package.json"),
+      JSON.stringify({
+        name: "test-repo",
+        scripts: {
+          "format:check": "exit 0",
+          lint: "exit 0",
+          typecheck: "exit 0",
+          test: "exit 0",
+          build: "exit 0",
+        },
+      }),
+    );
+    await mkdir(join(repo, "packages", "core", "src"), { recursive: true });
+    await linkNodeModules(repo, join(process.cwd(), "node_modules"));
+    return repo;
+  }
+
+  it("runs each selection.testFiles path with (i/N) progress, not the package glob", async () => {
+    const repo = await initFileScopeRepo();
+    try {
+      await writeFile(
+        join(repo, "packages", "core", "src", "a.test.ts"),
+        `import assert from "node:assert/strict";\nimport { describe, it } from "node:test";\ndescribe("a", () => { it("ok", () => assert.equal(1, 1)); });\n`,
+      );
+      await writeFile(
+        join(repo, "packages", "core", "src", "b.test.ts"),
+        `import assert from "node:assert/strict";\nimport { describe, it } from "node:test";\ndescribe("b", () => { it("ok", () => assert.equal(2, 2)); });\n`,
+      );
+      const events: { check?: string; state: string; command?: string; message?: string }[] = [];
+      const testFiles = ["packages/core/src/a.test.ts", "packages/core/src/b.test.ts"];
+      const result = await runCiChecks(repo, {
+        checks: ["test:core"],
+        selection: {
+          checks: ["test:core"],
+          reason: ["fixture: file-scoped test:core"],
+          mapping: [{ check: "test:core", reason: "file-scoped" }],
+          uncertain: false,
+          changedPaths: ["packages/core/src/a.ts", "packages/core/src/b.ts"],
+          packageScoped: true,
+          testFiles: { "test:core": testFiles },
+        },
+        skipCache: true,
+        skipToolchainEnsure: true,
+        timeout: 60_000,
+        parallel: false,
+        onProgress: (event) => {
+          events.push({
+            check: event.check,
+            state: event.state,
+            command: event.command,
+            message: event.message,
+          });
+        },
+      });
+      assert.equal(result.allPassed, true);
+      const starts = events.filter((e) => e.check === "test:core" && e.state === "start");
+      assert.ok(
+        starts.some(
+          (e) => e.command?.includes("packages/core/src/a.test.ts") && e.command?.includes("(1/2)"),
+        ),
+        `expected a.test.ts (1/2) in starts: ${JSON.stringify(starts)}`,
+      );
+      assert.ok(
+        starts.some(
+          (e) => e.command?.includes("packages/core/src/b.test.ts") && e.command?.includes("(2/2)"),
+        ),
+        `expected b.test.ts (2/2) in starts: ${JSON.stringify(starts)}`,
+      );
+      assert.ok(
+        !starts.some((e) => e.command?.includes("*.test.ts")),
+        "must not invoke the package glob",
+      );
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("failure path records the active per-file command, not the package glob", async () => {
+    const repo = await initFileScopeRepo();
+    try {
+      await writeFile(
+        join(repo, "packages", "core", "src", "ok.test.ts"),
+        `import assert from "node:assert/strict";\nimport { describe, it } from "node:test";\ndescribe("ok", () => { it("ok", () => assert.equal(1, 1)); });\n`,
+      );
+      await writeFile(
+        join(repo, "packages", "core", "src", "boom.test.ts"),
+        `import { describe, it } from "node:test";\ndescribe("boom", () => { it("fails", () => { throw new Error("intentional boom"); }); });\n`,
+      );
+      const result = await runCiChecks(repo, {
+        checks: ["test:core"],
+        selection: {
+          checks: ["test:core"],
+          reason: ["fixture: file-scoped fail"],
+          mapping: [{ check: "test:core", reason: "file-scoped" }],
+          uncertain: false,
+          changedPaths: ["packages/core/src/ok.ts"],
+          packageScoped: true,
+          testFiles: {
+            "test:core": ["packages/core/src/ok.test.ts", "packages/core/src/boom.test.ts"],
+          },
+        },
+        skipCache: true,
+        skipToolchainEnsure: true,
+        timeout: 60_000,
+        parallel: false,
+      });
+      assert.equal(result.allPassed, false, JSON.stringify(result.checks));
+      const failed = result.checks.find((c) => c.name === "test:core");
+      assert.ok(failed);
+      assert.equal(failed.passed, false);
+      const err = failed.error ?? "";
+      assert.match(err, /boom\.test\.ts/, `error should name the failing file: ${err}`);
+      assert.ok(!err.includes("*.test.ts"), `error must not cite the package glob: ${err}`);
+      assert.match(
+        err,
+        /pnpm exec tsx --test packages\/core\/src\/boom\.test\.ts/,
+        `error should record the active per-file command: ${err}`,
+      );
+      assert.ok(
+        !err.includes("ok.test.ts"),
+        `error should be the failing file command, not the earlier pass: ${err}`,
+      );
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+});

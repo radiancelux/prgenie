@@ -321,6 +321,8 @@ export type {
 export {
   changedPathsForCi,
   classifyCiPath,
+  CORE_PACKAGE_GLOB_MODULES,
+  coreSrcModuleStem,
   DEFAULT_CI_CHECKS,
   envFlag,
   formatCiSelectionReason,
@@ -333,12 +335,21 @@ export {
   packageFromCiPath,
   packageFromScopedCheck,
   resolveCiCwd,
+  resolveScopedTestFiles,
   SCOPABLE_PACKAGES,
   selectCiChecks,
   shouldScopeFormatCheck,
+  siblingTestPath,
   expandFailingChecks,
 } from "./ci-select.js";
-export type { CiCheckMapping, CiCheckSelection, CiPathKind, ScopablePackage } from "./ci-select.js";
+export type {
+  CiCheckMapping,
+  CiCheckSelection,
+  CiPathKind,
+  ScopablePackage,
+  ScopedTestFilePlan,
+  SelectCiChecksOptions,
+} from "./ci-select.js";
 export {
   ciSelectionPlansEqual,
   clearWorktreeCiSelectCache,
