@@ -147,7 +147,6 @@ describe("RAD-94 declared baseRef", { concurrency: false }, () => {
     };
     const check = await checkDeclaredBaseAlignment(repo, pr);
     assert.equal(check.ok, true, "WIP bookmark on first-parent walk must not look stacked");
-    if (check.ok === false) assert.equal(check.stackedOn, null);
   });
 
   test("RAD-94: bare named parent without a live local PR is not stacked", async () => {
