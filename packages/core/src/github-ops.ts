@@ -72,6 +72,15 @@ export function githubPrCreateArgs(options: {
   ];
 }
 
+/** Swap `--body <text>` for `--body-file <path>` (RAD-129). */
+export function replaceGhBodyWithFile(args: string[], bodyFile: string): string[] {
+  const bodyIdx = args.indexOf("--body");
+  if (bodyIdx < 0 || bodyIdx + 1 >= args.length) return args;
+  const next = args.slice();
+  next.splice(bodyIdx, 2, "--body-file", bodyFile);
+  return next;
+}
+
 function gh(
   args: string[],
   options: { cwd?: string; signal?: AbortSignal } = {},
@@ -125,10 +134,20 @@ function gh(
   });
 }
 
+/**
+ * Run `gh` with argv. Any `--body <text>` is rewritten to a temp `--body-file`
+ * so multiline / `%VAR%` payloads never travel through Windows cmd.exe argv (RAD-129).
+ * Call sites may still pass `--body`; spawn always sees `--body-file` when body was set.
+ */
 export function runGh(
   args: string[],
   options: { cwd?: string; signal?: AbortSignal } = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
+  const bodyIdx = args.indexOf("--body");
+  if (bodyIdx >= 0 && bodyIdx + 1 < args.length) {
+    const body = args[bodyIdx + 1]!;
+    return withGhBodyFile(body, (bodyFile) => gh(replaceGhBodyWithFile(args, bodyFile), options));
+  }
   return gh(args, options);
 }
 
