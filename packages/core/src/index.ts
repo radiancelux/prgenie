@@ -176,6 +176,7 @@ export {
   exportLocalPr,
   exportPushRefspec,
   archiveLoopsMergedOnGithub,
+  exportPartialFailureFromRelease,
   formatExportPartialFailure,
   githubPrViewArgs,
 } from "./export.js";

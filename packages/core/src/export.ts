@@ -83,6 +83,41 @@ export function formatExportPartialFailure(partial: ExportPartialFailure): strin
   return partial.message;
 }
 
+/**
+ * Build the export partial-failure payload from a release result.
+ * Shared by `exportLocalPr` so the contract is unit-testable without push/gh.
+ */
+export function exportPartialFailureFromRelease(
+  url: string,
+  released: {
+    checkedOutBase: boolean;
+    prunedWorktree: boolean;
+    primaryPath: string | null;
+    reopen: boolean;
+    worktreeLeftoverPath: string | null;
+    pruneError: string | null;
+  },
+  archivedWorktreePath: string | null,
+): ExportPartialFailure | null {
+  if (released.prunedWorktree) return null;
+  const worktreePath =
+    released.worktreeLeftoverPath ?? archivedWorktreePath ?? released.primaryPath;
+  const reason = released.reopen
+    ? `reopen primary at ${released.primaryPath ?? "unknown"} then prune`
+    : (released.pruneError ?? "prune failed");
+  return {
+    kind: "partial_failure",
+    message: `PR opened; worktree still at ${worktreePath ?? "unknown"}; ${reason}`,
+    prOpened: true,
+    url,
+    worktreePath: worktreePath ?? null,
+    checkedOutBase: released.checkedOutBase,
+    prunedWorktree: released.prunedWorktree,
+    reopen: released.reopen,
+    pruneError: released.pruneError,
+  };
+}
+
 export async function exportLocalPr(
   cwd: string,
   id: string,
@@ -225,25 +260,7 @@ export async function exportLocalPr(
     const archived = await getLocalPr(cwd, pr.id);
     const released = await releaseArchivedLoop(cwd, archived);
 
-    let partialFailure: ExportPartialFailure | null = null;
-    if (!released.prunedWorktree) {
-      const worktreePath =
-        released.worktreeLeftoverPath ?? archived.worktreePath ?? released.primaryPath;
-      const reason = released.reopen
-        ? `reopen primary at ${released.primaryPath ?? "unknown"} then prune`
-        : (released.pruneError ?? "prune failed");
-      partialFailure = {
-        kind: "partial_failure",
-        message: `PR opened; worktree still at ${worktreePath ?? "unknown"}; ${reason}`,
-        prOpened: true,
-        url,
-        worktreePath: worktreePath ?? null,
-        checkedOutBase: released.checkedOutBase,
-        prunedWorktree: released.prunedWorktree,
-        reopen: released.reopen,
-        pruneError: released.pruneError,
-      };
-    }
+    const partialFailure = exportPartialFailureFromRelease(url, released, archived.worktreePath);
 
     return {
       url,
