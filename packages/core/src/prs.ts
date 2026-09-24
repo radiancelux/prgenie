@@ -374,6 +374,7 @@ export async function createLocalPr(cwd: string, input: CreateLocalPrInput = {})
     (await shortLogSubject(cwd, headSha).catch(() => "")) ||
     `Local PR from ${headRef}`;
   const createdAt = nowIso();
+  // RAD-94: persist declared baseRef + baseSha at create; ready/CI/export enforce alignment.
   const pr: LocalPr = {
     id,
     title,
@@ -439,7 +440,10 @@ export async function setLocalPrStatus(
       );
     }
     if (status === "ready") {
+      // RAD-94: refresh tip then refuse ready when merge-base ≠ declared base (or stacked).
       await applyHeadRefresh(cwd, pr);
+      const { assertDeclaredBaseAligned } = await import("./base-ref.js");
+      await assertDeclaredBaseAligned(cwd, pr);
       // RAD-97: soft-block before pattern preflight (fail fast; avoid diff work when CI missing).
       applyReadyCiGate(pr, options.ciSkipReason);
     }
@@ -674,6 +678,9 @@ async function maybeHandoffToReviewer(
   if (pendingReviewComments(pr).length > 0) return;
   applyReadyCiGate(pr);
   await armReviewRequest(cwd, pr);
+  // RAD-94: same gate as set_status ready — refuse handoff when base is misaligned.
+  const { assertDeclaredBaseAligned } = await import("./base-ref.js");
+  await assertDeclaredBaseAligned(cwd, pr);
   pr.status = "ready";
   upsertReviewRequestedComment(pr, now, author, pr.headSha, newId("c"));
   pr.updatedAt = now;

@@ -743,6 +743,10 @@ export async function changedPathsForCi(cwd: string, id?: string): Promise<strin
   const paths = new Set<string>();
   if (id) {
     try {
+      // RAD-94: refuse run_ci when merge-base ≠ declared base (or ahead-of-base is stacked).
+      const prForBase = await getLocalPr(cwd, id);
+      const { assertDeclaredBaseAligned } = await import("./base-ref.js");
+      await assertDeclaredBaseAligned(cwd, prForBase);
       // Prefer refreshed loop name-status (base…head), then base…HEAD / baseRef…HEAD fallbacks.
       for (const file of await getLocalPrNameStatus(cwd, id)) {
         addSplitPaths(paths, file.path);
@@ -754,7 +758,14 @@ export async function changedPathsForCi(cwd: string, id?: string): Promise<strin
           await addDiffNameOnly(paths, cwd, `${pr.baseRef}...HEAD`);
         }
       }
-    } catch {
+    } catch (err) {
+      // RAD-94 base misalignment must not be swallowed as "packet missing".
+      if (
+        err instanceof Error &&
+        /declared base|merge-base|stacked on|RAD-87|dependsOn/i.test(err.message)
+      ) {
+        throw err;
+      }
       // Packet missing or no git — fall through to dirty tree.
     }
   }

@@ -126,6 +126,10 @@ export async function evaluateAndStoreExportGate(
     // changedPathsForCi already sees the new tip (RAD-117 CI-resume).
     const pr = await refreshLocalPrHead(cwd, id);
     throwIfAborted(controller.signal);
+    // RAD-94: same declared-base gate as ready / run_ci / export.
+    const { assertDeclaredBaseAligned } = await import("./base-ref.js");
+    await assertDeclaredBaseAligned(cwd, pr);
+    throwIfAborted(controller.signal);
     const key = gateKey(cwd, id, pr.headSha);
     const existing = inflight.get(key);
     if (existing) {
@@ -404,6 +408,16 @@ export async function validateExport(
   // still names the failing check — do not greenwash or drop those reasons.
   // RAD-123: never adopt a stale full-suite snapshot (forces re-evaluate).
   const pr = await refreshLocalPrHead(cwd, id);
+  // RAD-94: fail export when merge-base ≠ declared base (or ahead-of-base is stacked).
+  const { assertDeclaredBaseAligned } = await import("./base-ref.js");
+  try {
+    await assertDeclaredBaseAligned(cwd, pr);
+  } catch (err) {
+    return {
+      ok: false,
+      issues: [err instanceof Error ? err.message : String(err)],
+    };
+  }
   if (pr.exportGate && snapshotIsAdoptable(pr.exportGate, pr.headSha)) {
     const fromStore = shepherdFromSnapshot(pr.exportGate);
     if (fromStore.status === "ready") {

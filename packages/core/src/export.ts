@@ -1,3 +1,4 @@
+import { exportPushArgs, ensureExportUpstream } from "./base-ref.js";
 import { git } from "./git.js";
 import { describeRepoGithubBind, ensureRepoGithub, runGh } from "./github-ops.js";
 import { getLocalPr, isArchivedPr, listLocalPrs, setLocalPrStatus } from "./prs.js";
@@ -63,7 +64,7 @@ export async function archiveLoopsMergedOnGithub(
 
 /** Push this loop's recorded SHA, not whatever HEAD is in cwd. */
 export function exportPushRefspec(pr: { headSha: string; headRef: string }): string {
-  return `${pr.headSha}:refs/heads/${pr.headRef}`;
+  return `${pr.headSha}:refs/heads/${localBaseRef(pr.headRef)}`;
 }
 
 /** Structured report when GitHub PR opened but local release/prune did not finish (RAD-95). */
@@ -176,10 +177,12 @@ export async function exportLocalPr(
 
   await haltWatch(cwd, "export", pr.id);
   try {
-    const pushCmd = `git push -u origin ${exportPushRefspec(pr)}`;
+    // RAD-94: push recorded SHA, then set upstream to origin/<headRef> (never the base).
+    const pushArgv = exportPushArgs(pr);
+    const pushCmd = `git ${pushArgv.join(" ")}`;
     onProgress?.({ phase: "push", state: "start", command: pushCmd });
     const pushStarted = Date.now();
-    const push = await git(cwd, ["push", "-u", "origin", exportPushRefspec(pr)], {
+    const push = await git(cwd, pushArgv, {
       allowFail: true,
       signal,
     });
@@ -193,6 +196,7 @@ export async function exportLocalPr(
       });
       throw new Error(push.stderr.trim() || `git push failed for ${pr.headRef}`);
     }
+    await ensureExportUpstream(cwd, pr.headRef);
     onProgress?.({
       phase: "push",
       state: "pass",
