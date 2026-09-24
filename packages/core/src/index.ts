@@ -182,6 +182,20 @@ export {
 } from "./export.js";
 export type { ExportPartialFailure, GithubPrHeadState } from "./export.js";
 export {
+  assertDeclaredBaseAligned,
+  checkDeclaredBaseAlignment,
+  ensureExportUpstream,
+  exportPushArgs,
+  exportUpstreamRef,
+  findStackedParentBranch,
+} from "./base-ref.js";
+export type {
+  DeclaredBaseAlignment,
+  DeclaredBaseMisalignment,
+  DeclaredBasePr,
+  DeclaredBaseResult,
+} from "./base-ref.js";
+export {
   abortCiForSteward,
   abortExportGate,
   evaluateAndStoreExportGate,

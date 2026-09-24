@@ -740,6 +740,10 @@ export async function runLoopCi(
     throwIfAborted(controller.signal);
     const pr = await getLocalPr(cwd, id);
     throwIfAborted(controller.signal);
+    // RAD-94: refuse CI when merge-base ≠ declared base (or ahead-of-base is stacked).
+    const { assertDeclaredBaseAligned } = await import("./base-ref.js");
+    await assertDeclaredBaseAligned(cwd, pr);
+    throwIfAborted(controller.signal);
     const ciCwd = resolveCiCwd(cwd, pr.worktreePath);
     const paths = options.changedPaths ?? (await changedPathsForCi(ciCwd, id));
     throwIfAborted(controller.signal);
