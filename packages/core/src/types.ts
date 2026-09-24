@@ -40,6 +40,17 @@ export interface CommentThread {
   replies: LocalPrComment[];
 }
 
+/** One implement↔review cycle in the loop-detail COMMENTS column (RAD-114). */
+export interface CommentRound {
+  /** 1-based round number in chronological order. */
+  round: number;
+  threads: CommentThread[];
+  /** Findings still open or addressed (not resolved). */
+  openCount: number;
+  /** Findings with status resolved. */
+  resolvedCount: number;
+}
+
 export interface LocalPrSource {
   kind: "subagent" | "cli" | "extension";
   subagentType?: string;

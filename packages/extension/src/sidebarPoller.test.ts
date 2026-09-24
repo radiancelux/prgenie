@@ -342,6 +342,22 @@ test("laneView STATUS quiet until reviewed; idle clear; no vertical reason layou
   );
 });
 
+test("laneView COMMENTS wider + review rounds (RAD-114)", () => {
+  const src = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "laneView.ts"),
+    "utf8",
+  );
+  assert.match(src, /groupThreadsByRound/);
+  assert.match(src, /\.files \{[\s\S]*?width: 280px/);
+  assert.match(src, /\.comments \{[\s\S]*?flex: 1/);
+  assert.match(src, /file \.path/);
+  assert.match(src, /details\.round/);
+  assert.match(src, /isRoundExpanded/);
+  assert.match(src, /setRoundCollapsed/);
+  assert.match(src, /roundCollapsed/);
+  assert.match(src, /overflow-wrap: anywhere/);
+});
+
 test("export gate scheduler runs once per id+HEAD and ignores in-flight overlap", async () => {
   let inflight = 0;
   let maxInflight = 0;

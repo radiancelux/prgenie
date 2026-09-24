@@ -20,6 +20,7 @@ import type {
   CaptureResult,
   CommentRole,
   CommentStatus,
+  CommentRound,
   CommentThread,
   CreateLocalPrInput,
   ExportGateSnapshot,
@@ -647,6 +648,58 @@ export function commentThreads(comments: LocalPrComment[]): CommentThread[] {
     if (isFindingComment(c)) lastFinding = thread;
   }
   return threads;
+}
+
+function isReviewRequestRoot(thread: CommentThread): boolean {
+  const c = normalizeComment(thread.root);
+  return c.role === "agent" && !c.replyTo && isReviewRequestBody(c.body);
+}
+
+function roundFindingCounts(threads: CommentThread[]): {
+  openCount: number;
+  resolvedCount: number;
+} {
+  let openCount = 0;
+  let resolvedCount = 0;
+  for (const t of threads) {
+    if (!isFindingComment(t.root)) continue;
+    const st = normalizeComment(t.root).status;
+    if (st === "resolved") resolvedCount += 1;
+    else openCount += 1;
+  }
+  return { openCount, resolvedCount };
+}
+
+/**
+ * Group comment threads into implement↔review rounds.
+ * A new round starts at each root "Review requested." agent comment when the
+ * current bucket already contains a prior Review requested (RAD-114).
+ * Comments before the first Review requested stay in round 1.
+ */
+export function groupThreadsByRound(threads: CommentThread[]): CommentRound[] {
+  const buckets: CommentThread[][] = [];
+  let current: CommentThread[] = [];
+  let currentHasReviewRequest = false;
+  for (const t of threads) {
+    if (isReviewRequestRoot(t) && currentHasReviewRequest) {
+      buckets.push(current);
+      current = [t];
+      currentHasReviewRequest = true;
+    } else {
+      current.push(t);
+      if (isReviewRequestRoot(t)) currentHasReviewRequest = true;
+    }
+  }
+  if (current.length > 0) buckets.push(current);
+  return buckets.map((bucket, i) => {
+    const counts = roundFindingCounts(bucket);
+    return {
+      round: i + 1,
+      threads: bucket,
+      openCount: counts.openCount,
+      resolvedCount: counts.resolvedCount,
+    };
+  });
 }
 
 function maybePromoteToReviewed(pr: LocalPr): void {

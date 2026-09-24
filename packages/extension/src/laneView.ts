@@ -8,6 +8,7 @@ import {
   attachLocalPr,
   bindRepoGithub,
   commentThreads,
+  groupThreadsByRound,
   completeLocalPrReview,
   consoleDir,
   createLocalPr,
@@ -159,6 +160,13 @@ type Snapshot = {
   selectedId: string | null;
   files: { status: string; path: string }[];
   threads?: { root: LocalPr["comments"][number]; replies: LocalPr["comments"] }[];
+  /** implement↔review cycles for the COMMENTS column (RAD-114). */
+  rounds?: {
+    round: number;
+    threads: { root: LocalPr["comments"][number]; replies: LocalPr["comments"] }[];
+    openCount: number;
+    resolvedCount: number;
+  }[];
   repo: string;
   freshIds: string[];
   watching: boolean;
@@ -1031,6 +1039,7 @@ export class LaneHub implements vscode.Disposable {
           selectedId: this.selectedId ?? null,
           files,
           threads: selected ? commentThreads(selected.comments) : [],
+          rounds: selected ? groupThreadsByRound(commentThreads(selected.comments)) : [],
           repo: path.basename(root),
           freshIds,
           watching: true,
@@ -1082,6 +1091,7 @@ function snapshotKey(payload: Snapshot | { type: "snapshot"; error: string; prs:
     repo: "repo" in payload ? payload.repo : "",
     files: "files" in payload ? payload.files : [],
     threads: "threads" in payload ? payload.threads : [],
+    rounds: "rounds" in payload ? payload.rounds : [],
     ghBind: "ghBind" in payload ? payload.ghBind : null,
     shepherdStatus: "shepherdStatus" in payload ? payload.shepherdStatus : null,
     progress: "progress" in payload ? payload.progress : null,
@@ -2056,7 +2066,7 @@ function panelHtml(webview: vscode.Webview): string {
     .grow { flex: 1; }
     .body { display: flex; flex: 1; min-height: 0; }
     .files {
-      flex: 1; min-width: 0; min-height: 0; overflow: hidden;
+      width: 280px; flex: none; min-width: 0; min-height: 0; overflow: hidden;
       display: flex; flex-direction: column;
       border-right: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, transparent));
     }
@@ -2071,25 +2081,55 @@ function panelHtml(webview: vscode.Webview): string {
     .summary .pad { padding: 0 10px 8px; }
     .file {
       display: flex; gap: 8px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+      min-width: 0;
     }
     .file:hover { background: var(--vscode-list-hoverBackground); }
     .file .st { width: 16px; flex: none; font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; }
+    .file .path {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     .add { color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950); }
     .del { color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149); }
     .mod { color: var(--vscode-gitDecoration-modifiedResourceForeground, #d29922); }
     .comments {
-      width: 280px; flex: none; min-height: 0; overflow: hidden;
+      flex: 1; min-width: 0; min-height: 0; overflow: hidden;
       display: flex; flex-direction: column;
     }
     #flist, #clist { flex: 1; min-height: 0; overflow: auto; }
     #clist { padding: 0 10px 8px; }
+    .round {
+      margin: 8px 0 0;
+      border: 1px solid var(--vscode-widget-border, rgba(127,127,127,0.35));
+    }
+    .round > summary {
+      cursor: pointer;
+      list-style: none;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 6px 8px;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--vscode-descriptionForeground);
+      user-select: none;
+    }
+    .round > summary::-webkit-details-marker { display: none; }
+    .round > summary::before {
+      content: "▸";
+      display: inline-block;
+      width: 1em;
+      color: var(--vscode-foreground);
+    }
+    .round[open] > summary::before { content: "▾"; }
+    .round .round-label { color: var(--vscode-foreground); font-weight: 600; }
+    .round-body { padding: 0 8px 8px; }
     .thread {
       margin: 8px 0 0;
       padding: 8px;
       border: 1px solid var(--vscode-widget-border, rgba(127,127,127,0.35));
     }
     .thread.resolved { opacity: 0.72; }
-    .thread .body { font-size: 12px; white-space: pre-wrap; }
+    .thread .body { font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
     .replies {
       margin: 8px 0 0;
       padding: 8px 0 0 10px;
@@ -2097,7 +2137,7 @@ function panelHtml(webview: vscode.Webview): string {
     }
     .reply { font-size: 12px; margin-top: 8px; }
     .reply:first-child { margin-top: 0; }
-    .reply .body { white-space: pre-wrap; }
+    .reply .body { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
     .comment .who, .thread .who, .reply .who {
       font-size: 11px; margin-bottom: 4px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
     }
@@ -2245,6 +2285,53 @@ function panelHtml(webview: vscode.Webview): string {
           line: Number(el.getAttribute("data-line") || 0) || undefined
         });
       }
+      for (const el of root.querySelectorAll("details.round[data-round]")) {
+        el.ontoggle = () => {
+          const round = el.getAttribute("data-round");
+          if (!round) return;
+          setRoundCollapsed(selected.id, round, !el.open);
+        };
+      }
+    }
+    function roundCollapsedMap(prId) {
+      const state = vscode.getState() || {};
+      const all = state.roundCollapsed || {};
+      return all[prId] || {};
+    }
+    function setRoundCollapsed(prId, round, collapsed) {
+      const state = vscode.getState() || {};
+      const all = Object.assign({}, state.roundCollapsed || {});
+      const forPr = Object.assign({}, all[prId] || {});
+      forPr[String(round)] = !!collapsed;
+      all[prId] = forPr;
+      vscode.setState(Object.assign({}, state, { roundCollapsed: all }));
+    }
+    function isRoundExpanded(prId, round, isLast) {
+      const map = roundCollapsedMap(prId);
+      const key = String(round);
+      if (Object.prototype.hasOwnProperty.call(map, key)) return !map[key];
+      return !!isLast;
+    }
+    function renderThread(t, archivedView) {
+      const c = t.root;
+      const st = c.status || (c.resolvedAt ? "resolved" : "open");
+      const loc = c.path
+        ? '<button type="button" class="loc secondary" data-path="' + esc(c.path) + '" data-line="' + (c.line || "") + '">' + esc(c.path) + (c.line ? ":" + c.line : "") + "</button>"
+        : "";
+      const manage = !archivedView && st === "open" && (c.role === "human" || c.role === "reviewer")
+        ? '<button type="button" class="edit secondary" data-cid="' + esc(c.id) + '" title="Edit finding">Edit</button><button type="button" class="delete-c danger" data-cid="' + esc(c.id) + '" title="Delete finding">Delete</button>'
+        : "";
+      const action = archivedView
+        ? ""
+        : st === "open" && (c.role === "human" || c.role === "reviewer")
+          ? '<button type="button" class="address success" data-cid="' + esc(c.id) + '" title="Mark addressed">Addressed</button>'
+          : st === "addressed"
+            ? '<button type="button" class="resolve resolve-btn" data-cid="' + esc(c.id) + '" title="Resolve finding">Resolve</button>'
+            : "";
+      const replies = (t.replies || []).map((r) =>
+        '<div class="reply"><div class="who muted"><span class="role">' + esc(roleLabel(r.role)) + "</span>" + esc(r.author || "agent") + " · " + esc(new Date(r.createdAt).toLocaleString()) + '</div><div class="body">' + esc(r.body) + "</div></div>"
+      ).join("");
+      return '<div class="thread ' + esc(st) + '"><div class="who muted"><span class="role">' + esc(roleLabel(c.role)) + '</span><span class="role ' + esc(st) + '">' + esc(st === "open" ? "open — needs action" : st) + "</span>" + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + loc + manage + action + '</div><div class="body">' + esc(c.body) + "</div>" + (replies ? '<div class="replies">' + replies + "</div>" : "") + "</div>";
     }
     function setTextarea(el, next) {
       if (!el || document.activeElement === el || el.value === next) return;
@@ -2465,34 +2552,26 @@ function panelHtml(webview: vscode.Webview): string {
       }
       const reuse = layoutId === selected.id && root.querySelector("#sum") && root.querySelector("#cmt") && root.querySelector("#clist") && root.querySelector("#flist");
       const files = msg.files || [];
-      const threads = msg.threads || [];
+      const rounds = msg.rounds || [];
       const where = selected.worktreePath ? "worktree" : "head";
       const fileHtml = files.map((f) => {
         const st = stLabel(f.status);
-        return '<div class="file" data-path="' + esc(f.path) + '" data-status="' + esc(f.status) + '"><span class="st ' + st.c + '">' + esc(st.t) + '</span><span>' + esc(fileLabel(f.path)) + "</span></div>";
+        const label = fileLabel(f.path);
+        return '<div class="file" data-path="' + esc(f.path) + '" data-status="' + esc(f.status) + '" title="' + esc(f.path) + '"><span class="st ' + st.c + '">' + esc(st.t) + '</span><span class="path" title="' + esc(f.path) + '">' + esc(label) + "</span></div>";
       }).join("") || '<p class="muted empty">No files changed</p>';
       const archivedView = selected.status === "approved";
-      const commentHtml = threads.map((t) => {
-        const c = t.root;
-        const st = c.status || (c.resolvedAt ? "resolved" : "open");
-        const loc = c.path
-          ? '<button type="button" class="loc secondary" data-path="' + esc(c.path) + '" data-line="' + (c.line || "") + '">' + esc(c.path) + (c.line ? ":" + c.line : "") + "</button>"
-          : "";
-        const manage = !archivedView && st === "open" && (c.role === "human" || c.role === "reviewer")
-          ? '<button type="button" class="edit secondary" data-cid="' + esc(c.id) + '" title="Edit finding">Edit</button><button type="button" class="delete-c danger" data-cid="' + esc(c.id) + '" title="Delete finding">Delete</button>'
-          : "";
-        const action = archivedView
-          ? ""
-          : st === "open" && (c.role === "human" || c.role === "reviewer")
-            ? '<button type="button" class="address success" data-cid="' + esc(c.id) + '" title="Mark addressed">Addressed</button>'
-            : st === "addressed"
-              ? '<button type="button" class="resolve resolve-btn" data-cid="' + esc(c.id) + '" title="Resolve finding">Resolve</button>'
-              : "";
-        const replies = (t.replies || []).map((r) =>
-          '<div class="reply"><div class="who muted"><span class="role">' + esc(roleLabel(r.role)) + "</span>" + esc(r.author || "agent") + " · " + esc(new Date(r.createdAt).toLocaleString()) + '</div><div class="body">' + esc(r.body) + "</div></div>"
-        ).join("");
-        return '<div class="thread ' + esc(st) + '"><div class="who muted"><span class="role">' + esc(roleLabel(c.role)) + '</span><span class="role ' + esc(st) + '">' + esc(st === "open" ? "open — needs action" : st) + "</span>" + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + loc + manage + action + '</div><div class="body">' + esc(c.body) + "</div>" + (replies ? '<div class="replies">' + replies + "</div>" : "") + "</div>";
-      }).join("") || '<p class="muted empty">No comments yet</p>';
+      const commentHtml = rounds.length
+        ? rounds.map((round, i) => {
+            const isLast = i === rounds.length - 1;
+            const expanded = isRoundExpanded(selected.id, round.round, isLast);
+            const threadsHtml = (round.threads || []).map((t) => renderThread(t, archivedView)).join("");
+            return '<details class="round" data-round="' + esc(String(round.round)) + '"' + (expanded ? " open" : "") + ">" +
+              '<summary><span class="round-label">Round ' + esc(String(round.round)) + "</span>" +
+              "<span>" + esc(String(round.openCount)) + " open</span>" +
+              "<span>" + esc(String(round.resolvedCount)) + " resolved</span></summary>" +
+              '<div class="round-body">' + threadsHtml + "</div></details>";
+          }).join("")
+        : '<p class="muted empty">No comments yet</p>';
       if (!reuse) {
         paintedFiles = "";
         paintedComments = "";
