@@ -26,7 +26,8 @@ import {
 } from "./ci-host-scope.js";
 import { requestCiAbort, watchCiAbort } from "./ci-abort.js";
 import { git } from "./git.js";
-import { getLocalPr } from "./prs.js";
+import { getLocalPr, recordLocalPrReadyCi } from "./prs.js";
+import { readyCiFromRunnerResult } from "./ready-ci.js";
 import {
   abortError,
   ciCheckCommand,
@@ -792,13 +793,30 @@ export async function runLoopCi(
       }
     }
     throwIfAborted(controller.signal);
-    return await runCiChecks(ciCwd, {
+    const result = await runCiChecks(ciCwd, {
       ...options,
       checks,
       selection: runSelection,
       changedPaths: paths,
       signal: controller.signal,
     });
+    // RAD-97: persist green / intentional-skip onto the loop so ready soft-block can pass.
+    try {
+      const tip = await getLocalPr(cwd, id);
+      const record = readyCiFromRunnerResult(tip.headSha, result);
+      if (record) {
+        await recordLocalPrReadyCi(cwd, id, record);
+      } else if (!result.allPassed) {
+        // Clear stale green for this tip so ready cannot lie.
+        const prior = tip.readyCi;
+        if (prior && prior.headSha === tip.headSha) {
+          await recordLocalPrReadyCi(cwd, id, null);
+        }
+      }
+    } catch {
+      // CI result still returns to the caller even if packet write fails.
+    }
+    return result;
   } finally {
     stopWatch();
     detach();

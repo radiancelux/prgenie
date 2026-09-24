@@ -42,6 +42,11 @@ import {
   resolveLocalPrComment,
   runPreflight,
   setLocalPrStatus,
+  markReviewInterrupted,
+  resumeReview,
+  formatSessionReconcileDigest,
+  reconcileSessionLoops,
+  reconcileOneLoop,
   abortCiForSteward,
   createProgressCardSink,
   evaluateAndStoreExportGate,
@@ -215,6 +220,7 @@ export async function handleTool(
       }
       const pr = await setLocalPrStatus(cwd, String(args.id ?? ""), status, {
         skipPreflight: typeof args.skipPreflight === "boolean" ? args.skipPreflight : undefined,
+        ciSkipReason: typeof args.ciSkipReason === "string" ? args.ciSkipReason : undefined,
       });
       const githubBind = await describeRepoGithubBind(cwd);
       return { ...withCommentViews(pr), githubBind };
@@ -334,6 +340,24 @@ export async function handleTool(
     case "run_preflight": {
       const pr = await getLocalPr(cwd, String(args.id ?? ""));
       return runPreflight(cwd, pr);
+    }
+    case "mark_review_interrupted": {
+      const pr = await markReviewInterrupted(cwd, String(args.id ?? ""), {
+        reason: typeof args.reason === "string" ? args.reason : undefined,
+      });
+      return withCommentViews(pr);
+    }
+    case "resume_review": {
+      const pr = await resumeReview(cwd, String(args.id ?? ""));
+      const rows = await reconcileOneLoop(cwd, pr.id);
+      return { ...withCommentViews(pr), reconcile: rows };
+    }
+    case "reconcile_session": {
+      if (args.id) {
+        return reconcileOneLoop(cwd, String(args.id));
+      }
+      const rows = await reconcileSessionLoops(cwd);
+      return { rows, digest: formatSessionReconcileDigest(rows) };
     }
     case "run_ci": {
       const failing =
@@ -591,7 +615,7 @@ export const tools = [
   {
     name: "set_status",
     description:
-      "Set local PR status: draft, ready, changes_requested, reviewed, approved. reviewed means the automated reviewer cleared and the steward will run the export gate — not a human handoff. Setting reviewed requires a repo gh bind (RAD-95); returns githubBind. When setting to ready, a pattern preflight check runs automatically; pass skipPreflight=true to bypass. Before ready, also run MCP run_ci / prgenie ci and fix failures in-worktree.",
+      'Set local PR status: draft, ready, review_interrupted, changes_requested, reviewed, approved. reviewed means the automated reviewer cleared and the steward will run the export gate — not a human handoff. Setting reviewed requires a repo gh bind (RAD-95); returns githubBind. When setting to ready, a pattern preflight check runs automatically; pass skipPreflight=true to bypass. Ready is soft-blocked (RAD-97) until run_ci is green for HEAD or ciSkipReason / a "CI skipped: <reason>" comment is recorded. Before ready, run MCP run_ci / prgenie ci and fix failures in-worktree.',
     inputSchema: {
       type: "object",
       required: ["id", "status"],
@@ -599,12 +623,24 @@ export const tools = [
         id: { type: "string" },
         status: {
           type: "string",
-          enum: ["draft", "ready", "changes_requested", "reviewed", "approved"],
+          enum: [
+            "draft",
+            "ready",
+            "review_interrupted",
+            "changes_requested",
+            "reviewed",
+            "approved",
+          ],
         },
         skipPreflight: {
           type: "boolean",
           description:
             "Skip preflight check when setting to ready. Use only when preflight issues are false positives or you want to override.",
+        },
+        ciSkipReason: {
+          type: "string",
+          description:
+            'RAD-97: explicit skip reason when toolchain cannot run. Records readyCi as skipped for current HEAD (stored as "CI skipped: <reason>").',
         },
         cwd: { type: "string" },
       },
@@ -911,6 +947,39 @@ export const tools = [
     inputSchema: {
       type: "object",
       required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } },
+    },
+  },
+  {
+    name: "mark_review_interrupted",
+    description:
+      "RAD-97: mark a ready loop review_interrupted after reviewer auth/host failure. Persists status so steward resumes the same reviewerTaskId without re-brief. Prefer this over leaving the loop ready with a dead Task.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        reason: { type: "string", description: "Default: auth failure" },
+        cwd: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "resume_review",
+    description:
+      "RAD-97: one-command resume after review_interrupted → ready. Keeps reviewRequestedSha; steward should resume the same reviewer Task (no re-brief). Returns reconcile row with Task ids.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } },
+    },
+  },
+  {
+    name: "reconcile_session",
+    description:
+      "RAD-97 / RAD-88 stuck-Task slice: reconcile live loop status vs steward Task ids (one digest). Omit id for all live loops; pass id for one row. Use on session reconnect.",
+    inputSchema: {
+      type: "object",
       properties: { id: { type: "string" }, cwd: { type: "string" } },
     },
   },

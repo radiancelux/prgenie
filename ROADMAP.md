@@ -133,7 +133,7 @@ Children in epic rank order:
 3. **[RAD-94](https://linear.app/radiancelux/issue/RAD-94/enforce-declared-baseref-before-readyciexport-correct-upstream)** — Enforce declared `baseRef` before ready/CI/export + correct upstream (Urgent · Todo)
 4. **[RAD-95](https://linear.app/radiancelux/issue/RAD-95/export-reliability-early-bind-atomic-prune-partial-failure-report)** — Export reliability: early bind, atomic prune, partial-failure report (High · Backlog)
 5. **[RAD-100](https://linear.app/radiancelux/issue/RAD-100/mcp-timeoutsprogress-for-gitci-tools-windows-cli-docs)** — MCP timeouts/progress for git+CI tools + Windows CLI docs (High · Backlog)
-6. **[RAD-97](https://linear.app/radiancelux/issue/RAD-97/ready-requires-ci-or-skip-reason-review-resume-after-auth)** — Ready requires CI (or skip reason); review resume after auth (High · Backlog)
+6. **[RAD-97](https://linear.app/radiancelux/issue/RAD-97/ready-requires-ci-or-skip-reason-review-resume-after-auth)** — Ready requires CI (or skip reason); review resume after auth (High) — **in progress on this loop**
 
 #### Post-dogfood board (related)
 

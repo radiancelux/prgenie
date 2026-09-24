@@ -41,7 +41,7 @@ test("learning extraction from resolved comments", async () => {
       body: "Test body",
     });
 
-    await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true });
+    await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true, ciSkipReason: "test" });
     const commented = await addLocalPrComment(
       repo,
       pr.id,
@@ -127,9 +127,12 @@ test("preflight check blocks ready when pattern matches", async () => {
       body: "This contains the forbidden pattern",
     });
 
-    await assert.rejects(async () => setLocalPrStatus(repo, pr.id, "ready"), /Preflight failed/);
+    await assert.rejects(
+      async () => setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" }),
+      /Preflight failed/,
+    );
 
-    await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true });
+    await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true, ciSkipReason: "test" });
     assert.equal(pr.status, "draft");
   } finally {
     cleanup(repo);
@@ -157,7 +160,7 @@ test("preflight allows ready when no patterns match", async () => {
       body: "No problematic patterns here",
     });
 
-    const updated = await setLocalPrStatus(repo, pr.id, "ready");
+    const updated = await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
     assert.equal(updated.status, "ready");
   } finally {
     cleanup(repo);
@@ -185,7 +188,7 @@ test("disabled learnings do not block preflight", async () => {
       body: "Contains disabled pattern",
     });
 
-    const updated = await setLocalPrStatus(repo, pr.id, "ready");
+    const updated = await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
     assert.equal(updated.status, "ready");
   } finally {
     cleanup(repo);
@@ -231,7 +234,7 @@ test("learning extraction handles addressed then resolved flow", async () => {
       body: "Test body",
     });
 
-    await setLocalPrStatus(repo, pr.id, "ready");
+    await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
     const commented = await addLocalPrComment(
       repo,
       pr.id,

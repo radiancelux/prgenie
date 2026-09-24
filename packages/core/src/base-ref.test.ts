@@ -96,7 +96,7 @@ describe("RAD-94 declared baseRef", { concurrency: false }, () => {
     assert.ok(pr.baseSha);
     const check = await checkDeclaredBaseAlignment(repo, pr);
     assert.equal(check.ok, true);
-    await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true });
+    await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true, ciSkipReason: "test" });
   });
 
   test("RAD-94: merge-base ≠ declared base tip fails alignment", async () => {

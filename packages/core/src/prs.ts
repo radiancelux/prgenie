@@ -27,12 +27,22 @@ import type {
   LocalPrComment,
   LocalPrStatus,
   LocalPrSource,
+  ReadyCiRecord,
 } from "./types.js";
 import { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
 import { getRepoWatch, resumeWatchRole } from "./watch.js";
 import { addLearnings, extractLearningsFromResolvedComments, runPreflight } from "./learnings.js";
 import { normalizeExportGate, pendingExportGate } from "./export-gate.js";
 import { assertNoDirtyPluginBuildArtifacts } from "./plugin-dirt.js";
+import {
+  assertReadyCiSatisfied,
+  isReadyCiSatisfied,
+  normalizeReadyCi,
+  parseCiSkipReason,
+  readyCiFromSkipReason,
+  tipScopedCiSkipReason,
+  upsertReviewRequestedComment,
+} from "./ready-ci.js";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -64,6 +74,7 @@ async function readPrFile(file: string): Promise<LocalPr> {
   pr.source = pr.source ?? null;
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
   pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
+  pr.readyCi = normalizeReadyCi(pr.readyCi);
   pr.exportGate = normalizeExportGate(pr.exportGate);
   pr.comments = (pr.comments ?? []).map(normalizeComment);
   return pr;
@@ -273,6 +284,7 @@ export async function listLocalPrs(
     pr.source = pr.source ?? null;
     pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
     pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
+    pr.readyCi = normalizeReadyCi(pr.readyCi);
     pr.exportGate = normalizeExportGate(pr.exportGate);
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
@@ -379,6 +391,7 @@ export async function createLocalPr(cwd: string, input: CreateLocalPrInput = {})
     updatedAt: createdAt,
     reviewRequestedSha: null,
     reviewerNotifiedSha: null,
+    readyCi: null,
   };
   await writePr(root, pr);
   const others = await listLocalPrs(root);
@@ -415,7 +428,7 @@ export async function setLocalPrStatus(
   cwd: string,
   id: string,
   status: LocalPrStatus,
-  options: { skipPreflight?: boolean } = {},
+  options: { skipPreflight?: boolean; ciSkipReason?: string } = {},
 ): Promise<LocalPr> {
   if (!STATUSES.includes(status)) {
     throw new Error(`Invalid status: ${status}`);
@@ -431,6 +444,8 @@ export async function setLocalPrStatus(
       await applyHeadRefresh(cwd, pr);
       const { assertDeclaredBaseAligned } = await import("./base-ref.js");
       await assertDeclaredBaseAligned(cwd, pr);
+      // RAD-97: soft-block before pattern preflight (fail fast; avoid diff work when CI missing).
+      applyReadyCiGate(pr, options.ciSkipReason);
     }
     if (status === "ready" && !options.skipPreflight) {
       const preflight = await runPreflight(cwd, pr);
@@ -446,9 +461,108 @@ export async function setLocalPrStatus(
         );
       }
     }
+    if (status === "ready") {
+      await armReviewRequest(cwd, pr);
+    }
+    if (status === "review_interrupted") {
+      if (pr.status !== "ready" && pr.status !== "review_interrupted") {
+        throw new Error(
+          `review_interrupted requires status ready (got ${pr.status}). Mark ready first, then interrupt on auth failure.`,
+        );
+      }
+    }
     pr.status = status;
-    if (status === "ready") await armReviewRequest(cwd, pr);
     if (status === "reviewed") pr.exportGate = pendingExportGate(pr.headSha);
+    if (status !== "ready" && status !== "review_interrupted") {
+      // Leaving the review lane — readyCi stays as evidence for this SHA.
+    }
+    pr.updatedAt = nowIso();
+  });
+}
+
+/** Soft-block / record skip for ready (RAD-97). Mutates pr.readyCi. */
+function applyReadyCiGate(pr: LocalPr, ciSkipReason?: string): void {
+  if (ciSkipReason?.trim()) {
+    pr.readyCi = readyCiFromSkipReason(pr.headSha, ciSkipReason.trim());
+    return;
+  }
+  if (isReadyCiSatisfied(pr)) return;
+  // Promote only tip-scoped "CI skipped: …" comments (forSha === HEAD) into readyCi.
+  const tipSkip = tipScopedCiSkipReason(pr, pr.headSha);
+  if (tipSkip) {
+    pr.readyCi = readyCiFromSkipReason(pr.headSha, tipSkip);
+    return;
+  }
+  assertReadyCiSatisfied(pr);
+}
+
+/** Persist implementor CI result onto the loop packet (RAD-97). */
+export async function recordLocalPrReadyCi(
+  cwd: string,
+  id: string,
+  record: ReadyCiRecord | null,
+): Promise<LocalPr> {
+  return withPrLock(cwd, id, async (pr) => {
+    await applyHeadRefresh(cwd, pr);
+    if (record) {
+      pr.readyCi = { ...record, headSha: record.headSha || pr.headSha };
+    } else {
+      pr.readyCi = null;
+    }
+    pr.updatedAt = nowIso();
+  });
+}
+
+/**
+ * Auth / host failure while a reviewer Task was in flight (RAD-97).
+ * Keeps reviewRequestedSha and steward reviewerTaskId; steward resumes without re-brief.
+ */
+export async function markReviewInterrupted(
+  cwd: string,
+  id: string,
+  options: { reason?: string } = {},
+): Promise<LocalPr> {
+  return withPrLock(cwd, id, async (pr) => {
+    if (isArchivedPr(pr)) throw new Error(`Loop ${pr.id} is archived.`);
+    if (pr.status !== "ready" && pr.status !== "review_interrupted") {
+      throw new Error(`markReviewInterrupted requires status ready (got ${pr.status}).`);
+    }
+    pr.status = "review_interrupted";
+    const reason = options.reason?.trim() || "auth failure";
+    const note = `Review interrupted: ${reason}. Resume with prgenie review-resume ${pr.id} / MCP resume_review (same reviewer Task — no re-brief).`;
+    const already = (pr.comments ?? []).some(
+      (c) => c.role === "agent" && !c.replyTo && c.body.startsWith("Review interrupted:"),
+    );
+    if (!already) {
+      pr.comments.push({
+        id: newId("c"),
+        body: note,
+        createdAt: nowIso(),
+        author: "prgenie",
+        role: "agent",
+        status: "resolved",
+      });
+    }
+    pr.updatedAt = nowIso();
+  });
+}
+
+/**
+ * One-command resume after review_interrupted (RAD-97).
+ * Returns ready + clears interrupt so steward can resume the same reviewer Task.
+ */
+export async function resumeReview(cwd: string, id: string): Promise<LocalPr> {
+  return withPrLock(cwd, id, async (pr) => {
+    if (isArchivedPr(pr)) throw new Error(`Loop ${pr.id} is archived.`);
+    if (pr.status !== "review_interrupted" && pr.status !== "ready") {
+      throw new Error(`resumeReview expects review_interrupted or ready (got ${pr.status}).`);
+    }
+    await applyHeadRefresh(cwd, pr);
+    pr.status = "ready";
+    // Keep reviewRequestedSha — do not re-arm / do not require a new readyCi for resume.
+    if (!pr.reviewRequestedSha) {
+      pr.reviewRequestedSha = pr.headSha;
+    }
     pr.updatedAt = nowIso();
   });
 }
@@ -562,19 +676,13 @@ async function maybeHandoffToReviewer(
   if (isArchivedPr(pr)) return;
   if (pr.status !== "changes_requested") return;
   if (pendingReviewComments(pr).length > 0) return;
+  applyReadyCiGate(pr);
   await armReviewRequest(cwd, pr);
   // RAD-94: same gate as set_status ready — refuse handoff when base is misaligned.
   const { assertDeclaredBaseAligned } = await import("./base-ref.js");
   await assertDeclaredBaseAligned(cwd, pr);
   pr.status = "ready";
-  pr.comments.push({
-    id: newId("c"),
-    body: "Review requested.",
-    createdAt: now,
-    author,
-    role: "agent",
-    status: "resolved",
-  });
+  upsertReviewRequestedComment(pr, now, author, pr.headSha, newId("c"));
   pr.updatedAt = now;
 }
 
@@ -604,7 +712,10 @@ export function formatReviewInbox(pr: LocalPr): string | null {
 }
 
 export function shouldSpawnReviewer(pr: LocalPr): boolean {
-  return pr.status === "ready" && (pr.reviewerNotifiedSha ?? null) !== pr.headSha;
+  return (
+    (pr.status === "ready" || pr.status === "review_interrupted") &&
+    (pr.reviewerNotifiedSha ?? null) !== pr.headSha
+  );
 }
 
 export function formatSpawnReviewer(pr: LocalPr): string {
@@ -680,14 +791,38 @@ export async function addLocalPrComment(
   return withFileLock(file, async () => {
     const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
     pr.comments = (pr.comments ?? []).map(normalizeComment);
+    pr.readyCi = normalizeReadyCi(pr.readyCi);
+    const now = nowIso();
+    const author = options.author?.trim() || (await userName(cwd));
+
+    // RAD-97: upsert a single Review-requested root per HEAD sha.
+    if (role === "agent" && isReviewRequestBody(text) && !options.replyTo) {
+      await applyHeadRefresh(cwd, pr);
+      upsertReviewRequestedComment(pr, now, author, pr.headSha, newId("c"));
+      pr.updatedAt = now;
+      await writePr(cwd, pr);
+      pr.worktreePath = resolved.worktreePath;
+      return pr;
+    }
+
+    // RAD-97: "CI skipped: <reason>" stamps forSha and readyCi for this tip only.
+    const skipReason = role === "agent" ? parseCiSkipReason(text) : null;
+    if (skipReason && !options.replyTo) {
+      await applyHeadRefresh(cwd, pr);
+      pr.readyCi = readyCiFromSkipReason(pr.headSha, skipReason, now);
+    }
+
     const comment: LocalPrComment = {
       id: newId("c"),
       body: text,
-      createdAt: nowIso(),
-      author: options.author?.trim() || (await userName(cwd)),
+      createdAt: now,
+      author,
       role,
       status: role === "agent" ? "resolved" : "open",
     };
+    if (skipReason && !options.replyTo) {
+      comment.forSha = pr.headSha;
+    }
     const loc = options.path?.trim();
     if (loc) comment.path = loc.replace(/\\/g, "/");
     if (options.line && options.line > 0) comment.line = Math.floor(options.line);
@@ -698,15 +833,15 @@ export async function addLocalPrComment(
       if (!target) throw new Error(`Comment not found: ${replyTo}`);
       comment.replyTo = target.id;
       comment.status = "resolved";
-    } else if (role === "agent" && !isReviewRequestBody(text)) {
+    } else if (role === "agent" && !isReviewRequestBody(text) && !skipReason) {
       const parent = lastFinding(pr);
       if (parent) comment.replyTo = parent.id;
     }
     pr.comments.push(comment);
     if (!isArchivedPr(pr) && comment.status === "open") {
       // Human findings always wake the implementor. Reviewer findings normally stay on
-      // ready until complete_review; if the loop is already reviewed, a new finding must
-      // flip to changes_requested or the implementor inbox never sees it.
+      // ready / review_interrupted until complete_review; if the loop is already reviewed,
+      // a new finding must flip to changes_requested or the implementor inbox never sees it.
       if (role === "human" || (role === "reviewer" && pr.status === "reviewed")) {
         pr.status = "changes_requested";
       }
@@ -1206,6 +1341,7 @@ export async function attachLocalPr(cwd: string, input: AttachLocalPrInput): Pro
     updatedAt: createdAt,
     reviewRequestedSha: null,
     reviewerNotifiedSha: null,
+    readyCi: null,
   };
 
   await writePr(root, pr);

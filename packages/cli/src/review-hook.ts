@@ -3,6 +3,7 @@ import {
   findGitRoot,
   findLocalPrForCurrentWorktree,
   formatReviewInbox,
+  formatSessionReconnectDigest,
   pendingReviewComments,
 } from "@prgenie/core";
 
@@ -42,19 +43,22 @@ export async function main(): Promise<void> {
   }
 
   const pr = await findLocalPrForCurrentWorktree(root);
-  if (!pr) {
-    silent();
-    return;
-  }
-
-  const inbox = formatReviewInbox(pr);
+  const inbox = pr ? formatReviewInbox(pr) : null;
 
   if (event === "sessionStart") {
-    if (!inbox) {
+    // RAD-97: one reconnect digest reconciling Task ids vs loop status (all live loops).
+    const digest = await formatSessionReconnectDigest(root).catch(() => null);
+    const parts = [digest, inbox].filter((s): s is string => Boolean(s && s.trim()));
+    if (parts.length === 0) {
       silent();
       return;
     }
-    process.stdout.write(JSON.stringify({ additional_context: inbox }) + "\n");
+    process.stdout.write(JSON.stringify({ additional_context: parts.join("\n\n") }) + "\n");
+    return;
+  }
+
+  if (!pr) {
+    silent();
     return;
   }
 

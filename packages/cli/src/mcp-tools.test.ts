@@ -69,6 +69,9 @@ test("tools catalog exposes core flywheel tools", () => {
     "steward_next",
     "run_ci",
     "abort_ci",
+    "mark_review_interrupted",
+    "resume_review",
+    "reconcile_session",
   ]) {
     assert.ok(names.has(required), `missing tool ${required}`);
   }
@@ -102,7 +105,12 @@ test("handleTool create/list/get/set_status/add_comment/get_diff", async () => {
   })) as LocalPr[];
   assert.ok(listed.some((p) => p.id === created.id));
 
-  await handleTool("set_status", { cwd: repo, id: created.id, status: "ready" });
+  await handleTool("set_status", {
+    cwd: repo,
+    id: created.id,
+    status: "ready",
+    ciSkipReason: "test",
+  });
   const got = (await handleTool("get_local_pr", { cwd: repo, id: created.id })) as LocalPr & {
     pendingComments: unknown[];
   };
@@ -134,7 +142,12 @@ test("handleTool claim_review is exclusive per HEAD", async () => {
     body: "Exercise claim_review.",
     base: "main",
   })) as LocalPr;
-  await handleTool("set_status", { cwd: repo, id: created.id, status: "ready" });
+  await handleTool("set_status", {
+    cwd: repo,
+    id: created.id,
+    status: "ready",
+    ciSkipReason: "test",
+  });
 
   const first = (await handleTool("claim_review", {
     cwd: repo,
@@ -177,7 +190,12 @@ test("handleTool list_local_prs status filter and complete_review path", async (
     base: "main",
   })) as LocalPr & { githubBind?: { bound?: boolean } };
   assert.equal(created.githubBind?.bound, true);
-  await handleTool("set_status", { cwd: repo, id: created.id, status: "ready" });
+  await handleTool("set_status", {
+    cwd: repo,
+    id: created.id,
+    status: "ready",
+    ciSkipReason: "test",
+  });
   // complete_review may refuse on drift; allowDrift covers the tool wiring.
   const done = (await handleTool("complete_review", {
     cwd: repo,

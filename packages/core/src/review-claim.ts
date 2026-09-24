@@ -72,7 +72,12 @@ async function pruneStale(cwd: string, state: ReviewClaimsState): Promise<Review
   const claims: Record<string, ReviewClaim> = {};
   for (const claim of Object.values(state.claims)) {
     const pr = byId.get(claim.id);
-    if (!pr || pr.status !== "ready" || pr.headSha !== claim.headSha) continue;
+    if (
+      !pr ||
+      (pr.status !== "ready" && pr.status !== "review_interrupted") ||
+      pr.headSha !== claim.headSha
+    )
+      continue;
     claims[reviewClaimKey(claim.id, claim.headSha)] = claim;
   }
   return { updatedAt: state.updatedAt, claims };
@@ -99,7 +104,7 @@ export async function claimReview(
   const file = claimsFile(await consoleDir(root));
   return withFileLock(file, async () => {
     const pr = await getLocalPr(root, id);
-    if (pr.status !== "ready") {
+    if (pr.status !== "ready" && pr.status !== "review_interrupted") {
       return {
         claimed: false,
         id: pr.id,

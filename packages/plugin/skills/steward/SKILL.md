@@ -74,6 +74,10 @@ Prompt on resume:
 
 Task a reviewer (`/review` leaf). One id only. Prompt stays **token-thin**: loop id + “follow `/review` and `skills/review/process-bar.md`” (plus `.prgenie/review.md` when present). Do **not** paste the process bar, Copilot, or `review-open-prs` skills into the Task. `claim_review` first if you want the exclusive HEAD lock. File findings, resolve fixed threads, **always `complete_review`**. Persist `reviewerTaskId` via `bind_steward`. Await this Task.
 
+On **auth / host failure** before complete: MCP `mark_review_interrupted` / `prgenie review-interrupted` (status `review_interrupted`). Resume with Task `resume` on the **same** `reviewerTaskId` (or `resume_review` / `prgenie review-resume` then resume) — **no re-brief**. `steward_next` on `review_interrupted` returns `resume_reviewer` when the Task id is still bound.
+
+On session reconnect: MCP `reconcile_session` / `prgenie reconcile` for a one-shot Task↔loop digest (RAD-97 / RAD-88 stuck-Task slice — not a full token-budget redesign).
+
 On `changes_requested` after complete, `steward_next` will resume the **same** implementor Task.
 
 ### `evaluate_export_gate`
