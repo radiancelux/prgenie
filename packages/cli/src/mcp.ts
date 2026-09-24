@@ -1011,7 +1011,7 @@ export const tools = [
   {
     name: "abort_ci",
     description:
-      "Cancel in-flight implementor preflight or export-gate CI for a loop. Same path as the loop panel Cancel (RAD-115): abortCiForSteward bumps the shared abort token under .git/agent-console/ci-abort and stops the in-process gate. This is the skip half — also stop/interrupt the returned implementorTaskId when stewardAction is stop_implementor_and_abort_ci; do not assume the panel alone kills the agent. Abort alone leaves the implementor Task looping. Returns { aborted, implementorTaskId, stewardAction, message }.",
+      "Cancel in-flight implementor preflight or export-gate CI for a loop. Same abort as the loop panel Cancel: bumps the shared abort token under .git/agent-console/ci-abort and stops the in-process gate. For a human/steward CI skip (RAD-112), this is one half of the skip: also stop/interrupt the returned implementorTaskId — abort alone leaves the implementor Task looping. Returns { aborted, implementorTaskId, stewardAction, message }.",
     inputSchema: {
       type: "object",
       required: ["id"],
