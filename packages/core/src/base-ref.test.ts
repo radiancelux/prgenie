@@ -7,13 +7,11 @@ import { after, describe, test } from "node:test";
 import {
   assertDeclaredBaseAligned,
   checkDeclaredBaseAlignment,
-  createLocalPr,
   exportPushArgs,
   exportUpstreamRef,
-  pruneLoopWorktrees,
-  setLocalPrStatus,
-} from "./index.js";
-import type { DeclaredBasePr } from "./base-ref.js";
+  type DeclaredBasePr,
+} from "./base-ref.js";
+import { createLocalPr, pruneLoopWorktrees, setLocalPrStatus } from "./index.js";
 
 /** Sequential: tests mutate a shared `repo` path via beforeEach-style helpers. */
 describe("RAD-94 declared baseRef", { concurrency: false }, () => {
