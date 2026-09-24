@@ -139,6 +139,46 @@ test("pinPluginMcpJson writes stdio + absolute node + absolute server (no BOM)",
   };
   assert.equal(win.mcpServers.prgenie.command, "cmd");
   assert.equal(win.mcpServers.prgenie.args[0], "/c");
+
+  const raised = pinPluginMcpJson(
+    JSON.stringify({
+      mcpServers: {
+        prgenie: {
+          command: "node",
+          args: ["${CURSOR_PLUGIN_ROOT}/mcp/server.cjs"],
+          timeout: 60,
+        },
+      },
+    }),
+    { pluginRoot, nodeCommand: process.execPath },
+  );
+  const raisedParsed = JSON.parse(raised) as {
+    mcpServers: { prgenie: { timeout?: number } };
+  };
+  assert.equal(
+    raisedParsed.mcpServers.prgenie.timeout,
+    1200,
+    "RAD-100: pin raises sub-1200 timeouts to the floor",
+  );
+
+  const keptHigh = pinPluginMcpJson(
+    JSON.stringify({
+      mcpServers: {
+        prgenie: {
+          command: "node",
+          args: ["${CURSOR_PLUGIN_ROOT}/mcp/server.cjs"],
+          timeout: 2400,
+        },
+      },
+    }),
+    { pluginRoot, nodeCommand: process.execPath },
+  );
+  assert.equal(
+    (JSON.parse(keptHigh) as { mcpServers: { prgenie: { timeout?: number } } }).mcpServers.prgenie
+      .timeout,
+    2400,
+    "RAD-100: explicit higher timeout still wins",
+  );
 });
 
 test("pin-plugin-mcp.mjs writes UTF-8 without BOM and pins execPath", async () => {

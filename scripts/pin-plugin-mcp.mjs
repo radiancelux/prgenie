@@ -38,14 +38,16 @@ const DEFAULT_TIMEOUT_SEC = 1200;
 const priorTimeout =
   typeof servers[name].timeout === "number" && Number.isFinite(servers[name].timeout)
     ? servers[name].timeout
-    : DEFAULT_TIMEOUT_SEC;
+    : undefined;
+// Floor at DEFAULT_TIMEOUT_SEC so short leftovers (e.g. 60) are raised; higher overrides win.
+const timeout = Math.max(priorTimeout ?? 0, DEFAULT_TIMEOUT_SEC);
 servers[name] = {
   ...servers[name],
   type: "stdio",
   command: useCmd ? "cmd" : nodeCommand,
   args: useCmd ? ["/c", nodeCommand, serverPath] : [serverPath],
   cwd: dest.split(path.sep).join("/"),
-  timeout: priorTimeout && priorTimeout > 0 ? priorTimeout : DEFAULT_TIMEOUT_SEC,
+  timeout,
 };
 cfg.mcpServers = servers;
 

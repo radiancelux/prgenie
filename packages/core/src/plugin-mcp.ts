@@ -133,14 +133,16 @@ export function pinPluginMcpJson(
   const priorTimeout =
     typeof servers[name].timeout === "number" && Number.isFinite(servers[name].timeout)
       ? servers[name].timeout
-      : MCP_SERVER_TIMEOUT_SEC;
+      : undefined;
+  // Floor at MCP_SERVER_TIMEOUT_SEC so short leftovers (e.g. 60) are raised; higher overrides win.
+  const timeout = Math.max(priorTimeout ?? 0, MCP_SERVER_TIMEOUT_SEC);
   servers[name] = {
     ...servers[name],
     type: "stdio",
     command: spawn.command,
     args: spawn.args,
     cwd: opts.pluginRoot.split(path.sep).join("/"),
-    timeout: priorTimeout && priorTimeout > 0 ? priorTimeout : MCP_SERVER_TIMEOUT_SEC,
+    timeout,
   };
   cfg.mcpServers = servers;
   return `${JSON.stringify(cfg, null, 2)}\n`;

@@ -81,6 +81,10 @@ test("startMcpProgressSession heartbeats and progress notifications", async () =
   });
   session.stop();
   assert.ok(messages.some((m) => /run_ci/.test(m)));
+  assert.ok(
+    messages.some((m) => /done/.test(m)),
+    "stop() must emit a final done tick while stopped is still false",
+  );
   assert.ok(methods.filter((m) => m === "notifications/progress").length >= 2);
 });
 

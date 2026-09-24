@@ -137,9 +137,10 @@ export function startMcpProgressSession(opts: {
     },
     stop: () => {
       if (stopped) return;
-      stopped = true;
       clearInterval(timer);
+      // Emit while stopped is still false so the final tick is not dropped (RAD-100 review).
       emit("done", ticks);
+      stopped = true;
     },
   };
 }
