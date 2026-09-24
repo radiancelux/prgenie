@@ -165,10 +165,22 @@ Doctor `corrupt-prs` lists unparsable files under `.git/agent-console/prs/`. Cor
 **Fix (already in product after rebuild + `pnpm link-plugin`):**
 
 1. Installed `mcp.json` pins `timeout: 1200` (seconds) for hosts that honor it.
-2. Heavy tools stream `notifications/message` heartbeats and `notifications/progress` when the client sends `_meta.progressToken` — so the session does not look dead.
+2. Heavy tools stream `notifications/message` heartbeats so the session does not look dead. `notifications/progress` is **off by default** (RAD-128) — set `PRGENIE_MCP_PROGRESS=1` only if a host is known to honor the token.
 3. MCP refuses a stale root full-suite `pnpm lint` / `test` / turbo plan (RAD-119) instead of blocking without progress.
 
 Default cwd stays with RAD-86 — pass `cwd` when the host lands in the wrong repo; do not re-solve cwd here.
+
+## MCP unknown progress token disconnect (RAD-128)
+
+**Symptoms:** Output → MCP Logs shows `Received a progress notification for an unknown token` then `connection:transport_error` / `conn=failed`. Later `createClient` stays `connected=false`. Often seen on heavy-tool `done` ticks or mid-`run_ci` after RAD-100.
+
+**Cause:** Cursor Shared MCP treats an unknown `progressToken` on `notifications/progress` as fatal (not ignore-and-continue). Message-channel heartbeats are fine; progress is not.
+
+**Fix:**
+
+1. Ship/use code that **does not** send `notifications/progress` by default (this ticket). Keep the 1200s timeout pin.
+2. Rebuild + `pnpm link-plugin`, then Customize → Plugins → PR Genie **off/on** (or reload the window) so the MCP process picks up the new server.
+3. Do **not** set `PRGENIE_MCP_PROGRESS=1` unless you have confirmed the host accepts the tokens.
 
 ## Windows CLI not on PATH
 
