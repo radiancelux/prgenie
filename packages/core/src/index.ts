@@ -17,6 +17,8 @@ export type {
   ExportGateStatus,
   PreflightIssue,
   PreflightResult,
+  ReadyCiOutcome,
+  ReadyCiRecord,
   WorktreeInfo,
 } from "./types.js";
 export { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
@@ -100,12 +102,15 @@ export {
   normalizeLocalPrSearchFields,
   markReviewRequested,
   markReviewerNotified,
+  markReviewInterrupted,
   normalizeComment,
   pendingReviewComments,
   refreshLocalPrHead,
   invalidateReviewedOnHeadMove,
+  recordLocalPrReadyCi,
   reopenLocalPr,
   resolveLocalPrComment,
+  resumeReview,
   resumeWatchForNextLoop,
   setLocalPrExportGate,
   setLocalPrStatus,
@@ -255,6 +260,25 @@ export {
 export type { HumanExportKind, HumanExportState, HumanExportUi } from "./export-gate.js";
 export { appendSession, formatSessionEvent, listSessions } from "./sessions.js";
 export type { ListSessionsOptions, SessionEvent } from "./sessions.js";
+export {
+  formatSessionReconnectDigest,
+  formatSessionReconcileDigest,
+  reconcileOneLoop,
+  reconcileSessionLoops,
+  rowForLoop,
+} from "./session-reconcile.js";
+export type { SessionReconcileRow } from "./session-reconcile.js";
+export {
+  assertReadyCiSatisfied,
+  formatCiSkipBody,
+  isReadyCiSatisfied,
+  normalizeReadyCi,
+  parseCiSkipReason,
+  readyCiBlockMessage,
+  readyCiFromRunnerResult,
+  readyCiFromSkipReason,
+  upsertReviewRequestedComment,
+} from "./ready-ci.js";
 export { generateLearningDigest, formatLearningDigest } from "./learning.js";
 export type { LearningSummary } from "./learning.js";
 export { consoleDir, parseJsonObject, writeJsonFile } from "./store.js";

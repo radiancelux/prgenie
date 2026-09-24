@@ -59,7 +59,7 @@ test("export validation blocks ready status with no review", async () => {
     body: "Waiting for review",
     base: "main",
   });
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
 
   const result = await validateExport(repo, pr.id);
   assert.equal(result.ok, false);
@@ -74,7 +74,7 @@ test("export validation blocks changes_requested with pending comments", async (
     body: "Has open comments",
     base: "main",
   });
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   await addLocalPrComment(repo, pr.id, "Please fix this bug", {
     role: "reviewer",
   });
@@ -92,7 +92,7 @@ test("export validation allows reviewed status", async () => {
     body: "All good",
     base: "main",
   });
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   await completeLocalPrReview(repo, pr.id, {
     body: "Looks good",
   });

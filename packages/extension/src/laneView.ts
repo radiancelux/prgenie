@@ -27,6 +27,7 @@ import {
   resolveLocalPrComment,
   sameFsPath,
   setLocalPrStatus,
+  resumeReview,
   shepherdStatus,
   updateLocalPr,
   exportLocalPr,
@@ -74,6 +75,7 @@ type Surface = "lane" | "panel";
 
 type ClientMessage =
   | { type: "ready" }
+  | { type: "resumeReview"; id: string }
   | { type: "refresh" }
   | { type: "create" }
   | { type: "attach" }
@@ -728,6 +730,13 @@ export class LaneHub implements vscode.Disposable {
           skipPreflight: msg.status === "ready" ? false : undefined,
         });
         await this.pushSnapshot();
+      } else if (msg.type === "resumeReview") {
+        if (await this.rejectIfArchived(cwd, msg.id)) return;
+        await resumeReview(cwd, msg.id);
+        await this.pushSnapshot();
+        void vscode.window.showInformationMessage(
+          "Review resumed — steward should resume the same reviewer Task (no re-brief).",
+        );
       } else if (msg.type === "export") {
         await this.exportLoop(cwd, msg.id);
       } else if (msg.type === "comment") {
@@ -1582,6 +1591,7 @@ function laneHtml(webview: vscode.Webview): string {
     const STATUS_PHASE = ${JSON.stringify({
       draft: statusPanelGuidanceForLoop("draft"),
       ready: statusPanelGuidanceForLoop("ready"),
+      review_interrupted: statusPanelGuidanceForLoop("review_interrupted"),
       changes_requested: statusPanelGuidanceForLoop("changes_requested"),
       approved: statusPanelGuidanceForLoop("approved"),
     })};
@@ -2159,6 +2169,10 @@ function panelHtml(webview: vscode.Webview): string {
       for (const btn of root.querySelectorAll("button[data-s]")) {
         btn.onclick = () => vscode.postMessage({ type: "status", id: selected.id, status: btn.getAttribute("data-s") });
       }
+      const resumeBtn = root.querySelector("#resumeReview");
+      if (resumeBtn) {
+        resumeBtn.onclick = () => vscode.postMessage({ type: "resumeReview", id: selected.id });
+      }
       root.querySelector("#openWt").onclick = () => vscode.postMessage({ type: "openFolder", id: selected.id });
       const openTerm = root.querySelector("#openTerminal");
       if (openTerm) openTerm.onclick = () => vscode.postMessage({ type: "openTerminal", id: selected.id });
@@ -2242,6 +2256,7 @@ function panelHtml(webview: vscode.Webview): string {
       const archived = selected.status === "approved";
       const reviewed = selected.status === "reviewed";
       const ready = selected.status === "ready";
+      const reviewInterrupted = selected.status === "review_interrupted";
       const exportUi = selected.humanExport || {};
       const yourTurn = !!exportUi.yourTurn;
       const exportBlocked = exportUi.kind === "blocked";
@@ -2333,14 +2348,19 @@ function panelHtml(webview: vscode.Webview): string {
       }
       const complete = root.querySelector("#completeReview");
       if (complete) {
-        complete.hidden = !ready;
-        complete.disabled = !ready;
-        complete.className = ready ? "secondary" : "secondary";
+        complete.hidden = !(ready || reviewInterrupted);
+        complete.disabled = !(ready || reviewInterrupted);
+        complete.className = ready || reviewInterrupted ? "secondary" : "secondary";
       }
       const markReady = root.querySelector("#markReady");
       if (markReady) {
-        markReady.hidden = archived || reviewed || ready;
+        markReady.hidden = archived || reviewed || ready || reviewInterrupted;
         markReady.disabled = archived;
+      }
+      const resumeReviewBtn = root.querySelector("#resumeReview");
+      if (resumeReviewBtn) {
+        resumeReviewBtn.hidden = !reviewInterrupted;
+        resumeReviewBtn.disabled = !reviewInterrupted;
       }
       const requestChanges = root.querySelector("#requestChanges");
       if (requestChanges) {
@@ -2494,6 +2514,7 @@ function panelHtml(webview: vscode.Webview): string {
           '<button class="secondary" id="completeReview">Complete review</button>',
           '<button class="secondary" id="openDiffs">Open diffs</button>',
           '<button class="secondary" id="markReady" data-s="ready">Mark ready</button>',
+          '<button class="secondary" id="resumeReview">Resume review</button>',
           '<button class="secondary" id="requestChanges" data-s="changes_requested">Request changes</button>',
           '<button class="secondary" id="archivePr" data-s="approved">Archive locally</button>',
           '<button class="secondary" id="copyReview">Copy review prompt</button>',

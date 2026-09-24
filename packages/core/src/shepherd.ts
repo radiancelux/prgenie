@@ -96,6 +96,11 @@ export async function shepherdStatus(
           check: "review",
           message: "Review not started (status is ready)",
         });
+      } else if (pr.status === "review_interrupted") {
+        reasons.push({
+          check: "review",
+          message: "Review interrupted (resume reviewer before export gate)",
+        });
       } else if (pr.status === "changes_requested") {
         reasons.push({
           check: "review",

@@ -192,7 +192,37 @@ export function decideStewardAction(
     };
   }
 
-  if (pr.status === "ready") {
+  if (pr.status === "ready" || pr.status === "review_interrupted") {
+    if (pr.status === "review_interrupted") {
+      if (resumeReviewer) {
+        return {
+          kind: "resume_reviewer",
+          loopId: pr.id,
+          implementorTaskId,
+          reviewerTaskId,
+          resumeSameImplementor: false,
+          humanExportable: false,
+          yourTurn: false,
+          failingCheck: null,
+          gateStatus: null,
+          reason:
+            "review_interrupted (auth/host). Resume the same reviewer Task — no re-brief. Or prgenie review-resume / MCP resume_review.",
+        };
+      }
+      return {
+        kind: "spawn_reviewer",
+        loopId: pr.id,
+        implementorTaskId,
+        reviewerTaskId: null,
+        resumeSameImplementor: false,
+        humanExportable: false,
+        yourTurn: false,
+        failingCheck: null,
+        gateStatus: null,
+        reason:
+          "review_interrupted and reviewer Task missing/failed. Spawn a reviewer Task (thin packet) and persist reviewerTaskId.",
+      };
+    }
     if (resumeReviewer) {
       return {
         kind: "resume_reviewer",

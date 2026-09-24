@@ -9,6 +9,7 @@ export type StatusPanelPhase =
   | "idle"
   | "draft"
   | "ready"
+  | "review_interrupted"
   | "changes_requested"
   | "reviewed_pending"
   | "reviewed_hint"
@@ -49,6 +50,11 @@ export function statusPanelGuidanceForLoop(
       return {
         badge: "READY",
         body: "Ready for review. Waiting on the reviewer — STATUS is not an export gate yet.",
+      };
+    case "review_interrupted":
+      return {
+        badge: "REVIEW INTERRUPTED",
+        body: "Reviewer Task interrupted (auth/host). Resume the same Task — prgenie review-resume / MCP resume_review — no re-brief.",
       };
     case "changes_requested":
       return {

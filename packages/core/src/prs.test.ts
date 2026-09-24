@@ -139,7 +139,7 @@ test("creates, lists, and approves a local PR", async () => {
 
 test("comments move ready PRs back to changes_requested", async () => {
   const pr = await createLocalPr(repo, { title: "Second", base: "main" });
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   const commented = await addLocalPrComment(repo, pr.id, "Please rename the file.");
   assert.equal(commented.status, "changes_requested");
   assert.equal(commented.comments.length, 1);
@@ -151,7 +151,7 @@ test("comments move ready PRs back to changes_requested", async () => {
 
 test("reviewer comments stay on ready until complete_review", async () => {
   const pr = await createLocalPr(repo, { title: "Roles", base: "main" });
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   const filed = await addLocalPrComment(repo, pr.id, "Missing tests.", {
     role: "reviewer",
     author: "review-agent",
@@ -191,7 +191,7 @@ test("reviewer comments stay on ready until complete_review", async () => {
 
 test("address_comment marks a finding addressed; reviewer resolve can hand off to human", async () => {
   const pr = await createLocalPr(repo, { title: "Resolve", base: "main" });
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   const first = await addLocalPrComment(repo, pr.id, "Missing tests.", {
     role: "reviewer",
     author: "review-agent",
@@ -239,7 +239,7 @@ test("address_comment marks a finding addressed; reviewer resolve can hand off t
 
 test("complete_review with no findings clears review for the export gate", async () => {
   const pr = await createLocalPr(repo, { title: "Clean", base: "main" });
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   const done = await completeLocalPrReview(repo, pr.id, { body: "LGTM" });
   assert.equal(done.status, "reviewed");
   assert.match(done.comments[0].body, /LGTM/);
@@ -248,7 +248,7 @@ test("complete_review with no findings clears review for the export gate", async
 
 test("complete_review default copy is review-cleared, not ready-for-human", async () => {
   const pr = await createLocalPr(repo, { title: "Default copy", base: "main" });
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   const done = await completeLocalPrReview(repo, pr.id);
   assert.equal(done.status, "reviewed");
   assert.match(done.comments[0].body, /Review cleared\. Steward will run the export gate/);
@@ -257,7 +257,7 @@ test("complete_review default copy is review-cleared, not ready-for-human", asyn
 
 test("complete_review with findings hands the loop to the implementor", async () => {
   const pr = await createLocalPr(repo, { title: "Batch", base: "main" });
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   await addLocalPrComment(repo, pr.id, "Missing tests.", { role: "reviewer" });
   assert.equal((await getLocalPr(repo, pr.id)).status, "ready");
   const done = await completeLocalPrReview(repo, pr.id);
@@ -268,7 +268,7 @@ test("complete_review with findings hands the loop to the implementor", async ()
 
 test("addressing the last open finding sets ready for the next review", async () => {
   const pr = await createLocalPr(repo, { title: "Handoff", base: "main" });
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   const filed = await addLocalPrComment(repo, pr.id, "Missing tests.", { role: "reviewer" });
   await completeLocalPrReview(repo, pr.id);
   const first = await addressLocalPrComment(repo, pr.id, filed.comments[0].id, "Added tests.");
@@ -283,11 +283,11 @@ test("addressing the last open finding sets ready for the next review", async ()
 
 test("resolve_comment on ready does not finish the review", async () => {
   const pr = await createLocalPr(repo, { title: "Stay ready", base: "main" });
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   const filed = await addLocalPrComment(repo, pr.id, "Missing tests.", { role: "reviewer" });
   await completeLocalPrReview(repo, pr.id);
   await addressLocalPrComment(repo, pr.id, filed.comments[0].id, "Added tests.");
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   const verified = await resolveLocalPrComment(
     repo,
     pr.id,
@@ -302,12 +302,12 @@ test("resolve_comment on ready does not finish the review", async () => {
 test("findLocalPrForCurrentWorktree does not grab another loop's inbox", async () => {
   git(["checkout", "feat/widget"]);
   const here = await createLocalPr(repo, { title: "This checkout", base: "main" });
-  await setLocalPrStatus(repo, here.id, "ready");
+  await setLocalPrStatus(repo, here.id, "ready", { ciSkipReason: "test" });
   assert.equal(here.headRef, "feat/widget");
   assert.ok(here.worktreePath);
   git(["checkout", "-b", "feat/other-inbox"]);
   const other = await createLocalPr(repo, { title: "Other inbox", base: "main" });
-  await setLocalPrStatus(repo, other.id, "ready");
+  await setLocalPrStatus(repo, other.id, "ready", { ciSkipReason: "test" });
   await addLocalPrComment(repo, other.id, "Fix other.", { role: "reviewer" });
   await completeLocalPrReview(repo, other.id);
   assert.equal((await getLocalPr(repo, other.id)).status, "changes_requested");
@@ -332,7 +332,7 @@ test("parallel reviewer comments both survive", async () => {
 test("status write overlapping a comment keeps the finding", async () => {
   const pr = await createLocalPr(repo, { title: "Status lock", base: "main" });
   await Promise.all([
-    setLocalPrStatus(repo, pr.id, "ready"),
+    setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" }),
     addLocalPrComment(repo, pr.id, "Do not drop this.", { role: "reviewer" }),
   ]);
   const fresh = await getLocalPr(repo, pr.id);
@@ -382,7 +382,7 @@ test("captureAgentWork creates then updates a loop for the same branch", async (
 
 test("reviewer Task is requested once per loop HEAD", async () => {
   const pr = await createLocalPr(repo, { title: "Spawn", base: "main" });
-  const ready = await setLocalPrStatus(repo, pr.id, "ready");
+  const ready = await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   // Drift baseline is armed; spawn notify is still pending for this HEAD.
   assert.equal(ready.reviewRequestedSha, ready.headSha);
   assert.equal(ready.reviewerNotifiedSha, null);
@@ -808,7 +808,7 @@ test("a missing export id is treated as shipped when creating the next loop", as
 test("ready handoff arms reviewRequestedSha for the drift guard", async () => {
   git(["checkout", "main"]);
   const pr = await createLocalPr(repo, { title: "Arm baseline", base: "main" });
-  const ready = await setLocalPrStatus(repo, pr.id, "ready");
+  const ready = await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   assert.equal(ready.reviewRequestedSha, ready.headSha);
   assert.ok(ready.reviewRequestedSha);
 
@@ -824,7 +824,7 @@ test("complete_review refuses when HEAD moved after Review requested", async () 
   git(["checkout", "main"]);
   const pr = await createLocalPr(repo, { title: "Drift guard", base: "main" });
   assert.ok(pr.worktreePath);
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   const marked = await markReviewRequested(repo, pr.id);
   await writeFile(path.join(pr.worktreePath, "drift.txt"), "moved\n");
   git(["add", "drift.txt"], pr.worktreePath);
@@ -842,7 +842,7 @@ test("complete_review refuses when HEAD moved after Review requested", async () 
 test("reviewer finding on reviewed flips to changes_requested", async () => {
   git(["checkout", "main"]);
   const pr = await createLocalPr(repo, { title: "Late finding", base: "main" });
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   await completeLocalPrReview(repo, pr.id);
   assert.equal((await getLocalPr(repo, pr.id)).status, "reviewed");
   const after = await addLocalPrComment(repo, pr.id, "Missed this.", { role: "reviewer" });
@@ -858,7 +858,7 @@ test("getLocalPrDiff supports paths filter", async () => {
   await writeFile(path.join(pr.worktreePath, "b.txt"), "b\n");
   git(["add", "a.txt", "b.txt"], pr.worktreePath);
   git(["commit", "-m", "two files"], pr.worktreePath);
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   const onlyA = await getLocalPrDiff(repo, pr.id, { paths: ["a.txt"] });
   assert.match(onlyA, /a\.txt/);
   assert.doesNotMatch(onlyA, /b\.txt/);

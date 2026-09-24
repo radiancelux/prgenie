@@ -41,6 +41,10 @@ import {
   resolveLocalPrComment,
   runDoctor,
   setLocalPrStatus,
+  markReviewInterrupted,
+  resumeReview,
+  formatSessionReconnectDigest,
+  reconcileOneLoop,
   updateLocalPr,
   createProgressCardSink,
   evaluateAndStoreExportGate,
@@ -84,7 +88,10 @@ Usage:
   prgenie delete <id> [--yes]
   prgenie reopen <id>
   prgenie approve <id>
-  prgenie ready <id>
+  prgenie ready <id> [--ci-skip <reason>]
+  prgenie review-interrupted <id> [--reason <text>]
+  prgenie review-resume <id>
+  prgenie reconcile [id]
   prgenie request-changes <id> [-m <message>]
   prgenie comment <id> -m <message> [--role human|agent|reviewer] [--author <name>] [--path <file>] [--line <n>] [--side left|right] [--reply-to <commentId>] [--body-file <path>]
   prgenie address <id> <commentId> -m <message>
@@ -92,7 +99,7 @@ Usage:
   prgenie edit-comment <id> <commentId> -m <message>
   prgenie delete-comment <id> <commentId> [--yes]
   prgenie complete-review <id> [-m <message>] [--force]
-  prgenie status <id> <draft|ready|changes_requested|reviewed|approved>
+  prgenie status <id> <draft|ready|review_interrupted|changes_requested|reviewed|approved>
   prgenie worktrees
   prgenie worktree <id>
   prgenie learnings [--disabled] [--category <name>]
@@ -581,6 +588,19 @@ export async function run(argv: string[]): Promise<number> {
     process.stdout.write(`${formatClaimReview(result)}\n`);
     return 0;
   }
+  if (sub === "reconcile") {
+    const targetId = rest[0];
+    if (targetId) {
+      const row = await reconcileOneLoop(repo, targetId);
+      process.stdout.write(
+        `${row.loopId}  ${row.status}  impl=${row.implementorTaskId ?? "-"}  rev=${row.reviewerTaskId ?? "-"}\n  → ${row.hint.replace("{id}", row.loopId)}\n`,
+      );
+      return 0;
+    }
+    const digest = await formatSessionReconnectDigest(repo);
+    process.stdout.write((digest ?? "PR Genie session reconcile: no live loops.") + "\n");
+    return 0;
+  }
   const id = rest[0];
   if (!id) {
     process.stderr.write("Missing local PR id.\n");
@@ -744,8 +764,29 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (sub === "ready") {
-    printPr(await setLocalPrStatus(repo, id, "ready"));
+    const ciSkip = arg(rest, "--ci-skip") ?? arg(rest, "--ci-skip-reason");
+    printPr(
+      await setLocalPrStatus(repo, id, "ready", {
+        ciSkipReason: ciSkip,
+      }),
+    );
     await printGithubBind(repo);
+    return 0;
+  }
+  if (sub === "review-interrupted") {
+    printPr(
+      await markReviewInterrupted(repo, id, {
+        reason: arg(rest, "--reason") ?? messageArg(rest),
+      }),
+    );
+    return 0;
+  }
+  if (sub === "review-resume") {
+    printPr(await resumeReview(repo, id));
+    const row = await reconcileOneLoop(repo, id);
+    process.stdout.write(
+      `  resume: implementor=${row.implementorTaskId ?? "-"}  reviewer=${row.reviewerTaskId ?? "-"}\n  → ${row.hint.replace("{id}", id)}\n`,
+    );
     return 0;
   }
   if (sub === "request-changes") {

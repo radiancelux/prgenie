@@ -112,7 +112,7 @@ test("attached PR goes through full export validation workflow", async () => {
   assert.match(draftIssue, /draft/);
 
   // Move to ready
-  await setLocalPrStatus(repo, pr.id, "ready");
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
 
   // Should still block without complete review
   result = await validateExport(repo, pr.id);
@@ -159,7 +159,7 @@ test("attached PR is blocked by Learn #18 preflight patterns", async () => {
     source: "feat/with-todo",
     title: "Work in progress",
   });
-  await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true });
+  await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true, ciSkipReason: "test" });
   await completeLocalPrReview(repo, pr.id);
 
   // Export validation should catch the pattern
