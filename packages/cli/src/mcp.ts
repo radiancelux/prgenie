@@ -27,6 +27,7 @@ import {
   getLocalPrNameStatus,
   getRepoGithubBind,
   describeRepoGithubBind,
+  requireGithubBindForReviewed,
   getRepoWatch,
   LISTEN_REMOVED_MESSAGE,
   listGhAccounts,
@@ -208,7 +209,11 @@ export async function handleTool(
       return { ...withCommentViews(pr), githubBind };
     }
     case "set_status": {
-      const pr = await setLocalPrStatus(cwd, String(args.id ?? ""), args.status as LocalPrStatus, {
+      const status = args.status as LocalPrStatus;
+      if (status === "reviewed") {
+        await requireGithubBindForReviewed(cwd);
+      }
+      const pr = await setLocalPrStatus(cwd, String(args.id ?? ""), status, {
         skipPreflight: typeof args.skipPreflight === "boolean" ? args.skipPreflight : undefined,
       });
       const githubBind = await describeRepoGithubBind(cwd);
@@ -255,6 +260,12 @@ export async function handleTool(
     case "delete_comment":
       return deleteLocalPrComment(cwd, String(args.id ?? ""), String(args.commentId ?? ""));
     case "complete_review": {
+      // Probe pending findings first so changes_requested path does not require bind.
+      const before = await refreshLocalPrHead(cwd, String(args.id ?? ""));
+      const openFindings = pendingReviewComments(before);
+      if (openFindings.length === 0 && !isArchivedPr(before)) {
+        await requireGithubBindForReviewed(cwd);
+      }
       const done = await completeLocalPrReview(cwd, String(args.id ?? ""), {
         author: typeof args.author === "string" ? args.author : undefined,
         body: typeof args.body === "string" ? args.body : undefined,

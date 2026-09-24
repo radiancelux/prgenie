@@ -477,16 +477,10 @@ test("prune clears orphan leftover directory after git link is gone (RAD-95)", a
   assert.equal(existsSync(pr.worktreePath), false);
 });
 
-test("setLocalPrStatus reviewed requires gh bind (RAD-95)", async () => {
+test("requireGithubBindForReviewed refuses unbound repos (RAD-95)", async () => {
   git(["checkout", "main"]);
-  const pr = await createLocalPr(repo, {
-    title: "Need bind",
-    base: "main",
-    head: "feat/widget",
-  });
-  await assert.rejects(() => setLocalPrStatus(repo, pr.id, "reviewed"), /unbound|gh use/i);
-  await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
-  assert.equal((await getLocalPr(repo, pr.id)).status, "reviewed");
+  const { requireGithubBindForReviewed } = await import("./github-ops.js");
+  await assert.rejects(() => requireGithubBindForReviewed(repo), /unbound|gh use/i);
 });
 
 test("pruneArchivedLoopWorktree never removes the primary checkout", async () => {
@@ -1033,7 +1027,7 @@ test("RAD-126: refreshLocalPrHead invalidates reviewed when tip moves", async ()
   git(["add", "."]);
   git(["commit", "-m", "inv126 one"]);
   const pr = await createLocalPr(repo, { title: "RAD-126 invalidate", base: "main" });
-  await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
+  await setLocalPrStatus(repo, pr.id, "reviewed");
   await setLocalPrExportGate(repo, pr.id, {
     status: "ready",
     reasons: [],

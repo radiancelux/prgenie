@@ -53,7 +53,7 @@ export async function archiveLoopsMergedOnGithub(
       continue;
     }
     if (state !== "MERGED") continue;
-    await setLocalPrStatus(cwd, pr.id, "approved", { skipBindCheck: true });
+    await setLocalPrStatus(cwd, pr.id, "approved");
     const archived = await getLocalPr(cwd, pr.id);
     await releaseArchivedLoop(cwd, archived);
     ids.push(pr.id);
@@ -220,7 +220,7 @@ export async function exportLocalPr(
     });
 
     if (pr.status !== "approved") {
-      await setLocalPrStatus(cwd, pr.id, "approved", { skipBindCheck: true });
+      await setLocalPrStatus(cwd, pr.id, "approved");
     }
     const archived = await getLocalPr(cwd, pr.id);
     const released = await releaseArchivedLoop(cwd, archived);

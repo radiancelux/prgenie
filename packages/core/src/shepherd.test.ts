@@ -64,7 +64,7 @@ describe("shepherdStatus", () => {
       });
 
       // Mark as reviewed (simulating complete review)
-      await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
 
       // Skip GitHub check and CI check for testing (no gh CLI / CI env in test)
       const result = await shepherdStatus(repo, pr.id, {
@@ -176,7 +176,7 @@ describe("shepherdStatus", () => {
         head: "feature",
       });
 
-      await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
 
       const result = await shepherdStatus(repo, pr.id);
 
@@ -207,7 +207,7 @@ describe("shepherdStatus", () => {
         head: "feature",
       });
 
-      await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
 
       const result = await shepherdStatus(repo, pr.id);
 
@@ -300,7 +300,7 @@ describe("shepherdStatus", () => {
         }),
       );
 
-      await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
 
       // Skip github check but allow CI check to run (exit-script fixture — no real bins).
       // Force the root plan: selectCiChecks would skip this fixture diff (RAD-119).
@@ -359,7 +359,7 @@ describe("shepherdStatus", () => {
         }),
       );
 
-      await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
 
       const result = await shepherdStatus(repo, pr.id, {
         skipGithubCheck: true,
@@ -413,7 +413,7 @@ describe("shepherdStatus", () => {
         }),
       );
 
-      await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
 
       const result = await shepherdStatus(repo, pr.id, {
         skipGithubCheck: true,
@@ -458,7 +458,7 @@ describe("shepherdStatus", () => {
         }),
       );
 
-      await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
 
       const cheap = await shepherdStatus(repo, pr.id, {
         skipGithubCheck: true,
@@ -499,7 +499,7 @@ describe("shepherdStatus", () => {
       });
       assert.ok(pr.worktreePath);
       // No node_modules on primary or worktree — ensure reports env unhealthy.
-      await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
 
       const soft = await shepherdStatus(repo, pr.id, { skipGithubCheck: true });
       assert.equal(soft.status, "ready", "env unhealthy alone must not hard-block");
@@ -546,7 +546,7 @@ describe("shepherdStatus", () => {
           },
         }),
       );
-      await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
       const events: ProgressEvent[] = [];
       const result = await shepherdStatus(repo, pr.id, {
         skipGithubCheck: true,
@@ -605,7 +605,7 @@ describe("shepherdStatus", () => {
           },
         }),
       );
-      await setLocalPrStatus(repo, pr.id, "reviewed", { skipBindCheck: true });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
       const events: ProgressEvent[] = [];
       const result = await shepherdStatus(repo, pr.id, {
         skipGithubCheck: true,

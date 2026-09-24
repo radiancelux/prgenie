@@ -25,6 +25,7 @@ import {
   refreshLocalPrHead,
   getRepoGithubBind,
   describeRepoGithubBind,
+  requireGithubBindForReviewed,
   getRepoWatch,
   formatWatchLane,
   formatWatchStatus,
@@ -823,6 +824,10 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "complete-review") {
     try {
+      const before = await refreshLocalPrHead(repo, id);
+      if (pendingReviewComments(before).length === 0 && !isArchivedPr(before)) {
+        await requireGithubBindForReviewed(repo);
+      }
       const done = await completeLocalPrReview(repo, id, {
         body: messageArg(rest),
         allowDrift: flag(rest, "--force") || flag(rest, "--allow-drift"),
@@ -843,7 +848,11 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "status") {
     const status = rest[1] as LocalPrStatus;
+    if (status === "reviewed") {
+      await requireGithubBindForReviewed(repo);
+    }
     printPr(await setLocalPrStatus(repo, id, status));
+    await printGithubBind(repo);
     return 0;
   }
   if (sub === "disable-learning") {
