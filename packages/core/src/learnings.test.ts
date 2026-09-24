@@ -127,7 +127,10 @@ test("preflight check blocks ready when pattern matches", async () => {
       body: "This contains the forbidden pattern",
     });
 
-    await assert.rejects(async () => setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" }), /Preflight failed/);
+    await assert.rejects(
+      async () => setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" }),
+      /Preflight failed/,
+    );
 
     await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true, ciSkipReason: "test" });
     assert.equal(pr.status, "draft");
