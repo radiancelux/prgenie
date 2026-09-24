@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
+import { consoleDir } from "@prgenie/core";
 import { handleTool, tools } from "./mcp.js";
 import type { LocalPr } from "@prgenie/core";
 
@@ -32,6 +33,13 @@ before(async () => {
   await writeFile(path.join(repo, "tool.txt"), "v1\n");
   git(["add", "."]);
   git(["commit", "-m", "add tool"]);
+  // RAD-95: MCP complete_review ? reviewed requires a repo bind file.
+  const bindDir = await consoleDir(repo);
+  await mkdir(bindDir, { recursive: true });
+  await writeFile(
+    path.join(bindDir, "github.json"),
+    JSON.stringify({ host: "github.com", login: "test-user" }),
+  );
 });
 
 after(async () => {
@@ -167,17 +175,18 @@ test("handleTool list_local_prs status filter and complete_review path", async (
     title: "Ready for complete_review",
     body: "No findings.",
     base: "main",
-  })) as LocalPr;
+  })) as LocalPr & { githubBind?: { bound?: boolean } };
+  assert.equal(created.githubBind?.bound, true);
   await handleTool("set_status", { cwd: repo, id: created.id, status: "ready" });
-  // Seed reviewRequestedSha via add_comment agent Review requested pattern isn't required —
   // complete_review may refuse on drift; allowDrift covers the tool wiring.
   const done = (await handleTool("complete_review", {
     cwd: repo,
     id: created.id,
     body: "LGTM",
     allowDrift: true,
-  })) as LocalPr & { headDrift?: boolean };
+  })) as LocalPr & { headDrift?: boolean; githubBind?: { bound?: boolean } };
   assert.equal(done.status, "reviewed");
+  assert.equal(done.githubBind?.bound, true);
 
   const readyOnly = (await handleTool("list_local_prs", {
     cwd: repo,
