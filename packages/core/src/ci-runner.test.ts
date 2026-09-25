@@ -8,6 +8,9 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { abortExportGate } from "./export-validation.js";
 import {
+  CI_CHECK_TIMEOUT_MS,
+  CI_PACKAGE_TEST_TIMEOUT_MS,
+  resolveCiCheckTimeout,
   resolvePrettierFromCwd,
   resolveFormatCheckFiles,
   runCiChecks,
@@ -738,6 +741,14 @@ describe("runCiChecks", () => {
 
   // Cross-platform delay for package.json scripts (Windows has no `sleep`).
   const nodeSleep = (ms: number) => `node -e "setTimeout(() => process.exit(0), ${ms})"`;
+
+  it("RAD-133: package test checks use a longer default timeout than lint", () => {
+    assert.equal(resolveCiCheckTimeout("format:check"), CI_CHECK_TIMEOUT_MS);
+    assert.equal(resolveCiCheckTimeout("lint:core"), CI_CHECK_TIMEOUT_MS);
+    assert.equal(resolveCiCheckTimeout("test"), CI_PACKAGE_TEST_TIMEOUT_MS);
+    assert.equal(resolveCiCheckTimeout("test:core"), CI_PACKAGE_TEST_TIMEOUT_MS);
+    assert.equal(resolveCiCheckTimeout("test:core", 5000), 5000);
+  });
 
   // RAD-46: Verify timeout configuration works
   it("RAD-46: timeout configuration is respected", async () => {
