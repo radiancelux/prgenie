@@ -8,15 +8,15 @@
  */
 
 import type { ProgressEvent } from "@prgenie/core";
-import { formatProgressLine, looksLikeStaleFullSuitePlan } from "@prgenie/core";
+import {
+  formatProgressLine,
+  looksLikeStaleFullSuitePlan,
+  MCP_SERVER_TIMEOUT_SEC,
+} from "@prgenie/core";
 
 type Json = Record<string, unknown>;
 
-/**
- * Cursor/community mcp.json timeout field (seconds). Match CI default wall (~20m).
- * Keep in sync with `MCP_SERVER_TIMEOUT_SEC` in `@prgenie/core` (`plugin-mcp.ts`).
- */
-export const MCP_SERVER_TIMEOUT_SEC = 1_200;
+export { MCP_SERVER_TIMEOUT_SEC };
 
 /** Heartbeat cadence while a heavy tool has not yet returned (ms). */
 export const MCP_HEARTBEAT_INTERVAL_MS = 15_000;

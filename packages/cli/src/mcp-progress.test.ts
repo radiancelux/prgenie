@@ -28,7 +28,7 @@ test("RAD-100: heavy tools include the five timeout offenders + CI siblings", ()
   }
   assert.equal(isMcpHeavyTool("add_comment"), false);
   assert.ok(MCP_HEAVY_TOOLS.size >= 5);
-  assert.equal(MCP_SERVER_TIMEOUT_SEC, 1200);
+  assert.equal(MCP_SERVER_TIMEOUT_SEC, 2400);
   assert.ok(MCP_HEARTBEAT_INTERVAL_MS >= 5_000);
   assert.equal(RECOMMENDED_MAX_PARALLEL_IMPLEMENTOR_TASKS, 2);
 });

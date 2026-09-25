@@ -26,6 +26,10 @@ import { git } from "./git.js";
 /** Bump when the seeded template layout changes (invalidates process-local templates). */
 export const FIXTURE_TEMPLATE_SCHEMA = 1;
 
+/** Local identity on every clone (matches legacy per-test `git init` helpers). */
+export const FIXTURE_USER_EMAIL = "test@example.com";
+export const FIXTURE_USER_NAME = "Test User";
+
 const SCHEMA_FILE = ".prgenie-git-fixture-schema";
 
 export type GitFixtureTemplateId = "basic" | "loop-ci";
@@ -104,8 +108,8 @@ async function buildTemplate(id: GitFixtureTemplateId): Promise<string> {
   );
   await mkdir(dir, { recursive: true });
   await git(dir, ["init", "-b", "main"]);
-  await git(dir, ["config", "user.email", "test@example.com"]);
-  await git(dir, ["config", "user.name", "Test User"]);
+  await git(dir, ["config", "user.email", FIXTURE_USER_EMAIL]);
+  await git(dir, ["config", "user.name", FIXTURE_USER_NAME]);
   await writeFile(join(dir, SCHEMA_FILE), String(FIXTURE_TEMPLATE_SCHEMA));
   await spec.seed(dir);
   await git(dir, ["add", "."]);
@@ -125,13 +129,21 @@ export async function ensureGitFixtureTemplate(id: GitFixtureTemplateId): Promis
   return built;
 }
 
+async function finalizeClone(dest: string): Promise<void> {
+  await git(dest, ["reset", "--hard", "HEAD"]);
+  await git(dest, ["clean", "-fd"]);
+  await git(dest, ["config", "user.email", FIXTURE_USER_EMAIL]);
+  await git(dest, ["config", "user.name", FIXTURE_USER_NAME]);
+  await git(dest, ["remote", "remove", "origin"], { allowFail: true });
+  await git(dest, ["branch", "--unset-upstream", "main"], { allowFail: true });
+}
+
 async function cloneFromTemplate(templatePath: string, dest: string): Promise<void> {
   const parent = dirname(dest);
   const name = basename(dest);
   await rm(dest, { recursive: true, force: true }).catch(() => undefined);
   await git(parent, ["clone", templatePath, name]);
-  await git(dest, ["reset", "--hard", "HEAD"]);
-  await git(dest, ["clean", "-fd"]);
+  await finalizeClone(dest);
 }
 
 /**
@@ -148,11 +160,13 @@ export async function createTempGitRepo(options: CreateTempGitRepoOptions = {}):
       const templatePath = await ensureGitFixtureTemplate(templateId);
       await cloneFromTemplate(templatePath, dest);
       return dest;
-    } catch {
+    } catch (err) {
       await invalidateTemplate(templateId);
       if (attempt === 1) {
+        const detail = err instanceof Error ? err.message : String(err);
         throw new Error(
-          `createTempGitRepo: failed to clone template "${templateId}" after rebuild`,
+          `createTempGitRepo: failed to clone template "${templateId}" after rebuild: ${detail}`,
+          { cause: err },
         );
       }
     }

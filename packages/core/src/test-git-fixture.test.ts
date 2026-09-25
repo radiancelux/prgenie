@@ -5,6 +5,8 @@ import { describe, it } from "node:test";
 import { git } from "./git.js";
 import {
   FIXTURE_TEMPLATE_SCHEMA,
+  FIXTURE_USER_EMAIL,
+  FIXTURE_USER_NAME,
   clearGitFixtureTemplatesForTest,
   createTempGitRepo,
   ensureGitFixtureTemplate,
@@ -30,6 +32,30 @@ describe("test-git-fixture", () => {
       }
     } finally {
       await rm(first, { recursive: true, force: true });
+    }
+  });
+
+  it("clone is init-equivalent: local identity, no origin, commits succeed", async () => {
+    clearGitFixtureTemplatesForTest();
+    const repo = await createTempGitRepo({ prefix: "prgenie-fixture-ident-" });
+    try {
+      const email = await git(repo, ["config", "user.email"]);
+      const name = await git(repo, ["config", "user.name"]);
+      assert.equal(email.stdout.trim(), FIXTURE_USER_EMAIL);
+      assert.equal(name.stdout.trim(), FIXTURE_USER_NAME);
+      const remotes = await git(repo, ["remote"], { allowFail: true });
+      assert.equal(remotes.stdout.trim(), "");
+      const upstream = await git(repo, ["config", "--get", "branch.main.remote"], {
+        allowFail: true,
+      });
+      assert.notEqual(upstream.code, 0, "branch.main should not track a remote");
+      await writeFile(join(repo, "probe.txt"), "x\n");
+      await git(repo, ["add", "probe.txt"]);
+      await git(repo, ["commit", "-m", "probe"]);
+      const log = await git(repo, ["log", "-1", "--format=%ae %an"]);
+      assert.equal(log.stdout.trim(), `${FIXTURE_USER_EMAIL} ${FIXTURE_USER_NAME}`);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
     }
   });
 
