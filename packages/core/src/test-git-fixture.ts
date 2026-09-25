@@ -151,7 +151,9 @@ export async function createTempGitRepo(options: CreateTempGitRepoOptions = {}):
     } catch {
       await invalidateTemplate(templateId);
       if (attempt === 1) {
-        throw new Error(`createTempGitRepo: failed to clone template "${templateId}" after rebuild`);
+        throw new Error(
+          `createTempGitRepo: failed to clone template "${templateId}" after rebuild`,
+        );
       }
     }
   }
