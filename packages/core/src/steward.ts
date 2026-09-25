@@ -548,6 +548,9 @@ export async function stewardNext(
     implementorTaskId: options.implementorTaskId,
     reviewerTaskId: options.reviewerTaskId,
   });
+  // bindSteward may record implementorTier on disk — refresh before decideStewardAction.
+  pr = await getLocalPr(root, pr.id);
+  syncReviewRoundCount(pr);
 
   if (pr.status === "reviewed" && options.evaluateGate !== false && needsExportGateEvaluation(pr)) {
     await evaluateAndStoreExportGate(root, pr.id, {

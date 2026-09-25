@@ -376,11 +376,12 @@ test("RAD-89: stewardNext spawns strong after two failed AC rounds on same Task 
   assert.equal(next.decision.implementorSubagentType, "prgenie-implementor-strong");
   assert.match(next.decision.reason, /same AC still open/i);
 
-  await bindSteward(repo, pr.id, { implementorTaskId: "task-strong-ac" });
-  const afterBump = await getLocalPr(repo, pr.id);
-  assert.equal(afterBump.implementorTier, "strong");
-
-  next = await stewardNext(repo, pr.id, { evaluateGate: false });
+  // Persist strong Task id via steward_next (same call path as /steward) — must resume, not twin-spawn.
+  next = await stewardNext(repo, pr.id, {
+    evaluateGate: false,
+    implementorTaskId: "task-strong-ac",
+  });
+  assert.equal((await getLocalPr(repo, pr.id)).implementorTier, "strong");
   assert.equal(next.decision.kind, "resume_implementor");
   assert.equal(next.binding.implementorTaskId, "task-strong-ac");
   assert.equal(next.decision.resumeSameImplementor, true);
