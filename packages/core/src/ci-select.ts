@@ -44,6 +44,7 @@ export interface CiCheckSelection {
  */
 export const CORE_PACKAGE_GLOB_MODULES = new Set([
   "git",
+  "test-git-fixture",
   "prs",
   "store",
   "steward",

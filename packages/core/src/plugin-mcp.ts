@@ -1,14 +1,16 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { CI_PACKAGE_TEST_TIMEOUT_MS } from "./ci-runner.js";
 
 export const PRGENIE_MCP_NAME = "prgenie";
 
 /**
  * Per-server `timeout` for mcp.json (seconds). Hosts that honor it (Cursor
- * community field) should allow git+CI tools up to the CI wall (~20m) instead
- * of dying at the default ~30–60s with `-32001 Request timed out` (RAD-100).
+ * community field) should allow git+CI tools up to the package-test CI wall
+ * (~40m for `test:core` globs on Windows, RAD-133) instead of dying with
+ * `-32001 Request timed out` (RAD-100).
  */
-export const MCP_SERVER_TIMEOUT_SEC = 1_200;
+export const MCP_SERVER_TIMEOUT_SEC = CI_PACKAGE_TEST_TIMEOUT_MS / 1000;
 
 export type McpServerEntry = {
   type?: string;

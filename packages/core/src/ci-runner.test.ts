@@ -8,6 +8,9 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { abortExportGate } from "./export-validation.js";
 import {
+  CI_CHECK_TIMEOUT_MS,
+  CI_PACKAGE_TEST_TIMEOUT_MS,
+  resolveCiCheckTimeout,
   resolvePrettierFromCwd,
   resolveFormatCheckFiles,
   runCiChecks,
@@ -17,6 +20,7 @@ import { selectCiChecks, shouldScopeFormatCheck } from "./ci-select.js";
 import { git } from "./git.js";
 import { isAbortError } from "./progress.js";
 import { createLocalPr } from "./prs.js";
+import { createTempGitRepo } from "./test-git-fixture.js";
 
 const execAsync = promisify(exec);
 
@@ -737,6 +741,14 @@ describe("runCiChecks", () => {
 
   // Cross-platform delay for package.json scripts (Windows has no `sleep`).
   const nodeSleep = (ms: number) => `node -e "setTimeout(() => process.exit(0), ${ms})"`;
+
+  it("RAD-133: package test checks use a longer default timeout than lint", () => {
+    assert.equal(resolveCiCheckTimeout("format:check"), CI_CHECK_TIMEOUT_MS);
+    assert.equal(resolveCiCheckTimeout("lint:core"), CI_CHECK_TIMEOUT_MS);
+    assert.equal(resolveCiCheckTimeout("test"), CI_PACKAGE_TEST_TIMEOUT_MS);
+    assert.equal(resolveCiCheckTimeout("test:core"), CI_PACKAGE_TEST_TIMEOUT_MS);
+    assert.equal(resolveCiCheckTimeout("test:core", 5000), 5000);
+  });
 
   // RAD-46: Verify timeout configuration works
   it("RAD-46: timeout configuration is respected", async () => {
@@ -1464,27 +1476,7 @@ describe("runCiChecks", () => {
 
 describe("runLoopCi", () => {
   async function initGitRepo(): Promise<string> {
-    const tmp = await mkdtemp(join(tmpdir(), "prgenie-loop-ci-"));
-    await git(tmp, ["init", "-b", "main"]);
-    await git(tmp, ["config", "user.email", "test@example.com"]);
-    await git(tmp, ["config", "user.name", "Test"]);
-    await writeFile(join(tmp, "README.md"), "hi\n");
-    await writeFile(
-      join(tmp, "package.json"),
-      JSON.stringify({
-        name: "test-repo",
-        scripts: {
-          "format:check": "exit 0",
-          lint: "exit 0",
-          typecheck: "exit 0",
-          test: "exit 0",
-          build: "exit 0",
-        },
-      }),
-    );
-    await git(tmp, ["add", "."]);
-    await git(tmp, ["commit", "-m", "init"]);
-    return tmp;
+    return createTempGitRepo({ prefix: "prgenie-loop-ci-", template: "loop-ci" });
   }
 
   it("merges failingChecks into the smart-selected set", async () => {

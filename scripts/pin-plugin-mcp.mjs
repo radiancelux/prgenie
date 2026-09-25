@@ -33,8 +33,8 @@ if (!name || !servers[name]) {
 
 const nodeCommand = process.execPath;
 const useCmd = process.platform === "win32" && /\s/.test(nodeCommand);
-/** RAD-100: seconds — hosts that honor mcp.json timeout (Cursor community). Match CI ~20m. */
-const DEFAULT_TIMEOUT_SEC = 1200;
+/** RAD-100 / RAD-133: seconds — match package-test CI wall (~40m for test:core globs). */
+const DEFAULT_TIMEOUT_SEC = 2400;
 const priorTimeout =
   typeof servers[name].timeout === "number" && Number.isFinite(servers[name].timeout)
     ? servers[name].timeout

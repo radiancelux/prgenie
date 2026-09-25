@@ -104,8 +104,8 @@ test("pinPluginMcpJson writes stdio + absolute node + absolute server (no BOM)",
   assert.equal(parsed.mcpServers.prgenie.type, "stdio");
   assert.equal(
     (parsed.mcpServers.prgenie as { timeout?: number }).timeout,
-    1200,
-    "RAD-100: pin 20m tools/call timeout (seconds)",
+    2400,
+    "RAD-100/RAD-133: pin 40m tools/call timeout (seconds)",
   );
   const expectCmd = process.platform === "win32" && /\s/.test(process.execPath);
   if (expectCmd) {
@@ -157,8 +157,8 @@ test("pinPluginMcpJson writes stdio + absolute node + absolute server (no BOM)",
   };
   assert.equal(
     raisedParsed.mcpServers.prgenie.timeout,
-    1200,
-    "RAD-100: pin raises sub-1200 timeouts to the floor",
+    2400,
+    "RAD-100: pin raises sub-2400 timeouts to the floor",
   );
 
   const keptHigh = pinPluginMcpJson(
@@ -167,7 +167,7 @@ test("pinPluginMcpJson writes stdio + absolute node + absolute server (no BOM)",
         prgenie: {
           command: "node",
           args: ["${CURSOR_PLUGIN_ROOT}/mcp/server.cjs"],
-          timeout: 2400,
+          timeout: 3600,
         },
       },
     }),
@@ -176,7 +176,7 @@ test("pinPluginMcpJson writes stdio + absolute node + absolute server (no BOM)",
   assert.equal(
     (JSON.parse(keptHigh) as { mcpServers: { prgenie: { timeout?: number } } }).mcpServers.prgenie
       .timeout,
-    2400,
+    3600,
     "RAD-100: explicit higher timeout still wins",
   );
 });
@@ -206,8 +206,8 @@ test("pin-plugin-mcp.mjs writes UTF-8 without BOM and pins execPath", async () =
   assert.equal(pinned.mcpServers.prgenie.type, "stdio");
   assert.equal(
     (pinned.mcpServers.prgenie as { timeout?: number }).timeout,
-    1200,
-    "pin-plugin-mcp.mjs preserves/raises timeout (RAD-100)",
+    2400,
+    "pin-plugin-mcp.mjs preserves/raises timeout (RAD-100/RAD-133)",
   );
   const expectCmd = process.platform === "win32" && /\s/.test(process.execPath);
   if (expectCmd) {

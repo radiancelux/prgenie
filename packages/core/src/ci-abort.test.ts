@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import { describe, it } from "node:test";
+import { createTempGitRepo } from "./test-git-fixture.js";
 import {
   acquireCiLock,
   ciAbortFile,
@@ -11,18 +10,10 @@ import {
   requestCiAbort,
   watchCiAbort,
 } from "./ci-abort.js";
-import { git } from "./git.js";
 import { isAbortError } from "./progress.js";
 
 async function initRepo(): Promise<string> {
-  const tmp = await mkdtemp(join(tmpdir(), "prgenie-ci-abort-"));
-  await git(tmp, ["init", "-b", "main"]);
-  await git(tmp, ["config", "user.email", "test@example.com"]);
-  await git(tmp, ["config", "user.name", "Test"]);
-  await writeFile(join(tmp, "README.md"), "hi\n");
-  await git(tmp, ["add", "."]);
-  await git(tmp, ["commit", "-m", "init"]);
-  return tmp;
+  return createTempGitRepo({ prefix: "prgenie-ci-abort-" });
 }
 
 describe("ci-abort token", () => {

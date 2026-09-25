@@ -48,6 +48,19 @@ import {
 
 const execAsync = promisify(exec);
 
+/** Default per-check wall for format/lint/typecheck/build (20 minutes). */
+export const CI_CHECK_TIMEOUT_MS = 1_200_000;
+
+/** Package unit tests (`test:core`, …) on Windows full globs need more headroom (RAD-133). */
+export const CI_PACKAGE_TEST_TIMEOUT_MS = 2_400_000;
+
+/** Resolve the exec timeout for one check; optional override applies to every check. */
+export function resolveCiCheckTimeout(check: string, override?: number): number {
+  if (override != null) return override;
+  if (check === "test" || check.startsWith("test:")) return CI_PACKAGE_TEST_TIMEOUT_MS;
+  return CI_CHECK_TIMEOUT_MS;
+}
+
 /**
  * Env for CI shell checks. Strip Node's test-runner context so nested
  * `tsx --test` / `node --test` (e.g. file-scoped test:core) report their own
@@ -115,7 +128,7 @@ export interface CiRunnerResult {
 export interface CiRunnerOptions {
   /** Override the default CI checks */
   checks?: string[];
-  /** Timeout per check in milliseconds. Default 1200000 (20 minutes) */
+  /** Override every check's timeout (ms). Default: 20m; `test` / `test:*` use 40m (RAD-133). */
   timeout?: number;
   /** Skip cache and force all checks to run (for testing). Default false. */
   skipCache?: boolean;
@@ -562,7 +575,7 @@ export async function runCiChecks(
   options: CiRunnerOptions = {},
 ): Promise<CiRunnerResult> {
   const checks = options.checks ?? ["format:check", "lint", "typecheck", "test", "build"];
-  const timeout = options.timeout ?? 1_200_000;
+  const timeoutOverride = options.timeout;
   const skipCache = options.skipCache ?? false;
   const onProgress = options.onProgress;
   const signal = options.signal;
@@ -696,7 +709,7 @@ export async function runCiChecks(
     try {
       const pending = checks.map((check) =>
         runOneCheck(cwd, check, {
-          timeout,
+          timeout: resolveCiCheckTimeout(check, timeoutOverride),
           skipCache,
           onProgress,
           signal: child.signal,
@@ -740,7 +753,7 @@ export async function runCiChecks(
       try {
         results.push(
           await runOneCheck(cwd, check, {
-            timeout,
+            timeout: resolveCiCheckTimeout(check, timeoutOverride),
             skipCache,
             onProgress,
             signal,

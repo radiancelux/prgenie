@@ -102,6 +102,7 @@ Uncertain / hard-config mapping **skips** local CI with an explicit `skip local 
 
 ## Speed
 
+- **Git fixture templates** (RAD-133): heavy core suites (`export-gate`, `shepherd`, `ci-runner` loop-CI, `ci-abort`) clone a process-local seeded template (`packages/core/src/test-git-fixture.ts`) instead of `git init` per test. Templates are removed on process exit (best effort). Measured Windows solo `export-gate.test.ts` (2026-09-25): `main` @ `d9f5674` mean **104.8s**; RAD-133 branch mean **113.2s** (**103.2s** uncontended). The ~522s dogfood baseline did not reproduce solo — wall time is dominated by six tests that run real CI checks. AC5 speed target moved to **RAD-146**.
 - **Fail-fast** (default): stop remaining checks after the first failure. Disable with `failFast: false` or `PRGENIE_CI_FAIL_FAST=0`.
 - **Package suites**: implementor preflight runs package-scoped checks **sequentially** so fail-fast **stops after the first package suite fail** (do not continue lint/typecheck/test for later packages).
 - **Parallel** (default when multiple independent root checks are caller-selected): independent checks may run concurrently. Disable with `parallel: false` or `PRGENIE_CI_PARALLEL=0`. Package-scoped plans are always sequential.
@@ -109,6 +110,7 @@ Uncertain / hard-config mapping **skips** local CI with an explicit `skip local 
 - **test:core file scope** (RAD-127): leaf core modules (and sibling `*.test.ts`) that do **not** touch the shared git-fixture / steward / export-gate / ci-runner surface select only those covering test files. Progress shows `tsx --test packages/core/src/progress.test.ts` (and `1/N files` when multiple). Shared-surface or package-config diffs keep `packages/core/src/*.test.ts` with an explicit reason. `--failing test:core` re-selects from the same paths, so the file list repeats.
 - **Host-repo vs package**: RAD-105 rewrites check **names** (`lint:core`). RAD-120 rewrites host **commands** (`eslint <changed>`). Format scoping is independent: it filters the blob file list from `changedPaths`, not a prettier CLI rewrite.
 - **Cache** (RAD-35, RAD-118): per-check input hashes cover **worktree** content in that check’s scope (tracked + dirty/untracked under the scoped paths), not only committed HEAD. Unrelated dirty edits leave other green checks cached; touching a file in scope or an unreadable path is a miss (fail-closed — never a false pass). Progress shows `cached` with **0 elapsed**. Stored under `.git/agent-console/ci-cache`.
+- **Per-check timeout** (RAD-133): format/lint/typecheck/build default to **20 minutes**; `test` / `test:*` (including full `packages/core/src/*.test.ts` globs on Windows) default to **40 minutes** so ~28 min suites finish inside `run_ci` / `prgenie ci`. MCP `mcp.json` / `MCP_SERVER_TIMEOUT_SEC` matches the **40-minute** package-test wall so `run_ci` and `shepherd_status` are not cut off at 20 minutes (RAD-100).
 - Progress UI shows **elapsed time per check** and the **actual command** (including path args / blob scope).
 
 ## Who runs what
