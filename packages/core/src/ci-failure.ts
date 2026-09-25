@@ -216,14 +216,18 @@ export function failureExcerptContextFromError(
 }
 
 export function collectShellOutput(err: unknown): ExecFailureOutput {
-  const e = err as { message?: string; stdout?: unknown; stderr?: unknown };
+  const e = err as { message?: string; stdout?: unknown; stderr?: unknown; notes?: string[] };
   const stdout = typeof e.stdout === "string" ? e.stdout : "";
   const stderr = typeof e.stderr === "string" ? e.stderr : "";
+  const notes = Array.isArray(e.notes) ? e.notes.filter((n) => n.trim()) : [];
   const message = err instanceof Error ? err.message : String(err);
   const firstLine = (message.split("\n")[0] || message).trim() || "Command failed";
   let combined = [stderr, stdout].filter((s) => s.trim()).join("\n");
   if (!combined.trim()) {
     combined = message.split("\n").slice(1).join("\n").trim();
+  }
+  if (notes.length) {
+    combined = [combined, notes.join("\n")].filter((s) => s.trim()).join("\n");
   }
   return { firstLine, stdout, stderr, combined };
 }
@@ -262,6 +266,8 @@ function truncateBytes(text: string, max: number): string {
   return `…(truncated to last ${max} bytes)\n${slice.toString("utf8")}`;
 }
 
+export type CiFailureLogOutcome = "failed" | "timed out" | "cancelled";
+
 /** Persist full (capped) stdout/stderr. Fail-soft — excerpt still surfaces without a path. */
 export async function writeCiFailureLog(
   cwd: string,
@@ -269,11 +275,12 @@ export async function writeCiFailureLog(
   command: string,
   output: ExecFailureOutput,
   excerpt: string,
+  outcome: CiFailureLogOutcome = "failed",
 ): Promise<string | null> {
   try {
     const dir = await ciLogsDir(cwd);
     const logPath = path.join(dir, `${safeCheckFile(check)}.log`);
-    const header = `# ${check} (${command}) failed ${new Date().toISOString()}\n\n`;
+    const header = `# ${check} (${command}) ${outcome} ${new Date().toISOString()}\n\n`;
     const body = truncateBytes(
       `${header}${output.combined.trim() || output.firstLine}\n`,
       CI_LOG_MAX_BYTES,

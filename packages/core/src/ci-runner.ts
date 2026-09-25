@@ -322,6 +322,11 @@ function skippedResult(check: string, reason?: string): CiCheckResult {
   return { name: check, passed: true, skipped: true, reason };
 }
 
+function shellProgressMessage(err: CiShellError, excerpt: string): string {
+  if (!err.notes.length) return excerpt;
+  return `${excerpt}\n${err.notes.join("\n")}`;
+}
+
 async function runOneCheck(
   cwd: string,
   check: string,
@@ -467,14 +472,25 @@ async function runOneCheck(
     if (err instanceof CiShellError && err.kind === "cancelled") {
       const output = collectShellOutput(err);
       const excerpt = formatFailureExcerpt(check, output, { kind: "cancelled" });
+      const progressMessage = shellProgressMessage(err, excerpt);
       const elapsedMs = Date.now() - started;
+      if (err.notes.length > 0) {
+        await writeCiFailureLog(
+          cwd,
+          check,
+          activeShellCommand,
+          output,
+          progressMessage,
+          "cancelled",
+        );
+      }
       onProgress?.({
         phase: "ci",
         check,
         state: "skip",
         command: progressCommand,
         elapsedMs,
-        message: excerpt,
+        message: progressMessage,
       });
       throw abortError();
     }
@@ -482,9 +498,24 @@ async function runOneCheck(
     const output = err instanceof CiShellError ? collectShellOutput(err) : collectExecOutput(err);
     const excerptContext = failureExcerptContextFromError(err, timeout);
     const excerpt = formatFailureExcerpt(check, output, excerptContext);
-    const logPath = await writeCiFailureLog(cwd, check, activeShellCommand, output, excerpt);
+    const progressMessage =
+      err instanceof CiShellError ? shellProgressMessage(err, excerpt) : excerpt;
+    const logOutcome: "failed" | "timed out" =
+      excerptContext?.kind === "timeout" ? "timed out" : "failed";
+    const logPath = await writeCiFailureLog(
+      cwd,
+      check,
+      activeShellCommand,
+      output,
+      progressMessage,
+      logOutcome,
+    );
     const elapsedMs = Date.now() - started;
-    const error = formatCiCheckError({ command: activeShellCommand, excerpt, logPath });
+    const error = formatCiCheckError({
+      command: activeShellCommand,
+      excerpt: progressMessage,
+      logPath,
+    });
     const envFail = isCiEnvFailureOutput(output.firstLine);
     onProgress?.({
       phase: "ci",
@@ -492,7 +523,7 @@ async function runOneCheck(
       state: "fail",
       command: progressCommand,
       elapsedMs,
-      message: excerpt,
+      message: progressMessage,
       logPath: logPath ?? undefined,
     });
     return {

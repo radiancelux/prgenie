@@ -152,6 +152,61 @@ describe("ci process tree kill (RAD-135)", () => {
     }
   });
 
+  it("execCiShell finishes after pipe drain when stdout never closes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "prgenie-ci-kill-pipe-"));
+    try {
+      await writeFile(
+        join(dir, "hang-pipe.mjs"),
+        [
+          "setInterval(() => {",
+          "  try { process.stdout.write('x'); } catch {}",
+          "}, 100);",
+          "setInterval(() => {}, 1e9);",
+        ].join("\n"),
+      );
+      const drainMs = 400;
+      const started = Date.now();
+      let childPid = 0;
+      await assert.rejects(
+        execCiShell({
+          command: "node hang-pipe.mjs",
+          cwd: dir,
+          timeout: 300,
+          maxBuffer: 256 * 1024,
+          pipeCloseWaitMs: drainMs,
+          killProcessTreeFn: (pid) => {
+            childPid = pid ?? 0;
+            return { ok: true };
+          },
+        }),
+        (err: unknown) => {
+          assert.ok(err instanceof CiShellError);
+          assert.equal(err.kind, "timeout");
+          assert.ok(
+            err.notes.some((n) => n.includes("descendants may survive")),
+            `expected pipe-drain note, got ${JSON.stringify(err.notes)}`,
+          );
+          return true;
+        },
+      );
+      const elapsed = Date.now() - started;
+      assert.ok(
+        elapsed < 300 + drainMs + 2000,
+        `should finish within timeout + drain window, took ${elapsed}ms`,
+      );
+      if (childPid > 0) killProcessTree(childPid);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("killProcessTree returns ok for invalid or already-dead pids", () => {
+    assert.deepEqual(killProcessTree(undefined), { ok: true });
+    assert.deepEqual(killProcessTree(0), { ok: true });
+    assert.deepEqual(killProcessTree(-1), { ok: true });
+    assert.deepEqual(killProcessTree(9_999_999), { ok: true });
+  });
+
   it("execCiShell records maxBuffer exceeded distinctly on a single stream", async () => {
     const dir = await mkdtemp(join(tmpdir(), "prgenie-ci-kill-buf-"));
     try {
