@@ -17,6 +17,7 @@ import { selectCiChecks, shouldScopeFormatCheck } from "./ci-select.js";
 import { git } from "./git.js";
 import { isAbortError } from "./progress.js";
 import { createLocalPr } from "./prs.js";
+import { createTempGitRepo } from "./test-git-fixture.js";
 
 const execAsync = promisify(exec);
 
@@ -1464,27 +1465,7 @@ describe("runCiChecks", () => {
 
 describe("runLoopCi", () => {
   async function initGitRepo(): Promise<string> {
-    const tmp = await mkdtemp(join(tmpdir(), "prgenie-loop-ci-"));
-    await git(tmp, ["init", "-b", "main"]);
-    await git(tmp, ["config", "user.email", "test@example.com"]);
-    await git(tmp, ["config", "user.name", "Test"]);
-    await writeFile(join(tmp, "README.md"), "hi\n");
-    await writeFile(
-      join(tmp, "package.json"),
-      JSON.stringify({
-        name: "test-repo",
-        scripts: {
-          "format:check": "exit 0",
-          lint: "exit 0",
-          typecheck: "exit 0",
-          test: "exit 0",
-          build: "exit 0",
-        },
-      }),
-    );
-    await git(tmp, ["add", "."]);
-    await git(tmp, ["commit", "-m", "init"]);
-    return tmp;
+    return createTempGitRepo({ prefix: "prgenie-loop-ci-", template: "loop-ci" });
   }
 
   it("merges failingChecks into the smart-selected set", async () => {

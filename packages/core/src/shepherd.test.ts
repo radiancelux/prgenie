@@ -1,9 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile, symlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { shepherdStatus } from "./shepherd.js";
+import { createTempGitRepo } from "./test-git-fixture.js";
 import type { ProgressEvent } from "./progress.js";
 import { git } from "./git.js";
 import { createLocalPr, setLocalPrStatus, addLocalPrComment } from "./prs.js";
@@ -36,14 +36,7 @@ async function linkNodeModules(targetDir: string, sourceModulesPath: string): Pr
 }
 
 async function initRepo(): Promise<string> {
-  const tmp = await mkdtemp(join(tmpdir(), "prgenie-shepherd-test-"));
-  await git(tmp, ["init", "-b", "main"]);
-  await git(tmp, ["config", "user.email", "test@example.com"]);
-  await git(tmp, ["config", "user.name", "Test User"]);
-  await writeFile(join(tmp, "README.md"), "# Test\n");
-  await git(tmp, ["add", "."]);
-  await git(tmp, ["commit", "-m", "Initial commit"]);
-  return tmp;
+  return createTempGitRepo({ prefix: "prgenie-shepherd-test-" });
 }
 
 describe("shepherdStatus", () => {

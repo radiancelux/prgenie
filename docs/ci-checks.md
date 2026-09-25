@@ -102,6 +102,7 @@ Uncertain / hard-config mapping **skips** local CI with an explicit `skip local 
 
 ## Speed
 
+- **Git fixture templates** (RAD-133): heavy core suites (`export-gate`, `shepherd`, `ci-runner` loop-CI, `ci-abort`) clone a process-local seeded template (`packages/core/src/test-git-fixture.ts`) instead of `git init` per test. On Windows, `export-gate.test.ts` dropped from ~522s to ~89s (~83% faster, measured 2026-09-24).
 - **Fail-fast** (default): stop remaining checks after the first failure. Disable with `failFast: false` or `PRGENIE_CI_FAIL_FAST=0`.
 - **Package suites**: implementor preflight runs package-scoped checks **sequentially** so fail-fast **stops after the first package suite fail** (do not continue lint/typecheck/test for later packages).
 - **Parallel** (default when multiple independent root checks are caller-selected): independent checks may run concurrently. Disable with `parallel: false` or `PRGENIE_CI_PARALLEL=0`. Package-scoped plans are always sequential.
