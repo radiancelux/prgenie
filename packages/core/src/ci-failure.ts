@@ -16,6 +16,15 @@ export interface ExecFailureOutput {
   combined: string;
 }
 
+/** Priority context for CI failure excerpts (RAD-137). */
+export type FailureExcerptKind = "timeout" | "cancelled" | "maxBuffer" | "spawn";
+
+export interface FailureExcerptContext {
+  kind?: FailureExcerptKind;
+  /** Wall-clock timeout in seconds (for timeout excerpts). */
+  timeoutSec?: number;
+}
+
 export interface CiFailureLogMeta {
   check: string;
   command: string;
@@ -129,13 +138,98 @@ export function parseGateExcerpt(check: string, text: string): string | null {
   return parseFirstFailingTest(text);
 }
 
-export function formatFailureExcerpt(check: string, output: ExecFailureOutput): string {
+function formatTimeoutExcerpt(
+  check: string,
+  output: ExecFailureOutput,
+  timeoutSec: number,
+): string {
+  const head = `${check} timed out after ${timeoutSec}s`;
+  const source = output.combined.trim() ? output.combined : output.firstLine;
+  const parsed = parseFirstFailingTest(source);
+  if (parsed) {
+    return flattenExcerpt(`${head} · ${parsed}`);
+  }
+  const tail = lastNonEmptyLines(source, CI_EXCERPT_LINES);
+  if (tail) return flattenExcerpt(`${head} · ${tail}`);
+  return flattenExcerpt(head);
+}
+
+export function formatFailureExcerpt(
+  check: string,
+  output: ExecFailureOutput,
+  context?: FailureExcerptContext,
+): string {
+  if (context?.kind === "cancelled") {
+    return flattenExcerpt(`${check} cancelled`);
+  }
+  if (context?.kind === "timeout") {
+    const sec = context.timeoutSec ?? 0;
+    return formatTimeoutExcerpt(check, output, sec);
+  }
+  if (context?.kind === "maxBuffer") {
+    return flattenExcerpt(`${check} output exceeded max buffer`);
+  }
+  if (context?.kind === "spawn") {
+    const detail = output.firstLine.trim() || "spawn failed";
+    return flattenExcerpt(`${check} spawn failed: ${detail}`);
+  }
+
   const source = output.combined.trim() ? output.combined : output.firstLine;
   const parsed = parseGateExcerpt(check, source);
   if (parsed) return flattenExcerpt(parsed);
   const tail = lastNonEmptyLines(source, CI_EXCERPT_LINES);
   if (tail) return flattenExcerpt(tail);
   return flattenExcerpt(output.firstLine);
+}
+
+/** Map exec / CiShellError fields to excerpt priority context. */
+export function failureExcerptContextFromError(
+  err: unknown,
+  timeoutMs?: number,
+): FailureExcerptContext | undefined {
+  const e = err as {
+    kind?: FailureExcerptKind | "exit";
+    timeoutMs?: number;
+    code?: string;
+    killed?: boolean;
+    signal?: string;
+  };
+  if (e.kind === "timeout") {
+    const ms = e.timeoutMs ?? timeoutMs;
+    return { kind: "timeout", timeoutSec: ms != null ? Math.round(ms / 1000) : undefined };
+  }
+  if (e.kind === "cancelled" || e.kind === "maxBuffer" || e.kind === "spawn") {
+    return { kind: e.kind };
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  if (/maxBuffer exceeded/i.test(message) || e.code === "ENOBUFS") {
+    return { kind: "maxBuffer" };
+  }
+  if (/timed out/i.test(message) || (e.killed && e.signal === "SIGTERM")) {
+    const sec = timeoutMs != null ? Math.round(timeoutMs / 1000) : undefined;
+    return { kind: "timeout", timeoutSec: sec };
+  }
+  if (e.code === "ENOENT" || /spawn/i.test(message)) {
+    return { kind: "spawn" };
+  }
+  return undefined;
+}
+
+export function collectShellOutput(err: unknown): ExecFailureOutput {
+  const e = err as { message?: string; stdout?: unknown; stderr?: unknown; notes?: string[] };
+  const stdout = typeof e.stdout === "string" ? e.stdout : "";
+  const stderr = typeof e.stderr === "string" ? e.stderr : "";
+  const notes = Array.isArray(e.notes) ? e.notes.filter((n) => n.trim()) : [];
+  const message = err instanceof Error ? err.message : String(err);
+  const firstLine = (message.split("\n")[0] || message).trim() || "Command failed";
+  let combined = [stderr, stdout].filter((s) => s.trim()).join("\n");
+  if (!combined.trim()) {
+    combined = message.split("\n").slice(1).join("\n").trim();
+  }
+  if (notes.length) {
+    combined = [combined, notes.join("\n")].filter((s) => s.trim()).join("\n");
+  }
+  return { firstLine, stdout, stderr, combined };
 }
 
 export function formatCiCheckError(input: {
@@ -172,6 +266,8 @@ function truncateBytes(text: string, max: number): string {
   return `…(truncated to last ${max} bytes)\n${slice.toString("utf8")}`;
 }
 
+export type CiFailureLogOutcome = "failed" | "timed out" | "cancelled";
+
 /** Persist full (capped) stdout/stderr. Fail-soft — excerpt still surfaces without a path. */
 export async function writeCiFailureLog(
   cwd: string,
@@ -179,11 +275,12 @@ export async function writeCiFailureLog(
   command: string,
   output: ExecFailureOutput,
   excerpt: string,
+  outcome: CiFailureLogOutcome = "failed",
 ): Promise<string | null> {
   try {
     const dir = await ciLogsDir(cwd);
     const logPath = path.join(dir, `${safeCheckFile(check)}.log`);
-    const header = `# ${check} (${command}) failed ${new Date().toISOString()}\n\n`;
+    const header = `# ${check} (${command}) ${outcome} ${new Date().toISOString()}\n\n`;
     const body = truncateBytes(
       `${header}${output.combined.trim() || output.firstLine}\n`,
       CI_LOG_MAX_BYTES,
