@@ -39,9 +39,20 @@ Call `steward_next` / `bind_steward` **before** awaiting any Task so ownership i
 1. MCP `steward_next` `{ id }` (or `prgenie steward <id>`). Optional: pass Task ids to persist them. Read `decision.kind`.
 2. Do **exactly** that action. Then `steward_next` again. Repeat until `handoff_human` or the user stops you.
 
+## Model tiers (RAD-89)
+
+Default spend is asymmetric: **cheap implementor** (`prgenie-implementor`), **strong reviewer** (`prgenie-reviewer`). Vendor model ids live only in `packages/plugin/agents/*.md` (copied by `link-plugin`).
+
+- **`steward_next`** returns an implementor tier hint on `spawn_implementor`: `cheap` (default) or `strong` + `tierBumpReason` when the brief is design-heavy or the same AC stayed open after two implementor rounds.
+- **Bump = new spawn:** Task `prgenie-implementor-strong` (not resume). Log the bump reason from `steward_next`.
+- **CI-resume / format / lint fixes** always stay **cheap** (`prgenie-implementor`) — even when restarting after a blocked export gate.
+- Surface packet metrics from `steward_next` / `formatStewardDecision`: implementor tier, model slug, `reviewRounds`, `implementorRounds`.
+
+Never Task `generalPurpose` for implementor or reviewer on steward-owned loops.
+
 ### `spawn_implementor`
 
-Task `generalPurpose` (or `computerUse` only if the work needs a browser). Prompt must include:
+Task **`prgenie-implementor`** or **`prgenie-implementor-strong`** per `steward_next` `implementorSubagentType` (never `generalPurpose`; `computerUse` only if the work needs a browser). Prompt must include:
 
 - implement this loop only; `/local-pr` rules; do not review yourself; do not push
 - commit on the loop branch; refresh `body`
@@ -72,7 +83,7 @@ Prompt on resume:
 
 ### `spawn_reviewer` / `resume_reviewer`
 
-Task a reviewer (`/review` leaf). One id only. Prompt stays **token-thin**: loop id + “follow `/review` and `skills/review/process-bar.md`” (plus `.prgenie/review.md` when present). Do **not** paste the process bar, Copilot, or `review-open-prs` skills into the Task. `claim_review` first if you want the exclusive HEAD lock. File findings, resolve fixed threads, **always `complete_review`**. Persist `reviewerTaskId` via `bind_steward`. Await this Task.
+Task **`prgenie-reviewer`** (`/review` leaf — never `generalPurpose`). One id only. Prompt stays **token-thin**: loop id + “follow `/review` and `skills/review/process-bar.md`” (plus `.prgenie/review.md` when present). Do **not** paste the process bar, Copilot, or `review-open-prs` skills into the Task. `claim_review` first if you want the exclusive HEAD lock. File findings, resolve fixed threads, **always `complete_review`**. Persist `reviewerTaskId` via `bind_steward`. Await this Task.
 
 On **auth / host failure** before complete: MCP `mark_review_interrupted` / `prgenie review-interrupted` (status `review_interrupted`). Resume with Task `resume` on the **same** `reviewerTaskId` (or `resume_review` / `prgenie review-resume` then resume) — **no re-brief**. `steward_next` on `review_interrupted` returns `resume_reviewer` when the Task id is still bound.
 

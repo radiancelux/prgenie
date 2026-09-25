@@ -21,7 +21,23 @@ export type {
   ReadyCiOutcome,
   ReadyCiRecord,
   WorktreeInfo,
+  ImplementorTier,
 } from "./types.js";
+export {
+  parseAgentModelFrontmatter,
+  readPluginAgentModel,
+} from "./agent-model.js";
+export {
+  formatTierMetricsLine,
+  IMPLEMENTOR_SUBAGENT_CHEAP,
+  IMPLEMENTOR_SUBAGENT_STRONG,
+  IMPLEMENTOR_TIER_CHEAP,
+  IMPLEMENTOR_TIER_STRONG,
+  isDesignHeavyBrief,
+  resolveImplementorTierHint,
+  REVIEWER_SUBAGENT,
+} from "./model-tiers.js";
+export type { ImplementorTierHint, ResolveImplementorTierInput } from "./model-tiers.js";
 export { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
 export {
   GitBinaryError,
@@ -91,6 +107,8 @@ export {
   captureAgentWork,
   commentThreads,
   groupThreadsByRound,
+  syncReviewRoundCount,
+  recordImplementorSpawnMetrics,
   completeLocalPrReview,
   createLocalPr,
   deleteLocalPr,

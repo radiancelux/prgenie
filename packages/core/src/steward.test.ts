@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
@@ -283,6 +283,43 @@ test("RAD-125: stewardNext refreshes headSha before matching a blocked gate", as
   const shown = await getLocalPr(repo, pr.id);
   assert.equal(shown.headSha, newSha);
   assert.equal(shown.status, "ready");
+});
+
+test("RAD-89: stewardNext spawn_implementor returns cheap tier by default", async () => {
+  const pr = await createLocalPr(repo, { title: "Tier default", body: "Fix tooltip copy." });
+  const next = await stewardNext(repo, pr.id, { evaluateGate: false });
+  assert.equal(next.decision.kind, "spawn_implementor");
+  assert.equal(next.implementorTierHint?.tier, "cheap");
+  assert.equal(next.decision.implementorSubagentType, "prgenie-implementor");
+  assert.match(formatStewardDecision(next), /implementorSubagentType=prgenie-implementor/);
+});
+
+test("RAD-89: bindSteward records implementor tier and model on new Task id", async () => {
+  const agentsDir = path.join(repo, "packages", "plugin", "agents");
+  await mkdir(agentsDir, { recursive: true });
+  await writeFile(
+    path.join(agentsDir, "prgenie-implementor-strong.md"),
+    "---\nmodel: test-strong-model\n---\n",
+    "utf8",
+  );
+  const pr = await createLocalPr(repo, {
+    title: "Tier record",
+    body: "design-heavy architecture for the packet store",
+  });
+  await bindSteward(repo, pr.id, { implementorTaskId: "task-tier-1" });
+  const stored = await getLocalPr(repo, pr.id);
+  assert.equal(stored.implementorTier, "strong");
+  assert.equal(stored.implementorRoundCount, 1);
+  assert.equal(stored.implementorModel, "test-strong-model");
+  assert.match(stored.lastTierBumpReason ?? "", /design-heavy/i);
+});
+
+test("RAD-89: stewardNext spawn_reviewer names prgenie-reviewer subagent", async () => {
+  const pr = await createLocalPr(repo, { title: "Reviewer tier", body: "Body" });
+  await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true, ciSkipReason: "test" });
+  const next = await stewardNext(repo, pr.id, { evaluateGate: false });
+  assert.equal(next.decision.kind, "spawn_reviewer");
+  assert.equal(next.decision.reviewerSubagentType, "prgenie-reviewer");
 });
 
 test("RAD-126: decideStewardAction labels refused plan as ci-select not test", () => {

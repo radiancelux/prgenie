@@ -11,6 +11,8 @@ pnpm link-plugin
 
 Clean clone path: install → build → link-plugin → Customize → Plugins → PR Genie off/on. There is no pre-committed `server.cjs`.
 
+**Agents (RAD-89):** `packages/plugin/agents/*.md` defines `prgenie-implementor`, `prgenie-implementor-strong`, and `prgenie-reviewer` with vendor model ids. `link-plugin` copies them to `%USERPROFILE%\.cursor\agents\`.
+
 If a PR still shows huge ±tens-of-thousands-line diffs on those `.cjs` files, you have a dirty local build against an old tracked copy, or you are on a pre-migration branch — rebuild or rebase; that is not product source.
 
 `mcp.json` uses `${CURSOR_PLUGIN_ROOT}/mcp/server.cjs` (Cursor does **not** expand `${PLUGIN_ROOT}`). A relative `./mcp/server.cjs` resolves against the **workspace**, which 404s. `link-plugin` rewrites the installed copy to an absolute `node.exe` + `server.cjs` (UTF-8, no BOM; `cmd /c` when the node path has spaces) and pins `timeout: 1200` (seconds) for git+CI tools (RAD-100). **Do not ship** a workspace `.cursor/mcp.json` named `prgenie` — that creates a second Connected MCP row tagged with the folder name.

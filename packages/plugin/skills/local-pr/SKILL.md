@@ -8,6 +8,8 @@ disable-model-invocation: true
 
 Do not push. Local create is **opt-in** — slash `/local-pr`, `/start`, `/steward`, or an explicit “use PR Genie” / “start a loop”. Ready-for-review alone is not enough.
 
+**Model tiers:** `/steward` Tasks `prgenie-implementor` (cheap) or `prgenie-implementor-strong` (design-heavy / repeated AC) and `prgenie-reviewer` (strong) — never `generalPurpose`. See `/steward` “Model tiers”.
+
 `subagentStop` auto-capture is **off by default**. Set `PRGENIE_CAPTURE_SUBAGENT=1` to draft a loop when a coding subagent commits and stops. Explore/shell subagents with no file changes are ignored.
 
 To **start** a full flywheel (one agent owns implement ↔ review): `/steward` with a ticket or brief. Implementor-only entry remains `/start`. Either creates the feature branch and the draft packet. Do not stay on `main`.

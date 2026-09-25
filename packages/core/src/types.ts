@@ -58,6 +58,9 @@ export interface LocalPrSource {
   task?: string;
 }
 
+/** cheap = default implementor; strong = design-heavy or repeated open AC (RAD-89). */
+export type ImplementorTier = "cheap" | "strong";
+
 export interface LocalPr {
   id: string;
   title: string;
@@ -86,6 +89,16 @@ export interface LocalPr {
    * Human-exportable UI is fail-closed: missing/stale/pending is not exportable.
    */
   exportGate?: ExportGateSnapshot | null;
+  /** Last implementor spawn tier (RAD-89 measurement). */
+  implementorTier?: ImplementorTier | null;
+  /** Model slug read from plugin agent frontmatter at last implementor spawn. */
+  implementorModel?: string | null;
+  /** Completed implement↔review rounds (RAD-114 grouping). */
+  reviewRoundCount?: number;
+  /** New implementor Task spawns (not resumes) for this loop. */
+  implementorRoundCount?: number;
+  /** Logged when strong tier was chosen on spawn. */
+  lastTierBumpReason?: string | null;
 }
 
 export type ExportGateStatus = "ready" | "blocked" | "pending";

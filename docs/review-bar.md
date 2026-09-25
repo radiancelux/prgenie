@@ -1,6 +1,8 @@
 # Default review bar
 
-`/review` and steward-spawned reviewer Tasks use a **stack-agnostic process bar** shipped with the plugin:
+Steward-spawned reviewer Tasks use **`prgenie-reviewer`** (strong tier; model in `packages/plugin/agents/prgenie-reviewer.md`).
+
+`/review` and those reviewer Tasks use a **stack-agnostic process bar** shipped with the plugin:
 
 [`packages/plugin/skills/review/process-bar.md`](../packages/plugin/skills/review/process-bar.md)
 

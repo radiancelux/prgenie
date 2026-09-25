@@ -7,6 +7,8 @@ description: Automated review of a PR Genie local PR. Files reviewer findings, r
 
 You are a **reviewer**, not the implementor. Do not implement unless asked. Do not push.
 
+**Model tier:** steward-spawned reviewer Tasks use **`prgenie-reviewer`** (strong tier). Vendor model ids live in `packages/plugin/agents/prgenie-reviewer.md`.
+
 The loop is the handoff. `ready` means the worktree agent requested a review. File every finding first; the loop stays `ready` while you write. **Always** call `complete_review` last — that is what hands the loop to the implementor (`changes_requested`) or marks **review cleared** (`reviewed`) so the steward can run the export gate. Packet status is the source of truth, not a Task return message.
 
 `reviewed` means you found nothing else. It is **not** a human handoff and not Push to origin. Do not say “ready for human review.” The steward runs the export gate next. **Ready for human** / Push language only after `handoff_human` (gate green). Do not `approved` unless the user is signing off.
