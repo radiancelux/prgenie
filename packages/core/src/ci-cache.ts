@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile, mkdir, access } from "node:fs/promises";
+import { readFile, writeFile, mkdir, access, lstat } from "node:fs/promises";
 import path from "node:path";
 import {
   eslintPathsFromChanged,
@@ -72,6 +72,34 @@ function isPrettierWorktreeInput(relPath: string): boolean {
     (PRETTIER_WORKTREE_INPUTS as readonly string[]).includes(base) ||
     base.startsWith(".prettierrc.")
   );
+}
+
+/**
+ * Present on every check. Worktree bytes, not the git index — an unstaged
+ * devDependency or lockfile edit must miss (RAD-118).
+ */
+const EVERY_CHECK_DISK_INPUTS = ["package.json", "pnpm-lock.yaml", "tsconfig.base.json"] as const;
+
+/**
+ * Gitignored install/build/tool trees. Omitted from the hash; dependency identity
+ * is covered by pnpm-lock.yaml + root package.json. Any other gitignored file in
+ * scope is hashed. A non-omitted ignored directory is a miss (contents are unknown).
+ */
+const OMITTED_IGNORED_DIR_NAMES = new Set([
+  "node_modules",
+  "dist",
+  "coverage",
+  ".turbo",
+  ".vscode-test",
+]);
+
+function isEveryCheckDiskInput(relPath: string): boolean {
+  return (EVERY_CHECK_DISK_INPUTS as readonly string[]).includes(normalizeCiPath(relPath));
+}
+
+function isOmittedIgnoredPath(relPath: string): boolean {
+  const parts = normalizeCiPath(relPath).split("/").filter(Boolean);
+  return parts.some((part) => OMITTED_IGNORED_DIR_NAMES.has(part) || part.endsWith(".vsix"));
 }
 
 /** Map workspace dependency names in this monorepo to scopable package ids. */
@@ -178,13 +206,6 @@ async function pathExists(cwd: string, relPath: string): Promise<boolean> {
   }
 }
 
-/** Source path for a sibling unit test (`foo.test.ts` → `foo.ts`). */
-function siblingSourceFromTest(testPath: string): string | null {
-  const p = normalizeCiPath(testPath);
-  if (!/\.(test|spec)\.[cm]?[jt]sx?$/i.test(p)) return null;
-  return p.replace(/\.(test|spec)\.([cm]?[jt]sx?)$/i, ".$2");
-}
-
 async function addGitPathListing(
   cwd: string,
   paths: Set<string>,
@@ -224,7 +245,70 @@ async function collectPathsUnderPrefix(cwd: string, prefix: string): Promise<str
     if (!ok) return null;
   }
 
+  const ignoredOk = await addIgnoredScopePaths(cwd, paths, normalizedPrefix);
+  if (!ignoredOk) return null;
+
   return [...paths].sort();
+}
+
+/**
+ * Gitignored files under prefix join the hash. Omitted install/build trees are
+ * skipped. Any other ignored directory fails closed (a hit would hide its files).
+ */
+async function addIgnoredScopePaths(
+  cwd: string,
+  paths: Set<string>,
+  prefix: string,
+): Promise<boolean> {
+  const pathArgs = prefix ? ["--", prefix] : [];
+  const result = await git(
+    cwd,
+    ["ls-files", "-o", "-i", "--exclude-standard", "--directory", ...pathArgs],
+    { allowFail: true },
+  );
+  if (result.code !== 0) return false;
+
+  for (const line of result.stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const isDir = trimmed.endsWith("/");
+    const rel = normalizeCiPath(trimmed.replace(/\/+$/, ""));
+    if (!rel || isOmittedIgnoredPath(rel)) continue;
+    if (isDir) return false;
+    paths.add(rel);
+  }
+  return true;
+}
+
+/** Index modes other than regular files (symlink 120000, gitlink 160000, …). */
+async function indexNonRegularPaths(cwd: string): Promise<Set<string> | null> {
+  const result = await git(cwd, ["ls-files", "-s"], { allowFail: true });
+  if (result.code !== 0) return null;
+  const bad = new Set<string>();
+  for (const line of result.stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const match = /^(\d+)\s+\S+\s+\d+\t(.+)$/.exec(trimmed);
+    if (!match) return null;
+    const mode = match[1]!;
+    const relRaw = match[2]!;
+    if (relRaw.startsWith('"')) return null;
+    const rel = normalizeCiPath(relRaw);
+    if (mode !== "100644" && mode !== "100755") bad.add(rel);
+  }
+  return bad;
+}
+
+/** True when the worktree entry is a symlink or other non-file. null = uncertain. */
+async function isNonRegularWorktreeEntry(cwd: string, relPath: string): Promise<boolean | null> {
+  try {
+    const st = await lstat(path.join(cwd, relPath));
+    return st.isSymbolicLink() || !st.isFile();
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return false;
+    return null;
+  }
 }
 
 async function collectExistingRootConfigs(cwd: string, names: string[]): Promise<string[]> {
@@ -293,12 +377,8 @@ async function collectExplicitInputPaths(
   return [...paths].sort();
 }
 
-/**
- * Resolve the repo-relative paths whose content affects a CI check.
- * Safe over-approximations are documented in docs/ci-checks.md (RAD-118).
- * Fail-closed: returns null when scope cannot be determined reliably.
- */
-export async function resolveCheckInputPaths(
+/** Scoped paths before root lockfile / package.json / tsconfig.base.json are merged. */
+async function resolveScopedCheckInputPaths(
   cwd: string,
   check: string,
   options: CheckInputScopeOptions = {},
@@ -315,26 +395,8 @@ export async function resolveCheckInputPaths(
     const needsWorkspaceDeps =
       check.startsWith("typecheck:") || check.startsWith("test:") || check.startsWith("build:");
 
-    if (check.startsWith("test:")) {
-      const scoped = options.testFiles ?? options.selection?.testFiles?.[check] ?? undefined;
-      if (scoped && scoped.length > 0) {
-        const explicit = new Set<string>([`${prefix}package.json`, `${prefix}tsconfig.json`]);
-        for (const testFile of scoped) {
-          explicit.add(normalizeCiPath(testFile));
-          const src = siblingSourceFromTest(testFile);
-          if (src) explicit.add(src);
-        }
-        const explicitPaths = await collectExplicitInputPaths(cwd, [...explicit]);
-        if (!explicitPaths) return null;
-        const deps = await readWorkspaceDependencyPackages(cwd, pkg);
-        if (deps === null) return null;
-        const prefixes = deps.map((dep) => `packages/${dep}/`);
-        const depPaths = await mergePathsUnderPrefixes(cwd, prefixes);
-        if (!depPaths) return null;
-        return [...new Set([...explicitPaths, ...depPaths])].sort();
-      }
-    }
-
+    // File-scoped test:* hashes the same tree as the package glob (whole package +
+    // workspace deps). The selected test file list stays in the command hash only.
     const prefixes = new Set<string>([prefix]);
     if (needsWorkspaceDeps) {
       const deps = await readWorkspaceDependencyPackages(cwd, pkg);
@@ -372,6 +434,23 @@ export async function resolveCheckInputPaths(
 }
 
 /**
+ * Resolve the repo-relative paths whose content affects a CI check.
+ * Safe over-approximations are documented in docs/ci-checks.md (RAD-118).
+ * Fail-closed: returns null when scope cannot be determined reliably.
+ */
+export async function resolveCheckInputPaths(
+  cwd: string,
+  check: string,
+  options: CheckInputScopeOptions = {},
+): Promise<string[] | null> {
+  const scoped = await resolveScopedCheckInputPaths(cwd, check, options);
+  if (scoped == null) return null;
+  const common = await collectExplicitInputPaths(cwd, [...EVERY_CHECK_DISK_INPUTS]);
+  if (common == null) return null;
+  return [...new Set([...scoped, ...common])].sort();
+}
+
+/**
  * Hash one file's effective content for cache invalidation.
  * format:check uses git index blobs (matches the blob runner); other checks use disk bytes.
  */
@@ -381,8 +460,12 @@ async function hashFileContent(
   check: string,
 ): Promise<string | null> {
   const normalized = normalizeCiPath(relPath);
+  const useIndexBlob =
+    check === "format:check" &&
+    !isPrettierWorktreeInput(normalized) &&
+    !isEveryCheckDiskInput(normalized);
 
-  if (check === "format:check" && !isPrettierWorktreeInput(normalized)) {
+  if (useIndexBlob) {
     const blob = await git(cwd, ["show", `:${normalized.replace(/"/g, '\\"')}`], {
       allowFail: true,
     });
@@ -419,8 +502,15 @@ async function hashFileContent(
 }
 
 async function hashInputPaths(cwd: string, check: string, paths: string[]): Promise<string | null> {
+  const nonRegular = await indexNonRegularPaths(cwd);
+  if (nonRegular == null) return null;
+
   const hash = createHash("sha256");
   for (const relPath of paths) {
+    const normalized = normalizeCiPath(relPath);
+    if (nonRegular.has(normalized)) return null;
+    const irregular = await isNonRegularWorktreeEntry(cwd, normalized);
+    if (irregular === null || irregular) return null;
     const fileHash = await hashFileContent(cwd, relPath, check);
     if (!fileHash) return null;
     hash.update(relPath);
@@ -488,10 +578,24 @@ export async function computeCheckInputHash(
 
   if (!filesHash || !scriptsHash) return null;
 
+  // test:* also binds the committed tree. A base move that changes an imported
+  // module misses even when the selected test file list is unchanged. rev-parse
+  // failure is a miss (fail closed).
+  let headTree = "";
+  if (check.startsWith("test:")) {
+    const tree = await git(cwd, ["rev-parse", "--verify", "HEAD^{tree}"], { allowFail: true });
+    if (tree.code !== 0 || !tree.stdout.trim()) return null;
+    headTree = tree.stdout.trim();
+  }
+
   const hash = createHash("sha256");
   hash.update(filesHash);
   hash.update(scriptsHash);
   hash.update(check);
+  if (headTree) {
+    hash.update("\0");
+    hash.update(headTree);
+  }
   return hash.digest("hex");
 }
 
