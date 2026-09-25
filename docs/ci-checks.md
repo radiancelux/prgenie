@@ -109,7 +109,32 @@ Uncertain / hard-config mapping **skips** local CI with an explicit `skip local 
 - **format:check scope** (RAD-117): confident package-scoped or docs/style-only plans blob-check **only changed prettier-able paths** (loop diff + dirty/untracked in the CI cwd). Skip plans run no format. Always git blob content (LF) — never working-tree CRLF (RAD-46). Progress shows `format:check (blobs) <paths>` when scoped, or `pnpm format:check` when a caller still requests full-tree format. Host `prettier --check .` rewrite stays deferred (blob runner owns format).
 - **test:core file scope** (RAD-127): leaf core modules (and sibling `*.test.ts`) that do **not** touch the shared git-fixture / steward / export-gate / ci-runner surface select only those covering test files. Progress shows `tsx --test packages/core/src/progress.test.ts` (and `1/N files` when multiple). Shared-surface or package-config diffs keep `packages/core/src/*.test.ts` with an explicit reason. `--failing test:core` re-selects from the same paths, so the file list repeats.
 - **Host-repo vs package**: RAD-105 rewrites check **names** (`lint:core`). RAD-120 rewrites host **commands** (`eslint <changed>`). Format scoping is independent: it filters the blob file list from `changedPaths`, not a prettier CLI rewrite.
-- **Cache** (RAD-35, RAD-118): per-check input hashes cover **worktree** content in that check’s scope (tracked + dirty/untracked under the scoped paths), not only committed HEAD. Unrelated dirty edits leave other green checks cached; touching a file in scope or an unreadable path is a miss (fail-closed — never a false pass). Progress shows `cached` with **0 elapsed**. Stored under `.git/agent-console/ci-cache`.
+- **Cache** (RAD-35, RAD-118): per-check input hashes cover **worktree** content in that check’s scope, not only committed HEAD. Unrelated dirty edits **outside** the set below stay cached. Anything uncertain (unreadable path, non-regular entry, unknown ignored directory) is a **miss** — never a false pass. A real hit still shows progress `cached` with **0 elapsed**. Stored under `.git/agent-console/ci-cache`.
+
+  **Included**
+
+  - Tracked, dirty, and untracked files under the check scope: `packages/<pkg>/**` for `lint|typecheck|test|build:<pkg>`. `typecheck:*`, `test:*`, and `build:*` also include each `workspace:*` dependency package. File-scoped `test:*` uses that **same** tree (the selected test paths change only the command string, not the file set).
+  - Other gitignored files in that scope (a new ignored file is a miss).
+  - On **every** check, worktree bytes of root `package.json`, `pnpm-lock.yaml`, and `tsconfig.base.json` when that file exists (unstaged edits count).
+  - `lint:*`: root ESLint config files that exist. `typecheck:*`: root `tsconfig.json` when it exists. `build:*`: `scripts/build.mjs` when it exists.
+  - `format:check`: changed prettier-able paths as **index blobs** (LF, matching the blob runner), plus Prettier config and `.prettierignore` as worktree bytes. The three root inputs above are still worktree bytes.
+  - The check command (`ciCheckCommand`, including a file-scoped `test:*` argv) and the target package’s `package.json` text.
+  - `test:*` also includes `HEAD^{tree}`, so a moved base misses even when the selected test file list is unchanged.
+
+  **Left out** (a hit stays valid)
+
+  - Gitignored install/build/tool trees: `node_modules/**`, `dist/**`, `coverage/**`, `.turbo/**`, `.vscode-test/**`, and `*.vsix`. Untracked listings use `git ls-files -o --directory` plus omit pathspecs so those trees are **never descended** — including a primary→worktree `node_modules` junction when the worktree has no `.gitignore`. Post-filtering after a full `-o` walk is not enough (that walk is the hang). Dependency identity is the hashed lockfile and root `package.json`, not the install tree.
+  - Files outside the scope above (a dirty root `README.md` does not invalidate `lint:core`).
+  - `format:check` does not hash worktree CRLF for source files; those use the index blob.
+
+  **Always a miss**
+
+  - A symlink, junction, or other non-regular entry whose path is itself in scope (tracked or untracked), including a tracked directory symlink.
+  - A gitignored directory in scope that is not one of the omitted trees above.
+  - An untracked directory in scope that is not one of the omitted trees (listed as a directory line; contents are not walked).
+  - Unreadable inputs, or `test:*` when `HEAD^{tree}` cannot be resolved.
+  - A check that passed while its inputs changed mid-run (hash before; re-hash after; record only if unchanged).
+
 - **Per-check timeout** (RAD-133): format/lint/typecheck/build default to **20 minutes**; `test` / `test:*` (including full `packages/core/src/*.test.ts` globs on Windows) default to **40 minutes** so ~28 min suites finish inside `run_ci` / `prgenie ci`. MCP `mcp.json` / `MCP_SERVER_TIMEOUT_SEC` matches the **40-minute** package-test wall so `run_ci` and `shepherd_status` are not cut off at 20 minutes (RAD-100).
 - Progress UI shows **elapsed time per check** and the **actual command** (including path args / blob scope).
 

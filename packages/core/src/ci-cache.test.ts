@@ -279,6 +279,43 @@ describe("ci-cache", () => {
       }
     });
 
+    it("does not record when expected hash no longer matches (mid-run edit)", async () => {
+      const repo = await initTestRepo();
+      try {
+        const before = await computeCiInputHash(repo);
+        assert.ok(before);
+
+        await writeFile(join(repo, "test.txt"), "edited mid-run\n");
+
+        const recorded = await recordCheckPass(repo, "lint", {}, before);
+        assert.equal(recorded, false, "mid-run edit must not create a cache entry");
+
+        const cache = await loadCiCache(repo);
+        assert.equal(cache.checks["lint"], undefined);
+
+        assert.equal(await getCachedResult(repo, "lint"), null);
+      } finally {
+        await rm(repo, { recursive: true, force: true });
+      }
+    });
+
+    it("records when expected hash still matches after the check", async () => {
+      const repo = await initTestRepo();
+      try {
+        const before = await computeCiInputHash(repo);
+        assert.ok(before);
+
+        const recorded = await recordCheckPass(repo, "lint", {}, before);
+        assert.equal(recorded, true);
+
+        const after = await getCachedResult(repo, "lint");
+        assert.ok(after);
+        assert.equal(after.inputHash, before);
+      } finally {
+        await rm(repo, { recursive: true, force: true });
+      }
+    });
+
     it("loadCiCache returns empty cache for non-existent file", async () => {
       const repo = await initTestRepo();
       try {
