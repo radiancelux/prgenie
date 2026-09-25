@@ -27,6 +27,7 @@ import type {
   CommentThread,
   CreateLocalPrInput,
   ExportGateSnapshot,
+  ImplementorTier,
   LocalPr,
   LocalPrComment,
   LocalPrStatus,
@@ -81,6 +82,12 @@ async function readPrFile(file: string): Promise<LocalPr> {
   pr.readyCi = normalizeReadyCi(pr.readyCi);
   pr.exportGate = normalizeExportGate(pr.exportGate);
   pr.comments = (pr.comments ?? []).map(normalizeComment);
+  pr.implementorTier = pr.implementorTier ?? null;
+  pr.implementorModel = pr.implementorModel ?? null;
+  pr.reviewRoundCount = pr.reviewRoundCount ?? 0;
+  pr.implementorRoundCount = pr.implementorRoundCount ?? 0;
+  pr.failedAcRoundCount = pr.failedAcRoundCount ?? 0;
+  pr.lastTierBumpReason = pr.lastTierBumpReason ?? null;
   return pr;
 }
 
@@ -397,6 +404,11 @@ export async function createLocalPr(cwd: string, input: CreateLocalPrInput = {})
     reviewRequestedSha: null,
     reviewerNotifiedSha: null,
     readyCi: null,
+    implementorTier: null,
+    implementorModel: null,
+    reviewRoundCount: 0,
+    implementorRoundCount: 0,
+    lastTierBumpReason: null,
   };
   await writePr(root, pr);
   const others = await listLocalPrs(root);
@@ -706,6 +718,35 @@ export function groupThreadsByRound(threads: CommentThread[]): CommentRound[] {
   });
 }
 
+/** Persist review-round count from RAD-114 comment grouping. */
+export function syncReviewRoundCount(pr: LocalPr): number {
+  const rounds = groupThreadsByRound(commentThreads(pr.comments ?? []));
+  const count = rounds.length > 0 ? rounds.length : 0;
+  pr.reviewRoundCount = count;
+  return count;
+}
+
+/** Record implementor tier/model metrics when the steward spawns a new implementor Task. */
+export async function recordImplementorSpawnMetrics(
+  cwd: string,
+  id: string,
+  input: {
+    tier: ImplementorTier;
+    subagentType: string;
+    bumpReason: string | null;
+    model: string | null;
+  },
+): Promise<LocalPr> {
+  return withPrLock(cwd, id, (pr) => {
+    syncReviewRoundCount(pr);
+    pr.implementorRoundCount = (pr.implementorRoundCount ?? 0) + 1;
+    pr.implementorTier = input.tier;
+    pr.implementorModel = input.model;
+    pr.lastTierBumpReason = input.bumpReason;
+    pr.updatedAt = nowIso();
+  });
+}
+
 function maybePromoteToReviewed(pr: LocalPr): void {
   // Only auto-finish from changes_requested (human resolving the last finding).
   // A ready loop is still with the reviewer until complete_review.
@@ -715,6 +756,7 @@ function maybePromoteToReviewed(pr: LocalPr): void {
   if (open.length > 0 || addressed.length > 0) return;
   pr.status = "reviewed";
   pr.exportGate = pendingExportGate(pr.headSha);
+  pr.failedAcRoundCount = 0;
 }
 
 async function armReviewRequest(cwd: string, pr: LocalPr): Promise<void> {
@@ -1120,7 +1162,13 @@ export async function completeLocalPrReview(
     if (!isArchivedPr(pr)) {
       pr.status = handedToImplementor ? "changes_requested" : "reviewed";
       if (pr.status === "reviewed") pr.exportGate = pendingExportGate(pr.headSha);
+      if (handedToImplementor) {
+        pr.failedAcRoundCount = (pr.failedAcRoundCount ?? 0) + 1;
+      } else {
+        pr.failedAcRoundCount = 0;
+      }
     }
+    syncReviewRoundCount(pr);
     pr.updatedAt = now;
     await writePr(cwd, pr);
     pr.worktreePath = resolved.worktreePath;

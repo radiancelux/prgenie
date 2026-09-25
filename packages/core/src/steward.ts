@@ -3,10 +3,25 @@ import path from "node:path";
 import { formatExportBlockLabel, needsExportGateEvaluation } from "./export-gate.js";
 import { evaluateAndStoreExportGate } from "./export-validation.js";
 import { requireGitRoot } from "./git.js";
-import { getLocalPr, isArchivedPr, listLocalPrs, refreshLocalPrHead } from "./prs.js";
+import { readPluginAgentModel } from "./agent-model.js";
+import {
+  formatTierMetricsLine,
+  IMPLEMENTOR_TIER_STRONG,
+  resolveImplementorTierHint,
+  REVIEWER_SUBAGENT,
+  sameAcStillOpen,
+  type ImplementorTierHint,
+} from "./model-tiers.js";
+import {
+  getLocalPr,
+  isArchivedPr,
+  listLocalPrs,
+  refreshLocalPrHead,
+  syncReviewRoundCount,
+} from "./prs.js";
 import type { ProgressCallback } from "./progress.js";
 import { consoleDir, parseJsonObject, withFileLock, writeJsonFile } from "./store.js";
-import type { ExportGateSnapshot, ExportGateStatus, LocalPr } from "./types.js";
+import type { ExportGateSnapshot, ExportGateStatus, ImplementorTier, LocalPr } from "./types.js";
 
 export interface StewardBinding {
   loopId: string;
@@ -37,6 +52,11 @@ export interface StewardDecision {
   failingCheck: string | null;
   gateStatus: ExportGateStatus | null;
   reason: string;
+  /** cheap | strong hint when kind is spawn_implementor (RAD-89). */
+  implementorTier?: ImplementorTier | null;
+  implementorTierBumpReason?: string | null;
+  implementorSubagentType?: string | null;
+  reviewerSubagentType?: string | null;
 }
 
 export interface StewardNextOptions {
@@ -62,6 +82,12 @@ export interface StewardNextResult {
   decision: StewardDecision;
   status: LocalPr["status"];
   exportGate: ExportGateSnapshot | null;
+  implementorTierHint: ImplementorTierHint | null;
+  /** Persisted packet tier (always present when set; spawn hint may differ until bind). */
+  implementorTier: ImplementorTier | null;
+  reviewRoundCount: number;
+  implementorRoundCount: number;
+  implementorModel: string | null;
 }
 
 interface StewardMapState {
@@ -157,7 +183,10 @@ function canResumeTask(
  * Human handoff (Push to origin) only when status is reviewed and the export gate is ready.
  */
 export function decideStewardAction(
-  pr: Pick<LocalPr, "id" | "status" | "headSha" | "exportGate">,
+  pr: Pick<
+    LocalPr,
+    "id" | "status" | "headSha" | "exportGate" | "failedAcRoundCount" | "implementorTier"
+  >,
   binding: StewardBinding | null,
   options: StewardNextOptions = {},
 ): StewardDecision {
@@ -318,6 +347,26 @@ export function decideStewardAction(
   }
 
   // draft or changes_requested (and any other live status)
+  if (
+    pr.status === "changes_requested" &&
+    sameAcStillOpen(pr) &&
+    resumeImplementor &&
+    pr.implementorTier !== IMPLEMENTOR_TIER_STRONG
+  ) {
+    return {
+      kind: "spawn_implementor",
+      loopId: pr.id,
+      implementorTaskId: null,
+      reviewerTaskId,
+      resumeSameImplementor: false,
+      humanExportable: false,
+      yourTurn: false,
+      failingCheck: null,
+      gateStatus: null,
+      reason:
+        "changes_requested with same AC still open after two reviewer rejections. Spawn strong implementor (new Task).",
+    };
+  }
   if (resumeImplementor) {
     return {
       kind: "resume_implementor",
@@ -360,7 +409,7 @@ export async function bindSteward(
   const root = await requireGitRoot(cwd);
   const pr = await getLocalPr(root, id);
   const file = stewardsFile(await consoleDir(root));
-  return withFileLock(file, async () => {
+  const binding = await withFileLock(file, async () => {
     const current = await pruneStale(root, await loadMap(file));
     const existing = current.bindings[pr.id] ?? emptyBinding(pr.id);
     const next: StewardBinding = {
@@ -378,8 +427,28 @@ export async function bindSteward(
     current.bindings[pr.id] = next;
     current.updatedAt = next.updatedAt;
     await writeJsonFile(file, current);
-    return next;
+    return { next, existing };
   });
+
+  const newImpl = binding.next.implementorTaskId;
+  const oldImpl = binding.existing.implementorTaskId;
+  if (newImpl && newImpl !== oldImpl) {
+    const { recordImplementorSpawnMetrics } = await import("./prs.js");
+    const gateBlocked =
+      pr.status === "reviewed" &&
+      pr.exportGate?.status === "blocked" &&
+      pr.exportGate.headSha === pr.headSha;
+    const hint = resolveImplementorTierHint(pr, { ciResume: gateBlocked });
+    const model = await readPluginAgentModel(root, hint.subagentType);
+    await recordImplementorSpawnMetrics(root, pr.id, {
+      tier: hint.tier,
+      subagentType: hint.subagentType,
+      bumpReason: hint.bumpReason,
+      model,
+    });
+  }
+
+  return binding.next;
 }
 
 export async function getStewardBinding(cwd: string, id: string): Promise<StewardBinding | null> {
@@ -419,6 +488,49 @@ export async function clearStewardBinding(cwd: string, id: string): Promise<void
  * Load the durable map, optionally persist Task ids, run the export gate when
  * the reviewer has cleared, then return the next steward action.
  */
+function isCiResumeSpawn(decision: Pick<StewardDecision, "kind" | "failingCheck">): boolean {
+  return decision.kind === "spawn_implementor" && Boolean(decision.failingCheck);
+}
+
+function attachReviewerSubagent(decision: StewardDecision): StewardDecision {
+  if (decision.kind === "spawn_reviewer" || decision.kind === "resume_reviewer") {
+    return { ...decision, reviewerSubagentType: REVIEWER_SUBAGENT };
+  }
+  return decision;
+}
+
+async function attachImplementorTierHint(
+  root: string,
+  pr: LocalPr,
+  decision: StewardDecision,
+  options: StewardNextOptions,
+): Promise<{ decision: StewardDecision; tierHint: ImplementorTierHint | null }> {
+  let current = attachReviewerSubagent(decision);
+  const persistedTier = pr.implementorTier ?? null;
+
+  if (current.kind !== "spawn_implementor") {
+    if (persistedTier) {
+      current = { ...current, implementorTier: persistedTier };
+    }
+    return { decision: current, tierHint: null };
+  }
+
+  const ciResume = isCiResumeSpawn(current);
+  const hint = resolveImplementorTierHint(pr, { ciResume, restart: options.restart });
+  current = {
+    ...current,
+    implementorTier: hint.tier,
+    implementorTierBumpReason: hint.bumpReason,
+    implementorSubagentType: hint.subagentType,
+  };
+  if (hint.bumpReason) {
+    current.reason = `${current.reason} Tier bump (${hint.tier}): ${hint.bumpReason}.`;
+  } else {
+    current.reason = `${current.reason} Implementor tier: ${hint.tier} (${hint.subagentType}).`;
+  }
+  return { decision: current, tierHint: hint };
+}
+
 export async function stewardNext(
   cwd: string,
   id: string,
@@ -429,12 +541,16 @@ export async function stewardNext(
   // exportGate / blocked-check labels (stale HEAD matched the wrong gate).
   // RAD-126: refresh also invalidates reviewed → ready when tip moved.
   let pr = await refreshLocalPrHead(root, id);
+  syncReviewRoundCount(pr);
   // Persist ownership on first next-action so the legacy stop hook stays silent
   // even before implementor/reviewer Task ids are known.
   const binding = await bindSteward(root, pr.id, {
     implementorTaskId: options.implementorTaskId,
     reviewerTaskId: options.reviewerTaskId,
   });
+  // bindSteward may record implementorTier on disk — refresh before decideStewardAction.
+  pr = await getLocalPr(root, pr.id);
+  syncReviewRoundCount(pr);
 
   if (pr.status === "reviewed" && options.evaluateGate !== false && needsExportGateEvaluation(pr)) {
     await evaluateAndStoreExportGate(root, pr.id, {
@@ -442,13 +558,23 @@ export async function stewardNext(
       signal: options.signal,
     });
     pr = await refreshLocalPrHead(root, pr.id);
+    syncReviewRoundCount(pr);
   }
+
+  const baseDecision = decideStewardAction(pr, binding, options);
+  const tiered = await attachImplementorTierHint(root, pr, baseDecision, options);
+  const fresh = await getLocalPr(root, pr.id);
 
   return {
     binding,
-    decision: decideStewardAction(pr, binding, options),
-    status: pr.status,
-    exportGate: pr.exportGate ?? null,
+    decision: tiered.decision,
+    status: fresh.status,
+    exportGate: fresh.exportGate ?? null,
+    implementorTierHint: tiered.tierHint,
+    implementorTier: fresh.implementorTier ?? null,
+    reviewRoundCount: fresh.reviewRoundCount ?? syncReviewRoundCount(fresh),
+    implementorRoundCount: fresh.implementorRoundCount ?? 0,
+    implementorModel: fresh.implementorModel ?? null,
   };
 }
 
@@ -459,6 +585,25 @@ export function formatStewardDecision(result: StewardNextResult): string {
     `  implementorTaskId=${binding.implementorTaskId ?? "-"}  reviewerTaskId=${binding.reviewerTaskId ?? "-"}`,
     `  resumeSameImplementor=${decision.resumeSameImplementor}  humanExportable=${decision.humanExportable}  yourTurn=${decision.yourTurn}`,
   ];
+  if (decision.implementorSubagentType) {
+    lines.push(
+      `  implementorSubagentType=${decision.implementorSubagentType}  implementorTier=${decision.implementorTier ?? "-"}`,
+    );
+    if (decision.implementorTierBumpReason) {
+      lines.push(`  tierBumpReason=${decision.implementorTierBumpReason}`);
+    }
+  }
+  if (decision.reviewerSubagentType) {
+    lines.push(`  reviewerSubagentType=${decision.reviewerSubagentType}`);
+  }
+  lines.push(
+    formatTierMetricsLine({
+      implementorTier: result.implementorTier ?? decision.implementorTier ?? null,
+      implementorModel: result.implementorModel,
+      reviewRoundCount: result.reviewRoundCount,
+      implementorRoundCount: result.implementorRoundCount,
+    }),
+  );
   if (decision.failingCheck) lines.push(`  failingCheck=${decision.failingCheck}`);
   if (decision.gateStatus) lines.push(`  exportGate=${decision.gateStatus}`);
   lines.push(`  ${decision.reason}`);

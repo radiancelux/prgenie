@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { pendingExportGate } from "./export-gate.js";
-import { createLocalPr, getLocalPr, setLocalPrExportGate, setLocalPrStatus } from "./prs.js";
+import {
+  addLocalPrComment,
+  addressLocalPrComment,
+  completeLocalPrReview,
+  createLocalPr,
+  getLocalPr,
+  setLocalPrExportGate,
+  setLocalPrStatus,
+} from "./prs.js";
 import {
   bindSteward,
   clearStewardBinding,
@@ -283,6 +291,135 @@ test("RAD-125: stewardNext refreshes headSha before matching a blocked gate", as
   const shown = await getLocalPr(repo, pr.id);
   assert.equal(shown.headSha, newSha);
   assert.equal(shown.status, "ready");
+});
+
+test("RAD-89: stewardNext spawn_implementor returns cheap tier by default", async () => {
+  const pr = await createLocalPr(repo, { title: "Tier default", body: "Fix tooltip copy." });
+  const next = await stewardNext(repo, pr.id, { evaluateGate: false });
+  assert.equal(next.decision.kind, "spawn_implementor");
+  assert.equal(next.implementorTierHint?.tier, "cheap");
+  assert.equal(next.decision.implementorSubagentType, "prgenie-implementor");
+  assert.match(formatStewardDecision(next), /implementorSubagentType=prgenie-implementor/);
+});
+
+test("RAD-89: bindSteward records implementor tier and model on new Task id", async () => {
+  const fakeHome = await mkdtemp(path.join(tmpdir(), "prgenie-agent-home-"));
+  const agentsDir = path.join(fakeHome, ".cursor", "agents");
+  await mkdir(agentsDir, { recursive: true });
+  await writeFile(
+    path.join(agentsDir, "prgenie-implementor-strong.md"),
+    "---\nmodel: test-strong-model\n---\n",
+    "utf8",
+  );
+  const prevHome = process.env.PRGENIE_AGENT_HOME;
+  process.env.PRGENIE_AGENT_HOME = fakeHome;
+  try {
+    const pr = await createLocalPr(repo, {
+      title: "Tier record",
+      body: "RAD-1: rewrite the packet store.\ntier: strong",
+    });
+    await bindSteward(repo, pr.id, { implementorTaskId: "task-tier-1" });
+    const stored = await getLocalPr(repo, pr.id);
+    assert.equal(stored.implementorTier, "strong");
+    assert.equal(stored.implementorRoundCount, 1);
+    assert.equal(stored.implementorModel, "test-strong-model");
+    assert.match(stored.lastTierBumpReason ?? "", /explicit strong-tier marker/i);
+  } finally {
+    if (prevHome === undefined) delete process.env.PRGENIE_AGENT_HOME;
+    else process.env.PRGENIE_AGENT_HOME = prevHome;
+    await rm(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test("RAD-89: stewardNext spawn_reviewer names prgenie-reviewer subagent", async () => {
+  const pr = await createLocalPr(repo, { title: "Reviewer tier", body: "Body" });
+  await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true, ciSkipReason: "test" });
+  const next = await stewardNext(repo, pr.id, { evaluateGate: false });
+  assert.equal(next.decision.kind, "spawn_reviewer");
+  assert.equal(next.decision.reviewerSubagentType, "prgenie-reviewer");
+});
+
+test("RAD-89: formatStewardDecision shows persisted tier on spawn_reviewer", async () => {
+  const pr = await createLocalPr(repo, { title: "Persisted tier", body: "Body" });
+  await bindSteward(repo, pr.id, { implementorTaskId: "task-tier-persist" });
+  const stored = await getLocalPr(repo, pr.id);
+  assert.ok(stored.implementorTier);
+  await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true, ciSkipReason: "test" });
+  const next = await stewardNext(repo, pr.id, { evaluateGate: false });
+  assert.equal(next.decision.kind, "spawn_reviewer");
+  assert.equal(next.implementorTier, stored.implementorTier);
+  assert.match(formatStewardDecision(next), new RegExp(`tier=${stored.implementorTier}`));
+});
+
+test("RAD-89: stewardNext spawns strong after two failed AC rounds on same Task id", async () => {
+  const pr = await createLocalPr(repo, { title: "AC bump", body: "Fix tooltip copy." });
+  await bindSteward(repo, pr.id, { implementorTaskId: "task-same-ac" });
+
+  await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true, ciSkipReason: "test" });
+  const firstFinding = await addLocalPrComment(repo, pr.id, "Still wrong.", { role: "reviewer" });
+  const firstFindingId = firstFinding.comments.find((c) => c.body === "Still wrong.")!.id;
+  await completeLocalPrReview(repo, pr.id);
+  let next = await stewardNext(repo, pr.id, { evaluateGate: false });
+  assert.equal(next.decision.kind, "resume_implementor");
+  assert.equal(next.binding.implementorTaskId, "task-same-ac");
+  assert.equal((await getLocalPr(repo, pr.id)).failedAcRoundCount, 1);
+
+  await addressLocalPrComment(repo, pr.id, firstFindingId, "Try again.");
+  await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true, ciSkipReason: "test" });
+  await addLocalPrComment(repo, pr.id, "Still not fixed.", { role: "reviewer" });
+  await completeLocalPrReview(repo, pr.id);
+  assert.equal((await getLocalPr(repo, pr.id)).failedAcRoundCount, 2);
+
+  next = await stewardNext(repo, pr.id, { evaluateGate: false });
+  assert.equal(next.decision.kind, "spawn_implementor");
+  assert.equal(next.implementorTierHint?.tier, "strong");
+  assert.equal(next.decision.implementorSubagentType, "prgenie-implementor-strong");
+  assert.match(next.decision.reason, /same AC still open/i);
+
+  // Persist strong Task id via steward_next (same call path as /steward) — must resume, not twin-spawn.
+  next = await stewardNext(repo, pr.id, {
+    evaluateGate: false,
+    implementorTaskId: "task-strong-ac",
+  });
+  assert.equal((await getLocalPr(repo, pr.id)).implementorTier, "strong");
+  assert.equal(next.decision.kind, "resume_implementor");
+  assert.equal(next.binding.implementorTaskId, "task-strong-ac");
+  assert.equal(next.decision.resumeSameImplementor, true);
+});
+
+test("RAD-89: export-gate restart spawn stays cheap even with tier marker brief", async () => {
+  git(["checkout", "main"]);
+  git(["checkout", "-b", "feat/steward-gate-restart"]);
+  await writeFile(path.join(repo, "gate-restart.txt"), "g\n");
+  git(["add", "."]);
+  git(["commit", "-m", "gate restart"]);
+
+  const pr = await createLocalPr(repo, {
+    title: "Gate restart tier",
+    body: "tier: strong\nRAD-1: architecture rewrite for export gate CI fix",
+    base: "main",
+  });
+  await bindSteward(repo, pr.id, { implementorTaskId: "task-impl-gate-old" });
+  await setLocalPrStatus(repo, pr.id, "reviewed");
+  await setLocalPrExportGate(repo, pr.id, {
+    status: "blocked",
+    reasons: [{ check: "ci", message: "CI check failed: lint — prettier" }],
+    headSha: pr.headSha,
+    evaluatedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  const next = await stewardNext(repo, pr.id, {
+    evaluateGate: false,
+    restart: true,
+    implementorMissing: true,
+  });
+  assert.equal(next.decision.kind, "spawn_implementor");
+  assert.equal(next.implementorTierHint?.tier, "cheap");
+  assert.equal(next.decision.implementorSubagentType, "prgenie-implementor");
+
+  await bindSteward(repo, pr.id, { implementorTaskId: "task-impl-gate-new" });
+  const stored = await getLocalPr(repo, pr.id);
+  assert.equal(stored.implementorTier, "cheap");
 });
 
 test("RAD-126: decideStewardAction labels refused plan as ci-select not test", () => {

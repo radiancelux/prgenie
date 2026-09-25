@@ -92,3 +92,21 @@ test("/review skill points at stack-agnostic process bar (RAD-103)", () => {
   assert.match(steward, /process-bar\.md/);
   assert.match(steward, /Do \*\*not\*\* paste the process bar/);
 });
+
+test("steward skill names PR Genie subagent types (RAD-89)", () => {
+  const steward = skillBody("steward");
+  assert.match(steward, /Model tiers \(RAD-89\)/);
+  assert.match(steward, /prgenie-implementor/);
+  assert.match(steward, /prgenie-implementor-strong/);
+  assert.match(steward, /prgenie-reviewer/);
+  assert.match(steward, /Never Task `generalPurpose`/);
+
+  const localPr = skillBody("local-pr");
+  assert.match(localPr, /prgenie-implementor/);
+  assert.match(localPr, /never `generalPurpose`/i);
+
+  const agentsDir = path.join(pluginRoot, "agents");
+  assert.equal(existsSync(path.join(agentsDir, "prgenie-implementor.md")), true);
+  assert.equal(existsSync(path.join(agentsDir, "prgenie-implementor-strong.md")), true);
+  assert.equal(existsSync(path.join(agentsDir, "prgenie-reviewer.md")), true);
+});
