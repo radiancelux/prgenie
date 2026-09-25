@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -11,6 +12,7 @@ import {
   createTempGitRepo,
   ensureGitFixtureTemplate,
   getGitFixtureTemplatePathForTest,
+  removeGitFixtureTemplatesSyncForTest,
 } from "./test-git-fixture.js";
 
 describe("test-git-fixture", () => {
@@ -57,6 +59,15 @@ describe("test-git-fixture", () => {
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
+  });
+
+  it("sync cleanup removes template directories from disk", async () => {
+    clearGitFixtureTemplatesForTest();
+    const path = await ensureGitFixtureTemplate("basic");
+    assert.ok(existsSync(path));
+    removeGitFixtureTemplatesSyncForTest();
+    assert.equal(existsSync(path), false);
+    assert.equal(getGitFixtureTemplatePathForTest("basic"), undefined);
   });
 
   it("rebuilds the template when schema version mismatches", async () => {

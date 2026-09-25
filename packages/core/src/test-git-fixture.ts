@@ -7,6 +7,7 @@
  *   Never share a working tree across parallel tests or sequential cases.
  * - Templates live under the OS temp dir, scoped to **this process** (PID in the path).
  *   There is no permanent cross-process disk cache (no `.cache/git-fixture`).
+ *   Template directories are removed on process exit (best effort, sync).
  * - After seeding, the template repo is **read-only** — tests only `clone` from it.
  * - Clones are independent; commits/branches in one clone do not affect others.
  * - Optional `node_modules` junctions belong in the **clone**, not the template.
@@ -18,6 +19,7 @@
  * - Corrupt templates (missing schema, bad clone) trigger one rebuild then retry.
  */
 import { randomBytes } from "node:crypto";
+import { rmSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -69,6 +71,25 @@ const TEMPLATE_SEEDS: Record<GitFixtureTemplateId, TemplateSeed> = {
 
 /** Process-local template paths (template id → absolute repo path). */
 const templatePaths = new Map<GitFixtureTemplateId, string>();
+
+let exitCleanupRegistered = false;
+
+function syncRemoveAllTemplates(): void {
+  for (const path of templatePaths.values()) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+    } catch {
+      // best effort on process exit
+    }
+  }
+  templatePaths.clear();
+}
+
+function registerProcessExitTemplateCleanup(): void {
+  if (exitCleanupRegistered) return;
+  exitCleanupRegistered = true;
+  process.on("exit", syncRemoveAllTemplates);
+}
 
 export type CreateTempGitRepoOptions = {
   /** Temp directory prefix (must end with `-` or `_` for mkdtemp). */
@@ -124,6 +145,7 @@ export async function ensureGitFixtureTemplate(id: GitFixtureTemplateId): Promis
     return cached;
   }
   await invalidateTemplate(id);
+  registerProcessExitTemplateCleanup();
   const built = await buildTemplate(id);
   templatePaths.set(id, built);
   return built;
@@ -177,10 +199,12 @@ export async function createTempGitRepo(options: CreateTempGitRepoOptions = {}):
 
 /** Test-only: drop cached templates so schema-miss / rebuild tests start fresh. */
 export function clearGitFixtureTemplatesForTest(): void {
-  for (const path of templatePaths.values()) {
-    rm(path, { recursive: true, force: true }).catch(() => undefined);
-  }
-  templatePaths.clear();
+  syncRemoveAllTemplates();
+}
+
+/** Test-only: same sync removal used on process exit. */
+export function removeGitFixtureTemplatesSyncForTest(): void {
+  syncRemoveAllTemplates();
 }
 
 /** Test-only: path of the cached template for `id`, if built. */
