@@ -123,15 +123,16 @@ Uncertain / hard-config mapping **skips** local CI with an explicit `skip local 
 
   **Left out** (a hit stays valid)
 
-  - Gitignored install/build/tool trees: `node_modules/**`, `dist/**`, `coverage/**`, `.turbo/**`, `.vscode-test/**`, and `*.vsix`. Dependency identity is the hashed lockfile and root `package.json`, not the install tree.
+  - Gitignored install/build/tool trees: `node_modules/**`, `dist/**`, `coverage/**`, `.turbo/**`, `.vscode-test/**`, and `*.vsix`. The same path segments are **also omitted from untracked listings** even when the worktree has no `.gitignore` (so a primary→worktree `node_modules` junction is not walked file-by-file). Dependency identity is the hashed lockfile and root `package.json`, not the install tree.
   - Files outside the scope above (a dirty root `README.md` does not invalidate `lint:core`).
   - `format:check` does not hash worktree CRLF for source files; those use the index blob.
 
   **Always a miss**
 
-  - A symlink or other non-regular tracked entry in scope (including content behind a directory symlink).
+  - A symlink, junction, or other non-regular entry whose path is itself in scope (tracked or untracked), including a tracked directory symlink.
   - A gitignored directory in scope that is not one of the omitted trees above.
   - Unreadable inputs, or `test:*` when `HEAD^{tree}` cannot be resolved.
+  - A check that passed while its inputs changed mid-run (hash before; re-hash after; record only if unchanged).
 
 - **Per-check timeout** (RAD-133): format/lint/typecheck/build default to **20 minutes**; `test` / `test:*` (including full `packages/core/src/*.test.ts` globs on Windows) default to **40 minutes** so ~28 min suites finish inside `run_ci` / `prgenie ci`. MCP `mcp.json` / `MCP_SERVER_TIMEOUT_SEC` matches the **40-minute** package-test wall so `run_ci` and `shepherd_status` are not cut off at 20 minutes (RAD-100).
 - Progress UI shows **elapsed time per check** and the **actual command** (including path args / blob scope).

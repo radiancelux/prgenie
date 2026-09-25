@@ -2,7 +2,12 @@ import { exec } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { promisify } from "node:util";
-import { getCachedResult, recordCheckPass, type CheckInputScopeOptions } from "./ci-cache.js";
+import {
+  computeCheckInputHash,
+  loadCiCache,
+  recordCheckPass,
+  type CheckInputScopeOptions,
+} from "./ci-cache.js";
 import {
   collectExecOutput,
   collectShellOutput,
@@ -380,9 +385,14 @@ async function runOneCheck(
     testFiles: scopedTestFiles,
   };
 
-  if (!skipCache) {
-    const cached = await getCachedResult(cwd, check, cacheScope);
-    if (cached) {
+  // Hash inputs before the check; after a pass, re-hash and record only if unchanged
+  // (mid-run dirty edits must not create a false-green cache entry).
+  const beforeHash = await computeCheckInputHash(cwd, check, cacheScope);
+
+  if (!skipCache && beforeHash) {
+    const cache = await loadCiCache(cwd);
+    const cached = cache.checks[check];
+    if (cached?.inputHash === beforeHash) {
       throwIfAborted(signal);
       onProgress?.({ phase: "ci", check, state: "cached", command: progressCommand, elapsedMs: 0 });
       return { name: check, passed: true, elapsedMs: 0, reason: reason || options.reason };
@@ -428,7 +438,7 @@ async function runOneCheck(
           const elapsedMs = Date.now() - started;
           onProgress?.({ phase: "ci", check, state: "pass", command: progressCommand, elapsedMs });
           try {
-            await recordCheckPass(cwd, check, cacheScope);
+            await recordCheckPass(cwd, check, cacheScope, beforeHash);
           } catch {
             // Check passed; cache write failed — ignore and continue without cache
           }
@@ -482,7 +492,7 @@ async function runOneCheck(
     const elapsedMs = Date.now() - started;
     onProgress?.({ phase: "ci", check, state: "pass", command: progressCommand, elapsedMs });
     try {
-      await recordCheckPass(cwd, check, cacheScope);
+      await recordCheckPass(cwd, check, cacheScope, beforeHash);
     } catch {
       // Check passed; cache write failed — ignore and continue without cache
     }

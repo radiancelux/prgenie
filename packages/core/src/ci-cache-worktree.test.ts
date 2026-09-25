@@ -383,6 +383,32 @@ describe("RAD-118 worktree CI cache", () => {
     }
   });
 
+  it("untracked node_modules without .gitignore is omitted (no hang / still hits)", async () => {
+    const repo = await initPackageRepo();
+    try {
+      // No .gitignore — git would otherwise list every file through a junction.
+      await clearCiCache(repo);
+      const scope = coreLintScope();
+      await recordCheckPass(repo, "lint:core", scope);
+      assert.ok(await getCachedResult(repo, "lint:core", scope));
+
+      await mkdir(join(repo, "packages", "core", "node_modules", "pkg"), { recursive: true });
+      await writeFile(
+        join(repo, "packages", "core", "node_modules", "pkg", "index.js"),
+        "module.exports = 1;\n",
+      );
+
+      const hash = await computeCheckInputHash(repo, "lint:core", scope);
+      assert.ok(hash, "omitted untracked install tree must not fail-closed the whole hash");
+      assert.ok(
+        await getCachedResult(repo, "lint:core", scope),
+        "untracked node_modules without .gitignore stays a hit",
+      );
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it("lint:core misses when an unknown gitignored directory appears in the package", async () => {
     const repo = await initPackageRepo();
     try {

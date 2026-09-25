@@ -299,7 +299,7 @@ describe("evaluateAndStoreExportGate", () => {
           },
         }),
       );
-      await writeFile(join(repo, ".gitignore"), "node_modules\n");
+      await writeFile(join(pr.worktreePath, ".gitignore"), "node_modules\n");
       const type = process.platform === "win32" ? "junction" : "dir";
       await symlink(
         join(process.cwd(), "node_modules"),
