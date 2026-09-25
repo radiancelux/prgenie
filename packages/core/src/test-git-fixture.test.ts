@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, it } from "node:test";
+import { describe, it } from "node:test";
 import { git } from "./git.js";
 import {
   FIXTURE_TEMPLATE_SCHEMA,
@@ -11,12 +11,9 @@ import {
   getGitFixtureTemplatePathForTest,
 } from "./test-git-fixture.js";
 
-afterEach(() => {
-  clearGitFixtureTemplatesForTest();
-});
-
 describe("test-git-fixture", () => {
   it("reuses the process-local template on cache hit", async () => {
+    clearGitFixtureTemplatesForTest();
     const first = await createTempGitRepo({ prefix: "prgenie-fixture-hit-a-" });
     const tplAfterFirst = getGitFixtureTemplatePathForTest("basic");
     assert.ok(tplAfterFirst);
@@ -37,6 +34,7 @@ describe("test-git-fixture", () => {
   });
 
   it("rebuilds the template when schema version mismatches", async () => {
+    clearGitFixtureTemplatesForTest();
     await ensureGitFixtureTemplate("basic");
     const before = getGitFixtureTemplatePathForTest("basic");
     assert.ok(before);
