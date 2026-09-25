@@ -29,11 +29,11 @@ test("resolveImplementorTierHint bumps to strong for design-heavy brief", () => 
   assert.match(hint.bumpReason ?? "", /design-heavy/i);
 });
 
-test("resolveImplementorTierHint bumps after two implementor rounds with open AC", () => {
+test("resolveImplementorTierHint bumps after two failed AC rounds with open AC", () => {
   const hint = resolveImplementorTierHint({
     body: "Fix the button color.",
     status: "changes_requested",
-    implementorRoundCount: 2,
+    failedAcRoundCount: 2,
   });
   assert.equal(hint.tier, "strong");
   assert.match(hint.bumpReason ?? "", /two implementor rounds/i);

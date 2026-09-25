@@ -6,6 +6,7 @@ import { requireGitRoot } from "./git.js";
 import { readPluginAgentModel } from "./agent-model.js";
 import {
   formatTierMetricsLine,
+  IMPLEMENTOR_TIER_STRONG,
   resolveImplementorTierHint,
   REVIEWER_SUBAGENT,
   sameAcStillOpen,
@@ -176,7 +177,10 @@ function canResumeTask(
  * Human handoff (Push to origin) only when status is reviewed and the export gate is ready.
  */
 export function decideStewardAction(
-  pr: Pick<LocalPr, "id" | "status" | "headSha" | "exportGate" | "failedAcRoundCount">,
+  pr: Pick<
+    LocalPr,
+    "id" | "status" | "headSha" | "exportGate" | "failedAcRoundCount" | "implementorTier"
+  >,
   binding: StewardBinding | null,
   options: StewardNextOptions = {},
 ): StewardDecision {
@@ -340,7 +344,8 @@ export function decideStewardAction(
   if (
     pr.status === "changes_requested" &&
     sameAcStillOpen(pr) &&
-    resumeImplementor
+    resumeImplementor &&
+    pr.implementorTier !== IMPLEMENTOR_TIER_STRONG
   ) {
     return {
       kind: "spawn_implementor",

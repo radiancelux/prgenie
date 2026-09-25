@@ -1,18 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { after, test } from "node:test";
+import { test } from "node:test";
 import { parseAgentModelFrontmatter, readPluginAgentModel } from "./agent-model.js";
-
-let repo = "";
-
-after(async () => {
-  if (repo) {
-    const { rm } = await import("node:fs/promises");
-    await rm(repo, { recursive: true, force: true });
-  }
-});
 
 test("parseAgentModelFrontmatter reads model slug", () => {
   const raw = `---
@@ -24,12 +15,12 @@ model: composer-2.5[fast=false]
   assert.equal(parseAgentModelFrontmatter(raw), "composer-2.5[fast=false]");
 });
 
-test("readPluginAgentModel loads from packages/plugin/agents", async () => {
-  repo = await mkdtemp(path.join(tmpdir(), "prgenie-agent-model-"));
-  const dir = path.join(repo, "packages", "plugin", "agents");
-  await mkdir(dir, { recursive: true });
+test("readPluginAgentModel loads from PRGENIE_AGENT_HOME user agents dir", async () => {
+  const fakeHome = await mkdtemp(path.join(tmpdir(), "prgenie-agent-model-"));
+  const agentsDir = path.join(fakeHome, ".cursor", "agents");
+  await mkdir(agentsDir, { recursive: true });
   await writeFile(
-    path.join(dir, "prgenie-implementor.md"),
+    path.join(agentsDir, "prgenie-implementor.md"),
     `---
 name: prgenie-implementor
 model: test-model[fast=false]
@@ -37,5 +28,13 @@ model: test-model[fast=false]
 `,
     "utf8",
   );
-  assert.equal(await readPluginAgentModel(repo, "prgenie-implementor"), "test-model[fast=false]");
+  const prevHome = process.env.PRGENIE_AGENT_HOME;
+  process.env.PRGENIE_AGENT_HOME = fakeHome;
+  try {
+    assert.equal(await readPluginAgentModel("/ignored/repo", "prgenie-implementor"), "test-model[fast=false]");
+  } finally {
+    if (prevHome === undefined) delete process.env.PRGENIE_AGENT_HOME;
+    else process.env.PRGENIE_AGENT_HOME = prevHome;
+    await rm(fakeHome, { recursive: true, force: true });
+  }
 });

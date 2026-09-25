@@ -1163,6 +1163,8 @@ export async function completeLocalPrReview(
       if (pr.status === "reviewed") pr.exportGate = pendingExportGate(pr.headSha);
       if (handedToImplementor) {
         pr.failedAcRoundCount = (pr.failedAcRoundCount ?? 0) + 1;
+      } else {
+        pr.failedAcRoundCount = 0;
       }
     }
     syncReviewRoundCount(pr);

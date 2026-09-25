@@ -376,6 +376,15 @@ test("RAD-89: stewardNext spawns strong after two failed AC rounds on same Task 
   assert.equal(next.implementorTierHint?.tier, "strong");
   assert.equal(next.decision.implementorSubagentType, "prgenie-implementor-strong");
   assert.match(next.decision.reason, /same AC still open/i);
+
+  await bindSteward(repo, pr.id, { implementorTaskId: "task-strong-ac" });
+  const afterBump = await getLocalPr(repo, pr.id);
+  assert.equal(afterBump.implementorTier, "strong");
+
+  next = await stewardNext(repo, pr.id, { evaluateGate: false });
+  assert.equal(next.decision.kind, "resume_implementor");
+  assert.equal(next.binding.implementorTaskId, "task-strong-ac");
+  assert.equal(next.decision.resumeSameImplementor, true);
 });
 
 test("RAD-89: export-gate restart spawn stays cheap even for design-heavy brief", async () => {
