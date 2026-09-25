@@ -353,6 +353,27 @@ test("complete_review with findings hands the loop to the implementor", async ()
   assert.match(done.comments.at(-1)?.body ?? "", /implementor/);
 });
 
+test("RAD-89: human resolve of last finding clears failedAcRoundCount on reviewed", async () => {
+  const pr = await createLocalPr(repo, { title: "Resolve reset", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
+  const filed = await addLocalPrComment(repo, pr.id, "Fix this.", { role: "reviewer" });
+  await completeLocalPrReview(repo, pr.id);
+  const mid = await getLocalPr(repo, pr.id);
+  assert.equal(mid.status, "changes_requested");
+  assert.equal(mid.failedAcRoundCount, 1);
+
+  const cleared = await resolveLocalPrComment(
+    repo,
+    pr.id,
+    filed.comments[0].id,
+    "Human cleared the finding.",
+    { role: "human" },
+  );
+  assert.equal(cleared.status, "reviewed");
+  assert.equal(cleared.failedAcRoundCount, 0);
+  assert.ok(cleared.exportGate);
+});
+
 test("addressing the last open finding sets ready for the next review", async () => {
   const pr = await createLocalPr(repo, { title: "Handoff", base: "main" });
   await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });

@@ -756,6 +756,7 @@ function maybePromoteToReviewed(pr: LocalPr): void {
   if (open.length > 0 || addressed.length > 0) return;
   pr.status = "reviewed";
   pr.exportGate = pendingExportGate(pr.headSha);
+  pr.failedAcRoundCount = 0;
 }
 
 async function armReviewRequest(cwd: string, pr: LocalPr): Promise<void> {
