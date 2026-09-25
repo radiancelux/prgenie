@@ -6,6 +6,17 @@ export const PIPE_CLOSE_WAIT_MS = 5000;
 
 export type KillTreeResult = { ok: true } | { ok: false; reason: string };
 
+function killErrCode(err: unknown): string | undefined {
+  if (!err || typeof err !== "object" || !("code" in err)) return undefined;
+  const code = (err as NodeJS.ErrnoException).code;
+  return code != null ? String(code) : undefined;
+}
+
+/** Match Windows taskkill "not found": process already exited is success, not a failed kill. */
+function isProcessAlreadyDead(err: unknown): boolean {
+  return killErrCode(err) === "ESRCH";
+}
+
 function taskkillWindows(pid: number): KillTreeResult {
   const result = spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
     windowsHide: true,
@@ -39,10 +50,12 @@ export function killProcessTree(pid: number | undefined): KillTreeResult {
     process.kill(-pid, "SIGKILL");
     return { ok: true };
   } catch (err) {
+    if (isProcessAlreadyDead(err)) return { ok: true };
     try {
       process.kill(pid, "SIGKILL");
       return { ok: true };
     } catch (inner) {
+      if (isProcessAlreadyDead(inner)) return { ok: true };
       const reason =
         inner instanceof Error ? inner.message : err instanceof Error ? err.message : "kill failed";
       return { ok: false, reason };
