@@ -8,4 +8,4 @@ Shipped agent definitions for steward-spawned Tasks. Vendor model ids live **onl
 | `prgenie-implementor-strong.md` | strong | Explicit `tier: strong` marker or same AC open after two rejections |
 | `prgenie-reviewer.md`           | strong | Reviewer leaf                                                       |
 
-`pnpm link-plugin` copies `packages/plugin/agents/*.md` into `%USERPROFILE%\.cursor\agents\` (the plugin `agents/` folder itself is excluded from the plugin copy — RAD-143).
+`pnpm link-plugin` copies `packages/plugin/agents/prgenie-*.md` into `%USERPROFILE%\.cursor\agents\`. Bracket options on `model:` (e.g. `[fast=false]`) are ignored by Cursor 3.22.7+ — use bare slugs such as `composer-2.5` or `inherit`.

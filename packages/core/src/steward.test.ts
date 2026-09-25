@@ -316,7 +316,7 @@ test("RAD-89: bindSteward records implementor tier and model on new Task id", as
   try {
     const pr = await createLocalPr(repo, {
       title: "Tier record",
-      body: "design-heavy architecture for the packet store",
+      body: "RAD-1: rewrite the packet store.\ntier: strong",
     });
     await bindSteward(repo, pr.id, { implementorTaskId: "task-tier-1" });
     const stored = await getLocalPr(repo, pr.id);
@@ -386,7 +386,7 @@ test("RAD-89: stewardNext spawns strong after two failed AC rounds on same Task 
   assert.equal(next.decision.resumeSameImplementor, true);
 });
 
-test("RAD-89: export-gate restart spawn stays cheap even for design-heavy brief", async () => {
+test("RAD-89: export-gate restart spawn stays cheap even with tier marker brief", async () => {
   git(["checkout", "main"]);
   git(["checkout", "-b", "feat/steward-gate-restart"]);
   await writeFile(path.join(repo, "gate-restart.txt"), "g\n");
@@ -395,7 +395,7 @@ test("RAD-89: export-gate restart spawn stays cheap even for design-heavy brief"
 
   const pr = await createLocalPr(repo, {
     title: "Gate restart tier",
-    body: "design-heavy architecture for export gate CI fix",
+    body: "tier: strong\nRAD-1: architecture rewrite for export gate CI fix",
     base: "main",
   });
   await bindSteward(repo, pr.id, { implementorTaskId: "task-impl-gate-old" });

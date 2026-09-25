@@ -30,7 +30,7 @@ export {
   IMPLEMENTOR_SUBAGENT_STRONG,
   IMPLEMENTOR_TIER_CHEAP,
   IMPLEMENTOR_TIER_STRONG,
-  isDesignHeavyBrief,
+  hasStrongTierMarkerLine,
   resolveImplementorTierHint,
   REVIEWER_SUBAGENT,
 } from "./model-tiers.js";

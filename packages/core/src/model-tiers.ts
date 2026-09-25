@@ -20,14 +20,14 @@ export interface ResolveImplementorTierInput {
   restart?: boolean;
 }
 
-/** Explicit strong-tier markers in the loop brief (no keyword scan). */
-const STRONG_TIER_MARKERS = [/\btier:\s*strong\b/i, /\bdesign-heavy\b/i];
+/** Line that is exactly `tier: strong` (own line, case-insensitive). */
+const STRONG_TIER_LINE = /^\s*tier:\s*strong\s*$/im;
 
-/** True when the brief carries an explicit strong-tier marker (e.g. `tier: strong`). */
-export function isDesignHeavyBrief(body: string): boolean {
+/** True when the brief includes an own-line `tier: strong` marker. */
+export function hasStrongTierMarkerLine(body: string): boolean {
   const text = body.trim();
   if (!text) return false;
-  return STRONG_TIER_MARKERS.some((re) => re.test(text));
+  return STRONG_TIER_LINE.test(text);
 }
 
 /** Times a new implementor Task was spawned (persisted on packet). */
@@ -66,7 +66,7 @@ export function resolveImplementorTierHint(
     };
   }
 
-  if (isDesignHeavyBrief(pr.body)) {
+  if (hasStrongTierMarkerLine(pr.body)) {
     return {
       tier: IMPLEMENTOR_TIER_STRONG,
       subagentType: IMPLEMENTOR_SUBAGENT_STRONG,

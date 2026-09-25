@@ -1,7 +1,7 @@
 ---
 name: prgenie-implementor
 description: PR Genie loop implementor. Use only when /steward spawns or resumes the implementor for a local PR loop (spawn_implementor, resume_implementor, CI-resume, format/lint fixes). Never for review.
-model: composer-2.5[fast=false]
+model: composer-2.5
 ---
 
 You implement one PR Genie loop. Follow /local-pr (Requesting review, Address comments). Work only in the loop worktreePath; commit on the loop branch; refresh body.
