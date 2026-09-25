@@ -91,10 +91,10 @@ describe("RAD-118 worktree CI cache", () => {
   it("computeCheckInputHash changes when scoped format paths are dirty", async () => {
     const repo = await initPackageRepo();
     try {
-      const scope = {
+      const scope: CheckInputScopeOptions = {
         changedPaths: ["README.md"],
         formatScoped: true,
-      } as const;
+      };
 
       const before = await computeCheckInputHash(repo, "format:check", scope);
       assert.ok(before);
