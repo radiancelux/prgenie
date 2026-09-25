@@ -27,7 +27,7 @@ Then **Developer: Reload Window** is not enough for MCP tools (Cursor caches the
 - MCP server: `prgenie`
 - Hooks: github-gate, session log, **review loop** (`sessionStart` / `subagentStop` inject pending comments when status is `changes_requested`; no stop-hook reviewer spawn), **subagentStop capture** (off by default; `PRGENIE_CAPTURE_SUBAGENT=1`)
 
-Each loop has a feature branch for export and a git worktree. **Switch** in Local PRs replaces this window with that checkout. When a loop is **reviewed**, **Export to GitHub** on the loop panel publishes it. Exported (`approved`) loops are archived: they stay on disk. **Show archived** in Local PRs lists them. A merged GitHub PR archives the matching local packet. Export also checks the main workspace off the loop branch and drops a sibling `.loops` checkout. The plugin still asks before `git push` / `gh pr create`.
+Each loop has a feature branch for export and a git worktree. **Switch** in Local PRs replaces this window with that checkout. When a loop is **reviewed**, **Export to GitHub** on the loop panel publishes it. Exported (`approved`) loops are archived: they stay on disk. **Archive (N)** in Local PRs lists them (default collapsed). A merged GitHub PR archives the matching local packet. Export / Archive locally also checks the main workspace off the loop branch, drops the sibling `.loops` checkout, and deletes the local loop branch (remotes stay). **Clear archived** bulk-deletes local packets after confirm. The plugin still asks before `git push` / `gh pr create`.
 
 Orchestration is **`/steward`** (one steward, durable Task ids, export gate before Push to origin). There is no inbox/queue listen flywheel. Reviewer Tasks require a durable `claim_review` for that `id`+`headSha`.
 

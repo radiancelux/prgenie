@@ -86,7 +86,7 @@ All local-PR state is git-native / machine-local — not committed:
 | `.git/agent-console/sessions.jsonl`                  | Session log events                                               |
 | `.git/agent-console/github.json`                     | Per-repo `gh` login bind (`bindFile` in `github-ops.ts`)         |
 
-`prgenie list` / MCP `list_local_prs` hide archived (`approved`) loops unless `--all` / `all=true`. Packets remain on disk for `prgenie show` and Local PRs **Show archived**.
+`prgenie list` / MCP `list_local_prs` hide archived (`approved`) loops unless `--all` / `all=true`. Packets remain on disk for `prgenie show` and Local PRs **Archive (N)** (chevron section; default collapsed). Expand/collapse preference is **workspace** state (`prgenie.archiveExpanded`). **Clear archived** permanently deletes local packets, `.loops/<id>` worktrees, and local loop branches; remotes stay.
 
 ## Worktrees
 
@@ -97,8 +97,9 @@ All local-PR state is git-native / machine-local — not committed:
 - Tests: call shared `pruneLoopWorktrees(cwd)` in `beforeEach` so leftover `.loops` checkouts do not poison later cases.
 - Each loop owns a feature branch; never use the repo base (`main`/`master`) as head.
 - **Switch** in Local PRs reopens this window on that loop's worktree.
-- Export checks the main workspace off the loop branch onto the loop base and removes the sibling `.loops/<id>` checkout. If the window is still on that extra worktree, PR Genie reopens the primary folder first.
-- Cursor may auto-clean worktrees; the loop packet remains. Orphans (`.loops` trees with no live local PR) show up in `prgenie doctor`.
+- Export / **Archive locally** checks the main workspace off the loop branch, removes the sibling `.loops/<id>` checkout, and deletes the **local** loop branch. Remotes stay. Reopen recreates a worktree from the packet tip (or fetch from remote after export); it does not resurrect a leftover `.loops/<id>` folder.
+- **Clear archived** (Local PRs) bulk-deletes archived packets + worktrees + local branches after a confirm dialog that lists N and paths. Partial failures name the leftover paths.
+- Cursor may auto-clean worktrees; the loop packet remains until Clear archived or Delete. Orphans (`.loops` trees with no live local PR) show up in `prgenie doctor`.
 
 ## GitHub account bind
 

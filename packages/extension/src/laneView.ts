@@ -4,9 +4,11 @@ import * as vscode from "vscode";
 import {
   addLocalPrComment,
   addressLocalPrComment,
+  archiveLocalPr,
   archiveLoopsMergedOnGithub,
   attachLocalPr,
   bindRepoGithub,
+  clearArchivedLocalPrs,
   commentThreads,
   groupThreadsByRound,
   completeLocalPrReview,
@@ -22,7 +24,10 @@ import {
   isArchivedPr,
   listGhAccounts,
   listLocalPrs,
+  loopWorktreeDir,
   loopWorktreeIdentity,
+  primaryWorktreePath,
+  listWorktrees,
   pruneArchivedLoopWorktree,
   reopenLocalPr,
   resolveLocalPrComment,
@@ -111,7 +116,8 @@ type ClientMessage =
       elapsedMs?: number;
       reason?: string;
     }
-  | { type: "showArchived"; value: boolean }
+  | { type: "toggleArchive" }
+  | { type: "clearArchived" }
   | { type: "ghBind"; login: string }
   | { type: "ghRefresh" }
   | { type: "search"; query: string };
@@ -172,7 +178,8 @@ type Snapshot = {
   watching: boolean;
   hereId: string | null;
   archivedCount?: number;
-  showArchived?: boolean;
+  archiveExpanded?: boolean;
+  archivedPrs?: SidebarPr[];
   titleSaveInFlightId?: string | null;
   ghBind?: GhBindSnapshot;
   shepherdStatus?: ShepherdResult | null;
@@ -196,7 +203,7 @@ export class LaneHub implements vscode.Disposable {
   private lastPosted = "";
   private reopeningMain = false;
   private lastGithubArchive = 0;
-  private showArchived = false;
+  private archiveExpanded = false;
   private titleSaveInFlightId: string | undefined;
   private lastShepherd: ShepherdResult | null = null;
   private lastShepherdId: string | undefined;
@@ -268,7 +275,7 @@ export class LaneHub implements vscode.Disposable {
   private searchQuery = "";
 
   constructor(private readonly context: vscode.ExtensionContext) {
-    this.showArchived = this.context.workspaceState.get("prgenie.showArchived", false);
+    this.archiveExpanded = this.context.workspaceState.get("prgenie.archiveExpanded", false);
     this.searchQuery = this.context.workspaceState.get("prgenie.searchQuery", "");
     this.enqueueSnapshot = createCoalescingFlight((force) => this.pushSnapshotWork(force));
     this.poller = setInterval(() => void this.pushSnapshot(), 2000);
@@ -602,10 +609,62 @@ export class LaneHub implements vscode.Disposable {
       await this.pushSnapshot(true);
       return;
     }
-    if (msg.type === "showArchived") {
-      this.showArchived = msg.value;
-      await this.context.workspaceState.update("prgenie.showArchived", msg.value);
+    if (msg.type === "toggleArchive") {
+      this.archiveExpanded = !this.archiveExpanded;
+      await this.context.workspaceState.update("prgenie.archiveExpanded", this.archiveExpanded);
       await this.pushSnapshot(true);
+      return;
+    }
+    if (msg.type === "clearArchived") {
+      const cwd = await this.repoCwd();
+      if (!cwd) return;
+      try {
+        const archived = (await listLocalPrs(cwd)).filter(isArchivedPr);
+        if (!archived.length) {
+          void vscode.window.showInformationMessage("No archived loops to clear.");
+          return;
+        }
+        const trees = await listWorktrees(cwd);
+        const primary = primaryWorktreePath(trees);
+        const paths = archived.map((pr) => {
+          if (primary) return loopWorktreeDir(primary, pr.id);
+          return pr.worktreePath ?? `(packet ${pr.id})`;
+        });
+        const pathList = paths.map((p) => `• ${p}`).join("\n");
+        const pick = await vscode.window.showWarningMessage(
+          `Clear ${archived.length} archived loop${archived.length === 1 ? "" : "s"}?\n\n` +
+            `This permanently deletes local packets, .loops worktrees, and local loop branches. ` +
+            `Remote origin branches/PRs stay. No undo.\n\n${pathList}`,
+          { modal: true },
+          "Clear archived",
+        );
+        if (pick !== "Clear archived") return;
+        const result = await clearArchivedLocalPrs(cwd);
+        if (this.selectedId && result.cleared.includes(this.selectedId)) {
+          this.selectedId = undefined;
+        }
+        if (this.selectedId && result.failed.some((f) => f.id === this.selectedId)) {
+          // packet may still exist on partial failure after delete attempt
+        }
+        await this.pushSnapshot(true);
+        if (result.failed.length && result.cleared.length) {
+          const failedPaths = result.failed.map((f) => `${f.path ?? f.id}: ${f.error}`).join("\n");
+          void vscode.window.showWarningMessage(
+            `Cleared ${result.cleared.length} archived loop(s), but ${result.failed.length} failed:\n${failedPaths}`,
+          );
+        } else if (result.failed.length) {
+          const failedPaths = result.failed.map((f) => `${f.path ?? f.id}: ${f.error}`).join("\n");
+          void vscode.window.showWarningMessage(
+            `Clear archived did not fully succeed:\n${failedPaths}`,
+          );
+        } else {
+          void vscode.window.showInformationMessage(
+            `Cleared ${result.cleared.length} archived loop${result.cleared.length === 1 ? "" : "s"} (local only — remotes stay).`,
+          );
+        }
+      } catch (err) {
+        void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
+      }
       return;
     }
     if (msg.type === "ghBind") {
@@ -745,10 +804,33 @@ export class LaneHub implements vscode.Disposable {
         await vscode.commands.executeCommand("prgenie.panel.focus");
       } else if (msg.type === "status") {
         if (await this.rejectIfArchived(cwd, msg.id)) return;
-        await setLocalPrStatus(cwd, msg.id, msg.status, {
-          skipPreflight: msg.status === "ready" ? false : undefined,
-        });
-        await this.pushSnapshot();
+        if (msg.status === "approved") {
+          const archived = await archiveLocalPr(cwd, msg.id);
+          await this.pushSnapshot(true);
+          if (archived.finalize.prunedWorktree && archived.finalize.deletedBranch) {
+            void vscode.window.showInformationMessage("Archived — worktree removed.");
+          } else {
+            const bits: string[] = [];
+            if (!archived.finalize.prunedWorktree) {
+              bits.push(
+                archived.finalize.pruneError ||
+                  archived.finalize.worktreeLeftoverPath ||
+                  "worktree not removed",
+              );
+            }
+            if (!archived.finalize.deletedBranch && archived.finalize.branchError) {
+              bits.push(archived.finalize.branchError);
+            }
+            void vscode.window.showWarningMessage(
+              `Archived, but cleanup was partial: ${bits.join("; ") || "see STATUS"}`,
+            );
+          }
+        } else {
+          await setLocalPrStatus(cwd, msg.id, msg.status, {
+            skipPreflight: msg.status === "ready" ? false : undefined,
+          });
+          await this.pushSnapshot();
+        }
       } else if (msg.type === "resumeReview") {
         if (await this.rejectIfArchived(cwd, msg.id)) return;
         await resumeReview(cwd, msg.id);
@@ -997,24 +1079,34 @@ export class LaneHub implements vscode.Disposable {
       const archivedCount = all.filter(isArchivedPr).length;
       const live = all.filter((p) => !isArchivedPr(p));
       const archived = all.filter(isArchivedPr);
-      const prs = this.showArchived ? [...live, ...archived] : live;
+      // Live list always; archived rows paint under Archive (N) when expanded (RAD-131).
+      const prs = live;
+      const selectable = this.archiveExpanded ? [...live, ...archived] : live;
       const ids = live.map((p) => p.id);
       const freshIds = this.primed ? ids.filter((id) => !this.knownIds.has(id)) : [];
       this.primed = true;
       for (const id of ids) this.knownIds.add(id);
       // RAD-124: while export is busy, keep the exporting loop selected even if a
       // draft sibling updates and would otherwise become "fresh" / top of list.
-      if (this.exportBusy && this.exportingId && prs.some((p) => p.id === this.exportingId)) {
+      if (
+        this.exportBusy &&
+        this.exportingId &&
+        selectable.some((p) => p.id === this.exportingId)
+      ) {
         this.selectedId = this.exportingId;
       } else {
         if (freshIds.length && !this.userPinned) this.selectedId = freshIds[0];
-        if (this.selectedId && !prs.some((p) => p.id === this.selectedId)) {
-          this.selectedId = live[0]?.id ?? (this.showArchived ? archived[0]?.id : undefined);
+        if (this.selectedId && !selectable.some((p) => p.id === this.selectedId)) {
+          // Keep selection if it is an archived loop (panel still works while section collapsed).
+          if (!archived.some((p) => p.id === this.selectedId)) {
+            this.selectedId = live[0]?.id ?? archived[0]?.id;
+          }
         }
-        if (!this.selectedId)
-          this.selectedId = live[0]?.id ?? (this.showArchived ? archived[0]?.id : undefined);
+        if (!this.selectedId) this.selectedId = live[0]?.id;
       }
-      const selected = prs.find((p) => p.id === this.selectedId);
+      const selected =
+        selectable.find((p) => p.id === this.selectedId) ??
+        archived.find((p) => p.id === this.selectedId);
       let files: { status: string; path: string }[] = [];
       try {
         files = selected ? await getLocalPrNameStatus(root, selected.id) : [];
@@ -1042,11 +1134,13 @@ export class LaneHub implements vscode.Disposable {
       const shepherd =
         selected && selected.status === "reviewed" ? displayShepherdStatus(cheap, selected) : null;
       const sidebarPrs = prs.map((pr) => ({ ...pr, humanExport: humanExportUi(pr) }));
+      const sidebarArchived = archived.map((pr) => ({ ...pr, humanExport: humanExportUi(pr) }));
       void this.promptExportReadyEnter(sidebarPrs);
       this.post(
         {
           type: "snapshot",
           prs: sidebarPrs,
+          archivedPrs: sidebarArchived,
           selectedId: this.selectedId ?? null,
           files,
           threads: selected ? commentThreads(selected.comments) : [],
@@ -1056,7 +1150,7 @@ export class LaneHub implements vscode.Disposable {
           watching: true,
           hereId,
           archivedCount,
-          showArchived: this.showArchived,
+          archiveExpanded: this.archiveExpanded,
           titleSaveInFlightId: this.titleSaveInFlightId ?? null,
           ghBind,
           shepherdStatus: shepherd,
@@ -1097,7 +1191,7 @@ function snapshotKey(payload: Snapshot | { type: "snapshot"; error: string; prs:
     selectedId: "selectedId" in payload ? payload.selectedId : null,
     hereId: "hereId" in payload ? payload.hereId : null,
     archivedCount: "archivedCount" in payload ? payload.archivedCount : 0,
-    showArchived: "showArchived" in payload ? payload.showArchived : false,
+    archiveExpanded: "archiveExpanded" in payload ? payload.archiveExpanded : false,
     titleSaveInFlightId: "titleSaveInFlightId" in payload ? payload.titleSaveInFlightId : null,
     repo: "repo" in payload ? payload.repo : "",
     files: "files" in payload ? payload.files : [],
@@ -1111,6 +1205,7 @@ function snapshotKey(payload: Snapshot | { type: "snapshot"; error: string; prs:
     ciCwd: "ciCwd" in payload ? payload.ciCwd : null,
     searchQuery: "searchQuery" in payload ? payload.searchQuery : "",
     prs: payload.prs,
+    archivedPrs: "archivedPrs" in payload ? payload.archivedPrs : [],
   });
 }
 
@@ -1509,6 +1604,29 @@ function laneHtml(webview: vscode.Webview): string {
     }
     .pr.export-blocked { border-left-color: var(--vscode-charts-orange, #f59f00); }
     .pr.archived { opacity: 0.72; }
+    .archive-section {
+      margin-top: 4px;
+      border-top: 1px solid var(--vscode-widget-border, rgba(127,127,127,0.35));
+    }
+    .archive-header {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 12px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .archive-header:hover { background: var(--vscode-list-hoverBackground); }
+    .archive-header .chevron {
+      display: inline-block; width: 1em; flex: none;
+      font-size: 10px;
+    }
+    .archive-header .label { flex: 1; font-weight: 600; letter-spacing: 0.02em; }
+    .archive-header .clear-archived {
+      flex: none; font-size: 10px; padding: 1px 6px;
+      cursor: pointer;
+    }
+    .archive-rows.collapsed { display: none; }
     .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .empty { padding: 12px; }
     .search-box {
@@ -1534,8 +1652,7 @@ function laneHtml(webview: vscode.Webview): string {
       padding: 4px 8px;
       font-size: 11px;
     }
-    .meta-top button { margin-left: auto; font-size: 11px; }
-    .meta-top button.on { outline: 1px solid var(--vscode-focusBorder); }
+    .meta-top { display: flex; align-items: center; gap: 8px; }
   </style>
 </head>
 <body>
@@ -1575,7 +1692,7 @@ function laneHtml(webview: vscode.Webview): string {
       <div class="ci-card" id="ciCard" hidden></div>
     </div>
     ${ciModalHtml()}
-    <div class="meta-top"><span class="dot off" id="dot"></span><span class="muted" id="meta">Watching</span><button type="button" class="secondary" id="archivedToggle">Show archived</button></div>
+    <div class="meta-top"><span class="dot off" id="dot"></span><span class="muted" id="meta">Watching</span></div>
   </div>
   <div id="list"></div>
   <script nonce="${nonce}">
@@ -1583,7 +1700,6 @@ function laneHtml(webview: vscode.Webview): string {
     ${ciUiScript()}
     bindCiModal();
     const list = document.getElementById("list");
-    const toggle = document.getElementById("archivedToggle");
     const searchInput = document.getElementById("searchInput");
     const clearSearch = document.getElementById("clearSearch");
     let searchDebounce = null;
@@ -1597,7 +1713,6 @@ function laneHtml(webview: vscode.Webview): string {
       searchInput.value = "";
       vscode.postMessage({ type: "search", query: "" });
     };
-    toggle.onclick = () => vscode.postMessage({ type: "showArchived", value: !toggle.classList.contains("on") });
     const ghRefreshBtn = document.getElementById("ghRefreshBtn");
     const ghBindBtn = document.getElementById("ghBindBtn");
     const ghAccountSelect = document.getElementById("ghAccountSelect");
@@ -1730,7 +1845,11 @@ function laneHtml(webview: vscode.Webview): string {
       if (!shepherdBox || !shepherdStatus || !shepherdReasons) return;
 
       const prs = msg.prs || [];
-      const selected = prs.find((p) => p.id === msg.selectedId) || null;
+      const archivedPrs = msg.archivedPrs || [];
+      const selected =
+        prs.find((p) => p.id === msg.selectedId) ||
+        archivedPrs.find((p) => p.id === msg.selectedId) ||
+        null;
       const progress = liveProgress && (!selected || liveProgress.id === selected.id)
         ? liveProgress
         : null;
@@ -1758,9 +1877,9 @@ function laneHtml(webview: vscode.Webview): string {
         }
       };
 
-      // 0 loops / no selection — idle STATUS, never a prior loop's READY/FAIL list (RAD-110).
-      if (!prs.length) {
-        const archived = msg.archivedCount || 0;
+      // 0 live loops / no selection — idle STATUS, never a prior loop's READY/FAIL list (RAD-110).
+      if (!prs.length && !selected) {
+        const archived = msg.archivedCount || archivedPrs.length || 0;
         let emptyText;
         if (msg.searchQuery && msg.searchQuery.trim()) {
           emptyText = STATUS_IDLE.search;
@@ -1929,25 +2048,21 @@ function laneHtml(webview: vscode.Webview): string {
       }
       if (msg.error) {
         meta.textContent = "Watching";
-        toggle.hidden = true;
         list.innerHTML = '<p class="error"></p>';
         list.firstChild.textContent = msg.error;
         return;
       }
       const prs = msg.prs || [];
+      const archivedPrs = msg.archivedPrs || [];
       const fresh = new Set(msg.freshIds || []);
-      const archived = msg.archivedCount || 0;
-      toggle.classList.toggle("on", !!msg.showArchived);
-      toggle.textContent = msg.showArchived ? "Hide archived" : "Show archived";
-      toggle.hidden = !(archived || msg.showArchived);
+      const archived = msg.archivedCount || archivedPrs.length || 0;
+      const expanded = !!msg.archiveExpanded;
       meta.textContent = (msg.repo ? msg.repo + " · " : "") + prs.length + " loop" + (prs.length === 1 ? "" : "s")
         + (archived ? " · " + archived + " archived" : "");
-      if (!prs.length) {
+      if (!prs.length && !archived) {
         let emptyText;
         if (msg.searchQuery && msg.searchQuery.trim()) {
           emptyText = "No loops match your search. Clear the search to view all loops.";
-        } else if (archived) {
-          emptyText = "No active loops. " + archived + " archived after export. Show archived to view them.";
         } else {
           emptyText = "Waiting for agents. Loops land here when work is committed.";
         }
@@ -1964,13 +2079,12 @@ function laneHtml(webview: vscode.Webview): string {
       const nodes = new Map();
       for (const el of list.querySelectorAll(".pr")) nodes.set(el.dataset.id, el);
       const used = new Set();
-      for (const pr of prs) {
+      function paintRow(pr) {
         used.add(pr.id);
         let el = nodes.get(pr.id);
         if (!el) {
           el = prRow(pr.id);
           nodes.set(pr.id, el);
-          list.appendChild(el);
         }
         const here = pr.id === msg.hereId;
         const archivedPr = pr.status === "approved";
@@ -2014,12 +2128,59 @@ function laneHtml(webview: vscode.Webview): string {
         rename.hidden = archivedPr;
         rename.disabled = archivedPr || saving;
         rename.textContent = saving ? "Saving…" : "Rename";
+        return el;
+      }
+      // Live rows first
+      for (let i = 0; i < prs.length; i++) {
+        const el = paintRow(prs[i]);
+        if (list.children[i] !== el) list.insertBefore(el, list.children[i] || null);
+      }
+      // Archive section (RAD-131) — hidden when N=0
+      let section = list.querySelector(":scope > .archive-section");
+      if (archived > 0) {
+        if (!section) {
+          section = document.createElement("div");
+          section.className = "archive-section";
+          section.innerHTML =
+            '<div class="archive-header" role="button" tabindex="0">' +
+            '<span class="chevron"></span><span class="label"></span>' +
+            '<button type="button" class="secondary clear-archived" title="Delete archived packets, worktrees, and local branches. Remotes stay.">Clear archived</button>' +
+            '</div><div class="archive-rows"></div>';
+          const header = section.querySelector(".archive-header");
+          header.onclick = (e) => {
+            if (e.target.closest(".clear-archived")) return;
+            vscode.postMessage({ type: "toggleArchive" });
+          };
+          header.onkeydown = (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              vscode.postMessage({ type: "toggleArchive" });
+            }
+          };
+          section.querySelector(".clear-archived").onclick = (e) => {
+            e.stopPropagation();
+            vscode.postMessage({ type: "clearArchived" });
+          };
+          list.appendChild(section);
+        }
+        section.querySelector(".chevron").textContent = expanded ? "▾" : "▸";
+        section.querySelector(".label").textContent = "Archive (" + archived + ")";
+        const rows = section.querySelector(".archive-rows");
+        rows.classList.toggle("collapsed", !expanded);
+        if (expanded) {
+          for (let i = 0; i < archivedPrs.length; i++) {
+            const el = paintRow(archivedPrs[i]);
+            if (rows.children[i] !== el) rows.insertBefore(el, rows.children[i] || null);
+          }
+        }
+        // Keep section after live rows
+        if (list.children[prs.length] !== section) {
+          list.insertBefore(section, list.children[prs.length] || null);
+        }
+      } else if (section) {
+        section.remove();
       }
       for (const [id, el] of nodes) if (!used.has(id)) el.remove();
-      for (let i = 0; i < prs.length; i++) {
-        const el = nodes.get(prs[i].id);
-        if (el && list.children[i] !== el) list.insertBefore(el, list.children[i] || null);
-      }
       list.scrollTop = y;
     });
     vscode.postMessage({ type: "ready" });
@@ -2550,14 +2711,14 @@ function panelHtml(webview: vscode.Webview): string {
         root.firstChild.textContent = msg.error;
         return;
       }
-      const selected = (msg.prs || []).find((p) => p.id === msg.selectedId);
+      const selected = [...(msg.prs || []), ...(msg.archivedPrs || [])].find((p) => p.id === msg.selectedId);
       if (!selected) {
         layoutId = null;
         paintedFiles = "";
         paintedComments = "";
         const n = msg.archivedCount || 0;
         root.innerHTML = n
-          ? '<p class="muted empty">Select a loop in Local PRs. Show archived to view exported loops.</p>'
+          ? '<p class="muted empty">Select a loop in Local PRs. Expand Archive to view exported loops.</p>'
           : '<p class="muted empty">Select a loop in Local PRs. File diffs open in the editor like Source Control, for that loop\\'s worktree.</p>';
         return;
       }

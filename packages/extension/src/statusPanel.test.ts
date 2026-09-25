@@ -14,7 +14,9 @@ describe("STATUS panel copy (RAD-110)", () => {
 
   it("clears idle body without leftover READY/FAIL gate language", () => {
     assert.match(statusPanelIdleBody({}), /No loops yet/);
-    assert.match(statusPanelIdleBody({ archivedCount: 2 }), /No active loops/);
+    assert.match(statusPanelIdleBody({ archivedCount: 2 }), /Expand Archive/);
+    assert.match(statusPanelIdleBody({ archivedCount: 2 }), /Clear archived/);
+    assert.match(statusPanelIdleBody({ archivedCount: 2 }), /remotes stay/i);
     assert.match(statusPanelIdleBody({ searchQuery: "foo" }), /No matching loops/);
     assert.equal(/READY|FAIL|BLOCKED/.test(statusPanelIdleBody({ archivedCount: 1 })), false);
   });

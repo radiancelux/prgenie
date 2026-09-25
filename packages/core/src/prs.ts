@@ -13,9 +13,12 @@ import {
   userName,
   worktreeForLoop,
   ensureWorktreeForLoop,
-  releaseArchivedLoop,
+  finalizeArchivedLoop,
+  loopWorktreeDir,
+  primaryWorktreePath,
   sameFsPath,
 } from "./worktrees.js";
+import type { FinalizeArchivedLoopResult } from "./worktrees.js";
 import type {
   CaptureResult,
   CommentRole,
@@ -118,16 +121,19 @@ async function withPrLock(
 }
 
 /**
- * Resolve loop tip from the exclusive worktree when present; else branch/HEAD in cwd.
+ * Resolve loop tip from the exclusive worktree when present; else the loop branch tip.
  * Worktree commits update the shared branch, but reading HEAD in the worktree is the
  * authoritative tip for agent decisions (RAD-125).
  *
  * Only trust paths from `listWorktrees` / `worktreeForLoop`. Never fall back to the
  * on-disk packet `worktreePath` — a pruned path throws and breaks refresh / steward_next.
+ *
+ * Never adopt the primary checkout when the loop worktree/branch is missing (RAD-130):
+ * archive deletes the local branch; falling back rewrote archived packets to `main`.
  */
 async function resolveLoopHeadTip(
   cwd: string,
-  pr: Pick<LocalPr, "id" | "headRef" | "worktreePath">,
+  pr: Pick<LocalPr, "id" | "headRef" | "headSha" | "worktreePath">,
 ): Promise<{ headRef: string; headSha: string }> {
   const trees = await listWorktrees(cwd);
   const wt = worktreeForLoop(trees, pr);
@@ -143,12 +149,8 @@ async function resolveLoopHeadTip(
       headSha: await gitText(cwd, ["rev-parse", pr.headRef]),
     };
   }
-  const branch = await currentBranch(cwd);
-  const headRef = branch ?? pr.headRef;
-  return {
-    headRef,
-    headSha: await gitText(cwd, ["rev-parse", "HEAD"]),
-  };
+  // Keep the packet tip — do not read primary HEAD / currentBranch(cwd).
+  return { headRef: pr.headRef, headSha: pr.headSha };
 }
 
 /**
@@ -166,6 +168,8 @@ export function invalidateReviewedOnHeadMove(pr: LocalPr, previousHeadSha: strin
 }
 
 async function applyHeadRefresh(cwd: string, pr: LocalPr): Promise<void> {
+  // Archived loops freeze headRef/headSha at archive; poll/show must not re-resolve.
+  if (isArchivedPr(pr)) return;
   const previousHeadSha = pr.headSha;
   const tip = await resolveLoopHeadTip(cwd, pr);
   pr.headRef = tip.headRef;
@@ -1144,13 +1148,13 @@ export async function getLocalPrDiff(
   return stdout;
 }
 
-/** Permanently remove a loop packet, its refs, and any sibling worktree. */
+/** Permanently remove a loop packet, its refs, sibling worktree, and local loop branch. */
 export async function deleteLocalPr(
   cwd: string,
   id: string,
-): Promise<{ id: string; deleted: true }> {
+): Promise<{ id: string; deleted: true; finalize: FinalizeArchivedLoopResult }> {
   const pr = await getLocalPr(cwd, id);
-  await releaseArchivedLoop(cwd, pr);
+  const finalize = await finalizeArchivedLoop(cwd, pr);
   const dir = await prsDir(cwd);
   const file = prFile(dir, pr.id);
   await withFileLock(file, async () => {
@@ -1158,7 +1162,104 @@ export async function deleteLocalPr(
   });
   await git(cwd, ["update-ref", "-d", `refs/local-pr/${pr.id}/head`], { allowFail: true });
   await git(cwd, ["update-ref", "-d", `refs/local-pr/${pr.id}/base`], { allowFail: true });
-  return { id: pr.id, deleted: true };
+  return { id: pr.id, deleted: true, finalize };
+}
+
+export type ArchiveLocalPrResult = {
+  pr: LocalPr;
+  finalize: FinalizeArchivedLoopResult;
+  /** Paths involved in disk cleanup (for toasts / confirm copy). */
+  worktreePath: string | null;
+};
+
+/**
+ * Archive one loop locally (RAD-130): set approved, prune `.loops/<id>`, delete local
+ * loop branch. Remote origin branch/PR untouched. Packet stays for Show/Reopen.
+ */
+export async function archiveLocalPr(cwd: string, id: string): Promise<ArchiveLocalPrResult> {
+  const before = await getLocalPr(cwd, id);
+  if (!isArchivedPr(before)) {
+    await setLocalPrStatus(cwd, id, "approved");
+  }
+  const pr = await getLocalPr(cwd, id);
+  const trees = await listWorktrees(cwd);
+  const primary = primaryWorktreePath(trees);
+  const dest = primary ? loopWorktreeDir(primary, pr.id) : pr.worktreePath;
+  const finalize = await finalizeArchivedLoop(cwd, pr);
+  return { pr, finalize, worktreePath: dest };
+}
+
+export type ClearArchivedFailure = {
+  id: string;
+  path: string | null;
+  error: string;
+};
+
+export type ClearArchivedLocalPrsResult = {
+  cleared: string[];
+  failed: ClearArchivedFailure[];
+};
+
+/**
+ * Fail closed on incomplete local disk cleanup after a packet delete (RAD-130).
+ * False prune/branch flags count even when error strings are empty/null.
+ */
+export function clearArchivedDiskFailure(
+  finalize: {
+    prunedWorktree: boolean;
+    pruneError: string | null;
+    worktreeLeftoverPath: string | null;
+    deletedBranch: boolean;
+    branch: string | null;
+    branchError: string | null;
+  },
+  fallbackPath: string | null,
+): Omit<ClearArchivedFailure, "id"> | null {
+  const errors: string[] = [];
+  if (!finalize.prunedWorktree) {
+    errors.push(finalize.pruneError?.trim() || "worktree not removed");
+  }
+  if (!finalize.deletedBranch) {
+    const name = finalize.branch ? `local branch ${finalize.branch}` : "local loop branch";
+    errors.push(finalize.branchError?.trim() || `${name} not deleted`);
+  }
+  if (!errors.length) return null;
+  return {
+    path: finalize.worktreeLeftoverPath ?? fallbackPath ?? finalize.branch,
+    error: errors.join("; "),
+  };
+}
+
+/**
+ * Bulk-delete every archived loop packet plus its worktree and local branch (RAD-130).
+ * Remotes stay. Partial failures name paths; does not claim full success when any fail.
+ */
+export async function clearArchivedLocalPrs(cwd: string): Promise<ClearArchivedLocalPrsResult> {
+  const archived = (await listLocalPrs(cwd)).filter(isArchivedPr);
+  const cleared: string[] = [];
+  const failed: ClearArchivedFailure[] = [];
+  for (const pr of archived) {
+    const trees = await listWorktrees(cwd);
+    const primary = primaryWorktreePath(trees);
+    const dest = primary ? loopWorktreeDir(primary, pr.id) : pr.worktreePath;
+    try {
+      const result = await deleteLocalPr(cwd, pr.id);
+      const disk = clearArchivedDiskFailure(result.finalize, dest);
+      // Packet delete succeeded; leftover disk is still a partial failure.
+      if (disk) {
+        failed.push({ id: pr.id, ...disk });
+      } else {
+        cleared.push(pr.id);
+      }
+    } catch (err) {
+      failed.push({
+        id: pr.id,
+        path: dest,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return { cleared, failed };
 }
 
 /** Bring an archived loop back as changes_requested and recreate its worktree. */

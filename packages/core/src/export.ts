@@ -2,7 +2,7 @@ import { exportPushArgs, ensureExportUpstream } from "./base-ref.js";
 import { git } from "./git.js";
 import { describeRepoGithubBind, ensureRepoGithub, runGh } from "./github-ops.js";
 import { getLocalPr, isArchivedPr, listLocalPrs, setLocalPrStatus } from "./prs.js";
-import { localBaseRef, releaseArchivedLoop } from "./worktrees.js";
+import { localBaseRef, finalizeArchivedLoop } from "./worktrees.js";
 import { haltWatch, resumeWatch } from "./watch.js";
 import { throwIfAborted, type RunProgressOptions } from "./progress.js";
 
@@ -56,7 +56,7 @@ export async function archiveLoopsMergedOnGithub(
     if (state !== "MERGED") continue;
     await setLocalPrStatus(cwd, pr.id, "approved");
     const archived = await getLocalPr(cwd, pr.id);
-    await releaseArchivedLoop(cwd, archived);
+    await finalizeArchivedLoop(cwd, archived);
     ids.push(pr.id);
   }
   return ids;
@@ -67,7 +67,7 @@ export function exportPushRefspec(pr: { headSha: string; headRef: string }): str
   return `${pr.headSha}:refs/heads/${localBaseRef(pr.headRef)}`;
 }
 
-/** Structured report when GitHub PR opened but local release/prune did not finish (RAD-95). */
+/** Structured report when GitHub PR opened but local release/prune did not finish (RAD-95 / RAD-130). */
 export type ExportPartialFailure = {
   kind: "partial_failure";
   message: string;
@@ -76,6 +76,9 @@ export type ExportPartialFailure = {
   worktreePath: string | null;
   checkedOutBase: boolean;
   prunedWorktree: boolean;
+  deletedBranch: boolean;
+  branch: string | null;
+  branchError: string | null;
   reopen: boolean;
   pruneError: string | null;
 };
@@ -85,8 +88,9 @@ export function formatExportPartialFailure(partial: ExportPartialFailure): strin
 }
 
 /**
- * Build the export partial-failure payload from a release result.
+ * Build the export partial-failure payload from a finalize/release result.
  * Shared by `exportLocalPr` so the contract is unit-testable without push/gh.
+ * Full success requires both worktree prune and local loop branch delete (RAD-130).
  */
 export function exportPartialFailureFromRelease(
   url: string,
@@ -97,23 +101,39 @@ export function exportPartialFailureFromRelease(
     reopen: boolean;
     worktreeLeftoverPath: string | null;
     pruneError: string | null;
+    deletedBranch: boolean;
+    branch: string | null;
+    branchError: string | null;
   },
   archivedWorktreePath: string | null,
 ): ExportPartialFailure | null {
-  if (released.prunedWorktree) return null;
+  if (released.prunedWorktree && released.deletedBranch) return null;
+
   const worktreePath =
     released.worktreeLeftoverPath ?? archivedWorktreePath ?? released.primaryPath;
-  const reason = released.reopen
-    ? `reopen primary at ${released.primaryPath ?? "unknown"} then prune`
-    : (released.pruneError ?? "prune failed");
+  const parts: string[] = [];
+  if (!released.prunedWorktree) {
+    const reason = released.reopen
+      ? `reopen primary at ${released.primaryPath ?? "unknown"} then prune`
+      : (released.pruneError ?? "prune failed");
+    parts.push(`worktree still at ${worktreePath ?? "unknown"}; ${reason}`);
+  }
+  if (!released.deletedBranch) {
+    const name = released.branch ?? "unknown";
+    const detail = released.branchError?.trim() || "delete failed";
+    parts.push(`local branch ${name} not deleted (${detail})`);
+  }
   return {
     kind: "partial_failure",
-    message: `PR opened; worktree still at ${worktreePath ?? "unknown"}; ${reason}`,
+    message: `PR opened; ${parts.join("; ")}`,
     prOpened: true,
     url,
     worktreePath: worktreePath ?? null,
     checkedOutBase: released.checkedOutBase,
     prunedWorktree: released.prunedWorktree,
+    deletedBranch: released.deletedBranch,
+    branch: released.branch,
+    branchError: released.branchError,
     reopen: released.reopen,
     pruneError: released.pruneError,
   };
@@ -129,6 +149,9 @@ export async function exportLocalPr(
   alreadyExisted: boolean;
   checkedOutBase: boolean;
   prunedWorktree: boolean;
+  deletedBranch: boolean;
+  branch: string | null;
+  branchError: string | null;
   primaryPath: string | null;
   reopen: boolean;
   worktreeLeftoverPath: string | null;
@@ -262,7 +285,7 @@ export async function exportLocalPr(
       await setLocalPrStatus(cwd, pr.id, "approved");
     }
     const archived = await getLocalPr(cwd, pr.id);
-    const released = await releaseArchivedLoop(cwd, archived);
+    const released = await finalizeArchivedLoop(cwd, archived);
 
     const partialFailure = exportPartialFailureFromRelease(url, released, archived.worktreePath);
 
@@ -272,6 +295,9 @@ export async function exportLocalPr(
       alreadyExisted,
       checkedOutBase: released.checkedOutBase,
       prunedWorktree: released.prunedWorktree,
+      deletedBranch: released.deletedBranch,
+      branch: released.branch,
+      branchError: released.branchError,
       primaryPath: released.primaryPath,
       reopen: released.reopen,
       worktreeLeftoverPath: released.worktreeLeftoverPath,

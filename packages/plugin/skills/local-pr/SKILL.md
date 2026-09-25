@@ -32,7 +32,7 @@ If the loop already exists, `update_local_pr` with `body` (or `prgenie update <i
 
 - `prgenie list` (hides `approved` / exported loops)
 - `prgenie list --all` to include the archive
-- Local PRs sidebar: **Show archived** to view exported/approved packets (read-only; worktrees are gone)
+- Local PRs sidebar: **Archive (N)** chevron section (default collapsed; workspace preference `prgenie.archiveExpanded`) to view exported/approved packets (read-only; worktrees are gone). **Clear archived** permanently deletes local packets, worktrees, and local loop branches — remotes stay.
 - `prgenie show <id>` still works after export
 - `prgenie diff <id>`
 - MCP `list_local_prs` (same archive filter; `all=true` or `status=approved` to see them), `get_local_pr`, `get_diff`
@@ -41,7 +41,7 @@ If the loop already exists, `update_local_pr` with `body` (or `prgenie update <i
 
 `draft` → `ready` (reviewer files findings; status stays `ready`) → `complete_review` → `changes_requested` (findings) or `reviewed` (clean) → `ready` (second pass) → `reviewed` → `approved`
 
-`reviewed` means the automated reviewer found nothing else — **review cleared**. The steward runs the export gate next. It is **not** a human handoff. `approved` is you signing off / export. Approved loops are **archived**: JSON and `refs/local-pr/*` stay; they are hidden from the default list. Local PRs shows them when **Show archived** is on (read-only). `get_local_pr` / `prgenie show` still work. A later `create_local_pr` / `captureAgentWork` on that branch starts a new loop.
+`reviewed` means the automated reviewer found nothing else — **review cleared**. The steward runs the export gate next. It is **not** a human handoff. `approved` is you signing off / export. Approved loops are **archived**: JSON and `refs/local-pr/*` stay; they are hidden from the default list. Local PRs shows them under **Archive (N)** when expanded (read-only). `get_local_pr` / `prgenie show` still work. A later `create_local_pr` / `captureAgentWork` on that branch starts a new loop.
 
 ### Comments
 
