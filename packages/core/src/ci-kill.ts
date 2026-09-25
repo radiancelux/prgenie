@@ -64,14 +64,15 @@ export interface ExecCiShellOptions {
   signal?: AbortSignal;
 }
 
+/** Match child_process.exec: maxBuffer applies per stream, not stdout+stderr combined. */
 function appendChunk(
   current: string,
   chunk: Buffer,
-  totalBytes: { value: number },
+  streamBytes: { value: number },
   maxBuffer: number,
 ): { text: string; exceeded: boolean } {
-  totalBytes.value += chunk.length;
-  if (totalBytes.value > maxBuffer) {
+  streamBytes.value += chunk.length;
+  if (streamBytes.value > maxBuffer) {
     return { text: current, exceeded: true };
   }
   return { text: current + chunk.toString("utf8"), exceeded: false };
@@ -94,7 +95,8 @@ export function execCiShell(
 
     let stdout = "";
     let stderr = "";
-    const totalBytes = { value: 0 };
+    const stdoutBytes = { value: 0 };
+    const stderrBytes = { value: 0 };
     let timedOut = false;
     let cancelled = false;
     let maxBufferExceeded = false;
@@ -145,7 +147,7 @@ export function execCiShell(
     });
 
     child.stdout.on("data", (chunk: Buffer) => {
-      const next = appendChunk(stdout, chunk, totalBytes, maxBuffer);
+      const next = appendChunk(stdout, chunk, stdoutBytes, maxBuffer);
       stdout = next.text;
       if (next.exceeded && !maxBufferExceeded) {
         maxBufferExceeded = true;
@@ -154,7 +156,7 @@ export function execCiShell(
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
-      const next = appendChunk(stderr, chunk, totalBytes, maxBuffer);
+      const next = appendChunk(stderr, chunk, stderrBytes, maxBuffer);
       stderr = next.text;
       if (next.exceeded && !maxBufferExceeded) {
         maxBufferExceeded = true;
