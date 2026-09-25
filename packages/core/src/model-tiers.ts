@@ -20,25 +20,14 @@ export interface ResolveImplementorTierInput {
   restart?: boolean;
 }
 
-const DESIGN_HEAVY_MARKERS = [
-  /\bdesign-heavy\b/i,
-  /\barchitecture\b/i,
-  /\barchitectural\b/i,
-  /\bdata model\b/i,
-  /\bschema design\b/i,
-  /\bapi design\b/i,
-  /\bstate machine\b/i,
-  /\bconcurrency\b/i,
-  /\brace condition\b/i,
-  /\bmigration strategy\b/i,
-  /\bcross-cutting\b/i,
-];
+/** Explicit strong-tier markers in the loop brief (no keyword scan). */
+const STRONG_TIER_MARKERS = [/\btier:\s*strong\b/i, /\bdesign-heavy\b/i];
 
-/** Heuristic: brief/AC text signals design-heavy work (explicit marker or keywords). */
+/** True when the brief carries an explicit strong-tier marker (e.g. `tier: strong`). */
 export function isDesignHeavyBrief(body: string): boolean {
   const text = body.trim();
   if (!text) return false;
-  return DESIGN_HEAVY_MARKERS.some((re) => re.test(text));
+  return STRONG_TIER_MARKERS.some((re) => re.test(text));
 }
 
 /** Times a new implementor Task was spawned (persisted on packet). */
@@ -51,7 +40,11 @@ export function failedAcRoundCount(pr: Pick<LocalPr, "failedAcRoundCount">): num
   return pr.failedAcRoundCount ?? 0;
 }
 
-/** True when the same AC is still open after two failed implementor rounds (RAD-89). */
+/**
+ * True when the same AC is still open after two reviewer rejections (RAD-89).
+ * `failedAcRoundCount` stands in for "same AC still open" — two `changes_requested`
+ * rounds without clearing the AC.
+ */
 export function sameAcStillOpen(pr: Pick<LocalPr, "status" | "failedAcRoundCount">): boolean {
   if (pr.status !== "changes_requested") return false;
   return failedAcRoundCount(pr) >= 2;
@@ -77,7 +70,7 @@ export function resolveImplementorTierHint(
     return {
       tier: IMPLEMENTOR_TIER_STRONG,
       subagentType: IMPLEMENTOR_SUBAGENT_STRONG,
-      bumpReason: "design-heavy AC in loop brief",
+      bumpReason: "explicit strong-tier marker in loop brief",
     };
   }
 
@@ -85,7 +78,7 @@ export function resolveImplementorTierHint(
     return {
       tier: IMPLEMENTOR_TIER_STRONG,
       subagentType: IMPLEMENTOR_SUBAGENT_STRONG,
-      bumpReason: "same AC still open after two implementor rounds",
+      bumpReason: "same AC still open after two reviewer rejections",
     };
   }
 

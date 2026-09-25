@@ -323,7 +323,7 @@ test("RAD-89: bindSteward records implementor tier and model on new Task id", as
     assert.equal(stored.implementorTier, "strong");
     assert.equal(stored.implementorRoundCount, 1);
     assert.equal(stored.implementorModel, "test-strong-model");
-    assert.match(stored.lastTierBumpReason ?? "", /design-heavy/i);
+    assert.match(stored.lastTierBumpReason ?? "", /explicit strong-tier marker/i);
   } finally {
     if (prevHome === undefined) delete process.env.PRGENIE_AGENT_HOME;
     else process.env.PRGENIE_AGENT_HOME = prevHome;

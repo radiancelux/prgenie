@@ -364,7 +364,7 @@ export function decideStewardAction(
       failingCheck: null,
       gateStatus: null,
       reason:
-        "changes_requested with same AC still open after two implementor rounds. Spawn strong implementor (new Task).",
+        "changes_requested with same AC still open after two reviewer rejections. Spawn strong implementor (new Task).",
     };
   }
   if (resumeImplementor) {

@@ -43,7 +43,7 @@ Call `steward_next` / `bind_steward` **before** awaiting any Task so ownership i
 
 Default spend is asymmetric: **cheap implementor** (`prgenie-implementor`), **strong reviewer** (`prgenie-reviewer`). Vendor model ids live only in `packages/plugin/agents/*.md` (copied by `link-plugin`).
 
-- **`steward_next`** returns an implementor tier hint on `spawn_implementor`: `cheap` (default) or `strong` + `tierBumpReason` when the brief is design-heavy or the same AC stayed open after two implementor rounds.
+- **`steward_next`** returns an implementor tier hint on `spawn_implementor`: `cheap` (default) or `strong` + `tierBumpReason` when the brief carries an explicit marker (e.g. `tier: strong`) or the same AC stayed open after two reviewer rejections (`failedAcRoundCount` ≥ 2 while `changes_requested`).
 - **Bump = new spawn:** Task `prgenie-implementor-strong` (not resume). Log the bump reason from `steward_next`.
 - **CI-resume / format / lint fixes** always stay **cheap** (`prgenie-implementor`) — even when restarting after a blocked export gate.
 - Surface packet metrics from `steward_next` / `formatStewardDecision`: implementor tier, model slug, `reviewRounds`, `implementorRounds`.

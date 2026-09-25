@@ -11,7 +11,7 @@ pnpm link-plugin
 
 Clean clone path: install → build → link-plugin → Customize → Plugins → PR Genie off/on. There is no pre-committed `server.cjs`.
 
-**Agents (RAD-89):** `packages/plugin/agents/*.md` defines `prgenie-implementor`, `prgenie-implementor-strong`, and `prgenie-reviewer` with vendor model ids. `link-plugin` copies them to `%USERPROFILE%\.cursor\agents\`.
+**Agents (RAD-89):** `packages/plugin/agents/*.md` defines `prgenie-implementor`, `prgenie-implementor-strong`, and `prgenie-reviewer` with vendor model ids. `link-plugin` copies them to `%USERPROFILE%\.cursor\agents\` and excludes `agents/` from the plugin folder copy (Cursor auto-loads plugin `agents/`).
 
 If a PR still shows huge ±tens-of-thousands-line diffs on those `.cjs` files, you have a dirty local build against an old tracked copy, or you are on a pre-migration branch — rebuild or rebase; that is not product source.
 

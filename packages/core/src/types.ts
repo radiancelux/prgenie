@@ -58,7 +58,7 @@ export interface LocalPrSource {
   task?: string;
 }
 
-/** cheap = default implementor; strong = design-heavy or repeated open AC (RAD-89). */
+/** cheap = default implementor; strong = explicit `tier: strong` marker or two reviewer rejections (RAD-89). */
 export type ImplementorTier = "cheap" | "strong";
 
 export interface LocalPr {

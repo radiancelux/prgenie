@@ -63,7 +63,7 @@ One steward chat owns one loop. It does **not** implement or review in-chat. It:
 
 CLI: `prgenie steward <id>`, `prgenie steward bind <id> --implementor <taskId>`. MCP: `steward_next`, `bind_steward`. Skill: `/steward`. There is no inbox/queue listen flywheel.
 
-**Model tiers (RAD-89):** default asymmetric spend — cheap implementor (`prgenie-implementor`), strong reviewer (`prgenie-reviewer`). Agent definitions ship in `packages/plugin/agents/`; `steward_next` returns tier hints and records tier/model/review-round metrics on the loop packet.
+**Model tiers (RAD-89):** default asymmetric spend — cheap implementor (`prgenie-implementor`), strong reviewer (`prgenie-reviewer`). Strong implementor only when the brief carries an explicit marker (e.g. `tier: strong`) or after two reviewer rejections with the same AC still open. Agent definitions ship in `packages/plugin/agents/` (copied to `~/.cursor/agents/` by `link-plugin`; the plugin copy excludes `agents/`). `steward_next` returns tier hints and records tier/model/review-round metrics on the loop packet.
 
 ## Export halt (`watch.json`)
 

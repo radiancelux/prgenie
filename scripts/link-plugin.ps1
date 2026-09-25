@@ -137,7 +137,8 @@ foreach ($rel in $requiredBundles) {
 Remove-PluginDest -PluginDest $dest
 
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
-robocopy $src $dest /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
+# Exclude agents/ — Cursor auto-loads plugin agents/ and that duplicates ~/.cursor/agents copies.
+robocopy $src $dest /E /XD agents /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
 if ($LASTEXITCODE -ge 8) {
   Write-Error "robocopy failed with exit $LASTEXITCODE"
   exit 1
