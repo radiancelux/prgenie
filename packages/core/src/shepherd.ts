@@ -4,6 +4,7 @@ import { ensureRepoGithub } from "./github-ops.js";
 import { runCiChecks, type CiCheckResult } from "./ci-runner.js";
 import { changedPathsForCi, resolveCiCwd, type CiCheckSelection } from "./ci-select.js";
 import { looksLikeStaleFullSuitePlan, resolveCiSelection } from "./ci-select-worktree.js";
+import { planReadySkipCarry } from "./ready-skip-carry.js";
 import { isAbortError, throwIfAborted, type ProgressCallback } from "./progress.js";
 
 export type ShepherdStatus = "ready" | "blocked";
@@ -200,17 +201,66 @@ export async function shepherdStatus(
         options.selection && options.selection.checks.length > 0
           ? options.selection.checks
           : selection.checks;
-      const ciResult = await runCiChecks(resolvedCwd, {
-        checks,
-        selection,
-        // Prefer selection's own paths when a caller forced the plan (fixtures stub scripts).
-        changedPaths: options.selection?.changedPaths ?? paths,
-        onProgress,
-        signal,
-        failFast: options.failFast,
-        parallel: options.parallel,
-        skipToolchainEnsure: options.skipToolchainEnsure,
+      const carryPlan = planReadySkipCarry({
+        readyCi: pr.readyCi,
+        headSha: pr.headSha,
+        plannedChecks: checks,
       });
+      if (carryPlan.scopeInvalidated) {
+        onProgress?.({
+          phase: "ci",
+          state: "start",
+          message: "RAD-144: ready skip scope changed — re-running export gate checks",
+          cwd: resolvedCwd,
+        });
+      }
+      let ciResult: Awaited<ReturnType<typeof runCiChecks>>;
+      if (carryPlan.checksToRun.length === 0 && carryPlan.carriedResults.length > 0) {
+        onProgress?.({
+          phase: "ci",
+          state: "skip",
+          selectedChecks: checks,
+          selectionReason: "ready skip carry-over (RAD-144)",
+          message: carryPlan.carriedResults
+            .map((c) => `${c.name}: ${c.reason ?? "skipped"}`)
+            .join("; "),
+          cwd: resolvedCwd,
+        });
+        ciResult = {
+          allPassed: true,
+          checks: carryPlan.carriedResults,
+          selection,
+          cwd: resolvedCwd,
+        };
+      } else {
+        for (const carried of carryPlan.carriedResults) {
+          onProgress?.({
+            phase: "ci",
+            check: carried.name,
+            state: "skip",
+            message: carried.reason,
+            cwd: resolvedCwd,
+          });
+        }
+        ciResult = await runCiChecks(resolvedCwd, {
+          checks: carryPlan.checksToRun,
+          selection,
+          // Prefer selection's own paths when a caller forced the plan (fixtures stub scripts).
+          changedPaths: options.selection?.changedPaths ?? paths,
+          onProgress,
+          signal,
+          failFast: options.failFast,
+          parallel: options.parallel,
+          skipToolchainEnsure: options.skipToolchainEnsure,
+        });
+        ciResult = {
+          ...ciResult,
+          checks: [...carryPlan.carriedResults, ...ciResult.checks],
+          allPassed:
+            carryPlan.carriedResults.every((c) => c.passed) &&
+            ciResult.checks.every((c) => c.passed),
+        };
+      }
       ciPlan = selection;
       ciChecks = ciResult.checks;
       ciCwd = resolvedCwd;

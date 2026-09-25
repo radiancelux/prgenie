@@ -72,6 +72,22 @@ export function githubPrCreateArgs(options: {
   ];
 }
 
+/** `gh pr edit` argv using `--body-file` when body is set (RAD-150). */
+export function githubPrEditArgs(options: {
+  headRef: string;
+  title?: string;
+  bodyFile?: string;
+}): string[] {
+  const args = ["pr", "edit", options.headRef.replace(/^origin\//, "")];
+  if (options.title?.trim()) {
+    args.push("--title", options.title.trim());
+  }
+  if (options.bodyFile) {
+    args.push("--body-file", options.bodyFile);
+  }
+  return args;
+}
+
 /** Swap `--body <text>` for `--body-file <path>` (RAD-129). */
 export function replaceGhBodyWithFile(args: string[], bodyFile: string): string[] {
   const bodyIdx = args.indexOf("--body");

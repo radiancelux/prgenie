@@ -95,6 +95,14 @@ On completion:
 
 `/export` is the developer cutting the GitHub PR at origin.
 
+### Export gate skip carry-over (RAD-144)
+
+Skips recorded at ready (`readyCi` on the loop — per-check `checkSkips` or whole-plan skip) carry into the export gate at the **same HEAD** when `skipScope` still matches. The gate shows `skipped (ready: <reason>)` and does **not** re-run those checks. HEAD change or skip-scope change invalidates carry-over (fail closed — re-run).
+
+Export is **refused** while the gate is **blocked** unless `exportGateOverride` (`who`, `why`) is on the packet **and** echoed in the loop body. No silent validation skip.
+
+Re-export updates an existing GitHub PR title/body from the packet (`gh pr edit --body-file`, RAD-150). Body-update failure reports as partial failure.
+
 ## Worktrees
 
 Each loop has a **feature branch** for export (never `main`/`master`) and an exclusive sibling `../<repo>.loops/<id>` worktree — never the primary folder. If this window is on the base, PR Genie creates `lp-<id>` without switching primary onto it, then peels the `.loops/<id>` checkout (`-b` when needed — never detached). If the branch was already checked out in primary, PR Genie moves primary back onto the loop base and peels the exclusive worktree.

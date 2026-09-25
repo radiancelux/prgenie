@@ -1,6 +1,20 @@
 import type { CiRunnerResult } from "./ci-runner.js";
 import { formatCiSelectionReason } from "./ci-select.js";
-import type { LocalPr, LocalPrComment, ReadyCiRecord } from "./types.js";
+import { normalizeSkipScope } from "./ready-skip-carry.js";
+import type { LocalPr, LocalPrComment, ReadyCiCheckSkip, ReadyCiRecord } from "./types.js";
+
+const FAIL_FAST = /fail-fast/i;
+
+function isIntentionalReadySkip(reason: string | undefined): boolean {
+  if (!reason?.trim()) return false;
+  return !FAIL_FAST.test(reason);
+}
+
+function intentionalCheckSkips(result: CiRunnerResult): ReadyCiCheckSkip[] {
+  return result.checks
+    .filter((c) => c.skipped && isIntentionalReadySkip(c.reason))
+    .map((c) => ({ name: c.name, reason: c.reason!.trim() }));
+}
 
 const CI_SKIP_BODY = /^CI skipped:\s*(.+)$/i;
 
@@ -27,6 +41,20 @@ export function normalizeReadyCi(raw: unknown): ReadyCiRecord | null {
   const checks = Array.isArray(parsed.checks)
     ? parsed.checks.filter((c): c is string => typeof c === "string")
     : undefined;
+  const skipScope = Array.isArray(parsed.skipScope)
+    ? parsed.skipScope.filter((c): c is string => typeof c === "string")
+    : undefined;
+  const checkSkips: ReadyCiCheckSkip[] = [];
+  if (Array.isArray(parsed.checkSkips)) {
+    for (const row of parsed.checkSkips) {
+      if (!row || typeof row !== "object") continue;
+      const name = (row as ReadyCiCheckSkip).name;
+      const reason = (row as ReadyCiCheckSkip).reason;
+      if (typeof name === "string" && name && typeof reason === "string" && reason.trim()) {
+        checkSkips.push({ name, reason: reason.trim() });
+      }
+    }
+  }
   return {
     headSha: parsed.headSha,
     recordedAt:
@@ -36,6 +64,8 @@ export function normalizeReadyCi(raw: unknown): ReadyCiRecord | null {
     outcome: parsed.outcome,
     skipReason: typeof parsed.skipReason === "string" ? parsed.skipReason : null,
     checks,
+    skipScope: skipScope?.length ? normalizeSkipScope(skipScope) : undefined,
+    checkSkips: checkSkips.length ? checkSkips : undefined,
   };
 }
 
@@ -95,6 +125,10 @@ export function readyCiFromRunnerResult(
   recordedAt: string = new Date().toISOString(),
 ): ReadyCiRecord | null {
   if (!result.allPassed) return null;
+  const skipScope = normalizeSkipScope(
+    result.selection?.checks ?? result.checks.map((c) => c.name),
+  );
+  const checkSkips = intentionalCheckSkips(result);
   const selectionSkipped = result.selection?.skipped === true && result.checks.length === 0;
   if (selectionSkipped) {
     const skipReason =
@@ -105,6 +139,8 @@ export function readyCiFromRunnerResult(
       outcome: "skipped",
       skipReason,
       checks: [],
+      skipScope,
+      checkSkips: [],
     };
   }
   return {
@@ -112,7 +148,9 @@ export function readyCiFromRunnerResult(
     recordedAt,
     outcome: "passed",
     skipReason: null,
-    checks: result.checks.map((c) => c.name),
+    checks: result.checks.filter((c) => c.passed && !c.skipped).map((c) => c.name),
+    skipScope,
+    checkSkips: checkSkips.length ? checkSkips : undefined,
   };
 }
 
@@ -120,6 +158,7 @@ export function readyCiFromSkipReason(
   headSha: string,
   reason: string,
   recordedAt: string = new Date().toISOString(),
+  skipScope: string[] = [],
 ): ReadyCiRecord {
   const skipReason = parseCiSkipReason(reason)?.trim() || reason.trim();
   if (!skipReason) throw new Error("CI skip reason is empty");
@@ -129,6 +168,8 @@ export function readyCiFromSkipReason(
     outcome: "skipped",
     skipReason,
     checks: [],
+    skipScope: normalizeSkipScope(skipScope),
+    checkSkips: [],
   };
 }
 

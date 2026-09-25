@@ -1,6 +1,14 @@
 import { exportPushArgs, ensureExportUpstream } from "./base-ref.js";
 import { git } from "./git.js";
-import { describeRepoGithubBind, ensureRepoGithub, runGh } from "./github-ops.js";
+import {
+  describeRepoGithubBind,
+  ensureRepoGithub,
+  githubPrCreateArgs,
+  githubPrEditArgs,
+  runGh,
+  withGhBodyFile,
+} from "./github-ops.js";
+import { exportGateForHead } from "./export-gate.js";
 import { getLocalPr, isArchivedPr, listLocalPrs, setLocalPrStatus } from "./prs.js";
 import { localBaseRef, finalizeArchivedLoop } from "./worktrees.js";
 import { haltWatch, resumeWatch } from "./watch.js";
@@ -81,6 +89,9 @@ export type ExportPartialFailure = {
   branchError: string | null;
   reopen: boolean;
   pruneError: string | null;
+  /** GitHub PR body/title update failed after push (RAD-150). */
+  bodyUpdated?: boolean;
+  bodyUpdateError?: string | null;
 };
 
 export function formatExportPartialFailure(partial: ExportPartialFailure): string {
@@ -106,12 +117,14 @@ export function exportPartialFailureFromRelease(
     branchError: string | null;
   },
   archivedWorktreePath: string | null,
+  bodyUpdate?: { ok: boolean; error?: string | null },
 ): ExportPartialFailure | null {
-  if (released.prunedWorktree && released.deletedBranch) return null;
-
   const worktreePath =
     released.worktreeLeftoverPath ?? archivedWorktreePath ?? released.primaryPath;
   const parts: string[] = [];
+  if (bodyUpdate && !bodyUpdate.ok) {
+    parts.push(`GitHub PR body update failed (${bodyUpdate.error?.trim() || "gh pr edit failed"})`);
+  }
   if (!released.prunedWorktree) {
     const reason = released.reopen
       ? `reopen primary at ${released.primaryPath ?? "unknown"} then prune`
@@ -123,6 +136,15 @@ export function exportPartialFailureFromRelease(
     const detail = released.branchError?.trim() || "delete failed";
     parts.push(`local branch ${name} not deleted (${detail})`);
   }
+  if (
+    parts.length === 0 &&
+    released.prunedWorktree &&
+    released.deletedBranch &&
+    (!bodyUpdate || bodyUpdate.ok)
+  ) {
+    return null;
+  }
+  if (parts.length === 0) return null;
   return {
     kind: "partial_failure",
     message: `PR opened; ${parts.join("; ")}`,
@@ -136,17 +158,22 @@ export function exportPartialFailureFromRelease(
     branchError: released.branchError,
     reopen: released.reopen,
     pruneError: released.pruneError,
+    bodyUpdated: bodyUpdate?.ok,
+    bodyUpdateError: bodyUpdate?.error ?? null,
   };
 }
 
 export async function exportLocalPr(
   cwd: string,
   id: string,
-  options: { skipValidation?: boolean } & RunProgressOptions = {},
+  options: RunProgressOptions = {},
 ): Promise<{
   url: string;
   id: string;
   alreadyExisted: boolean;
+  bodyUpdated: boolean;
+  bodyUpdateError: string | null;
+  exportGateStatus: string | null;
   checkedOutBase: boolean;
   prunedWorktree: boolean;
   deletedBranch: boolean;
@@ -174,15 +201,20 @@ export async function exportLocalPr(
   }
 
   const validation = await validateExport(cwd, id, options);
+  const prForGate = await getLocalPr(cwd, id);
+  const gateSnap = exportGateForHead(prForGate);
+  const exportGateStatus = gateSnap?.status ?? "unknown";
+  onProgress?.({
+    phase: "preflight",
+    state: validation.ok ? "pass" : "fail",
+    message: `Export acted on gate: ${exportGateStatus}`,
+  });
   if (!validation.ok) {
-    const envNote =
-      validation.ciEnvUnhealthy && !options.skipValidation
-        ? ` CI env unhealthy (first-class): ${validation.ciEnvUnhealthy.message}`
-        : "";
+    const envNote = validation.ciEnvUnhealthy
+      ? ` CI env unhealthy (first-class): ${validation.ciEnvUnhealthy.message}`
+      : "";
     throw new Error(
-      `Export blocked. ${validation.issues.join(" ")}${envNote}${
-        options.skipValidation ? "" : " Use --skip-validation to override (not recommended)."
-      }`,
+      `Export blocked. ${validation.issues.join(" ")}${envNote} Record exportGateOverride on the loop (who/why) and echo it in the body to export while blocked.`,
     );
   }
 
@@ -237,25 +269,56 @@ export async function exportLocalPr(
     });
     let url: string;
     let alreadyExisted = false;
+    let bodyUpdated = false;
+    let bodyUpdateError: string | null = null;
+    const bodyText = pr.body.trim() || pr.title;
     if (existing.code === 0 && existing.stdout.trim().startsWith("http")) {
       url = existing.stdout.trim();
       alreadyExisted = true;
+      const editCmd = "gh pr edit --body-file";
+      onProgress?.({ phase: "create_pr", state: "start", command: editCmd });
+      const editStarted = Date.now();
+      const editResult = await withGhBodyFile(bodyText, (bodyFile) =>
+        runGh(
+          githubPrEditArgs({
+            headRef: pr.headRef,
+            title: pr.title,
+            bodyFile,
+          }),
+          { cwd, signal },
+        ),
+      );
+      if (editResult.code !== 0) {
+        bodyUpdateError =
+          editResult.stderr.trim() || editResult.stdout.trim() || "gh pr edit failed";
+        onProgress?.({
+          phase: "create_pr",
+          state: "fail",
+          command: editCmd,
+          elapsedMs: Date.now() - editStarted,
+          message: bodyUpdateError,
+        });
+      } else {
+        bodyUpdated = true;
+        onProgress?.({
+          phase: "create_pr",
+          state: "pass",
+          command: editCmd,
+          elapsedMs: Date.now() - editStarted,
+          message: "Updated GitHub PR title and body from loop packet (RAD-150)",
+        });
+      }
     } else {
-      // Title/body are separate argv entries; quoteWindowsShellArg keeps spaces intact on Win32.
-      const created = await runGh(
-        [
-          "pr",
-          "create",
-          "--title",
-          pr.title,
-          "--body",
-          pr.body.trim() || pr.title,
-          "--base",
-          ghBase(pr.baseRef),
-          "--head",
-          pr.headRef,
-        ],
-        { cwd, signal },
+      const created = await withGhBodyFile(bodyText, (bodyFile) =>
+        runGh(
+          githubPrCreateArgs({
+            title: pr.title,
+            bodyFile,
+            base: ghBase(pr.baseRef),
+            head: pr.headRef,
+          }),
+          { cwd, signal },
+        ),
       );
       if (created.code !== 0) {
         onProgress?.({
@@ -273,11 +336,12 @@ export async function exportLocalPr(
           .split("\n")
           .find((line) => /^https?:\/\//.test(line)) ?? created.stdout.trim();
       if (!url) throw new Error("gh pr create succeeded but returned no URL");
+      bodyUpdated = true;
     }
     onProgress?.({
       phase: "create_pr",
       state: "pass",
-      command: createCmd,
+      command: alreadyExisted ? "gh pr edit --body-file" : createCmd,
       elapsedMs: Date.now() - createStarted,
     });
 
@@ -287,12 +351,20 @@ export async function exportLocalPr(
     const archived = await getLocalPr(cwd, pr.id);
     const released = await finalizeArchivedLoop(cwd, archived);
 
-    const partialFailure = exportPartialFailureFromRelease(url, released, archived.worktreePath);
+    const partialFailure = exportPartialFailureFromRelease(
+      url,
+      released,
+      archived.worktreePath,
+      alreadyExisted ? { ok: bodyUpdated, error: bodyUpdateError } : undefined,
+    );
 
     return {
       url,
       id: pr.id,
       alreadyExisted,
+      bodyUpdated,
+      bodyUpdateError,
+      exportGateStatus,
       checkedOutBase: released.checkedOutBase,
       prunedWorktree: released.prunedWorktree,
       deletedBranch: released.deletedBranch,

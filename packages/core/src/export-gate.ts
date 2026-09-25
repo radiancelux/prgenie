@@ -3,10 +3,42 @@ import type { ShepherdResult } from "./shepherd.js";
 import type {
   ExportGateCiCheck,
   ExportGateCiPlan,
+  ExportGateOverride,
   ExportGateReason,
   ExportGateSnapshot,
   LocalPr,
 } from "./types.js";
+
+export function normalizeExportGateOverride(raw: unknown): ExportGateOverride | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Partial<ExportGateOverride>;
+  if (typeof row.who !== "string" || !row.who.trim()) return null;
+  if (typeof row.why !== "string" || !row.why.trim()) return null;
+  return {
+    who: row.who.trim(),
+    why: row.why.trim(),
+    recordedAt:
+      typeof row.recordedAt === "string" && row.recordedAt
+        ? row.recordedAt
+        : new Date(0).toISOString(),
+  };
+}
+
+/** Override must be on the packet and echoed in the loop body (RAD-144). */
+export function exportGateOverrideDocumented(
+  pr: Pick<LocalPr, "body" | "exportGateOverride">,
+): boolean {
+  const override = normalizeExportGateOverride(pr.exportGateOverride);
+  if (!override) return false;
+  const body = pr.body ?? "";
+  return body.includes(override.who) && body.includes(override.why);
+}
+
+export function exportGateOverrideAllowsBlockedExport(
+  pr: Pick<LocalPr, "body" | "exportGateOverride">,
+): boolean {
+  return exportGateOverrideDocumented(pr);
+}
 
 export type HumanExportKind = "exportable" | "blocked" | "pending" | "other";
 

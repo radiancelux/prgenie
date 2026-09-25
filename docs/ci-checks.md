@@ -149,6 +149,20 @@ Uncertain / hard-config mapping **skips** local CI with an explicit `skip local 
 
 Skip implementor preflight only when the toolchain cannot run (say so), mapping **skips** with a printable reason (RAD-119), or a human/steward gives an **explicit skip reason** (RAD-97). Do not skip a red scoped check. Do not “just `pnpm test` the whole repo” when `run_ci` already selected a confident scoped plan — and never escalate a skip/uncertain plan into full suite.
 
+### Ready skip carry-over → export gate (RAD-144)
+
+When implementor `run_ci` records a skip on check **X** at HEAD **H** (`readyCi.checkSkips` or whole-plan `readyCi.outcome === skipped`), the export gate **must not re-run** **X** at the same **H** with the same skip scope (`readyCi.skipScope` must match the gate plan). Progress shows `skipped (ready: <reason>)`.
+
+| Condition                         | Export gate behaviour                          |
+| --------------------------------- | ---------------------------------------------- |
+| Same HEAD + same `skipScope`      | Honour ready skip — do not re-run carried checks |
+| HEAD moved                        | Fail closed — re-run the gate plan             |
+| Skip scope changed (plan differs) | Fail closed — re-run all checks                |
+
+Export **refuses** while the stored gate is **blocked** or **failed**. There is no silent `--skip-validation` publish path. To export anyway, record `exportGateOverride` (`who`, `why`) on the loop packet **and** echo it in the loop body (which checks were skipped and why).
+
+Re-export to an existing GitHub PR updates title/body from the packet via `gh pr edit --body-file` (RAD-150). Body-update failure is a **partial failure** (RAD-95), not hidden behind a successful push.
+
 When a human/steward **skips** CI (or hits panel **Cancel**): MCP `abort_ci` / panel Cancel both call `abortCiForSteward` and return the bound `implementorTaskId` — stop/interrupt that Task in the same steward turn. Cancel is the skip half; the panel alone does not kill the agent (abort alone leaves the implementor looping).
 
 ## Generated MCP bundle size

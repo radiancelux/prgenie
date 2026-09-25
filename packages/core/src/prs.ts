@@ -32,12 +32,17 @@ import type {
   LocalPrComment,
   LocalPrStatus,
   LocalPrSource,
+  ExportGateOverride,
   ReadyCiRecord,
 } from "./types.js";
 import { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
 import { getRepoWatch, resumeWatchRole } from "./watch.js";
 import { addLearnings, extractLearningsFromResolvedComments, runPreflight } from "./learnings.js";
-import { normalizeExportGate, pendingExportGate } from "./export-gate.js";
+import {
+  normalizeExportGate,
+  normalizeExportGateOverride,
+  pendingExportGate,
+} from "./export-gate.js";
 import { assertNoDirtyPluginBuildArtifacts } from "./plugin-dirt.js";
 import {
   assertReadyCiSatisfied,
@@ -80,6 +85,7 @@ async function readPrFile(file: string): Promise<LocalPr> {
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
   pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
   pr.readyCi = normalizeReadyCi(pr.readyCi);
+  pr.exportGateOverride = normalizeExportGateOverride(pr.exportGateOverride);
   pr.exportGate = normalizeExportGate(pr.exportGate);
   pr.comments = (pr.comments ?? []).map(normalizeComment);
   pr.implementorTier = pr.implementorTier ?? null;
@@ -297,6 +303,7 @@ export async function listLocalPrs(
     pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
     pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
     pr.readyCi = normalizeReadyCi(pr.readyCi);
+    pr.exportGateOverride = normalizeExportGateOverride(pr.exportGateOverride);
     pr.exportGate = normalizeExportGate(pr.exportGate);
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     prs.push(pr);
@@ -404,6 +411,7 @@ export async function createLocalPr(cwd: string, input: CreateLocalPrInput = {})
     reviewRequestedSha: null,
     reviewerNotifiedSha: null,
     readyCi: null,
+    exportGateOverride: null,
     implementorTier: null,
     implementorModel: null,
     reviewRoundCount: 0,
@@ -526,6 +534,22 @@ export async function recordLocalPrReadyCi(
     } else {
       pr.readyCi = null;
     }
+    pr.updatedAt = nowIso();
+  });
+}
+
+/** Record an explicit export-gate override (RAD-144). Body must echo who/why before export. */
+export async function recordExportGateOverride(
+  cwd: string,
+  id: string,
+  override: { who: string; why: string },
+): Promise<LocalPr> {
+  const who = override.who.trim();
+  const why = override.why.trim();
+  if (!who || !why) throw new Error("exportGateOverride requires who and why");
+  const row: ExportGateOverride = { who, why, recordedAt: nowIso() };
+  return withPrLock(cwd, id, async (pr) => {
+    pr.exportGateOverride = row;
     pr.updatedAt = nowIso();
   });
 }

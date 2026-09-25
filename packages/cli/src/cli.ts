@@ -79,7 +79,7 @@ Usage:
   prgenie steward bind <id> [--implementor <taskId>] [--reviewer <taskId>]
   prgenie doctor
   prgenie sessions [--limit N] [--hook <name>] [--since <iso>] [--json]
-  prgenie export <id> [--skip-validation] [--verbose]
+  prgenie export <id> [--verbose]
   prgenie show <id>
   prgenie shepherd <id> [--verbose]
   prgenie ci <id> [--failing <checks>] [--no-fail-fast] [--no-parallel] [--skip-cache]
@@ -443,7 +443,7 @@ export async function run(argv: string[]): Promise<number> {
   if (sub === "export") {
     const exportId = rest[0];
     if (!exportId) {
-      process.stderr.write("prgenie export <id> [--skip-validation] [--verbose]\n");
+      process.stderr.write("prgenie export <id> [--verbose]\n");
       return 1;
     }
     const exportVerbose = flag(rest, "--verbose") || flag(rest, "-v");
@@ -453,7 +453,6 @@ export async function run(argv: string[]): Promise<number> {
     let result: Awaited<ReturnType<typeof exportLocalPr>>;
     try {
       result = await exportLocalPr(repo, exportId, {
-        skipValidation: flag(rest, "--skip-validation"),
         signal: ac.signal,
         onProgress: (event) => {
           process.stdout.write(`${formatProgressLine(event)}\n`);
