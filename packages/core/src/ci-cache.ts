@@ -630,7 +630,7 @@ async function hashInputPaths(cwd: string, check: string, paths: string[]): Prom
     const normalized = normalizeCiPath(relPath);
     if (isOmittedIgnoredPath(normalized)) continue;
 
-    let fileHash: string | null = null;
+    let fileHash: string | null;
     if (usesIndexBlob(check, normalized)) {
       const blob = blobs.get(normalized);
       if (blob != null) {
