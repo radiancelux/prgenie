@@ -2,7 +2,7 @@ import { exec } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { promisify } from "node:util";
-import { getCachedResult, recordCheckPass } from "./ci-cache.js";
+import { getCachedResult, recordCheckPass, type CheckInputScopeOptions } from "./ci-cache.js";
 import {
   collectExecOutput,
   formatCiCheckError,
@@ -352,9 +352,15 @@ async function runOneCheck(
   const shellCommand =
     check === "format:check" && formatScoped ? ciCheckCommand(check) : resolved.command;
   const reason = [options.reason, resolved.reason].filter(Boolean).join("; ");
+  const cacheScope: CheckInputScopeOptions = {
+    changedPaths,
+    formatScoped,
+    selection,
+    testFiles: scopedTestFiles,
+  };
 
   if (!skipCache) {
-    const cached = await getCachedResult(cwd, check);
+    const cached = await getCachedResult(cwd, check, cacheScope);
     if (cached) {
       throwIfAborted(signal);
       onProgress?.({ phase: "ci", check, state: "cached", command: progressCommand, elapsedMs: 0 });
@@ -401,7 +407,7 @@ async function runOneCheck(
           const elapsedMs = Date.now() - started;
           onProgress?.({ phase: "ci", check, state: "pass", command: progressCommand, elapsedMs });
           try {
-            await recordCheckPass(cwd, check);
+            await recordCheckPass(cwd, check, cacheScope);
           } catch {
             // Check passed; cache write failed — ignore and continue without cache
           }
@@ -453,7 +459,7 @@ async function runOneCheck(
     const elapsedMs = Date.now() - started;
     onProgress?.({ phase: "ci", check, state: "pass", command: progressCommand, elapsedMs });
     try {
-      await recordCheckPass(cwd, check);
+      await recordCheckPass(cwd, check, cacheScope);
     } catch {
       // Check passed; cache write failed — ignore and continue without cache
     }

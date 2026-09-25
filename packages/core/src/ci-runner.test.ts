@@ -854,10 +854,13 @@ describe("runCiChecks", () => {
         }),
       );
 
-      // Third run - should use cache (pass) because git HEAD unchanged
-      // The working tree change doesn't invalidate cache (only committed content matters)
+      // Third run - dirty package.json is in lint scope → cache miss → check runs and fails
       const result3 = await runCiChecks(repo, { checks: ["lint"], timeout: 5000 });
-      assert.equal(result3.allPassed, true, "Third run should pass via cache (HEAD unchanged)");
+      assert.equal(
+        result3.allPassed,
+        false,
+        "Dirty script change in scope should miss cache and re-run lint (RAD-118)",
+      );
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
