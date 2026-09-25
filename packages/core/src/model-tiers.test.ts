@@ -11,7 +11,7 @@ test("resolveImplementorTierHint defaults to cheap", () => {
   const hint = resolveImplementorTierHint({
     body: "Fix the widget tooltip.",
     status: "draft",
-    implementorRoundCount: 0,
+    failedAcRoundCount: 0,
   });
   assert.equal(hint.tier, "cheap");
   assert.equal(hint.subagentType, IMPLEMENTOR_SUBAGENT_CHEAP);
@@ -22,7 +22,7 @@ test("resolveImplementorTierHint bumps to strong for design-heavy brief", () => 
   const hint = resolveImplementorTierHint({
     body: "RAD-1: design-heavy API architecture for the steward flywheel.",
     status: "draft",
-    implementorRoundCount: 0,
+    failedAcRoundCount: 0,
   });
   assert.equal(hint.tier, "strong");
   assert.equal(hint.subagentType, IMPLEMENTOR_SUBAGENT_STRONG);
@@ -44,7 +44,7 @@ test("resolveImplementorTierHint CI-resume spawn stays cheap", () => {
     {
       body: "RAD-1: design-heavy architecture rewrite.",
       status: "reviewed",
-      implementorRoundCount: 0,
+      failedAcRoundCount: 0,
     },
     { ciResume: true },
   );
