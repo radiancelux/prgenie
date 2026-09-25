@@ -157,7 +157,7 @@ $agentsSrc = Join-Path $src "agents"
 $agentsDest = Join-Path $env:USERPROFILE ".cursor\agents"
 if (Test-Path -LiteralPath $agentsSrc) {
   New-Item -ItemType Directory -Force -Path $agentsDest | Out-Null
-  robocopy $agentsSrc $agentsDest *.md /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
+  robocopy $agentsSrc $agentsDest prgenie-*.md /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
   if ($LASTEXITCODE -ge 8) {
     Write-Error "robocopy agents failed with exit $LASTEXITCODE"
     exit 1

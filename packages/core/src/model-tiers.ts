@@ -46,9 +46,15 @@ export function implementorRoundCount(pr: Pick<LocalPr, "implementorRoundCount">
   return pr.implementorRoundCount ?? 0;
 }
 
-function sameAcStillOpen(pr: Pick<LocalPr, "status" | "implementorRoundCount">): boolean {
+/** Reviewer rejections while AC stayed open (complete_review → changes_requested). */
+export function failedAcRoundCount(pr: Pick<LocalPr, "failedAcRoundCount">): number {
+  return pr.failedAcRoundCount ?? 0;
+}
+
+/** True when the same AC is still open after two failed implementor rounds (RAD-89). */
+export function sameAcStillOpen(pr: Pick<LocalPr, "status" | "failedAcRoundCount">): boolean {
   if (pr.status !== "changes_requested") return false;
-  return implementorRoundCount(pr) >= 2;
+  return failedAcRoundCount(pr) >= 2;
 }
 
 /**
@@ -56,7 +62,7 @@ function sameAcStillOpen(pr: Pick<LocalPr, "status" | "implementorRoundCount">):
  * Resume paths do not call this — CI-resume always stays on the cheap resume Task.
  */
 export function resolveImplementorTierHint(
-  pr: Pick<LocalPr, "body" | "status" | "implementorRoundCount">,
+  pr: Pick<LocalPr, "body" | "status" | "failedAcRoundCount">,
   input: ResolveImplementorTierInput = {},
 ): ImplementorTierHint {
   if (input.ciResume) {

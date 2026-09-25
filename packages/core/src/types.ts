@@ -97,6 +97,8 @@ export interface LocalPr {
   reviewRoundCount?: number;
   /** New implementor Task spawns (not resumes) for this loop. */
   implementorRoundCount?: number;
+  /** Reviewer rejections (complete_review → changes_requested) for tier bump (RAD-89). */
+  failedAcRoundCount?: number;
   /** Logged when strong tier was chosen on spawn. */
   lastTierBumpReason?: string | null;
 }

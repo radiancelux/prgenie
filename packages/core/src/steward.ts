@@ -8,6 +8,7 @@ import {
   formatTierMetricsLine,
   resolveImplementorTierHint,
   REVIEWER_SUBAGENT,
+  sameAcStillOpen,
   type ImplementorTierHint,
 } from "./model-tiers.js";
 import { getLocalPr, isArchivedPr, listLocalPrs, refreshLocalPrHead, syncReviewRoundCount } from "./prs.js";
@@ -75,6 +76,8 @@ export interface StewardNextResult {
   status: LocalPr["status"];
   exportGate: ExportGateSnapshot | null;
   implementorTierHint: ImplementorTierHint | null;
+  /** Persisted packet tier (always present when set; spawn hint may differ until bind). */
+  implementorTier: ImplementorTier | null;
   reviewRoundCount: number;
   implementorRoundCount: number;
   implementorModel: string | null;
@@ -173,7 +176,7 @@ function canResumeTask(
  * Human handoff (Push to origin) only when status is reviewed and the export gate is ready.
  */
 export function decideStewardAction(
-  pr: Pick<LocalPr, "id" | "status" | "headSha" | "exportGate">,
+  pr: Pick<LocalPr, "id" | "status" | "headSha" | "exportGate" | "failedAcRoundCount">,
   binding: StewardBinding | null,
   options: StewardNextOptions = {},
 ): StewardDecision {
@@ -334,6 +337,25 @@ export function decideStewardAction(
   }
 
   // draft or changes_requested (and any other live status)
+  if (
+    pr.status === "changes_requested" &&
+    sameAcStillOpen(pr) &&
+    resumeImplementor
+  ) {
+    return {
+      kind: "spawn_implementor",
+      loopId: pr.id,
+      implementorTaskId: null,
+      reviewerTaskId,
+      resumeSameImplementor: false,
+      humanExportable: false,
+      yourTurn: false,
+      failingCheck: null,
+      gateStatus: null,
+      reason:
+        "changes_requested with same AC still open after two implementor rounds. Spawn strong implementor (new Task).",
+    };
+  }
   if (resumeImplementor) {
     return {
       kind: "resume_implementor",
@@ -455,13 +477,8 @@ export async function clearStewardBinding(cwd: string, id: string): Promise<void
  * Load the durable map, optionally persist Task ids, run the export gate when
  * the reviewer has cleared, then return the next steward action.
  */
-function isCiResumeSpawn(
-  decision: Pick<StewardDecision, "kind" | "failingCheck">,
-  options: StewardNextOptions,
-): boolean {
-  if (decision.kind !== "spawn_implementor" || !decision.failingCheck) return false;
-  if (options.restart) return false;
-  return true;
+function isCiResumeSpawn(decision: Pick<StewardDecision, "kind" | "failingCheck">): boolean {
+  return decision.kind === "spawn_implementor" && Boolean(decision.failingCheck);
 }
 
 function attachReviewerSubagent(decision: StewardDecision): StewardDecision {
@@ -478,11 +495,16 @@ async function attachImplementorTierHint(
   options: StewardNextOptions,
 ): Promise<{ decision: StewardDecision; tierHint: ImplementorTierHint | null }> {
   let current = attachReviewerSubagent(decision);
+  const persistedTier = pr.implementorTier ?? null;
+
   if (current.kind !== "spawn_implementor") {
+    if (persistedTier) {
+      current = { ...current, implementorTier: persistedTier };
+    }
     return { decision: current, tierHint: null };
   }
 
-  const ciResume = isCiResumeSpawn(current, options);
+  const ciResume = isCiResumeSpawn(current);
   const hint = resolveImplementorTierHint(pr, { ciResume, restart: options.restart });
   current = {
     ...current,
@@ -535,6 +557,7 @@ export async function stewardNext(
     status: fresh.status,
     exportGate: fresh.exportGate ?? null,
     implementorTierHint: tiered.tierHint,
+    implementorTier: fresh.implementorTier ?? null,
     reviewRoundCount: fresh.reviewRoundCount ?? syncReviewRoundCount(fresh),
     implementorRoundCount: fresh.implementorRoundCount ?? 0,
     implementorModel: fresh.implementorModel ?? null,
@@ -561,7 +584,7 @@ export function formatStewardDecision(result: StewardNextResult): string {
   }
   lines.push(
     formatTierMetricsLine({
-      implementorTier: decision.implementorTier ?? null,
+      implementorTier: result.implementorTier ?? decision.implementorTier ?? null,
       implementorModel: result.implementorModel,
       reviewRoundCount: result.reviewRoundCount,
       implementorRoundCount: result.implementorRoundCount,

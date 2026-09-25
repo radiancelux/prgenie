@@ -86,6 +86,7 @@ async function readPrFile(file: string): Promise<LocalPr> {
   pr.implementorModel = pr.implementorModel ?? null;
   pr.reviewRoundCount = pr.reviewRoundCount ?? 0;
   pr.implementorRoundCount = pr.implementorRoundCount ?? 0;
+  pr.failedAcRoundCount = pr.failedAcRoundCount ?? 0;
   pr.lastTierBumpReason = pr.lastTierBumpReason ?? null;
   return pr;
 }
@@ -1160,6 +1161,9 @@ export async function completeLocalPrReview(
     if (!isArchivedPr(pr)) {
       pr.status = handedToImplementor ? "changes_requested" : "reviewed";
       if (pr.status === "reviewed") pr.exportGate = pendingExportGate(pr.headSha);
+      if (handedToImplementor) {
+        pr.failedAcRoundCount = (pr.failedAcRoundCount ?? 0) + 1;
+      }
     }
     syncReviewRoundCount(pr);
     pr.updatedAt = now;
