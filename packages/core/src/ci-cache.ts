@@ -7,7 +7,13 @@ import {
   prettierPathsFromChanged,
   readPackageScripts,
 } from "./ci-host-scope.js";
-import { normalizeCiPath, packageFromScopedCheck, type CiCheckSelection } from "./ci-select.js";
+import {
+  isScopablePackage,
+  normalizeCiPath,
+  packageFromScopedCheck,
+  type CiCheckSelection,
+  type ScopablePackage,
+} from "./ci-select.js";
 import { ciCheckCommand } from "./progress.js";
 import { gitCommonDir, git } from "./git.js";
 
@@ -43,6 +49,84 @@ const ROOT_ESLINT_CONFIGS = [
 ];
 
 const ROOT_TSCONFIGS = ["tsconfig.json", "tsconfig.base.json"];
+
+/** Prettier config / ignore paths always hashed from disk (runner reads worktree, not index). */
+const PRETTIER_WORKTREE_INPUTS = [
+  ".prettierrc",
+  ".prettierrc.json",
+  ".prettierrc.yaml",
+  ".prettierrc.yml",
+  ".prettierrc.js",
+  ".prettierrc.cjs",
+  ".prettierrc.mjs",
+  "prettier.config.js",
+  "prettier.config.cjs",
+  "prettier.config.mjs",
+  ".prettierignore",
+] as const;
+
+function isPrettierWorktreeInput(relPath: string): boolean {
+  const normalized = normalizeCiPath(relPath);
+  const base = path.posix.basename(normalized);
+  return (
+    (PRETTIER_WORKTREE_INPUTS as readonly string[]).includes(base) ||
+    base.startsWith(".prettierrc.")
+  );
+}
+
+/** Map workspace dependency names in this monorepo to scopable package ids. */
+function workspaceNameToScopablePackage(name: string): ScopablePackage | null {
+  if (name === "@prgenie/core") return "core";
+  if (name === "@prgenie/cli") return "cli";
+  if (name === "prgenie" || name === "@prgenie/extension") return "extension";
+  return null;
+}
+
+async function readWorkspaceDependencyPackages(
+  cwd: string,
+  pkg: ScopablePackage,
+): Promise<ScopablePackage[] | null> {
+  try {
+    const raw = await readFile(path.join(cwd, "packages", pkg, "package.json"), "utf8");
+    const json = JSON.parse(raw) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const deps = new Set<ScopablePackage>();
+    for (const section of [json.dependencies, json.devDependencies]) {
+      if (!section) continue;
+      for (const [name, spec] of Object.entries(section)) {
+        if (typeof spec !== "string" || !spec.startsWith("workspace:")) continue;
+        const mapped = workspaceNameToScopablePackage(name);
+        if (mapped && isScopablePackage(mapped)) deps.add(mapped);
+      }
+    }
+    return [...deps];
+  } catch {
+    return null;
+  }
+}
+
+async function collectPrettierWorktreeInputPaths(cwd: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const name of PRETTIER_WORKTREE_INPUTS) {
+    if (await pathExists(cwd, name)) out.push(name);
+  }
+  return out;
+}
+
+async function mergePathsUnderPrefixes(
+  cwd: string,
+  prefixes: Iterable<string>,
+): Promise<string[] | null> {
+  const allPaths = new Set<string>();
+  for (const prefix of prefixes) {
+    const collected = await collectPathsUnderPrefix(cwd, prefix);
+    if (!collected) return null;
+    for (const p of collected) allPaths.add(p);
+  }
+  return [...allPaths].sort();
+}
 
 /**
  * Get the directory for CI cache storage.
@@ -156,28 +240,35 @@ async function collectFormatInputPaths(
   changedPaths: string[],
   formatScoped: boolean,
 ): Promise<string[] | null> {
+  const worktreeInputs = await collectPrettierWorktreeInputPaths(cwd);
+  let sourcePaths: string[] | null;
+
   if (formatScoped) {
     const candidates = prettierPathsFromChanged(changedPaths);
-    if (candidates.length === 0) return [];
+    if (candidates.length === 0) {
+      sourcePaths = [];
+    } else {
+      const paths = new Set<string>();
+      const okTracked = await addGitPathListing(cwd, paths, [
+        "ls-files",
+        "--exclude-standard",
+        "--",
+        ...candidates,
+      ]);
+      if (!okTracked) return null;
 
-    const paths = new Set<string>();
-    const okTracked = await addGitPathListing(cwd, paths, [
-      "ls-files",
-      "--exclude-standard",
-      "--",
-      ...candidates,
-    ]);
-    if (!okTracked) return null;
-
-    for (const candidate of candidates) {
-      if (paths.has(candidate)) continue;
-      if (await pathExists(cwd, candidate)) paths.add(candidate);
+      for (const candidate of candidates) {
+        if (paths.has(candidate)) continue;
+        if (await pathExists(cwd, candidate)) paths.add(candidate);
+      }
+      sourcePaths = [...paths].sort();
     }
-    return [...paths].sort();
+  } else {
+    sourcePaths = await collectPathsUnderPrefix(cwd, "");
   }
 
-  const all = await collectPathsUnderPrefix(cwd, "");
-  return all;
+  if (sourcePaths == null) return null;
+  return [...new Set([...sourcePaths, ...worktreeInputs])].sort();
 }
 
 async function collectExplicitInputPaths(
@@ -221,6 +312,8 @@ export async function resolveCheckInputPaths(
   const pkg = packageFromScopedCheck(check);
   if (pkg) {
     const prefix = `packages/${pkg}/`;
+    const needsWorkspaceDeps =
+      check.startsWith("typecheck:") || check.startsWith("test:") || check.startsWith("build:");
 
     if (check.startsWith("test:")) {
       const scoped = options.testFiles ?? options.selection?.testFiles?.[check] ?? undefined;
@@ -231,11 +324,25 @@ export async function resolveCheckInputPaths(
           const src = siblingSourceFromTest(testFile);
           if (src) explicit.add(src);
         }
-        return collectExplicitInputPaths(cwd, [...explicit]);
+        const explicitPaths = await collectExplicitInputPaths(cwd, [...explicit]);
+        if (!explicitPaths) return null;
+        const deps = await readWorkspaceDependencyPackages(cwd, pkg);
+        if (deps === null) return null;
+        const prefixes = deps.map((dep) => `packages/${dep}/`);
+        const depPaths = await mergePathsUnderPrefixes(cwd, prefixes);
+        if (!depPaths) return null;
+        return [...new Set([...explicitPaths, ...depPaths])].sort();
       }
     }
 
-    const packagePaths = await collectPathsUnderPrefix(cwd, prefix);
+    const prefixes = new Set<string>([prefix]);
+    if (needsWorkspaceDeps) {
+      const deps = await readWorkspaceDependencyPackages(cwd, pkg);
+      if (deps === null) return null;
+      for (const dep of deps) prefixes.add(`packages/${dep}/`);
+    }
+
+    const packagePaths = await mergePathsUnderPrefixes(cwd, prefixes);
     if (!packagePaths) return null;
 
     const extra: string[] = [];
@@ -244,6 +351,9 @@ export async function resolveCheckInputPaths(
     }
     if (check.startsWith("typecheck:")) {
       extra.push(...(await collectExistingRootConfigs(cwd, ROOT_TSCONFIGS)));
+    }
+    if (check.startsWith("build:") && (await pathExists(cwd, "scripts/build.mjs"))) {
+      extra.push("scripts/build.mjs");
     }
     return [...new Set([...packagePaths, ...extra])].sort();
   }
@@ -272,7 +382,7 @@ async function hashFileContent(
 ): Promise<string | null> {
   const normalized = normalizeCiPath(relPath);
 
-  if (check === "format:check") {
+  if (check === "format:check" && !isPrettierWorktreeInput(normalized)) {
     const blob = await git(cwd, ["show", `:${normalized.replace(/"/g, '\\"')}`], {
       allowFail: true,
     });
