@@ -23,10 +23,7 @@ export type {
   WorktreeInfo,
   ImplementorTier,
 } from "./types.js";
-export {
-  parseAgentModelFrontmatter,
-  readPluginAgentModel,
-} from "./agent-model.js";
+export { parseAgentModelFrontmatter, readPluginAgentModel } from "./agent-model.js";
 export {
   formatTierMetricsLine,
   IMPLEMENTOR_SUBAGENT_CHEAP,

@@ -12,7 +12,13 @@ import {
   sameAcStillOpen,
   type ImplementorTierHint,
 } from "./model-tiers.js";
-import { getLocalPr, isArchivedPr, listLocalPrs, refreshLocalPrHead, syncReviewRoundCount } from "./prs.js";
+import {
+  getLocalPr,
+  isArchivedPr,
+  listLocalPrs,
+  refreshLocalPrHead,
+  syncReviewRoundCount,
+} from "./prs.js";
 import type { ProgressCallback } from "./progress.js";
 import { consoleDir, parseJsonObject, withFileLock, writeJsonFile } from "./store.js";
 import type { ExportGateSnapshot, ExportGateStatus, ImplementorTier, LocalPr } from "./types.js";

@@ -31,7 +31,10 @@ model: test-model[fast=false]
   const prevHome = process.env.PRGENIE_AGENT_HOME;
   process.env.PRGENIE_AGENT_HOME = fakeHome;
   try {
-    assert.equal(await readPluginAgentModel("/ignored/repo", "prgenie-implementor"), "test-model[fast=false]");
+    assert.equal(
+      await readPluginAgentModel("/ignored/repo", "prgenie-implementor"),
+      "test-model[fast=false]",
+    );
   } finally {
     if (prevHome === undefined) delete process.env.PRGENIE_AGENT_HOME;
     else process.env.PRGENIE_AGENT_HOME = prevHome;

@@ -31,7 +31,10 @@ export function pluginAgentDefinitionPaths(agentName: string, home = agentHome()
 }
 
 /** Read model slug from the installed PR Genie agent definition file. */
-export async function readPluginAgentModel(_cwd: string, agentName: string): Promise<string | null> {
+export async function readPluginAgentModel(
+  _cwd: string,
+  agentName: string,
+): Promise<string | null> {
   for (const file of pluginAgentDefinitionPaths(agentName)) {
     try {
       const raw = await readFile(file, "utf8");
