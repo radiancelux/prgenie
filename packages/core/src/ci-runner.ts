@@ -5,10 +5,13 @@ import { promisify } from "node:util";
 import { getCachedResult, recordCheckPass } from "./ci-cache.js";
 import {
   collectExecOutput,
+  collectShellOutput,
+  failureExcerptContextFromError,
   formatCiCheckError,
   formatFailureExcerpt,
   writeCiFailureLog,
 } from "./ci-failure.js";
+import { CiShellError, execCiShell } from "./ci-kill.js";
 import {
   changedPathsForCi,
   envFlag,
@@ -433,7 +436,8 @@ async function runOneCheck(
           command: `${activeShellCommand} (${i + 1}/${total})`,
           message: `${i + 1}/${total} files`,
         });
-        await execAsync(activeShellCommand, {
+        await execCiShell({
+          command: activeShellCommand,
           cwd,
           timeout,
           signal,
@@ -442,7 +446,8 @@ async function runOneCheck(
         });
       }
     } else {
-      await execAsync(shellCommand, {
+      await execCiShell({
+        command: shellCommand,
         cwd,
         timeout,
         signal,
@@ -459,9 +464,24 @@ async function runOneCheck(
     }
     return { name: check, passed: true, elapsedMs, reason: reason || options.reason };
   } catch (err) {
+    if (err instanceof CiShellError && err.kind === "cancelled") {
+      const output = collectShellOutput(err);
+      const excerpt = formatFailureExcerpt(check, output, { kind: "cancelled" });
+      const elapsedMs = Date.now() - started;
+      onProgress?.({
+        phase: "ci",
+        check,
+        state: "skip",
+        command: progressCommand,
+        elapsedMs,
+        message: excerpt,
+      });
+      throw abortError();
+    }
     if (isAbortError(err) || signal?.aborted) throw abortError();
-    const output = collectExecOutput(err);
-    const excerpt = formatFailureExcerpt(check, output);
+    const output = err instanceof CiShellError ? collectShellOutput(err) : collectExecOutput(err);
+    const excerptContext = failureExcerptContextFromError(err, timeout);
+    const excerpt = formatFailureExcerpt(check, output, excerptContext);
     const logPath = await writeCiFailureLog(cwd, check, activeShellCommand, output, excerpt);
     const elapsedMs = Date.now() - started;
     const error = formatCiCheckError({ command: activeShellCommand, excerpt, logPath });

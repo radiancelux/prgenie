@@ -139,6 +139,26 @@ Loop panel **Cancel** and MCP `abort_ci` share one path: `abortCiForSteward` bum
 
 Export-gate evaluations also take a per id+HEAD lock (`.git/agent-console/ci-lock/`) so steward and the panel do not run two full suites; a waiter adopts the persisted snapshot or aborts with the owner.
 
+### Process tree kill (RAD-135)
+
+Each CI shell check runs via `execCiShell` (`packages/core/src/ci-kill.ts`). Timeout and Cancel both **kill the spawned child and its descendants** so `tsx --test` / node workers cannot outlive the parent (especially on Windows).
+
+| Platform    | Mechanism                                                        |
+| ----------- | ---------------------------------------------------------------- |
+| **Windows** | `taskkill /PID <shell-pid> /T /F` on the cmd.exe/pnpm shell      |
+| **POSIX**   | `detached: true` spawn + `SIGKILL` on the process group (`-pid`) |
+
+Progress and failure excerpts distinguish outcomes:
+
+| Outcome            | Progress / excerpt                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------ |
+| **Timeout**        | `<check> timed out after <N>s` (optional TAP tail); check state `fail`                     |
+| **Cancel**         | `<check> cancelled`; in-flight check reports `skip` with that message, then the run aborts |
+| **maxBuffer**      | `<check> output exceeded max buffer`                                                       |
+| **Real test fail** | First `not ok` / assertion (unchanged)                                                     |
+
+Implementors: when Cancel fires mid-check, do not assume orphan `tsx` processes — the runner tears down the tree. Re-run scoped checks after fixing; do not stack overlapping `run_ci` calls.
+
 ## UI
 
 Panel + lane + agent-chat progress card list **which** checks were selected and **why** (`reason[]`). Click a check name for status + RAD-74 excerpt/log. Elapsed time uses the same `formatElapsed` units as the CLI card. The command line must match what ran (`eslint apps/foo.ts`, not only `lint`).
