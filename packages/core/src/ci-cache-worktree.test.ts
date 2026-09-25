@@ -108,5 +108,4 @@ describe("RAD-118 worktree CI cache", () => {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
-
 });

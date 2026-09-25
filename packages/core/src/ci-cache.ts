@@ -7,11 +7,7 @@ import {
   prettierPathsFromChanged,
   readPackageScripts,
 } from "./ci-host-scope.js";
-import {
-  normalizeCiPath,
-  packageFromScopedCheck,
-  type CiCheckSelection,
-} from "./ci-select.js";
+import { normalizeCiPath, packageFromScopedCheck, type CiCheckSelection } from "./ci-select.js";
 import { ciCheckCommand } from "./progress.js";
 import { gitCommonDir, git } from "./git.js";
 
@@ -227,13 +223,9 @@ export async function resolveCheckInputPaths(
     const prefix = `packages/${pkg}/`;
 
     if (check.startsWith("test:")) {
-      const scoped =
-        options.testFiles ?? options.selection?.testFiles?.[check] ?? undefined;
+      const scoped = options.testFiles ?? options.selection?.testFiles?.[check] ?? undefined;
       if (scoped && scoped.length > 0) {
-        const explicit = new Set<string>([
-          `${prefix}package.json`,
-          `${prefix}tsconfig.json`,
-        ]);
+        const explicit = new Set<string>([`${prefix}package.json`, `${prefix}tsconfig.json`]);
         for (const testFile of scoped) {
           explicit.add(normalizeCiPath(testFile));
           const src = siblingSourceFromTest(testFile);
@@ -316,11 +308,7 @@ async function hashFileContent(
   }
 }
 
-async function hashInputPaths(
-  cwd: string,
-  check: string,
-  paths: string[],
-): Promise<string | null> {
+async function hashInputPaths(cwd: string, check: string, paths: string[]): Promise<string | null> {
   const hash = createHash("sha256");
   for (const relPath of paths) {
     const fileHash = await hashFileContent(cwd, relPath, check);
