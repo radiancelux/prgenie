@@ -150,7 +150,7 @@ describe("ci-cache", () => {
       }
     });
 
-    it("returns same hash when untracked files are added (working tree changes)", async () => {
+    it("returns different hash when untracked files are added (worktree scope)", async () => {
       const repo = await initTestRepo();
       try {
         const hash1 = await computeCiInputHash(repo);
@@ -159,10 +159,10 @@ describe("ci-cache", () => {
         await writeFile(join(repo, "untracked.txt"), "untracked content\n");
 
         const hash2 = await computeCiInputHash(repo);
-        assert.equal(
+        assert.notEqual(
           hash1,
           hash2,
-          "Hash should not change for untracked files (only committed content matters)",
+          "Full-repo lint scope includes untracked worktree files (RAD-118)",
         );
       } finally {
         await rm(repo, { recursive: true, force: true });

@@ -440,5 +440,11 @@ export {
   writeCiFailureLog,
 } from "./ci-failure.js";
 export type { CiFailureLogMeta, ExecFailureOutput } from "./ci-failure.js";
-export { clearCiCache, getCachedResult, recordCheckPass } from "./ci-cache.js";
-export type { CiCacheEntry, CiCacheData } from "./ci-cache.js";
+export {
+  clearCiCache,
+  computeCheckInputHash,
+  getCachedResult,
+  recordCheckPass,
+  resolveCheckInputPaths,
+} from "./ci-cache.js";
+export type { CheckInputScopeOptions, CiCacheEntry, CiCacheData } from "./ci-cache.js";
