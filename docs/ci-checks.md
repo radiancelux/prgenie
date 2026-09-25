@@ -123,7 +123,7 @@ Uncertain / hard-config mapping **skips** local CI with an explicit `skip local 
 
   **Left out** (a hit stays valid)
 
-  - Gitignored install/build/tool trees: `node_modules/**`, `dist/**`, `coverage/**`, `.turbo/**`, `.vscode-test/**`, and `*.vsix`. The same path segments are **also omitted from untracked listings** even when the worktree has no `.gitignore` (so a primary→worktree `node_modules` junction is not walked file-by-file). Dependency identity is the hashed lockfile and root `package.json`, not the install tree.
+  - Gitignored install/build/tool trees: `node_modules/**`, `dist/**`, `coverage/**`, `.turbo/**`, `.vscode-test/**`, and `*.vsix`. Untracked listings use `git ls-files -o --directory` plus omit pathspecs so those trees are **never descended** — including a primary→worktree `node_modules` junction when the worktree has no `.gitignore`. Post-filtering after a full `-o` walk is not enough (that walk is the hang). Dependency identity is the hashed lockfile and root `package.json`, not the install tree.
   - Files outside the scope above (a dirty root `README.md` does not invalidate `lint:core`).
   - `format:check` does not hash worktree CRLF for source files; those use the index blob.
 
@@ -131,6 +131,7 @@ Uncertain / hard-config mapping **skips** local CI with an explicit `skip local 
 
   - A symlink, junction, or other non-regular entry whose path is itself in scope (tracked or untracked), including a tracked directory symlink.
   - A gitignored directory in scope that is not one of the omitted trees above.
+  - An untracked directory in scope that is not one of the omitted trees (listed as a directory line; contents are not walked).
   - Unreadable inputs, or `test:*` when `HEAD^{tree}` cannot be resolved.
   - A check that passed while its inputs changed mid-run (hash before; re-hash after; record only if unchanged).
 

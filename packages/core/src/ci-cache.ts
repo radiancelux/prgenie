@@ -211,20 +211,28 @@ async function addGitPathListing(
   cwd: string,
   paths: Set<string>,
   args: string[],
-  options: { omitInstallTrees?: boolean } = {},
 ): Promise<boolean> {
   const result = await git(cwd, args, { allowFail: true });
   if (result.code !== 0) return false;
   for (const line of result.stdout.split("\n")) {
     const trimmed = line.trim();
-    if (!trimmed) continue;
-    const rel = normalizeCiPath(trimmed);
-    // Untracked listings walk junctions when .gitignore is missing; never hash
-    // install/build trees even if git did not exclude them.
-    if (options.omitInstallTrees && isOmittedIgnoredPath(rel)) continue;
-    paths.add(rel);
+    if (trimmed) paths.add(normalizeCiPath(trimmed));
   }
   return true;
+}
+
+/** Pathspecs that keep `git ls-files -o` from descending into install/build trees. */
+function omittedInstallExcludePathspecs(): string[] {
+  const specs: string[] = [];
+  for (const name of OMITTED_IGNORED_DIR_NAMES) {
+    specs.push(`:(exclude)${name}`);
+    specs.push(`:(exclude)${name}/**`);
+    specs.push(`:(exclude)**/${name}`);
+    specs.push(`:(exclude)**/${name}/**`);
+  }
+  specs.push(":(exclude)*.vsix");
+  specs.push(":(exclude)**/*.vsix");
+  return specs;
 }
 
 /**
@@ -251,20 +259,52 @@ async function collectPathsUnderPrefix(cwd: string, prefix: string): Promise<str
     if (!ok) return null;
   }
 
-  // Untracked: apply node_modules/dist/… exclusions even without a worktree .gitignore
-  // (Windows hang: git lists every file through a primary→worktree junction).
-  const okUntracked = await addGitPathListing(
-    cwd,
-    paths,
-    ["ls-files", "-o", "--exclude-standard", ...pathArgs],
-    { omitInstallTrees: true },
-  );
+  const okUntracked = await addUntrackedScopePaths(cwd, paths, normalizedPrefix);
   if (!okUntracked) return null;
 
   const ignoredOk = await addIgnoredScopePaths(cwd, paths, normalizedPrefix);
   if (!ignoredOk) return null;
 
   return [...paths].sort();
+}
+
+/**
+ * Untracked files under prefix. Uses `--directory` + omit pathspecs so git does
+ * not walk a `node_modules` junction when `.gitignore` is missing (post-filter
+ * after `ls-files -o` is too late — the hang is the listing itself).
+ * Non-omitted untracked directories fail closed (miss) rather than descending.
+ */
+async function addUntrackedScopePaths(
+  cwd: string,
+  paths: Set<string>,
+  prefix: string,
+): Promise<boolean> {
+  const pathArgs = prefix ? ["--", prefix] : ["--"];
+  const result = await git(
+    cwd,
+    [
+      "ls-files",
+      "-o",
+      "--exclude-standard",
+      "--directory",
+      ...pathArgs,
+      ...omittedInstallExcludePathspecs(),
+    ],
+    { allowFail: true },
+  );
+  if (result.code !== 0) return false;
+
+  for (const line of result.stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const isDir = trimmed.endsWith("/");
+    const rel = normalizeCiPath(trimmed.replace(/\/+$/, ""));
+    if (!rel || isOmittedIgnoredPath(rel)) continue;
+    // Directory line: never expand (junction hang). Non-omitted → miss.
+    if (isDir) return false;
+    paths.add(rel);
+  }
+  return true;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, mkdir, readFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exec } from "node:child_process";
@@ -383,27 +383,69 @@ describe("RAD-118 worktree CI cache", () => {
     }
   });
 
-  it("untracked node_modules without .gitignore is omitted (no hang / still hits)", async () => {
+  it("untracked node_modules junction without .gitignore is omitted (no hang / still hits)", async () => {
     const repo = await initPackageRepo();
+    const installTree = await mkdtemp(join(tmpdir(), "prgenie-nm-junction-"));
     try {
-      // No .gitignore — git would otherwise list every file through a junction.
+      // No .gitignore — listing must not walk the junction (exclude pathspec + --directory).
       await clearCiCache(repo);
       const scope = coreLintScope();
       await recordCheckPass(repo, "lint:core", scope);
       assert.ok(await getCachedResult(repo, "lint:core", scope));
 
-      await mkdir(join(repo, "packages", "core", "node_modules", "pkg"), { recursive: true });
-      await writeFile(
-        join(repo, "packages", "core", "node_modules", "pkg", "index.js"),
-        "module.exports = 1;\n",
-      );
+      // Populate a fake primary install tree, then junction/symlink it in-scope.
+      for (let i = 0; i < 80; i++) {
+        const pkg = join(installTree, `pkg-${i}`);
+        await mkdir(pkg, { recursive: true });
+        await writeFile(join(pkg, "index.js"), `module.exports = ${i};\n`);
+      }
+      const link = join(repo, "packages", "core", "node_modules");
+      const type = process.platform === "win32" ? "junction" : "dir";
+      await symlink(installTree, link, type);
 
+      const started = Date.now();
       const hash = await computeCheckInputHash(repo, "lint:core", scope);
-      assert.ok(hash, "omitted untracked install tree must not fail-closed the whole hash");
+      const elapsedMs = Date.now() - started;
+      assert.ok(hash, "omitted untracked install junction must not fail-closed the whole hash");
+      assert.ok(elapsedMs < 30_000, `junction listing must not hang (took ${elapsedMs}ms)`);
       assert.ok(
         await getCachedResult(repo, "lint:core", scope),
-        "untracked node_modules without .gitignore stays a hit",
+        "untracked node_modules junction without .gitignore stays a hit",
       );
+
+      // Other untracked files in scope still affect the hash.
+      await writeFile(join(repo, "packages", "core", "src", "extra.ts"), "export const x = 1;\n");
+      assert.equal(
+        await getCachedResult(repo, "lint:core", scope),
+        null,
+        "non-omitted untracked files in scope still miss",
+      );
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+      await rm(installTree, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("untracked non-omitted directory without .gitignore misses lint:core", async () => {
+    const repo = await initPackageRepo();
+    try {
+      await clearCiCache(repo);
+      const scope = coreLintScope();
+      await recordCheckPass(repo, "lint:core", scope);
+      assert.ok(await getCachedResult(repo, "lint:core", scope));
+
+      await mkdir(join(repo, "packages", "core", "vendor", "nested"), { recursive: true });
+      await writeFile(
+        join(repo, "packages", "core", "vendor", "nested", "mod.ts"),
+        "export const v = 1;\n",
+      );
+
+      assert.equal(
+        await computeCheckInputHash(repo, "lint:core", scope),
+        null,
+        "non-omitted untracked directory is a miss (no junction descent)",
+      );
+      assert.equal(await getCachedResult(repo, "lint:core", scope), null);
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
