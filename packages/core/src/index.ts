@@ -22,6 +22,8 @@ export type {
   ReadyCiRecord,
   WorktreeInfo,
   ImplementorTier,
+  RepoContextSnapshot,
+  ReviewGuidanceSnapshot,
 } from "./types.js";
 export { parseAgentModelFrontmatter, readPluginAgentModel } from "./agent-model.js";
 export {
@@ -134,6 +136,7 @@ export {
   refreshLocalPrHead,
   invalidateReviewedOnHeadMove,
   recordLocalPrReadyCi,
+  recordLoopGuidanceSnapshots,
   reopenLocalPr,
   resolveLocalPrComment,
   resumeReview,
@@ -428,6 +431,35 @@ export type {
   ResolveCiSelectionOptions,
   ResolveCiSelectionResult,
 } from "./ci-select-worktree.js";
+export {
+  buildReviewGuidanceExcerpt,
+  discoverReviewGuidanceSource,
+  extractClaudeReviewSection,
+  extractTopRules,
+  formatReviewerGuidanceBrief,
+  guidanceRepoRoot,
+  hashGuidanceContent,
+  loadReviewGuidanceSnapshot,
+  normalizeGuidanceText,
+  parseReviewGuidanceMeta,
+  REVIEW_GUIDANCE_CANONICAL,
+  REVIEW_GUIDANCE_CHARS_PER_TOKEN,
+  REVIEW_GUIDANCE_PROCESS_BAR,
+  REVIEW_GUIDANCE_TOKEN_BUDGET,
+  truncateGuidanceExcerpt,
+} from "./repo-guidance.js";
+export type {
+  ReviewGuidanceMeta,
+  ReviewGuidanceSource,
+  ReviewGuidanceSourceKind,
+} from "./repo-guidance.js";
+export {
+  discoverRepoContextSource,
+  formatImplementorContextBrief,
+  loadRepoContextSnapshot,
+  parseContextPaths,
+  REPO_CONTEXT_CANONICAL,
+} from "./repo-context.js";
 export {
   detectMonorepoWideScript,
   eslintPathsFromChanged,

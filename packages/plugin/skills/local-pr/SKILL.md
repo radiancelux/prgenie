@@ -30,6 +30,10 @@ Write it like a GitHub PR description:
 
 If the loop already exists, `update_local_pr` with `body` (or `prgenie update <id> --body "..."`). Fill the summary before `set_status ready`.
 
+## Repo context (before coding)
+
+When `steward_next` returns `implementorContextBrief`, or the repo has `.prgenie/context.md`, **Read** those paths in the worktree before writing product code. List paths only — never expect inline skill bodies in the Task prompt. Missing context fails soft unless the file sets `required: true` in frontmatter. See `docs/repo-local-guidance.md`.
+
 ## Inspect
 
 - `prgenie list` (hides `approved` / exported loops)
