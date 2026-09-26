@@ -30,6 +30,10 @@ Write it like a GitHub PR description:
 
 If the loop already exists, `update_local_pr` with `body` (or `prgenie update <id> --body "..."`). Fill the summary before `set_status ready`.
 
+**Implementor mid-loop:** only call `update_local_pr` on the loop id you were given. Never `create_local_pr` mid-loop — the steward already created the packet.
+
+**Base:** always a branch name (`main`), never a pinned SHA. Do not write `Base: main @ <sha>` in packet bodies.
+
 ## Inspect
 
 - `prgenie list` (hides `approved` / exported loops)

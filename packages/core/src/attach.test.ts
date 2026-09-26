@@ -85,7 +85,7 @@ test("attachLocalPr rejects duplicate attach for same branch", async () => {
         source: "feat/test-2",
         title: "Second attach",
       }),
-    /already exists/,
+    /already has live loop/,
   );
 });
 

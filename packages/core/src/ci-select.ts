@@ -746,7 +746,9 @@ export async function changedPathsForCi(cwd: string, id?: string): Promise<strin
     try {
       // RAD-94: refuse run_ci when merge-base ≠ declared base (or ahead-of-base is stacked).
       const prForBase = await getLocalPr(cwd, id);
-      const { assertDeclaredBaseAligned } = await import("./base-ref.js");
+      const { assertDeclaredBaseAligned, assertStoredBaseRefIsBranch } =
+        await import("./base-ref.js");
+      await assertStoredBaseRefIsBranch(cwd, prForBase);
       await assertDeclaredBaseAligned(cwd, prForBase);
       // Prefer refreshed loop name-status (base…head), then base…HEAD / baseRef…HEAD fallbacks.
       for (const file of await getLocalPrNameStatus(cwd, id)) {
@@ -763,7 +765,9 @@ export async function changedPathsForCi(cwd: string, id?: string): Promise<strin
       // RAD-94 base misalignment must not be swallowed as "packet missing".
       if (
         err instanceof Error &&
-        /declared base|merge-base|stacked on|RAD-87|dependsOn/i.test(err.message)
+        /declared base|merge-base|stacked on|RAD-87|dependsOn|is a commit|is not a branch name/i.test(
+          err.message,
+        )
       ) {
         throw err;
       }
