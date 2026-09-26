@@ -1,6 +1,101 @@
 import { git, gitText } from "./git.js";
 import { localBaseRef, refsAreSameBranch } from "./worktrees.js";
 
+/** True when `ref` looks like a raw commit SHA (not a branch name). */
+export function looksLikeCommitSha(ref: string): boolean {
+  return /^[0-9a-f]{7,40}$/i.test(ref.trim());
+}
+
+/** Canonical short branch name for storage, display, and duplicate checks (RAD-145 / RAD-149). */
+export function normalizeStoredBaseRef(baseRef: string): string {
+  return localBaseRef(baseRef);
+}
+
+async function refExists(cwd: string, ref: string): Promise<boolean> {
+  const result = await git(cwd, ["rev-parse", "--verify", ref], { allowFail: true });
+  return result.code === 0;
+}
+
+/**
+ * Whether `baseRef` names an existing local or remote-tracking branch.
+ * Returns null for commit SHAs, tags, or other non-branch refs.
+ */
+export async function classifyBaseRefAsBranch(
+  cwd: string,
+  baseRef: string,
+): Promise<"local" | "remote" | null> {
+  const trimmed = baseRef.trim();
+  if (!trimmed || looksLikeCommitSha(trimmed)) return null;
+
+  if (trimmed.startsWith("refs/heads/")) {
+    return (await refExists(cwd, trimmed)) ? "local" : null;
+  }
+  if (trimmed.startsWith("refs/remotes/")) {
+    return (await refExists(cwd, trimmed)) ? "remote" : null;
+  }
+  if (trimmed.includes("/")) {
+    if (await refExists(cwd, `refs/remotes/${trimmed}`)) return "remote";
+    const localAlias = localBaseRef(trimmed);
+    if (localAlias !== trimmed && (await refExists(cwd, `refs/heads/${localAlias}`))) {
+      return "local";
+    }
+  }
+  if (await refExists(cwd, `refs/heads/${trimmed}`)) return "local";
+  return null;
+}
+
+/** When a SHA matches exactly one remote branch tip, suggest that branch name. */
+export async function suggestBranchForSha(cwd: string, sha: string): Promise<string | null> {
+  const result = await git(
+    cwd,
+    ["for-each-ref", "refs/remotes", `--points-at=${sha.trim()}`, "--format=%(refname:short)"],
+    { allowFail: true },
+  );
+  if (result.code !== 0) return null;
+  const names = [
+    ...new Set(
+      result.stdout
+        .split("\n")
+        .map((line) => normalizeStoredBaseRef(line.replace(/\r$/, "").trim()))
+        .filter(Boolean),
+    ),
+  ];
+  return names.length === 1 ? names[0]! : null;
+}
+
+export function formatBaseRefNotBranchError(
+  baseRef: string,
+  options: { suggestedBranch?: string | null; loopId?: string } = {},
+): string {
+  const prefix = options.loopId ? `Loop ${options.loopId}: ` : "";
+  const ref = baseRef.trim();
+  if (looksLikeCommitSha(ref)) {
+    const hint = options.suggestedBranch ?? "main";
+    return `${prefix}\`${ref}\` is a commit; pass the branch name, e.g. \`${hint}\`.`;
+  }
+  return `${prefix}\`${ref}\` is not a branch name (use a local branch or \`origin/<branch>\`).`;
+}
+
+/** Refuse commit SHAs and other non-branch refs at create / ready / CI / export (RAD-145). */
+export async function assertBaseRefIsBranch(
+  cwd: string,
+  baseRef: string,
+  options: { loopId?: string } = {},
+): Promise<void> {
+  const kind = await classifyBaseRefAsBranch(cwd, baseRef);
+  if (kind) return;
+  const suggested = looksLikeCommitSha(baseRef) ? await suggestBranchForSha(cwd, baseRef) : null;
+  throw new Error(formatBaseRefNotBranchError(baseRef, { suggestedBranch: suggested, ...options }));
+}
+
+/** Re-validate stored packet `baseRef` before ready / run_ci / export (legacy SHA packets). */
+export async function assertStoredBaseRefIsBranch(
+  cwd: string,
+  pr: { id: string; baseRef: string },
+): Promise<void> {
+  await assertBaseRefIsBranch(cwd, pr.baseRef, { loopId: pr.id });
+}
+
 export type DeclaredBasePr = {
   id: string;
   headRef: string;
