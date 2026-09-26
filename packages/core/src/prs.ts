@@ -32,7 +32,6 @@ import type {
   LocalPrComment,
   LocalPrStatus,
   LocalPrSource,
-  ExportGateOverride,
   ReadyCiRecord,
 } from "./types.js";
 import { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";

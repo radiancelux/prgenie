@@ -32,7 +32,7 @@ export interface ExportValidationResult {
   };
 }
 
-export interface ExportValidationOptions extends RunProgressOptions {}
+export type ExportValidationOptions = RunProgressOptions;
 
 type GateFlight = {
   promise: Promise<ShepherdResult>;
