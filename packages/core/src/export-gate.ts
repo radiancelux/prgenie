@@ -35,16 +35,33 @@ function ciCheckNameFromBlockMessage(message: string): string | null {
   return name;
 }
 
+const SKIPPED_CHECKS_LINE = /Skipped checks:\s*([^\n]+)/gi;
+
+/** Names listed on a `Skipped checks:` line (backticks optional). */
+function skippedCheckSectionNames(body: string): Set<string> {
+  const names = new Set<string>();
+  for (const match of body.matchAll(SKIPPED_CHECKS_LINE)) {
+    for (const part of match[1].split(",")) {
+      const name = part.replace(/`/g, "").trim();
+      if (name) names.add(name);
+    }
+  }
+  return names;
+}
+
 /**
- * Body documents one blocked CI reason when it includes the skipped check name
- * or the blocked message itself (RAD-144). A who/why substring is not enough.
+ * Body documents one blocked CI reason when it quotes the blocked message,
+ * wraps the check name in backticks, or lists it under `Skipped checks:`.
+ * A bare substring (`lint`, `test`) is not enough (RAD-144).
  */
 function bodyDocumentsBlockedCi(body: string, reason: ExportGateReason): boolean {
   const message = reason.message.trim();
   if (!message) return false;
   if (body.includes(message)) return true;
   const name = ciCheckNameFromBlockMessage(message);
-  return name != null && body.includes(name);
+  if (!name) return false;
+  if (body.includes("`" + name + "`")) return true;
+  return skippedCheckSectionNames(body).has(name);
 }
 
 /**

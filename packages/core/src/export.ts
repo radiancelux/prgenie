@@ -281,7 +281,7 @@ export async function exportLocalPr(
       const editResult = await withGhBodyFile(bodyText, (bodyFile) =>
         runGh(
           githubPrEditArgs({
-            headRef: pr.headRef,
+            prUrl: url,
             title: pr.title,
             bodyFile,
           }),

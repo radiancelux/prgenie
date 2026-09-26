@@ -222,6 +222,9 @@ export async function handleTool(
       const pr = await setLocalPrStatus(cwd, String(args.id ?? ""), status, {
         skipPreflight: typeof args.skipPreflight === "boolean" ? args.skipPreflight : undefined,
         ciSkipReason: typeof args.ciSkipReason === "string" ? args.ciSkipReason : undefined,
+        ciSkipChecks: Array.isArray(args.ciSkipChecks)
+          ? args.ciSkipChecks.filter((name): name is string => typeof name === "string" && name.trim() !== "")
+          : undefined,
       });
       const githubBind = await describeRepoGithubBind(cwd);
       return { ...withCommentViews(pr), githubBind };
@@ -645,6 +648,12 @@ export const tools = [
           type: "string",
           description:
             'RAD-97: explicit skip reason when toolchain cannot run. Records readyCi as skipped for current HEAD (stored as "CI skipped: <reason>").',
+        },
+        ciSkipChecks: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "RAD-144: check names this human skip covers. Recorded as checkSkips and skipScope for the current HEAD. A prior readyCi on a different HEAD is ignored.",
         },
         cwd: { type: "string" },
       },

@@ -630,12 +630,18 @@ describe("exportGateOverrideDocumented", () => {
 
   it("requires each skipped check name, not only who and why", () => {
     const named = withOverride(
-      "Override by QA Lead because test:core timed out on green.",
+      "Override by QA Lead because test:core timed out on green.\nSkipped checks: `test:core`",
       "test:core timed out on green",
     );
     const reasons = [ci("test:core")];
     assert.equal(exportGateOverrideDocumented(named, { reasons }), true);
     assert.equal(exportGateOverrideAllowsBlockedExport(named, { reasons }), true);
+
+    const bare = withOverride(
+      "Override by QA Lead because the latest test run was flaky.",
+      "the latest test run was flaky",
+    );
+    assert.equal(exportGateOverrideDocumented(bare, { reasons: [ci("test")] }), false);
 
     const unnamed = withOverride(
       "Override by QA Lead because the suite was flaky on green.",
@@ -669,7 +675,7 @@ describe("exportGateOverrideDocumented", () => {
     const reasons = [ci("test:core"), ci("lint", "prettier")];
     assert.equal(exportGateOverrideAllowsBlockedExport(pr, { reasons }), false);
     const both = withOverride(
-      "Override by QA Lead because test:core and lint failed on green.",
+      "Override by QA Lead because test:core and lint failed on green.\nSkipped checks: `test:core`, `lint`",
       "test:core and lint failed on green",
     );
     assert.equal(exportGateOverrideAllowsBlockedExport(both, { reasons }), true);

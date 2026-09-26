@@ -158,6 +158,84 @@ describe("export gate honour ready skips", () => {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
+
+  it("carries a human skip that names checks with no prior readyCi", async () => {
+    const repo = await createTempGitRepo({ prefix: "prgenie-human-skip-" });
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(path.join(repo, "test.txt"), "x\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "feat"]);
+      const pr = await createLocalPr(repo, { title: "Human skip", body: "Body", base: "main" });
+      assert.ok(pr.worktreePath);
+      assert.equal(pr.readyCi ?? null, null);
+      const ready = await setLocalPrStatus(repo, pr.id, "ready", {
+        skipPreflight: true,
+        ciSkipReason: "flaky on Windows",
+        ciSkipChecks: ["test:core"],
+      });
+      assert.equal(ready.readyCi?.headSha, pr.headSha);
+      assert.deepEqual(ready.readyCi?.skipScope, ["test:core"]);
+      assert.deepEqual(ready.readyCi?.checkSkips, [
+        { name: "test:core", reason: "flaky on Windows" },
+      ]);
+      await writeFile(
+        path.join(pr.worktreePath, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: { test: "exit 1" },
+        }),
+      );
+      await writeFile(path.join(pr.worktreePath, ".gitignore"), "node_modules\n");
+      const type = process.platform === "win32" ? "junction" : "dir";
+      await symlink(
+        path.join(process.cwd(), "node_modules"),
+        path.join(pr.worktreePath, "node_modules"),
+        type,
+      );
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      const shepherd = await shepherdStatus(repo, pr.id, {
+        skipGithubCheck: true,
+        skipToolchainEnsure: true,
+        selection: fixtureRootSelection(["test:core"]),
+      });
+      assert.equal(shepherd.status, "ready");
+      const carried = shepherd.ciChecks?.find((c) => c.name === "test:core");
+      assert.ok(carried?.skipped);
+      assert.match(carried?.reason ?? "", /skipped \(ready: flaky on Windows\)/);
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("ignores prior readyCi scope when its HEAD differs", async () => {
+    const repo = await createTempGitRepo({ prefix: "prgenie-human-skip-head-" });
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(path.join(repo, "test.txt"), "x\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "feat"]);
+      const pr = await createLocalPr(repo, { title: "Stale scope", body: "Body", base: "main" });
+      await recordLocalPrReadyCi(repo, pr.id, {
+        headSha: "0".repeat(40),
+        recordedAt: new Date().toISOString(),
+        outcome: "skipped",
+        skipReason: "old run",
+        skipScope: ["lint"],
+        checks: [],
+      });
+      const ready = await setLocalPrStatus(repo, pr.id, "ready", {
+        skipPreflight: true,
+        ciSkipReason: "flaky",
+        ciSkipChecks: ["test:core"],
+      });
+      assert.equal(ready.readyCi?.headSha, pr.headSha);
+      assert.deepEqual(ready.readyCi?.skipScope, ["test:core"]);
+      assert.deepEqual(ready.readyCi?.checkSkips, [{ name: "test:core", reason: "flaky" }]);
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
 });
 
 describe("export refusal and override (RAD-144)", () => {
@@ -194,7 +272,7 @@ describe("export refusal and override (RAD-144)", () => {
       await git(repo, ["commit", "-m", "feat"]);
       const pr = await createLocalPr(repo, {
         title: "Override",
-        body: "Override by QA Lead because test:core timed out on green.",
+        body: "Override by QA Lead because test:core timed out on green.\nSkipped checks: `test:core`",
         base: "main",
       });
       await setLocalPrStatus(repo, pr.id, "reviewed");
@@ -315,14 +393,14 @@ describe("export refusal and override (RAD-144)", () => {
 describe("githubPrEditArgs (RAD-150)", () => {
   it("uses --body-file for multiline-safe edit", () => {
     const args = githubPrEditArgs({
-      headRef: "lp-abc",
+      prUrl: "https://github.com/o/r/pull/12",
       title: "New title",
       bodyFile: "C:\\tmp\\body.md",
     });
     assert.deepEqual(args, [
       "pr",
       "edit",
-      "lp-abc",
+      "https://github.com/o/r/pull/12",
       "--title",
       "New title",
       "--body-file",

@@ -24,6 +24,7 @@ export function skipScopesEqual(a: readonly string[], b: readonly string[]): boo
 
 export function readyCiPlannedScope(record: ReadyCiRecord): string[] {
   if (record.skipScope?.length) return normalizeSkipScope(record.skipScope);
+  if (record.checkSkips?.length) return normalizeSkipScope(record.checkSkips.map((c) => c.name));
   if (record.checks?.length) return normalizeSkipScope(record.checks);
   return [];
 }
@@ -61,6 +62,8 @@ export function planReadySkipCarry(options: {
   }
 
   const readyScope = readyCiPlannedScope(record);
+  // Empty scope is not "skip the whole gate". A human skip must name checks
+  // (ciSkipChecks / Skipped checks:) or inherit a same-HEAD plan. Otherwise re-run.
   if (planned.length > 0 && readyScope.length === 0) {
     return { checksToRun: planned, carriedResults: [], scopeInvalidated: true };
   }

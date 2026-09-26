@@ -17,13 +17,27 @@ function intentionalCheckSkips(result: CiRunnerResult): ReadyCiCheckSkip[] {
 }
 
 const CI_SKIP_BODY = /^CI skipped:\s*(.+)$/i;
+const CI_SKIP_FIRST_LINE = /^CI skipped:\s*([^\n]+)/i;
+const SKIPPED_CHECKS_LINE = /Skipped checks:\s*([^\n]+)/gi;
 
-/** Parse an explicit "CI skipped: <reason>" body (RAD-97). */
+/** Parse an explicit "CI skipped: <reason>" body (RAD-97). First line only. */
 export function parseCiSkipReason(body: string): string | null {
-  const match = CI_SKIP_BODY.exec(body.trim());
+  const match = CI_SKIP_FIRST_LINE.exec(body.trim());
   if (!match) return null;
   const reason = match[1]?.trim();
   return reason ? reason : null;
+}
+
+/** Check names from a `Skipped checks:` line (backticks optional). */
+export function parseNamedSkipChecks(text: string): string[] {
+  const names: string[] = [];
+  for (const match of text.matchAll(SKIPPED_CHECKS_LINE)) {
+    for (const part of match[1].split(",")) {
+      const name = part.replace(/`/g, "").trim();
+      if (name) names.push(name);
+    }
+  }
+  return normalizeSkipScope(names);
 }
 
 export function formatCiSkipBody(reason: string): string {
@@ -159,17 +173,20 @@ export function readyCiFromSkipReason(
   reason: string,
   recordedAt: string = new Date().toISOString(),
   skipScope: string[] = [],
+  namedChecks: readonly string[] = [],
 ): ReadyCiRecord {
   const skipReason = parseCiSkipReason(reason)?.trim() || reason.trim();
   if (!skipReason) throw new Error("CI skip reason is empty");
+  const named = normalizeSkipScope(namedChecks);
+  const scope = named.length ? named : normalizeSkipScope(skipScope);
   return {
     headSha,
     recordedAt,
     outcome: "skipped",
     skipReason,
     checks: [],
-    skipScope: normalizeSkipScope(skipScope),
-    checkSkips: [],
+    skipScope: scope,
+    checkSkips: named.map((name) => ({ name, reason: skipReason })),
   };
 }
 

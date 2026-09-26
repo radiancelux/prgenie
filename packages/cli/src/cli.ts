@@ -779,9 +779,17 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "ready") {
     const ciSkip = arg(rest, "--ci-skip") ?? arg(rest, "--ci-skip-reason");
+    const ciSkipChecksRaw = arg(rest, "--ci-skip-checks");
+    const ciSkipChecks = ciSkipChecksRaw
+      ? ciSkipChecksRaw
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean)
+      : undefined;
     printPr(
       await setLocalPrStatus(repo, id, "ready", {
         ciSkipReason: ciSkip,
+        ciSkipChecks,
       }),
     );
     await printGithubBind(repo);

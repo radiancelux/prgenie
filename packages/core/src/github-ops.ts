@@ -72,13 +72,15 @@ export function githubPrCreateArgs(options: {
   ];
 }
 
-/** `gh pr edit` argv using `--body-file` when body is set (RAD-150). */
+/** `gh pr edit` argv using `--body-file` when body is set (RAD-150). Target is the PR URL from `gh pr view`. */
 export function githubPrEditArgs(options: {
-  headRef: string;
+  prUrl: string;
   title?: string;
   bodyFile?: string;
 }): string[] {
-  const args = ["pr", "edit", options.headRef.replace(/^origin\//, "")];
+  const prUrl = options.prUrl.trim();
+  if (!prUrl) throw new Error("gh pr edit requires the PR URL from gh pr view");
+  const args = ["pr", "edit", prUrl];
   if (options.title?.trim()) {
     args.push("--title", options.title.trim());
   }
