@@ -19,14 +19,14 @@ The loop is the handoff. `ready` means the worktree agent requested a review. Fi
 
 Apply the stack-agnostic bar in [process-bar.md](process-bar.md) (HIGH/MEDIUM, SYSTEM IMPACT, REGRESSIONS, tests, mechanical CI pointer, package.json supply-chain, `VERDICT` output). **Point at that file; do not paste it or external Copilot / `review-open-prs` skills into the Task.**
 
-**Repo guidance:** if `.prgenie/review.md` is present, apply it with the process bar. If absent, use the process bar alone. Do not hardcode app or framework stack rules in plugin defaults. Authored guidance belongs in `.prgenie/review.md` (ingest: RAD-102 — not this skill).
+**Repo guidance:** `steward_next` returns `reviewerGuidanceBrief` (truncated excerpt + content hash) when the repo has review guidance. Apply it with the process bar. Read the full source path in the worktree when the excerpt is truncated. If absent, use the process bar alone. Do not hardcode app or framework stack rules in plugin defaults.
 
 ## Leaf reviewer (Task)
 
 If you **are** the subagent (one id in the prompt):
 
 1. If no id was given, `prgenie queue` / `list_local_prs` `status=ready` and pick the one the user named, or the current branch's loop.
-2. `get_local_pr` / `prgenie show` + `get_diff`. If `reviewRequestedSha` is null (legacy packet), re-run `set_status ready` / `prgenie ready <id>` to arm it, or record the `headSha` you are about to review and treat any later mismatch as drift. **Large loops:** call `get_diff` with `stat=true` (or `prgenie diff --stat`) first; if the full diff would truncate (~80KB on MCP), call `get_diff` again with `paths` for the files you need. Read `body`. Read [process-bar.md](process-bar.md); if the repo has `.prgenie/review.md`, read that too. `addressedComments` means a **second review** — verify those replies against the diff. Do not re-file a finding that is actually fixed.
+2. `get_local_pr` / `prgenie show` + `get_diff`. If `reviewRequestedSha` is null (legacy packet), re-run `set_status ready` / `prgenie ready <id>` to arm it, or record the `headSha` you are about to review and treat any later mismatch as drift. **Large loops:** call `get_diff` with `stat=true` (or `prgenie diff --stat`) first; if the full diff would truncate (~80KB on MCP), call `get_diff` again with `paths` for the files you need. Read `body`. Read [process-bar.md](process-bar.md). If `reviewGuidance` / `reviewerGuidanceBrief` is on the packet or Task prompt, apply that excerpt and read the full source path when truncated. `addressedComments` means a **second review** — verify those replies against the diff. Do not re-file a finding that is actually fixed.
 3. Write **SYSTEM IMPACT** and **REGRESSIONS / blast-radius** (required by the process bar) **before** filing findings.
 4. Post **all** new findings with `add_comment` `role=reviewer` (HIGH/MEDIUM only). Status stays `ready`. Long findings: MCP `add_comment` or `prgenie comment --body-file`. Do not pass finding text through an unquoted shell `-m`.
 5. `resolve_comment` addressed threads that are actually fixed. That does not finish the review.

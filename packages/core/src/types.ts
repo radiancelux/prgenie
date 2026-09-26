@@ -101,6 +101,31 @@ export interface LocalPr {
   failedAcRoundCount?: number;
   /** Logged when strong tier was chosen on spawn. */
   lastTierBumpReason?: string | null;
+  /** Repo-local review guidance snapshot (RAD-102). */
+  reviewGuidance?: ReviewGuidanceSnapshot | null;
+  /** Repo-local implementor context paths (RAD-102). */
+  repoContext?: RepoContextSnapshot | null;
+}
+
+/** Truncated repo review guidance recorded on the loop packet (RAD-102). */
+export interface ReviewGuidanceSnapshot {
+  sourcePath: string | null;
+  sourceKind: "canonical" | "cursor-rule" | "claude-md" | null;
+  contentHash: string | null;
+  recordedAt: string;
+  excerpt: string | null;
+  zeroToleranceCategories: string[];
+  stackCategories: string[];
+}
+
+/** Repo-local context paths for implementor (RAD-102). */
+export interface RepoContextSnapshot {
+  sourcePath: string | null;
+  contentHash: string | null;
+  recordedAt: string;
+  paths: string[];
+  required: boolean;
+  missing: boolean;
 }
 
 export type ExportGateStatus = "ready" | "blocked" | "pending";

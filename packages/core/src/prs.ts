@@ -33,6 +33,8 @@ import type {
   LocalPrStatus,
   LocalPrSource,
   ReadyCiRecord,
+  RepoContextSnapshot,
+  ReviewGuidanceSnapshot,
 } from "./types.js";
 import { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
 import { getRepoWatch, resumeWatchRole } from "./watch.js";
@@ -88,6 +90,8 @@ async function readPrFile(file: string): Promise<LocalPr> {
   pr.implementorRoundCount = pr.implementorRoundCount ?? 0;
   pr.failedAcRoundCount = pr.failedAcRoundCount ?? 0;
   pr.lastTierBumpReason = pr.lastTierBumpReason ?? null;
+  pr.reviewGuidance = pr.reviewGuidance ?? null;
+  pr.repoContext = pr.repoContext ?? null;
   return pr;
 }
 
@@ -525,6 +529,26 @@ export async function recordLocalPrReadyCi(
       pr.readyCi = { ...record, headSha: record.headSha || pr.headSha };
     } else {
       pr.readyCi = null;
+    }
+    pr.updatedAt = nowIso();
+  });
+}
+
+/** Persist repo guidance snapshots on the loop packet (RAD-102). */
+export async function recordLoopGuidanceSnapshots(
+  cwd: string,
+  id: string,
+  input: {
+    reviewGuidance?: ReviewGuidanceSnapshot | null;
+    repoContext?: RepoContextSnapshot | null;
+  },
+): Promise<LocalPr> {
+  return withPrLock(cwd, id, async (pr) => {
+    if (input.reviewGuidance !== undefined) {
+      pr.reviewGuidance = input.reviewGuidance;
+    }
+    if (input.repoContext !== undefined) {
+      pr.repoContext = input.repoContext;
     }
     pr.updatedAt = nowIso();
   });

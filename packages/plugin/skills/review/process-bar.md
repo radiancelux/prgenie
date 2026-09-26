@@ -26,7 +26,7 @@ Write these in the review chat (or a single agent comment) **before** filing `ad
 
 ## Zero-tolerance (opt-in only)
 
-Plugin defaults ship **empty** always-fail category keys. Fill them only from repo guidance (`.prgenie/review.md` — ingest is RAD-102). Never hardcode stack always-fail lists here.
+Plugin defaults ship **empty** always-fail category keys. Fill them only from repo guidance (`.prgenie/review.md` or fallbacks — see `docs/repo-local-guidance.md`). Never hardcode stack always-fail lists here.
 
 ## Output shape
 

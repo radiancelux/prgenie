@@ -450,3 +450,16 @@ test("RAD-126: decideStewardAction labels refused plan as ci-select not test", (
   assert.equal(decided.failingCheck, "ci-select");
   assert.match(decided.reason, /worktree select|do not fix root pnpm test/i);
 });
+
+test("RAD-102: stewardNext records reviewGuidance hash on packet", async () => {
+  await mkdir(path.join(repo, ".prgenie"), { recursive: true });
+  await writeFile(path.join(repo, ".prgenie", "review.md"), "- Always validate input\n");
+  const pr = await createLocalPr(repo, { title: "Guidance hash", body: "Body" });
+  const next = await stewardNext(repo, pr.id, { evaluateGate: false });
+  assert.ok(next.reviewGuidance?.contentHash);
+  assert.equal(next.reviewGuidance?.sourcePath, ".prgenie/review.md");
+  assert.ok(next.reviewerGuidanceBrief);
+  const stored = await getLocalPr(repo, pr.id);
+  assert.equal(stored.reviewGuidance?.contentHash, next.reviewGuidance?.contentHash);
+  assert.match(formatStewardDecision(next), /reviewGuidance=/);
+});
