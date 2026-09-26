@@ -56,6 +56,7 @@ Task **`prgenie-implementor`** or **`prgenie-implementor-strong`** per `steward_
 
 - implement this loop only; `/local-pr` rules; do not review yourself; do not push
 - commit on the loop branch; refresh `body`
+- **Base:** branch name only (`main`) — never a pinned SHA; do not write `Base: main @ <sha>` in packet bodies
 - **Before** `set_status ready` / Review requested: run MCP `run_ci` `{ id }` or `prgenie ci <id>` (path-scoped from changed paths — `docs/ci-checks.md`). Instruct the implementor to **print** `{ checks, reason }`, and **not** run whole-repo `pnpm test` when mapping is confident. If mapping **skips**, do not escalate to full suite — skip reason or touched-package tests only (RAD-119). Fail-fast: stop after first package suite fail. Prefer fix-before-ready over discover-via-gate.
 - **On red CI (RAD-121):** instruct the implementor to open the failing log, fix the named assertion/file, and re-run **only that file** (or that one check name) once per edit — **not** relaunch the multi-check scoped plan, and **not** overlap `run_ci` copies. Still format edited files. See `docs/ci-checks.md` (Red CI retry).
 - Skip CI only if the toolchain cannot run (say so in the comment). Do not skip a red check.

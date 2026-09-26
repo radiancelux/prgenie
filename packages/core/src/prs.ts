@@ -9,6 +9,7 @@ import {
   ensureLoopFeatureBranch,
   isBaseBranch,
   listWorktrees,
+  refsAreSameBranch,
   shortLogSubject,
   userName,
   worktreeForLoop,
@@ -78,6 +79,8 @@ async function writePr(cwd: string, pr: LocalPr): Promise<void> {
 
 async function readPrFile(file: string): Promise<LocalPr> {
   const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+  const { normalizeStoredBaseRef } = await import("./base-ref.js");
+  pr.baseRef = normalizeStoredBaseRef(pr.baseRef);
   pr.source = pr.source ?? null;
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
   pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
@@ -193,6 +196,10 @@ export function isArchivedPr(pr: { status: LocalPrStatus }): boolean {
   return pr.status === "approved";
 }
 
+function findLiveLoopForHead(prs: LocalPr[], headRef: string): LocalPr | undefined {
+  return prs.find((pr) => !isArchivedPr(pr) && refsAreSameBranch(pr.headRef, headRef));
+}
+
 export async function listCorruptLocalPrFiles(cwd: string): Promise<string[]> {
   await requireGitRoot(cwd);
   const dir = await prsDir(cwd);
@@ -290,20 +297,11 @@ export async function listLocalPrs(
   const prs: LocalPr[] = [];
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
-    const raw = await readFile(path.join(dir, name), "utf8");
-    let pr: LocalPr;
     try {
-      pr = parseJsonObject<LocalPr>(raw);
+      prs.push(await readPrFile(path.join(dir, name)));
     } catch {
       continue;
     }
-    pr.source = pr.source ?? null;
-    pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
-    pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
-    pr.readyCi = normalizeReadyCi(pr.readyCi);
-    pr.exportGate = normalizeExportGate(pr.exportGate);
-    pr.comments = (pr.comments ?? []).map(normalizeComment);
-    prs.push(pr);
   }
   prs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const trees = await listWorktrees(cwd);
@@ -367,19 +365,24 @@ export async function resumeWatchForNextLoop(cwd: string): Promise<void> {
 export async function createLocalPr(cwd: string, input: CreateLocalPrInput = {}): Promise<LocalPr> {
   const root = await requireGitRoot(cwd);
   await assertNoDirtyPluginBuildArtifacts(root);
-  const id = newId("lp");
-  const baseRef = input.base ?? (await detectDefaultBase(cwd));
-  const baseResolved = await git(cwd, ["rev-parse", "--verify", baseRef], {
-    allowFail: true,
-  });
-  if (baseResolved.code !== 0) {
-    throw new Error(`Cannot resolve base branch: ${baseRef}`);
-  }
-  const baseSha = baseResolved.stdout.trim();
+  const rawBaseRef = input.base ?? (await detectDefaultBase(cwd));
+  const { assertBaseRefIsBranch, resolveStoredBaseBranch } = await import("./base-ref.js");
+  await assertBaseRefIsBranch(root, rawBaseRef);
+  const { baseRef, baseSha } = await resolveStoredBaseBranch(root, rawBaseRef);
   const requestedHead =
     input.head ??
     (await currentBranch(cwd)) ??
     (await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]));
+  // Before ensureLoopFeatureBranch so a duplicate does not create a branch or worktree.
+  if (requestedHead && !isBaseBranch(requestedHead, baseRef)) {
+    const duplicate = findLiveLoopForHead(await listLocalPrs(root), requestedHead);
+    if (duplicate) {
+      throw new Error(
+        `Head ${requestedHead} already has live loop ${duplicate.id}. Use update_local_pr on ${duplicate.id}.`,
+      );
+    }
+  }
+  const id = newId("lp");
   const { headRef, headSha } = await ensureLoopFeatureBranch(root, {
     id,
     requestedHead,
@@ -463,7 +466,9 @@ export async function setLocalPrStatus(
     if (status === "ready") {
       // RAD-94: refresh tip then refuse ready when merge-base ≠ declared base (or stacked).
       await applyHeadRefresh(cwd, pr);
-      const { assertDeclaredBaseAligned } = await import("./base-ref.js");
+      const { assertDeclaredBaseAligned, assertStoredBaseRefIsBranch } =
+        await import("./base-ref.js");
+      await assertStoredBaseRefIsBranch(cwd, pr);
       await assertDeclaredBaseAligned(cwd, pr);
       // RAD-97: soft-block before pattern preflight (fail fast; avoid diff work when CI missing).
       applyReadyCiGate(pr, options.ciSkipReason);
@@ -802,7 +807,8 @@ async function maybeHandoffToReviewer(
   applyReadyCiGate(pr);
   await armReviewRequest(cwd, pr);
   // RAD-94: same gate as set_status ready — refuse handoff when base is misaligned.
-  const { assertDeclaredBaseAligned } = await import("./base-ref.js");
+  const { assertDeclaredBaseAligned, assertStoredBaseRefIsBranch } = await import("./base-ref.js");
+  await assertStoredBaseRefIsBranch(cwd, pr);
   await assertDeclaredBaseAligned(cwd, pr);
   pr.status = "ready";
   upsertReviewRequestedComment(pr, now, author, pr.headSha, newId("c"));
@@ -1530,21 +1536,18 @@ export async function attachLocalPr(cwd: string, input: AttachLocalPrInput): Pro
     }
   }
 
-  // Resolve base SHA
-  const baseResolved = await git(root, ["rev-parse", "--verify", baseRef], { allowFail: true });
-  if (baseResolved.code !== 0) {
-    throw new Error(`Cannot resolve base branch: ${baseRef}`);
-  }
+  const { assertBaseRefIsBranch, resolveStoredBaseBranch } = await import("./base-ref.js");
+  await assertBaseRefIsBranch(root, baseRef);
+  const resolved = await resolveStoredBaseBranch(root, baseRef);
+  baseRef = resolved.baseRef;
   // eslint-disable-next-line prefer-const
-  baseSha = baseResolved.stdout.trim();
+  baseSha = resolved.baseSha;
 
   // Check if a lane for this headRef already exists
-  const existing = (await listLocalPrs(root)).find(
-    (pr) => pr.headRef === headRef && !isArchivedPr(pr),
-  );
+  const existing = findLiveLoopForHead(await listLocalPrs(root), headRef);
   if (existing) {
     throw new Error(
-      `A lane for branch ${headRef} already exists (${existing.id}). Use update or refresh instead.`,
+      `Head ${headRef} already has live loop ${existing.id}. Use update_local_pr on ${existing.id}.`,
     );
   }
 
@@ -1602,7 +1605,7 @@ export async function captureAgentWork(
     (await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]));
   const existing = isBaseBranch(headRef, baseRef)
     ? undefined
-    : (await listLocalPrs(cwd)).find((pr) => pr.headRef === headRef && !isArchivedPr(pr));
+    : findLiveLoopForHead(await listLocalPrs(cwd), headRef);
   if (existing) {
     const updated = await withPrLock(cwd, existing.id, async (pr) => {
       if (input.source) pr.source = input.source;
