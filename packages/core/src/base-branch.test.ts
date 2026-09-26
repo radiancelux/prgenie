@@ -267,10 +267,7 @@ describe("RAD-145 / RAD-149 branch-only base and duplicate head", { concurrency:
     assert.notEqual(featSha, releaseSha);
     assert.equal(await suggestBranchForSha(repo, featSha), "feat/foo");
     assert.equal(await suggestBranchForSha(repo, releaseSha), "release/1.2");
-    await assert.rejects(
-      () => assertBaseRefIsBranch(repo, featSha),
-      /is a commit.*`feat\/foo`/,
-    );
+    await assert.rejects(() => assertBaseRefIsBranch(repo, featSha), /is a commit.*`feat\/foo`/);
     await assert.rejects(
       () => assertBaseRefIsBranch(repo, releaseSha),
       /is a commit.*`release\/1\.2`/,
