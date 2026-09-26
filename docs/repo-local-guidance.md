@@ -56,12 +56,12 @@ When guidance is absent, briefs omit repo sections and the process bar alone app
 
 ## Authoring from existing structure
 
-| You already have… | Map to… |
-| ----------------- | ------- |
+| You already have…          | Map to…                                                                |
+| -------------------------- | ---------------------------------------------------------------------- |
 | Org security standards doc | Link or summarize top rules in `.prgenie/review.md` **Zero-tolerance** |
-| `.cursor/rules/*review*` | Optional fallback until you add `.prgenie/review.md` |
-| `CLAUDE.md` review notes | Optional fallback (`## Review` section) |
-| `CONTRIBUTING.md` | List path in `.prgenie/context.md` |
-| Team Cursor skills | List skill **paths** in `.prgenie/context.md` |
+| `.cursor/rules/*review*`   | Optional fallback until you add `.prgenie/review.md`                   |
+| `CLAUDE.md` review notes   | Optional fallback (`## Review` section)                                |
+| `CONTRIBUTING.md`          | List path in `.prgenie/context.md`                                     |
+| Team Cursor skills         | List skill **paths** in `.prgenie/context.md`                          |
 
 Keep plugin skills generic; stack-specific rules live in the repo.

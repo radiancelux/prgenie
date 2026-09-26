@@ -32,7 +32,10 @@ test("required context with no paths sets missing", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "prgenie-context-req-"));
   try {
     await mkdir(path.join(root, ".prgenie"), { recursive: true });
-    await writeFile(path.join(root, ".prgenie", "context.md"), "---\nrequired: true\n---\n\n# empty\n");
+    await writeFile(
+      path.join(root, ".prgenie", "context.md"),
+      "---\nrequired: true\n---\n\n# empty\n",
+    );
     const snap = await loadRepoContextSnapshot(root);
     assert.equal(snap.required, true);
     assert.equal(snap.missing, true);

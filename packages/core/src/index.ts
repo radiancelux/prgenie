@@ -448,7 +448,11 @@ export {
   REVIEW_GUIDANCE_TOKEN_BUDGET,
   truncateGuidanceExcerpt,
 } from "./repo-guidance.js";
-export type { ReviewGuidanceMeta, ReviewGuidanceSource, ReviewGuidanceSourceKind } from "./repo-guidance.js";
+export type {
+  ReviewGuidanceMeta,
+  ReviewGuidanceSource,
+  ReviewGuidanceSourceKind,
+} from "./repo-guidance.js";
 export {
   discoverRepoContextSource,
   formatImplementorContextBrief,

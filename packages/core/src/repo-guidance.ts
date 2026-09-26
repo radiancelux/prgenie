@@ -163,7 +163,10 @@ export function parseReviewGuidanceMeta(content: string): ReviewGuidanceMeta {
   };
 }
 
-export function truncateGuidanceExcerpt(text: string, maxTokens = REVIEW_GUIDANCE_TOKEN_BUDGET): string {
+export function truncateGuidanceExcerpt(
+  text: string,
+  maxTokens = REVIEW_GUIDANCE_TOKEN_BUDGET,
+): string {
   const maxChars = maxTokens * REVIEW_GUIDANCE_CHARS_PER_TOKEN;
   const normalized = normalizeGuidanceText(text).trim();
   if (normalized.length <= maxChars) return normalized;
@@ -183,7 +186,11 @@ export function buildReviewGuidanceExcerpt(source: ReviewGuidanceSource): string
     ...(rules.length > 0 ? rules : ["- (no bullet rules — read full source)"]),
   ];
   if (meta.zeroToleranceCategories.length > 0) {
-    lines.push("", "### Zero-tolerance categories", ...meta.zeroToleranceCategories.map((c) => `- ${c}`));
+    lines.push(
+      "",
+      "### Zero-tolerance categories",
+      ...meta.zeroToleranceCategories.map((c) => `- ${c}`),
+    );
   }
   if (meta.stackCategories.length > 0) {
     lines.push("", "### Stack categories", ...meta.stackCategories.map((c) => `- ${c}`));
@@ -210,7 +217,9 @@ export async function loadReviewGuidanceSnapshot(
 }
 
 /** Reviewer Task brief block — truncated excerpt, not full dump. */
-export function formatReviewerGuidanceBrief(snapshot: ReviewGuidanceSnapshot | null): string | null {
+export function formatReviewerGuidanceBrief(
+  snapshot: ReviewGuidanceSnapshot | null,
+): string | null {
   if (!snapshot?.excerpt) return null;
   return [
     "## Repo review guidance (excerpt)",
