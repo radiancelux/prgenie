@@ -7,10 +7,6 @@ export const REPO_CONTEXT_CANONICAL = ".prgenie/context.md";
 
 export type { RepoContextSnapshot };
 
-function posixRel(repoRoot: string, absPath: string): string {
-  return path.relative(repoRoot, absPath).split(path.sep).join("/");
-}
-
 async function fileExists(file: string): Promise<boolean> {
   try {
     await access(file);

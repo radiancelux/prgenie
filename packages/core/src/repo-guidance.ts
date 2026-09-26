@@ -69,7 +69,7 @@ export function extractClaudeReviewSection(content: string): string | null {
 
 async function discoverCursorReviewRules(repoRoot: string): Promise<ReviewGuidanceSource | null> {
   const rulesDir = path.join(repoRoot, ".cursor", "rules");
-  let names: string[] = [];
+  let names: string[];
   try {
     names = (await readdir(rulesDir)).filter((name) => /review/i.test(name));
   } catch {
