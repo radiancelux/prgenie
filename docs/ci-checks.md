@@ -151,15 +151,24 @@ Skip implementor preflight only when the toolchain cannot run (say so), mapping 
 
 ### Ready skip carry-over → export gate (RAD-144)
 
-When implementor `run_ci` records a skip on check **X** at HEAD **H** (`readyCi.checkSkips` or whole-plan `readyCi.outcome === skipped`), the export gate **must not re-run** **X** at the same **H** with the same skip scope (`readyCi.skipScope` must match the gate plan). Progress shows `skipped (ready: <reason>)`.
+When implementor `run_ci` records a skip on check **X** at HEAD **H** (`readyCi.checkSkips` or whole-plan `readyCi.outcome === skipped`), the export gate **must not re-run** **X** at the same **H** when that skip still covers **X**. Progress shows `skipped (ready: <reason>)`.
 
-| Condition                         | Export gate behaviour                            |
-| --------------------------------- | ------------------------------------------------ |
-| Same HEAD + same `skipScope`      | Honour ready skip — do not re-run carried checks |
-| HEAD moved                        | Fail closed — re-run the gate plan               |
-| Skip scope changed (plan differs) | Fail closed — re-run all checks                  |
+A human skip names the checks it covers:
 
-Export **refuses** while the stored gate is **blocked** or **failed**. There is no silent `--skip-validation` publish path. To export anyway, record `exportGateOverride` (`who`, `why`) on the loop packet **and** echo who, why, and each skipped check name (or that check's blocked CI message) in the loop body. A who/why substring alone does not authorize the block.
+- MCP `set_status` `ready` with `ciSkipReason` and `ciSkipChecks` (string array of check names)
+- CLI `prgenie ready <id> --ci-skip-reason "<reason>" --ci-skip-checks test:core,lint` (comma-separated)
+- A tip-scoped comment whose first line is `CI skipped: <reason>` and that includes a `Skipped checks:` line (for example `Skipped checks: test:core, lint`)
+
+Those names are stored as `checkSkips`. A same-HEAD plan stays `skipScope`. A prior `readyCi` whose HEAD differs is ignored.
+
+| Condition                                                                             | Export gate behaviour                            |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Same HEAD + same `skipScope`                                                          | Honour ready skip — do not re-run carried checks |
+| Same HEAD, scope is only the named checks, and the gate plan still includes every one | Carry those checks — run the rest                |
+| HEAD moved                                                                            | Fail closed — re-run the gate plan               |
+| Plan drops a recorded check                                                           | Fail closed — re-run all checks                  |
+
+Export **refuses** while the stored gate is **blocked** or **failed**. There is no silent `--skip-validation` publish path. To export anyway, record `exportGateOverride` (`who`, `why`) on the loop packet **and** echo who, why, and each skipped check in the loop body. A plain check name does not count. Each check needs a backticked name (`` `test:core` ``), a `Skipped checks:` line, or that check's full blocked CI message. A who/why substring alone does not authorize the block.
 
 Re-export to an existing GitHub PR updates title/body from the packet via `gh pr edit --body-file` (RAD-150). Body-update failure is a **partial failure** (RAD-95), not hidden behind a successful push.
 

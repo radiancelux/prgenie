@@ -223,7 +223,9 @@ export async function handleTool(
         skipPreflight: typeof args.skipPreflight === "boolean" ? args.skipPreflight : undefined,
         ciSkipReason: typeof args.ciSkipReason === "string" ? args.ciSkipReason : undefined,
         ciSkipChecks: Array.isArray(args.ciSkipChecks)
-          ? args.ciSkipChecks.filter((name): name is string => typeof name === "string" && name.trim() !== "")
+          ? args.ciSkipChecks.filter(
+              (name): name is string => typeof name === "string" && name.trim() !== "",
+            )
           : undefined,
       });
       const githubBind = await describeRepoGithubBind(cwd);

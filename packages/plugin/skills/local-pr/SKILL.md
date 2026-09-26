@@ -97,9 +97,11 @@ On completion:
 
 ### Export gate skip carry-over (RAD-144)
 
-Skips recorded at ready (`readyCi` on the loop — per-check `checkSkips` or whole-plan skip) carry into the export gate at the **same HEAD** when `skipScope` still matches. The gate shows `skipped (ready: <reason>)` and does **not** re-run those checks. HEAD change or skip-scope change invalidates carry-over (fail closed — re-run).
+Skips recorded at ready (`readyCi` on the loop — per-check `checkSkips` or whole-plan skip) carry into the export gate at the **same HEAD**. The gate shows `skipped (ready: <reason>)` and does **not** re-run those checks.
 
-Export is **refused** while the gate is **blocked** unless `exportGateOverride` (`who`, `why`) is on the packet **and** the loop body names who, why, and each skipped check (or that check's blocked CI message). No silent validation skip.
+Name the checks on a human skip: MCP `set_status` `ciSkipChecks`, CLI `prgenie ready <id> --ci-skip-reason "<reason>" --ci-skip-checks test:core,lint`, or a `CI skipped:` comment with a `Skipped checks:` line (for example `Skipped checks: test:core`). Those names are `checkSkips`. A same-HEAD plan stays `skipScope`. When the recorded scope is only those names, the gate carries them if the plan still includes every one and runs the rest. A plan that drops a recorded check fail-closes, as does a HEAD change. A prior `readyCi` on a different HEAD is ignored.
+
+Export is **refused** while the gate is **blocked** unless `exportGateOverride` (`who`, `why`) is on the packet **and** the loop body names who, why, and each skipped check. A plain check name in the body does not count — use a backticked name (`` `test:core` ``) or a `Skipped checks:` line (or that check's blocked CI message). No silent validation skip.
 
 Re-export updates an existing GitHub PR title/body from the packet (`gh pr edit --body-file`, RAD-150). Body-update failure reports as partial failure.
 
