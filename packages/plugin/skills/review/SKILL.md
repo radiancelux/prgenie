@@ -19,7 +19,7 @@ The loop is the handoff. `ready` means the worktree agent requested a review. Fi
 
 Apply the stack-agnostic bar in [process-bar.md](process-bar.md) (HIGH/MEDIUM, SYSTEM IMPACT, REGRESSIONS, tests, mechanical CI pointer, package.json supply-chain, `VERDICT` output). **Point at that file; do not paste it or external Copilot / `review-open-prs` skills into the Task.**
 
-**Repo guidance:** `steward_next` returns `reviewerGuidanceBrief` (truncated excerpt + content hash) when the repo has review guidance. Apply it with the process bar. Read the full source path in the worktree when the excerpt is truncated. If absent, use the process bar alone. Do not hardcode app or framework stack rules in plugin defaults.
+**Repo guidance:** `steward_next` returns `reviewerGuidanceBrief` (truncated excerpt + content hash) when the repo has review guidance (`.prgenie/review.md`, else `.cursor/rules/code-review.mdc`, else the `## Review` section of `CLAUDE.md`). Apply it with the process bar. Read the full source path in the worktree when the excerpt is truncated. If absent, use the process bar alone. Do not hardcode app or framework stack rules in plugin defaults.
 
 ## Leaf reviewer (Task)
 
