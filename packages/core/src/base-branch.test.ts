@@ -9,6 +9,7 @@ import {
   assertStoredBaseRefIsBranch,
   classifyBaseRefAsBranch,
   normalizeStoredBaseRef,
+  suggestBranchForSha,
 } from "./base-ref.js";
 import {
   archiveLocalPr,
@@ -85,6 +86,43 @@ describe("RAD-145 / RAD-149 branch-only base and duplicate head", { concurrency:
     git(["commit", "-m", "good"]);
     const pr = await createLocalPr(repo, { title: "Good base", base: "origin/main" });
     assert.equal(pr.baseRef, "main");
+  });
+
+  test("createLocalPr resolves baseSha from origin/main when local main differs", async () => {
+    await freshRepo();
+    const originTip = git(["rev-parse", "main"]);
+    const bare = await mkdtemp(path.join(tmpdir(), "prgenie-base-remote-"));
+    git(["init", "--bare", "-b", "main"], bare);
+    git(["remote", "add", "origin", bare]);
+    git(["push", "-u", "origin", "main"]);
+    await writeFile(path.join(repo, "local-ahead.txt"), "ahead\n");
+    git(["add", "."]);
+    git(["commit", "-m", "local main ahead"]);
+    assert.notEqual(git(["rev-parse", "main"]), originTip);
+    git(["checkout", "-b", "feat/remote-base"]);
+    await writeFile(path.join(repo, "feat.txt"), "f\n");
+    git(["add", "."]);
+    git(["commit", "-m", "feat"]);
+    const pr = await createLocalPr(repo, { title: "Remote base", base: "origin/main" });
+    assert.equal(pr.baseRef, "main");
+    assert.equal(pr.baseSha, originTip);
+  });
+
+  test("createLocalPr resolves origin/main when local main is missing", async () => {
+    await freshRepo();
+    const originTip = git(["rev-parse", "main"]);
+    const bare = await mkdtemp(path.join(tmpdir(), "prgenie-base-remote-"));
+    git(["init", "--bare", "-b", "main"], bare);
+    git(["remote", "add", "origin", bare]);
+    git(["push", "-u", "origin", "main"]);
+    git(["checkout", "-b", "feat/no-local-main"]);
+    await writeFile(path.join(repo, "solo.txt"), "solo\n");
+    git(["add", "."]);
+    git(["commit", "-m", "solo"]);
+    git(["branch", "-D", "main"]);
+    const pr = await createLocalPr(repo, { title: "No local main", base: "origin/main" });
+    assert.equal(pr.baseRef, "main");
+    assert.equal(pr.baseSha, originTip);
   });
 
   test("legacy SHA baseRef packet fails validateExport before gh", async () => {
@@ -191,9 +229,16 @@ describe("RAD-145 / RAD-149 branch-only base and duplicate head", { concurrency:
     assert.equal(loaded.baseRef, "main");
   });
 
-  test("assertBaseRefIsBranch suggests branch when SHA matches one remote tip", async () => {
+  test("suggestBranchForSha returns the branch when origin/HEAD would duplicate the name", async () => {
     await freshRepo();
-    const sha = git(["rev-parse", "main"]);
-    await assert.rejects(() => assertBaseRefIsBranch(repo, sha), /is a commit.*`main`/);
+    git(["branch", "-m", "main", "develop"]);
+    const originTip = git(["rev-parse", "develop"]);
+    const bare = await mkdtemp(path.join(tmpdir(), "prgenie-base-remote-"));
+    git(["init", "--bare", "-b", "develop"], bare);
+    git(["remote", "add", "origin", bare]);
+    git(["push", "-u", "origin", "develop"]);
+    git(["remote", "set-head", "origin", "develop"]);
+    assert.equal(await suggestBranchForSha(repo, originTip), "develop");
+    await assert.rejects(() => assertBaseRefIsBranch(repo, originTip), /is a commit.*`develop`/);
   });
 });

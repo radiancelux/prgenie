@@ -44,11 +44,20 @@ export async function classifyBaseRefAsBranch(
   return null;
 }
 
+/** Remote-tracking branch short names only — excludes origin/HEAD (`origin`) aliases. */
+function remoteBranchShortName(name: string): string | null {
+  const trimmed = name.replace(/\r$/, "").trim();
+  if (!trimmed || trimmed === "origin" || trimmed.endsWith("/HEAD")) return null;
+  const slash = trimmed.indexOf("/");
+  if (slash <= 0 || slash === trimmed.length - 1) return null;
+  return normalizeStoredBaseRef(trimmed);
+}
+
 /** When a SHA matches exactly one remote branch tip, suggest that branch name. */
 export async function suggestBranchForSha(cwd: string, sha: string): Promise<string | null> {
   const result = await git(
     cwd,
-    ["for-each-ref", "refs/remotes", `--points-at=${sha.trim()}`, "--format=%(refname:short)"],
+    ["for-each-ref", "refs/remotes/*/*", `--points-at=${sha.trim()}`, "--format=%(refname:short)"],
     { allowFail: true },
   );
   if (result.code !== 0) return null;
@@ -56,11 +65,39 @@ export async function suggestBranchForSha(cwd: string, sha: string): Promise<str
     ...new Set(
       result.stdout
         .split("\n")
-        .map((line) => normalizeStoredBaseRef(line.replace(/\r$/, "").trim()))
-        .filter(Boolean),
+        .map((line) => remoteBranchShortName(line))
+        .filter((name): name is string => Boolean(name)),
     ),
   ];
   return names.length === 1 ? names[0]! : null;
+}
+
+/** Git ref to resolve the branch tip SHA — keeps remote form when that is the classified base. */
+export async function resolveBaseBranchRevParseRef(
+  cwd: string,
+  rawBaseRef: string,
+): Promise<string> {
+  const trimmed = rawBaseRef.trim();
+  if (trimmed.startsWith("refs/remotes/")) return trimmed;
+  if (trimmed.startsWith("refs/heads/")) return trimmed;
+  const kind = await classifyBaseRefAsBranch(cwd, trimmed);
+  if (kind === "remote") return `refs/remotes/${trimmed}`;
+  if (kind === "local") return `refs/heads/${normalizeStoredBaseRef(trimmed)}`;
+  throw new Error(`Cannot resolve base branch ref: ${trimmed}`);
+}
+
+/** Normalize stored baseRef and resolve its tip SHA from the classified branch ref. */
+export async function resolveStoredBaseBranch(
+  cwd: string,
+  rawBaseRef: string,
+): Promise<{ baseRef: string; baseSha: string }> {
+  const baseRef = normalizeStoredBaseRef(rawBaseRef);
+  const resolveRef = await resolveBaseBranchRevParseRef(cwd, rawBaseRef);
+  const baseResolved = await git(cwd, ["rev-parse", "--verify", resolveRef], { allowFail: true });
+  if (baseResolved.code !== 0) {
+    throw new Error(`Cannot resolve base branch: ${baseRef}`);
+  }
+  return { baseRef, baseSha: baseResolved.stdout.trim() };
 }
 
 export function formatBaseRefNotBranchError(

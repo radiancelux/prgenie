@@ -362,16 +362,9 @@ export async function createLocalPr(cwd: string, input: CreateLocalPrInput = {})
   const root = await requireGitRoot(cwd);
   await assertNoDirtyPluginBuildArtifacts(root);
   const rawBaseRef = input.base ?? (await detectDefaultBase(cwd));
-  const { assertBaseRefIsBranch, normalizeStoredBaseRef } = await import("./base-ref.js");
+  const { assertBaseRefIsBranch, resolveStoredBaseBranch } = await import("./base-ref.js");
   await assertBaseRefIsBranch(root, rawBaseRef);
-  const baseRef = normalizeStoredBaseRef(rawBaseRef);
-  const baseResolved = await git(cwd, ["rev-parse", "--verify", baseRef], {
-    allowFail: true,
-  });
-  if (baseResolved.code !== 0) {
-    throw new Error(`Cannot resolve base branch: ${baseRef}`);
-  }
-  const baseSha = baseResolved.stdout.trim();
+  const { baseRef, baseSha } = await resolveStoredBaseBranch(root, rawBaseRef);
   const requestedHead =
     input.head ??
     (await currentBranch(cwd)) ??
@@ -1524,17 +1517,12 @@ export async function attachLocalPr(cwd: string, input: AttachLocalPrInput): Pro
     }
   }
 
-  const { assertBaseRefIsBranch, normalizeStoredBaseRef } = await import("./base-ref.js");
+  const { assertBaseRefIsBranch, resolveStoredBaseBranch } = await import("./base-ref.js");
   await assertBaseRefIsBranch(root, baseRef);
-  baseRef = normalizeStoredBaseRef(baseRef);
-
-  // Resolve base SHA
-  const baseResolved = await git(root, ["rev-parse", "--verify", baseRef], { allowFail: true });
-  if (baseResolved.code !== 0) {
-    throw new Error(`Cannot resolve base branch: ${baseRef}`);
-  }
+  const resolved = await resolveStoredBaseBranch(root, baseRef);
+  baseRef = resolved.baseRef;
   // eslint-disable-next-line prefer-const
-  baseSha = baseResolved.stdout.trim();
+  baseSha = resolved.baseSha;
 
   // Check if a lane for this headRef already exists
   const existing = findLiveLoopForHead(await listLocalPrs(root), headRef);
