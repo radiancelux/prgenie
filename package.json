@@ -6,11 +6,11 @@
   "license": "MIT",
   "packageManager": "pnpm@10.33.0",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "tsx --test packages/*/src/**/*.test.ts",
+    "test": "tsx --test \"packages/*/src/**/*.test.ts\"",
     "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/cli --noEmit && tsc -p packages/extension --noEmit",
     "lint": "eslint packages/core/src packages/cli/src packages/extension/src scripts",
     "lint:fix": "eslint packages/core/src packages/cli/src packages/extension/src scripts --fix",
