@@ -448,7 +448,7 @@ export async function run(argv: string[]): Promise<number> {
     const why = arg(rest, "--why");
     if (!overrideId || !who || !why) {
       process.stderr.write(
-        "prgenie export-gate-override <id> --who <name> --why <reason>\n\nRecord exportGateOverride for the current HEAD. Echo who and why in the loop body before export.\n",
+        "prgenie export-gate-override <id> --who <name> --why <reason>\n\nRecord exportGateOverride for the current HEAD. Echo who, why, and each skipped check name in the loop body before export.\n",
       );
       return 1;
     }

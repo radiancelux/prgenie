@@ -217,6 +217,37 @@ describe("export refusal and override (RAD-144)", () => {
     }
   });
 
+  it("does not allow override when the body omits skipped check names", async () => {
+    const repo = await createTempGitRepo({ prefix: "prgenie-export-override-unnamed-" });
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(path.join(repo, "test.txt"), "x\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "feat"]);
+      const pr = await createLocalPr(repo, {
+        title: "Override unnamed",
+        body: "Override by QA Lead because the suite was flaky.",
+        base: "main",
+      });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      await setLocalPrExportGate(repo, pr.id, {
+        status: "blocked",
+        reasons: [{ check: "ci", message: "CI check failed: test:core — timeout" }],
+        headSha: pr.headSha,
+        evaluatedAt: new Date().toISOString(),
+      });
+      await recordExportGateOverride(repo, pr.id, {
+        who: "QA Lead",
+        why: "the suite was flaky",
+      });
+      const validation = await validateExport(repo, pr.id);
+      assert.equal(validation.ok, false);
+      assert.ok(validation.issues.some((i) => /Export gate is blocked/.test(i)));
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it("does not allow override after HEAD moves", async () => {
     const repo = await createTempGitRepo({ prefix: "prgenie-export-override-move-" });
     try {
@@ -240,11 +271,16 @@ describe("export refusal and override (RAD-144)", () => {
         who: "QA Lead",
         why: "test:core timed out on green",
       });
-      await writeFile(path.join(repo, "test.txt"), "y\n");
-      await git(repo, ["add", "."]);
-      await git(repo, ["commit", "-m", "follow-up"]);
+      assert.ok(pr.worktreePath);
+      const beforeSha = pr.headSha;
+      await writeFile(path.join(pr.worktreePath, "test.txt"), "y\n");
+      await git(pr.worktreePath, ["add", "."]);
+      await git(pr.worktreePath, ["commit", "-m", "follow-up"]);
       const validation = await validateExport(repo, pr.id);
       assert.equal(validation.ok, false);
+      const fresh = await getLocalPr(repo, pr.id);
+      assert.equal(fresh.exportGateOverride, null);
+      assert.notEqual(fresh.headSha, beforeSha);
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }

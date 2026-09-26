@@ -214,7 +214,7 @@ export async function exportLocalPr(
       ? ` CI env unhealthy (first-class): ${validation.ciEnvUnhealthy.message}`
       : "";
     throw new Error(
-      `Export blocked. ${validation.issues.join(" ")}${envNote} Record exportGateOverride on the loop (who/why) and echo it in the body to export while blocked.`,
+      `Export blocked. ${validation.issues.join(" ")}${envNote} Record exportGateOverride on the loop (who/why) and echo who, why, and each skipped check name in the body to export while blocked.`,
     );
   }
 

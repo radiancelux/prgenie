@@ -542,7 +542,7 @@ export async function recordLocalPrReadyCi(
   });
 }
 
-/** Record an explicit export-gate override (RAD-144). Body must echo who/why before export. */
+/** Record an explicit export-gate override (RAD-144). Body must echo who, why, and each skipped check name before export. */
 export async function recordExportGateOverride(
   cwd: string,
   id: string,

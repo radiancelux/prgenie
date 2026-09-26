@@ -99,7 +99,7 @@ On completion:
 
 Skips recorded at ready (`readyCi` on the loop — per-check `checkSkips` or whole-plan skip) carry into the export gate at the **same HEAD** when `skipScope` still matches. The gate shows `skipped (ready: <reason>)` and does **not** re-run those checks. HEAD change or skip-scope change invalidates carry-over (fail closed — re-run).
 
-Export is **refused** while the gate is **blocked** unless `exportGateOverride` (`who`, `why`) is on the packet **and** echoed in the loop body. No silent validation skip.
+Export is **refused** while the gate is **blocked** unless `exportGateOverride` (`who`, `why`) is on the packet **and** the loop body names who, why, and each skipped check (or that check's blocked CI message). No silent validation skip.
 
 Re-export updates an existing GitHub PR title/body from the packet (`gh pr edit --body-file`, RAD-150). Body-update failure reports as partial failure.
 

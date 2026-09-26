@@ -445,7 +445,7 @@ export async function validateExport(
 
   const blockedIssues = issuesFromShepherd(shepherd);
   blockedIssues.push(
-    "Export gate is blocked. Fix failing checks or record exportGateOverride (who and why) on the loop packet and in the PR body.",
+    "Export gate is blocked. Fix failing checks or record exportGateOverride (who, why, and each skipped check name) on the loop packet and in the PR body.",
   );
   return {
     ok: false,

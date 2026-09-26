@@ -853,7 +853,7 @@ export const tools = [
   {
     name: "export_local_pr",
     description:
-      "Developer command: validate review status and preflight, then git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export. Export is blocked unless the export gate is ready (review complete, preflight clean, gh bound, local CI green). Re-export updates title/body on existing GitHub PRs via gh pr edit --body-file (RAD-150). Blocked export requires exportGateOverride (who/why) on the packet and in the body (RAD-144). Unbound gh fails before CI. On prune/checkout or body-update failure after push, returns partialFailure.",
+      "Developer command: validate review status and preflight, then git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export. Export is blocked unless the export gate is ready (review complete, preflight clean, gh bound, local CI green). Re-export updates title/body on existing GitHub PRs via gh pr edit --body-file (RAD-150). Blocked export requires exportGateOverride (who/why) on the packet and each skipped check name in the body (RAD-144). Unbound gh fails before CI. On prune/checkout or body-update failure after push, returns partialFailure.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -866,7 +866,7 @@ export const tools = [
   {
     name: "record_export_gate_override",
     description:
-      "Record exportGateOverride (who/why) bound to the loop's current HEAD when export is blocked on CI. The loop body must echo who and why before export succeeds. Override does not bypass review, preflight, or GitHub blocks.",
+      "Record exportGateOverride (who/why) bound to the loop's current HEAD when export is blocked on CI. The loop body must echo who, why, and each skipped check name (or the blocked CI message) before export succeeds. Override does not bypass review, preflight, or GitHub blocks.",
     inputSchema: {
       type: "object",
       required: ["id", "who", "why"],

@@ -26,15 +26,43 @@ export function normalizeExportGateOverride(raw: unknown): ExportGateOverride | 
   };
 }
 
-/** Override must be on the packet, bound to this HEAD, and echoed in the loop body (RAD-144). */
+const CI_CHECK_NAME_RE = /CI check failed:\s+([^\s—]+)/;
+
+/** Named check from a CI block message. Bare `ci` is not a skipped-check name. */
+function ciCheckNameFromBlockMessage(message: string): string | null {
+  const name = message.match(CI_CHECK_NAME_RE)?.[1];
+  if (!name || name === "ci") return null;
+  return name;
+}
+
+/**
+ * Body documents one blocked CI reason when it includes the skipped check name
+ * or the blocked message itself (RAD-144). A who/why substring is not enough.
+ */
+function bodyDocumentsBlockedCi(body: string, reason: ExportGateReason): boolean {
+  const message = reason.message.trim();
+  if (!message) return false;
+  if (body.includes(message)) return true;
+  const name = ciCheckNameFromBlockMessage(message);
+  return name != null && body.includes(name);
+}
+
+/**
+ * Override must be on the packet, bound to this HEAD, and the body must name
+ * who, why, and each skipped CI check (or that check's blocked message).
+ */
 export function exportGateOverrideDocumented(
   pr: Pick<LocalPr, "body" | "exportGateOverride" | "headSha">,
+  blocked: Pick<ShepherdResult, "reasons">,
 ): boolean {
   const override = normalizeExportGateOverride(pr.exportGateOverride);
   if (!override) return false;
   if (override.headSha !== pr.headSha) return false;
   const body = pr.body ?? "";
-  return body.includes(override.who) && body.includes(override.why);
+  if (!body.includes(override.who) || !body.includes(override.why)) return false;
+  const ciReasons = (blocked.reasons ?? []).filter((r) => r.check === "ci");
+  if (ciReasons.length === 0) return false;
+  return ciReasons.every((reason) => bodyDocumentsBlockedCi(body, reason));
 }
 
 /** Override bypasses CI blocks only — not review, preflight, or GitHub (RAD-144). */
@@ -42,7 +70,7 @@ export function exportGateOverrideAllowsBlockedExport(
   pr: Pick<LocalPr, "body" | "exportGateOverride" | "headSha">,
   shepherd: Pick<ShepherdResult, "reasons">,
 ): boolean {
-  if (!exportGateOverrideDocumented(pr)) return false;
+  if (!exportGateOverrideDocumented(pr, shepherd)) return false;
   const reasons = shepherd.reasons ?? [];
   if (reasons.length === 0) return false;
   return reasons.every((r) => r.check === "ci");
@@ -290,10 +318,7 @@ export function formatExportBlockLabel(
   }
   const ciNames = reasons
     .filter((r) => r.check === "ci")
-    .map((r) => {
-      const match = r.message.match(/CI check failed:\s+([^\s—]+)/);
-      return match?.[1] ?? "ci";
-    });
+    .map((r) => ciCheckNameFromBlockMessage(r.message) ?? "ci");
   if (ciNames.length) return ciNames.join(", ");
   const first = reasons[0];
   if (!first) return "export";
