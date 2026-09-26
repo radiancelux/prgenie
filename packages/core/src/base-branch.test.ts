@@ -6,7 +6,6 @@ import path from "node:path";
 import { after, describe, test } from "node:test";
 import {
   assertBaseRefIsBranch,
-  assertStoredBaseRefIsBranch,
   classifyBaseRefAsBranch,
   normalizeStoredBaseRef,
   suggestBranchForSha,

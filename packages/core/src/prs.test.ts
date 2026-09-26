@@ -85,6 +85,8 @@ beforeEach(async () => {
   if (trees.some((t) => loopWorktreeIdentity(t.path))) {
     await pruneLoopWorktrees(repo);
   }
+  // Shared feat/widget checkout: drop live packets so the next case can create again.
+  await rm(await prsDir(repo), { recursive: true, force: true });
   try {
     git(["checkout", "feat/widget"]);
   } catch {
@@ -1276,6 +1278,7 @@ test("createLocalPr refuses dirty tracked plugin build artifacts on primary", as
 test("pruneLoopWorktrees clears leftover .loops between cases", async () => {
   const first = await createLocalPr(repo, { title: "Prune A", base: "main" });
   assert.ok(first.worktreePath);
+  git(["checkout", "-B", "feat/prune-b"]);
   const second = await createLocalPr(repo, { title: "Prune B", base: "main" });
   assert.ok(second.worktreePath);
   assert.notEqual(first.worktreePath, second.worktreePath);
