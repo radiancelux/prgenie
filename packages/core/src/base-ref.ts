@@ -55,9 +55,10 @@ function remoteBranchShortName(name: string): string | null {
 
 /** When a SHA matches exactly one remote branch tip, suggest that branch name. */
 export async function suggestBranchForSha(cwd: string, sha: string): Promise<string | null> {
+  // Prefix, not refs/remotes/*/*: a * glob does not cross /, so origin/feat/foo is omitted.
   const result = await git(
     cwd,
-    ["for-each-ref", "refs/remotes/*/*", `--points-at=${sha.trim()}`, "--format=%(refname:short)"],
+    ["for-each-ref", "refs/remotes", `--points-at=${sha.trim()}`, "--format=%(refname:short)"],
     { allowFail: true },
   );
   if (result.code !== 0) return null;

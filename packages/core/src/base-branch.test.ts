@@ -241,4 +241,39 @@ describe("RAD-145 / RAD-149 branch-only base and duplicate head", { concurrency:
     assert.equal(await suggestBranchForSha(repo, originTip), "develop");
     await assert.rejects(() => assertBaseRefIsBranch(repo, originTip), /is a commit.*`develop`/);
   });
+
+  test("suggestBranchForSha returns nested remote branch names", async () => {
+    await freshRepo();
+    const bare = await mkdtemp(path.join(tmpdir(), "prgenie-base-remote-"));
+    git(["init", "--bare", "-b", "main"], bare);
+    git(["remote", "add", "origin", bare]);
+    git(["push", "-u", "origin", "main"]);
+    git(["remote", "set-head", "origin", "main"]);
+
+    git(["checkout", "-b", "feat/foo"]);
+    await writeFile(path.join(repo, "nested.txt"), "nested\n");
+    git(["add", "."]);
+    git(["commit", "-m", "nested feature"]);
+    git(["push", "origin", "feat/foo"]);
+    const featSha = git(["rev-parse", "feat/foo"]);
+
+    git(["checkout", "-b", "release/1.2", "main"]);
+    await writeFile(path.join(repo, "release.txt"), "rel\n");
+    git(["add", "."]);
+    git(["commit", "-m", "release cut"]);
+    git(["push", "origin", "release/1.2"]);
+    const releaseSha = git(["rev-parse", "release/1.2"]);
+
+    assert.notEqual(featSha, releaseSha);
+    assert.equal(await suggestBranchForSha(repo, featSha), "feat/foo");
+    assert.equal(await suggestBranchForSha(repo, releaseSha), "release/1.2");
+    await assert.rejects(
+      () => assertBaseRefIsBranch(repo, featSha),
+      /is a commit.*`feat\/foo`/,
+    );
+    await assert.rejects(
+      () => assertBaseRefIsBranch(repo, releaseSha),
+      /is a commit.*`release\/1\.2`/,
+    );
+  });
 });
