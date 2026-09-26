@@ -11,6 +11,7 @@ import {
   normalizeStoredBaseRef,
   suggestBranchForSha,
 } from "./base-ref.js";
+import { runLoopCi } from "./ci-runner.js";
 import {
   archiveLocalPr,
   createLocalPr,
@@ -272,5 +273,87 @@ describe("RAD-145 / RAD-149 branch-only base and duplicate head", { concurrency:
       () => assertBaseRefIsBranch(repo, releaseSha),
       /is a commit.*`release\/1\.2`/,
     );
+  });
+
+  /** Remote `origin/main` only — local `main` deleted after the push. */
+  async function remoteMainWithoutLocal(head: string): Promise<string> {
+    await freshRepo();
+    const originTip = git(["rev-parse", "main"]);
+    const bare = await mkdtemp(path.join(tmpdir(), "prgenie-base-remote-"));
+    git(["init", "--bare", "-b", "main"], bare);
+    git(["remote", "add", "origin", bare]);
+    git(["push", "-u", "origin", "main"]);
+    git(["remote", "set-head", "origin", "main"]);
+    git(["checkout", "-b", head]);
+    await writeFile(path.join(repo, "remote-only.txt"), `${head}\n`);
+    git(["add", "."]);
+    git(["commit", "-m", head]);
+    git(["branch", "-D", "main"]);
+    assert.equal(await classifyBaseRefAsBranch(repo, "main"), "remote");
+    return originTip;
+  }
+
+  function assertBranchGatePassed(text: string): void {
+    assert.doesNotMatch(text, /is not a branch name/);
+    assert.doesNotMatch(text, /Cannot resolve declared baseRef/);
+  }
+
+  test("ready, run_ci, and export accept main when only origin/main exists", async () => {
+    const originTip = await remoteMainWithoutLocal("feat/remote-gates");
+    const pr = await createLocalPr(repo, {
+      title: "Remote gates",
+      base: "origin/main",
+      head: "feat/remote-gates",
+    });
+    assert.equal(pr.baseRef, "main");
+    assert.equal(pr.baseSha, originTip);
+
+    const ready = await setLocalPrStatus(repo, pr.id, "ready", {
+      skipPreflight: true,
+      ciSkipReason: "test",
+    });
+    assert.equal(ready.status, "ready");
+
+    const ci = await runLoopCi(repo, pr.id, { skipToolchainEnsure: true });
+    assert.equal(
+      ci.allPassed,
+      true,
+      `${ci.checks.map((check) => check.error ?? check.name).join("\n")}\n${(ci.selection?.reason ?? []).join("; ")}`,
+    );
+
+    const exported = await validateExport(repo, pr.id);
+    assertBranchGatePassed(exported.issues.join("\n"));
+  });
+
+  test("legacy origin/main packet passes ready, run_ci, and export after read-back as main", async () => {
+    const originTip = await remoteMainWithoutLocal("feat/legacy-origin");
+    const pr = await createLocalPr(repo, {
+      title: "Legacy origin",
+      base: "origin/main",
+      head: "feat/legacy-origin",
+    });
+    const dir = await prsDir(repo);
+    const stored = JSON.parse(await readFile(prFile(dir, pr.id), "utf8")) as LocalPr;
+    stored.baseRef = "origin/main";
+    stored.baseSha = originTip;
+    await writeJsonFile(prFile(dir, pr.id), stored);
+    const loaded = await getLocalPr(repo, pr.id);
+    assert.equal(loaded.baseRef, "main");
+
+    const ready = await setLocalPrStatus(repo, pr.id, "ready", {
+      skipPreflight: true,
+      ciSkipReason: "test",
+    });
+    assert.equal(ready.status, "ready");
+
+    const ci = await runLoopCi(repo, pr.id, { skipToolchainEnsure: true });
+    assert.equal(
+      ci.allPassed,
+      true,
+      `${ci.checks.map((check) => check.error ?? check.name).join("\n")}\n${(ci.selection?.reason ?? []).join("; ")}`,
+    );
+
+    const exported = await validateExport(repo, pr.id);
+    assertBranchGatePassed(exported.issues.join("\n"));
   });
 });

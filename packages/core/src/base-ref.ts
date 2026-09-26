@@ -41,6 +41,11 @@ export async function classifyBaseRefAsBranch(
     }
   }
   if (await refExists(cwd, `refs/heads/${trimmed}`)) return "local";
+  // Stored packets are the short name (`main`), including a legacy `origin/main` read.
+  // When local `main` is gone, `refs/remotes/origin/main` is still that branch.
+  // `upstream/main` is not rewritten — `localBaseRef` only strips `origin/`.
+  const short = normalizeStoredBaseRef(trimmed);
+  if (short && (await refExists(cwd, `refs/remotes/origin/${short}`))) return "remote";
   return null;
 }
 
@@ -82,7 +87,10 @@ export async function resolveBaseBranchRevParseRef(
   if (trimmed.startsWith("refs/remotes/")) return trimmed;
   if (trimmed.startsWith("refs/heads/")) return trimmed;
   const kind = await classifyBaseRefAsBranch(cwd, trimmed);
-  if (kind === "remote") return `refs/remotes/${trimmed}`;
+  if (kind === "remote") {
+    if (await refExists(cwd, `refs/remotes/${trimmed}`)) return `refs/remotes/${trimmed}`;
+    return `refs/remotes/origin/${normalizeStoredBaseRef(trimmed)}`;
+  }
   if (kind === "local") return `refs/heads/${normalizeStoredBaseRef(trimmed)}`;
   throw new Error(`Cannot resolve base branch ref: ${trimmed}`);
 }
@@ -287,7 +295,19 @@ export async function checkDeclaredBaseAlignment(
   pr: DeclaredBasePr,
 ): Promise<DeclaredBaseResult> {
   const base = localBaseRef(pr.baseRef);
-  const baseResolved = await git(cwd, ["rev-parse", "--verify", base], { allowFail: true });
+  let resolveRef: string;
+  try {
+    resolveRef = await resolveBaseBranchRevParseRef(cwd, pr.baseRef);
+  } catch {
+    return {
+      ok: false,
+      message: `Cannot resolve declared baseRef "${pr.baseRef}" for loop ${pr.id}.`,
+      mergeBase: null,
+      baseTip: null,
+      stackedOn: null,
+    };
+  }
+  const baseResolved = await git(cwd, ["rev-parse", "--verify", resolveRef], { allowFail: true });
   if (baseResolved.code !== 0) {
     return {
       ok: false,

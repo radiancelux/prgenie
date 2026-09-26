@@ -369,6 +369,7 @@ export async function createLocalPr(cwd: string, input: CreateLocalPrInput = {})
     input.head ??
     (await currentBranch(cwd)) ??
     (await gitText(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]));
+  // Before ensureLoopFeatureBranch so a duplicate does not create a branch or worktree.
   if (requestedHead && !isBaseBranch(requestedHead, baseRef)) {
     const duplicate = findLiveLoopForHead(await listLocalPrs(root), requestedHead);
     if (duplicate) {
@@ -383,12 +384,6 @@ export async function createLocalPr(cwd: string, input: CreateLocalPrInput = {})
     requestedHead,
     baseRef,
   });
-  const duplicateHead = findLiveLoopForHead(await listLocalPrs(root), headRef);
-  if (duplicateHead) {
-    throw new Error(
-      `Head ${headRef} already has live loop ${duplicateHead.id}. Use update_local_pr on ${duplicateHead.id}.`,
-    );
-  }
   const title =
     input.title?.trim() ||
     (await shortLogSubject(cwd, headSha).catch(() => "")) ||
