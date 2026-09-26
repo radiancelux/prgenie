@@ -1,5 +1,9 @@
 import { acquireCiLock, requestCiAbort, watchCiAbort } from "./ci-abort.js";
-import { exportGateSnapshotIsAdoptable, pendingExportGate } from "./export-gate.js";
+import {
+  exportGateOverrideAllowsBlockedExport,
+  exportGateSnapshotIsAdoptable,
+  pendingExportGate,
+} from "./export-gate.js";
 import { looksLikeStaleFullSuitePlan } from "./ci-select-worktree.js";
 import { getLocalPr, refreshLocalPrHead, setLocalPrExportGate } from "./prs.js";
 import { shepherdStatus, type ShepherdResult } from "./shepherd.js";
@@ -28,10 +32,7 @@ export interface ExportValidationResult {
   };
 }
 
-export interface ExportValidationOptions extends RunProgressOptions {
-  /** When true, skip all export validation (emergency override). Default false. */
-  skipValidation?: boolean;
-}
+export type ExportValidationOptions = RunProgressOptions;
 
 type GateFlight = {
   promise: Promise<ShepherdResult>;
@@ -401,10 +402,6 @@ export async function validateExport(
   id: string,
   options: ExportValidationOptions = {},
 ): Promise<ExportValidationResult> {
-  if (options.skipValidation) {
-    return { ok: true, issues: [] };
-  }
-
   // Prefer a complete stored gate for this HEAD (RAD-71 / RAD-119). Re-running
   // selectCiChecks can intentionally skip local CI while a prior blocked plan
   // still names the failing check — do not greenwash or drop those reasons.
@@ -421,31 +418,41 @@ export async function validateExport(
       issues: [err instanceof Error ? err.message : String(err)],
     };
   }
+  let shepherd: ShepherdResult;
   if (pr.exportGate && snapshotIsAdoptable(pr.exportGate, pr.headSha)) {
-    const fromStore = shepherdFromSnapshot(pr.exportGate);
-    if (fromStore.status === "ready") {
-      return { ok: true, issues: [], ciEnvUnhealthy: fromStore.ciEnvUnhealthy };
-    }
-    return {
-      ok: false,
-      issues: issuesFromShepherd(fromStore),
-      ciEnvUnhealthy: fromStore.ciEnvUnhealthy,
-    };
+    shepherd = shepherdFromSnapshot(pr.exportGate);
+  } else {
+    shepherd = await evaluateAndStoreExportGate(cwd, id, {
+      onProgress: options.onProgress,
+      signal: options.signal,
+    });
   }
 
-  // No stored gate yet — same shepherd run the UI gate persists.
-  const shepherd = await evaluateAndStoreExportGate(cwd, id, {
-    onProgress: options.onProgress,
-    signal: options.signal,
+  options.onProgress?.({
+    phase: "preflight",
+    state: shepherd.status === "ready" ? "pass" : "fail",
+    message: `Export gate: ${shepherd.status}`,
   });
 
   if (shepherd.status === "ready") {
     return { ok: true, issues: [], ciEnvUnhealthy: shepherd.ciEnvUnhealthy };
   }
 
+  if (exportGateOverrideAllowsBlockedExport(pr, shepherd)) {
+    return {
+      ok: true,
+      issues: [],
+      ciEnvUnhealthy: shepherd.ciEnvUnhealthy,
+    };
+  }
+
+  const blockedIssues = issuesFromShepherd(shepherd);
+  blockedIssues.push(
+    "Export gate is blocked. Fix failing checks or record exportGateOverride (who, why, and each skipped check name) on the loop packet and in the PR body.",
+  );
   return {
     ok: false,
-    issues: issuesFromShepherd(shepherd),
+    issues: blockedIssues,
     ciEnvUnhealthy: shepherd.ciEnvUnhealthy,
   };
 }

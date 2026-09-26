@@ -3,10 +3,95 @@ import type { ShepherdResult } from "./shepherd.js";
 import type {
   ExportGateCiCheck,
   ExportGateCiPlan,
+  ExportGateOverride,
   ExportGateReason,
   ExportGateSnapshot,
   LocalPr,
 } from "./types.js";
+
+export function normalizeExportGateOverride(raw: unknown): ExportGateOverride | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Partial<ExportGateOverride>;
+  if (typeof row.who !== "string" || !row.who.trim()) return null;
+  if (typeof row.why !== "string" || !row.why.trim()) return null;
+  if (typeof row.headSha !== "string" || !row.headSha.trim()) return null;
+  return {
+    who: row.who.trim(),
+    why: row.why.trim(),
+    headSha: row.headSha.trim(),
+    recordedAt:
+      typeof row.recordedAt === "string" && row.recordedAt
+        ? row.recordedAt
+        : new Date(0).toISOString(),
+  };
+}
+
+const CI_CHECK_NAME_RE = /CI check failed:\s+([^\s—]+)/;
+
+/** Named check from a CI block message. Bare `ci` is not a skipped-check name. */
+function ciCheckNameFromBlockMessage(message: string): string | null {
+  const name = message.match(CI_CHECK_NAME_RE)?.[1];
+  if (!name || name === "ci") return null;
+  return name;
+}
+
+const SKIPPED_CHECKS_LINE = /Skipped checks:\s*([^\n]+)/gi;
+
+/** Names listed on a `Skipped checks:` line (backticks optional). */
+function skippedCheckSectionNames(body: string): Set<string> {
+  const names = new Set<string>();
+  for (const match of body.matchAll(SKIPPED_CHECKS_LINE)) {
+    for (const part of match[1].split(",")) {
+      const name = part.replace(/`/g, "").trim();
+      if (name) names.add(name);
+    }
+  }
+  return names;
+}
+
+/**
+ * Body documents one blocked CI reason when it quotes the blocked message,
+ * wraps the check name in backticks, or lists it under `Skipped checks:`.
+ * A bare substring (`lint`, `test`) is not enough (RAD-144).
+ */
+function bodyDocumentsBlockedCi(body: string, reason: ExportGateReason): boolean {
+  const message = reason.message.trim();
+  if (!message) return false;
+  if (body.includes(message)) return true;
+  const name = ciCheckNameFromBlockMessage(message);
+  if (!name) return false;
+  if (body.includes("`" + name + "`")) return true;
+  return skippedCheckSectionNames(body).has(name);
+}
+
+/**
+ * Override must be on the packet, bound to this HEAD, and the body must name
+ * who, why, and each skipped CI check (or that check's blocked message).
+ */
+export function exportGateOverrideDocumented(
+  pr: Pick<LocalPr, "body" | "exportGateOverride" | "headSha">,
+  blocked: Pick<ShepherdResult, "reasons">,
+): boolean {
+  const override = normalizeExportGateOverride(pr.exportGateOverride);
+  if (!override) return false;
+  if (override.headSha !== pr.headSha) return false;
+  const body = pr.body ?? "";
+  if (!body.includes(override.who) || !body.includes(override.why)) return false;
+  const ciReasons = (blocked.reasons ?? []).filter((r) => r.check === "ci");
+  if (ciReasons.length === 0) return false;
+  return ciReasons.every((reason) => bodyDocumentsBlockedCi(body, reason));
+}
+
+/** Override bypasses CI blocks only — not review, preflight, or GitHub (RAD-144). */
+export function exportGateOverrideAllowsBlockedExport(
+  pr: Pick<LocalPr, "body" | "exportGateOverride" | "headSha">,
+  shepherd: Pick<ShepherdResult, "reasons">,
+): boolean {
+  if (!exportGateOverrideDocumented(pr, shepherd)) return false;
+  const reasons = shepherd.reasons ?? [];
+  if (reasons.length === 0) return false;
+  return reasons.every((r) => r.check === "ci");
+}
 
 export type HumanExportKind = "exportable" | "blocked" | "pending" | "other";
 
@@ -250,10 +335,7 @@ export function formatExportBlockLabel(
   }
   const ciNames = reasons
     .filter((r) => r.check === "ci")
-    .map((r) => {
-      const match = r.message.match(/CI check failed:\s+([^\s—]+)/);
-      return match?.[1] ?? "ci";
-    });
+    .map((r) => ciCheckNameFromBlockMessage(r.message) ?? "ci");
   if (ciNames.length) return ciNames.join(", ");
   const first = reasons[0];
   if (!first) return "export";

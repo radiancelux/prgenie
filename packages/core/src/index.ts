@@ -18,6 +18,8 @@ export type {
   ExportGateStatus,
   PreflightIssue,
   PreflightResult,
+  ExportGateOverride,
+  ReadyCiCheckSkip,
   ReadyCiOutcome,
   ReadyCiRecord,
   WorktreeInfo,
@@ -136,6 +138,7 @@ export {
   refreshLocalPrHead,
   invalidateReviewedOnHeadMove,
   recordLocalPrReadyCi,
+  recordExportGateOverride,
   recordLoopGuidanceSnapshots,
   reopenLocalPr,
   resolveLocalPrComment,
@@ -269,7 +272,10 @@ export {
   displayShepherdStatus,
   exportGateForHead,
   exportGateHasStaleFullSuiteCiPlan,
+  exportGateOverrideAllowsBlockedExport,
+  exportGateOverrideDocumented,
   exportGateSnapshotIsAdoptable,
+  normalizeExportGateOverride,
   exportReadyEnterKey,
   formatExportBlockLabel,
   reasonsLookLikeSelectionRefusal,
@@ -312,6 +318,14 @@ export {
   tipScopedCiSkipReason,
   upsertReviewRequestedComment,
 } from "./ready-ci.js";
+export {
+  formatReadyCarriedSkipReason,
+  normalizeSkipScope,
+  planReadySkipCarry,
+  readyCiPlannedScope,
+  skipScopesEqual,
+} from "./ready-skip-carry.js";
+export type { ReadySkipCarryPlan } from "./ready-skip-carry.js";
 export { generateLearningDigest, formatLearningDigest } from "./learning.js";
 export type { LearningSummary } from "./learning.js";
 export { consoleDir, parseJsonObject, writeJsonFile } from "./store.js";
@@ -323,6 +337,7 @@ export {
   describeRepoGithubBind,
   ensureRepoGithub,
   getRepoGithubBind,
+  githubPrEditArgs,
   listGhAccounts,
   quoteGhArgsForSpawn,
   quoteWindowsShellArg,

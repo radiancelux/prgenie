@@ -117,18 +117,24 @@ test("export validation allows approved status", async () => {
   assert.equal(reviewIssue, undefined, "Review should not be blocking");
 });
 
-test("export validation can be skipped with skipValidation flag", async () => {
+test("export validation refuses blocked gate without exportGateOverride (RAD-144)", async () => {
   const pr = await createLocalPr(repo, {
-    title: "Draft PR",
-    body: "Emergency export",
+    title: "Blocked gate",
+    body: "Not ready for export",
     base: "main",
   });
-
-  const result = await validateExport(repo, pr.id, {
-    skipValidation: true,
+  await setLocalPrStatus(repo, pr.id, "reviewed");
+  const { setLocalPrExportGate } = await import("./prs.js");
+  await setLocalPrExportGate(repo, pr.id, {
+    status: "blocked",
+    reasons: [{ check: "ci", message: "CI check failed: test — boom" }],
+    headSha: pr.headSha,
+    evaluatedAt: new Date().toISOString(),
   });
-  assert.equal(result.ok, true);
-  assert.equal(result.issues.length, 0);
+
+  const result = await validateExport(repo, pr.id);
+  assert.equal(result.ok, false);
+  assert.ok(result.issues.some((i) => /Export gate is blocked/.test(i)));
 });
 
 test("export validation blocks when Learn #18 preflight pattern matches", async () => {

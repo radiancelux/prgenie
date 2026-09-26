@@ -72,6 +72,24 @@ export function githubPrCreateArgs(options: {
   ];
 }
 
+/** `gh pr edit` argv using `--body-file` when body is set (RAD-150). Target is the PR URL from `gh pr view`. */
+export function githubPrEditArgs(options: {
+  prUrl: string;
+  title?: string;
+  bodyFile?: string;
+}): string[] {
+  const prUrl = options.prUrl.trim();
+  if (!prUrl) throw new Error("gh pr edit requires the PR URL from gh pr view");
+  const args = ["pr", "edit", prUrl];
+  if (options.title?.trim()) {
+    args.push("--title", options.title.trim());
+  }
+  if (options.bodyFile) {
+    args.push("--body-file", options.bodyFile);
+  }
+  return args;
+}
+
 /** Swap `--body <text>` for `--body-file <path>` (RAD-129). */
 export function replaceGhBodyWithFile(args: string[], bodyFile: string): string[] {
   const bodyIdx = args.indexOf("--body");

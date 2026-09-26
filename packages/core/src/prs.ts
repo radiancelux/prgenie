@@ -40,13 +40,18 @@ import type {
 import { COMMENT_ROLES, COMMENT_STATUSES, STATUSES } from "./types.js";
 import { getRepoWatch, resumeWatchRole } from "./watch.js";
 import { addLearnings, extractLearningsFromResolvedComments, runPreflight } from "./learnings.js";
-import { normalizeExportGate, pendingExportGate } from "./export-gate.js";
+import {
+  normalizeExportGate,
+  normalizeExportGateOverride,
+  pendingExportGate,
+} from "./export-gate.js";
 import { assertNoDirtyPluginBuildArtifacts } from "./plugin-dirt.js";
 import {
   assertReadyCiSatisfied,
   isReadyCiSatisfied,
   normalizeReadyCi,
   parseCiSkipReason,
+  parseNamedSkipChecks,
   readyCiFromSkipReason,
   tipScopedCiSkipReason,
   upsertReviewRequestedComment,
@@ -85,6 +90,7 @@ async function readPrFile(file: string): Promise<LocalPr> {
   pr.reviewRequestedSha = pr.reviewRequestedSha ?? null;
   pr.reviewerNotifiedSha = pr.reviewerNotifiedSha ?? null;
   pr.readyCi = normalizeReadyCi(pr.readyCi);
+  pr.exportGateOverride = normalizeExportGateOverride(pr.exportGateOverride);
   pr.exportGate = normalizeExportGate(pr.exportGate);
   pr.comments = (pr.comments ?? []).map(normalizeComment);
   pr.implementorTier = pr.implementorTier ?? null;
@@ -188,6 +194,9 @@ async function applyHeadRefresh(cwd: string, pr: LocalPr): Promise<void> {
   const tip = await resolveLoopHeadTip(cwd, pr);
   pr.headRef = tip.headRef;
   pr.headSha = tip.headSha;
+  if (previousHeadSha && pr.headSha !== previousHeadSha) {
+    pr.exportGateOverride = null;
+  }
   invalidateReviewedOnHeadMove(pr, previousHeadSha);
   pr.updatedAt = nowIso();
 }
@@ -411,6 +420,7 @@ export async function createLocalPr(cwd: string, input: CreateLocalPrInput = {})
     reviewRequestedSha: null,
     reviewerNotifiedSha: null,
     readyCi: null,
+    exportGateOverride: null,
     implementorTier: null,
     implementorModel: null,
     reviewRoundCount: 0,
@@ -452,7 +462,7 @@ export async function setLocalPrStatus(
   cwd: string,
   id: string,
   status: LocalPrStatus,
-  options: { skipPreflight?: boolean; ciSkipReason?: string } = {},
+  options: { skipPreflight?: boolean; ciSkipReason?: string; ciSkipChecks?: string[] } = {},
 ): Promise<LocalPr> {
   if (!STATUSES.includes(status)) {
     throw new Error(`Invalid status: ${status}`);
@@ -471,7 +481,7 @@ export async function setLocalPrStatus(
       await assertStoredBaseRefIsBranch(cwd, pr);
       await assertDeclaredBaseAligned(cwd, pr);
       // RAD-97: soft-block before pattern preflight (fail fast; avoid diff work when CI missing).
-      applyReadyCiGate(pr, options.ciSkipReason);
+      applyReadyCiGate(pr, options.ciSkipReason, options.ciSkipChecks);
     }
     if (status === "ready" && !options.skipPreflight) {
       const preflight = await runPreflight(cwd, pr);
@@ -506,17 +516,52 @@ export async function setLocalPrStatus(
   });
 }
 
-/** Soft-block / record skip for ready (RAD-97). Mutates pr.readyCi. */
-function applyReadyCiGate(pr: LocalPr, ciSkipReason?: string): void {
+/** Same-HEAD plan only. A prior readyCi from another tip (or a failed run) is not a scope. */
+function skipScopeFromSameHead(pr: LocalPr): string[] {
+  const prior = normalizeReadyCi(pr.readyCi);
+  if (!prior || prior.headSha !== pr.headSha) return [];
+  return prior.skipScope ?? [];
+}
+
+function namedChecksFromTipComment(pr: LocalPr): string[] {
+  for (const comment of pr.comments ?? []) {
+    if (comment.replyTo || comment.forSha !== pr.headSha) continue;
+    if (!parseCiSkipReason(comment.body)) continue;
+    return parseNamedSkipChecks(comment.body);
+  }
+  return [];
+}
+
+function recordHumanSkip(
+  pr: LocalPr,
+  reason: string,
+  namedChecks?: string[],
+  recordedAt?: string,
+): void {
+  const fromText = parseNamedSkipChecks(reason);
+  const named = namedChecks?.length ? namedChecks : fromText;
+  // Keep the same-HEAD plan as skipScope. Named checks are checkSkips.
+  // Blanking the plan here made a one-check skip look like a full-plan mismatch.
+  pr.readyCi = readyCiFromSkipReason(
+    pr.headSha,
+    reason,
+    recordedAt,
+    skipScopeFromSameHead(pr),
+    named,
+  );
+}
+
+/** Soft-block / record skip for ready (RAD-97 / RAD-144). Mutates pr.readyCi. */
+function applyReadyCiGate(pr: LocalPr, ciSkipReason?: string, ciSkipChecks?: string[]): void {
   if (ciSkipReason?.trim()) {
-    pr.readyCi = readyCiFromSkipReason(pr.headSha, ciSkipReason.trim());
+    recordHumanSkip(pr, ciSkipReason.trim(), ciSkipChecks);
     return;
   }
   if (isReadyCiSatisfied(pr)) return;
   // Promote only tip-scoped "CI skipped: …" comments (forSha === HEAD) into readyCi.
   const tipSkip = tipScopedCiSkipReason(pr, pr.headSha);
   if (tipSkip) {
-    pr.readyCi = readyCiFromSkipReason(pr.headSha, tipSkip);
+    recordHumanSkip(pr, tipSkip, namedChecksFromTipComment(pr));
     return;
   }
   assertReadyCiSatisfied(pr);
@@ -535,6 +580,22 @@ export async function recordLocalPrReadyCi(
     } else {
       pr.readyCi = null;
     }
+    pr.updatedAt = nowIso();
+  });
+}
+
+/** Record an explicit export-gate override (RAD-144). Body must echo who, why, and each skipped check name before export. */
+export async function recordExportGateOverride(
+  cwd: string,
+  id: string,
+  override: { who: string; why: string },
+): Promise<LocalPr> {
+  const who = override.who.trim();
+  const why = override.why.trim();
+  if (!who || !why) throw new Error("exportGateOverride requires who and why");
+  return withPrLock(cwd, id, async (pr) => {
+    await applyHeadRefresh(cwd, pr);
+    pr.exportGateOverride = { who, why, headSha: pr.headSha, recordedAt: nowIso() };
     pr.updatedAt = nowIso();
   });
 }
@@ -938,7 +999,7 @@ export async function addLocalPrComment(
     const skipReason = role === "agent" ? parseCiSkipReason(text) : null;
     if (skipReason && !options.replyTo) {
       await applyHeadRefresh(cwd, pr);
-      pr.readyCi = readyCiFromSkipReason(pr.headSha, skipReason, now);
+      recordHumanSkip(pr, skipReason, parseNamedSkipChecks(text), now);
     }
 
     const comment: LocalPrComment = {

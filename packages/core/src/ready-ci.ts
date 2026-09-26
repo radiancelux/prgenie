@@ -1,15 +1,43 @@
 import type { CiRunnerResult } from "./ci-runner.js";
 import { formatCiSelectionReason } from "./ci-select.js";
-import type { LocalPr, LocalPrComment, ReadyCiRecord } from "./types.js";
+import { normalizeSkipScope } from "./ready-skip-carry.js";
+import type { LocalPr, LocalPrComment, ReadyCiCheckSkip, ReadyCiRecord } from "./types.js";
+
+const FAIL_FAST = /fail-fast/i;
+
+function isIntentionalReadySkip(reason: string | undefined): boolean {
+  if (!reason?.trim()) return false;
+  return !FAIL_FAST.test(reason);
+}
+
+function intentionalCheckSkips(result: CiRunnerResult): ReadyCiCheckSkip[] {
+  return result.checks
+    .filter((c) => c.skipped && isIntentionalReadySkip(c.reason))
+    .map((c) => ({ name: c.name, reason: c.reason!.trim() }));
+}
 
 const CI_SKIP_BODY = /^CI skipped:\s*(.+)$/i;
+const CI_SKIP_FIRST_LINE = /^CI skipped:\s*([^\n]+)/i;
+const SKIPPED_CHECKS_LINE = /Skipped checks:\s*([^\n]+)/gi;
 
-/** Parse an explicit "CI skipped: <reason>" body (RAD-97). */
+/** Parse an explicit "CI skipped: <reason>" body (RAD-97). First line only. */
 export function parseCiSkipReason(body: string): string | null {
-  const match = CI_SKIP_BODY.exec(body.trim());
+  const match = CI_SKIP_FIRST_LINE.exec(body.trim());
   if (!match) return null;
   const reason = match[1]?.trim();
   return reason ? reason : null;
+}
+
+/** Check names from a `Skipped checks:` line (backticks optional). */
+export function parseNamedSkipChecks(text: string): string[] {
+  const names: string[] = [];
+  for (const match of text.matchAll(SKIPPED_CHECKS_LINE)) {
+    for (const part of match[1].split(",")) {
+      const name = part.replace(/`/g, "").trim();
+      if (name) names.push(name);
+    }
+  }
+  return normalizeSkipScope(names);
 }
 
 export function formatCiSkipBody(reason: string): string {
@@ -27,6 +55,20 @@ export function normalizeReadyCi(raw: unknown): ReadyCiRecord | null {
   const checks = Array.isArray(parsed.checks)
     ? parsed.checks.filter((c): c is string => typeof c === "string")
     : undefined;
+  const skipScope = Array.isArray(parsed.skipScope)
+    ? parsed.skipScope.filter((c): c is string => typeof c === "string")
+    : undefined;
+  const checkSkips: ReadyCiCheckSkip[] = [];
+  if (Array.isArray(parsed.checkSkips)) {
+    for (const row of parsed.checkSkips) {
+      if (!row || typeof row !== "object") continue;
+      const name = (row as ReadyCiCheckSkip).name;
+      const reason = (row as ReadyCiCheckSkip).reason;
+      if (typeof name === "string" && name && typeof reason === "string" && reason.trim()) {
+        checkSkips.push({ name, reason: reason.trim() });
+      }
+    }
+  }
   return {
     headSha: parsed.headSha,
     recordedAt:
@@ -36,6 +78,8 @@ export function normalizeReadyCi(raw: unknown): ReadyCiRecord | null {
     outcome: parsed.outcome,
     skipReason: typeof parsed.skipReason === "string" ? parsed.skipReason : null,
     checks,
+    skipScope: skipScope?.length ? normalizeSkipScope(skipScope) : undefined,
+    checkSkips: checkSkips.length ? checkSkips : undefined,
   };
 }
 
@@ -95,6 +139,10 @@ export function readyCiFromRunnerResult(
   recordedAt: string = new Date().toISOString(),
 ): ReadyCiRecord | null {
   if (!result.allPassed) return null;
+  const skipScope = normalizeSkipScope(
+    result.selection?.checks ?? result.checks.map((c) => c.name),
+  );
+  const checkSkips = intentionalCheckSkips(result);
   const selectionSkipped = result.selection?.skipped === true && result.checks.length === 0;
   if (selectionSkipped) {
     const skipReason =
@@ -105,6 +153,8 @@ export function readyCiFromRunnerResult(
       outcome: "skipped",
       skipReason,
       checks: [],
+      skipScope,
+      checkSkips: [],
     };
   }
   return {
@@ -112,7 +162,9 @@ export function readyCiFromRunnerResult(
     recordedAt,
     outcome: "passed",
     skipReason: null,
-    checks: result.checks.map((c) => c.name),
+    checks: result.checks.filter((c) => c.passed && !c.skipped).map((c) => c.name),
+    skipScope,
+    checkSkips: checkSkips.length ? checkSkips : undefined,
   };
 }
 
@@ -120,15 +172,24 @@ export function readyCiFromSkipReason(
   headSha: string,
   reason: string,
   recordedAt: string = new Date().toISOString(),
+  skipScope: string[] = [],
+  namedChecks: readonly string[] = [],
 ): ReadyCiRecord {
   const skipReason = parseCiSkipReason(reason)?.trim() || reason.trim();
   if (!skipReason) throw new Error("CI skip reason is empty");
+  const named = normalizeSkipScope(namedChecks);
+  const inherited = normalizeSkipScope(skipScope);
+  // A same-HEAD plan stays the scope. Names replace it only when there is
+  // no plan to keep. Named checks are always checkSkips, not a new plan.
+  const scope = inherited.length ? inherited : named;
   return {
     headSha,
     recordedAt,
     outcome: "skipped",
     skipReason,
     checks: [],
+    skipScope: scope,
+    checkSkips: named.map((name) => ({ name, reason: skipReason })),
   };
 }
 

@@ -4,6 +4,12 @@ export type LocalPrStatus =
 /** Last implementor CI result for soft-blocking ready (RAD-97). */
 export type ReadyCiOutcome = "passed" | "skipped";
 
+/** Per-check skip recorded at ready (RAD-144). */
+export interface ReadyCiCheckSkip {
+  name: string;
+  reason: string;
+}
+
 export interface ReadyCiRecord {
   headSha: string;
   recordedAt: string;
@@ -11,6 +17,19 @@ export interface ReadyCiRecord {
   /** Present when outcome is skipped — body form is "CI skipped: <reason>". */
   skipReason?: string | null;
   checks?: string[];
+  /** Planned check names when readyCi was recorded — export gate scope must match to carry skips. */
+  skipScope?: string[];
+  /** Individual checks skipped at ready with an intentional reason (not fail-fast). */
+  checkSkips?: ReadyCiCheckSkip[];
+}
+
+/** Explicit human override when export gate is blocked (RAD-144). */
+export interface ExportGateOverride {
+  who: string;
+  why: string;
+  /** HEAD this override authorizes — cleared when the tip moves. */
+  headSha: string;
+  recordedAt: string;
 }
 
 export type CommentRole = "human" | "agent" | "reviewer";
@@ -84,6 +103,11 @@ export interface LocalPr {
    * Soft-blocks `set_status ready` until passed or skipped for current headSha.
    */
   readyCi?: ReadyCiRecord | null;
+  /**
+   * Recorded override allowing export while the gate is blocked (RAD-144).
+   * Must also appear in the loop body (who, why, skipped checks).
+   */
+  exportGateOverride?: ExportGateOverride | null;
   /**
    * Last full shepherd/export-gate snapshot (review + preflight + gh + CI).
    * Human-exportable UI is fail-closed: missing/stale/pending is not exportable.

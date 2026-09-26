@@ -149,6 +149,29 @@ Uncertain / hard-config mapping **skips** local CI with an explicit `skip local 
 
 Skip implementor preflight only when the toolchain cannot run (say so), mapping **skips** with a printable reason (RAD-119), or a human/steward gives an **explicit skip reason** (RAD-97). Do not skip a red scoped check. Do not “just `pnpm test` the whole repo” when `run_ci` already selected a confident scoped plan — and never escalate a skip/uncertain plan into full suite.
 
+### Ready skip carry-over → export gate (RAD-144)
+
+When implementor `run_ci` records a skip on check **X** at HEAD **H** (`readyCi.checkSkips` or whole-plan `readyCi.outcome === skipped`), the export gate **must not re-run** **X** at the same **H** when that skip still covers **X**. Progress shows `skipped (ready: <reason>)`.
+
+A human skip names the checks it covers:
+
+- MCP `set_status` `ready` with `ciSkipReason` and `ciSkipChecks` (string array of check names)
+- CLI `prgenie ready <id> --ci-skip-reason "<reason>" --ci-skip-checks test:core,lint` (comma-separated)
+- A tip-scoped comment whose first line is `CI skipped: <reason>` and that includes a `Skipped checks:` line (for example `Skipped checks: test:core, lint`)
+
+Those names are stored as `checkSkips`. A same-HEAD plan stays `skipScope`. A prior `readyCi` whose HEAD differs is ignored.
+
+| Condition                                                                             | Export gate behaviour                            |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Same HEAD + same `skipScope`                                                          | Honour ready skip — do not re-run carried checks |
+| Same HEAD, scope is only the named checks, and the gate plan still includes every one | Carry those checks — run the rest                |
+| HEAD moved                                                                            | Fail closed — re-run the gate plan               |
+| Plan drops a recorded check                                                           | Fail closed — re-run all checks                  |
+
+Export **refuses** while the stored gate is **blocked** or **failed**. There is no silent `--skip-validation` publish path. To export anyway, record `exportGateOverride` (`who`, `why`) on the loop packet **and** echo who, why, and each skipped check in the loop body. A plain check name does not count. Each check needs a backticked name (`` `test:core` ``), a `Skipped checks:` line, or that check's full blocked CI message. A who/why substring alone does not authorize the block.
+
+Re-export to an existing GitHub PR updates title/body from the packet via `gh pr edit --body-file` (RAD-150). Body-update failure is a **partial failure** (RAD-95), not hidden behind a successful push.
+
 When a human/steward **skips** CI (or hits panel **Cancel**): MCP `abort_ci` / panel Cancel both call `abortCiForSteward` and return the bound `implementorTaskId` — stop/interrupt that Task in the same steward turn. Cancel is the skip half; the panel alone does not kill the agent (abort alone leaves the implementor looping).
 
 ## Generated MCP bundle size

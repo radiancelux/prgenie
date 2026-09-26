@@ -21,6 +21,8 @@ import { isAbortError, type ProgressEvent } from "./progress.js";
 import {
   displayShepherdStatus,
   exportGateHasStaleFullSuiteCiPlan,
+  exportGateOverrideAllowsBlockedExport,
+  exportGateOverrideDocumented,
   exportGateSnapshotIsAdoptable,
   exportReadyEnterKey,
   formatExportBlockLabel,
@@ -605,5 +607,77 @@ describe("first-enter export notice", () => {
       "lp-ready@ccc",
     ]);
     assert.deepEqual(retainExportReadyNotified([pending], ["lp-ready@ccc"]), []);
+  });
+});
+
+describe("exportGateOverrideDocumented", () => {
+  const ci = (name: string, detail = "timeout") => ({
+    check: "ci" as const,
+    message: `CI check failed: ${name} — ${detail}`,
+  });
+
+  function withOverride(body: string, why: string): LocalPr {
+    return reviewedPr({
+      body,
+      exportGateOverride: {
+        who: "QA Lead",
+        why,
+        headSha: "abc123",
+        recordedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+  }
+
+  it("requires each skipped check name, not only who and why", () => {
+    const named = withOverride(
+      "Override by QA Lead because test:core timed out on green.\nSkipped checks: `test:core`",
+      "test:core timed out on green",
+    );
+    const reasons = [ci("test:core")];
+    assert.equal(exportGateOverrideDocumented(named, { reasons }), true);
+    assert.equal(exportGateOverrideAllowsBlockedExport(named, { reasons }), true);
+
+    const bare = withOverride(
+      "Override by QA Lead because the latest test run was flaky.",
+      "the latest test run was flaky",
+    );
+    assert.equal(exportGateOverrideDocumented(bare, { reasons: [ci("test")] }), false);
+
+    const unnamed = withOverride(
+      "Override by QA Lead because the suite was flaky on green.",
+      "on green",
+    );
+    assert.equal(exportGateOverrideDocumented(unnamed, { reasons }), false);
+    assert.equal(exportGateOverrideAllowsBlockedExport(unnamed, { reasons }), false);
+  });
+
+  it("accepts the blocked CI message when it has no named check", () => {
+    const message = "runner aborted before a named check";
+    const pr = withOverride(
+      `Override by QA Lead because the suite was flaky. ${message}`,
+      "the suite was flaky",
+    );
+    assert.equal(exportGateOverrideDocumented(pr, { reasons: [{ check: "ci", message }] }), true);
+    assert.equal(
+      exportGateOverrideDocumented(
+        withOverride("Override by QA Lead because the suite was flaky.", "the suite was flaky"),
+        { reasons: [{ check: "ci", message }] },
+      ),
+      false,
+    );
+  });
+
+  it("refuses when only one of two blocked CI checks is named", () => {
+    const pr = withOverride(
+      "Override by QA Lead because test:core timed out on green.",
+      "test:core timed out on green",
+    );
+    const reasons = [ci("test:core"), ci("lint", "prettier")];
+    assert.equal(exportGateOverrideAllowsBlockedExport(pr, { reasons }), false);
+    const both = withOverride(
+      "Override by QA Lead because test:core and lint failed on green.\nSkipped checks: `test:core`, `lint`",
+      "test:core and lint failed on green",
+    );
+    assert.equal(exportGateOverrideAllowsBlockedExport(both, { reasons }), true);
   });
 });

@@ -89,7 +89,7 @@ prgenie steward <id> [--restart] [--implementor-missing] [--implementor-failed] 
 prgenie steward bind <id> [--implementor taskId] [--reviewer taskId]
 prgenie doctor
 prgenie sessions [--limit N] [--hook name] [--since iso] [--json]
-prgenie export <id> [--skip-validation] [--verbose]
+prgenie export <id> [--verbose]
 prgenie shepherd <id> [--verbose]
 prgenie update <id> [--title t] [--body "summary"]
 prgenie list [--all] [--search q] [--query q] [--in title,body,comment,file]

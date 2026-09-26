@@ -16,6 +16,7 @@ import {
   editLocalPrComment,
   enableLearning,
   exportLocalPr,
+  recordExportGateOverride,
   ensureWorktreeForLoop,
   findLocalPrForCurrentWorktree,
   resolveMcpGitRoot,
@@ -221,6 +222,11 @@ export async function handleTool(
       const pr = await setLocalPrStatus(cwd, String(args.id ?? ""), status, {
         skipPreflight: typeof args.skipPreflight === "boolean" ? args.skipPreflight : undefined,
         ciSkipReason: typeof args.ciSkipReason === "string" ? args.ciSkipReason : undefined,
+        ciSkipChecks: Array.isArray(args.ciSkipChecks)
+          ? args.ciSkipChecks.filter(
+              (name): name is string => typeof name === "string" && name.trim() !== "",
+            )
+          : undefined,
       });
       const githubBind = await describeRepoGithubBind(cwd);
       return { ...withCommentViews(pr), githubBind };
@@ -321,8 +327,11 @@ export async function handleTool(
     }
     case "export_local_pr":
       mcpProgress?.report("exporting local PR");
-      return exportLocalPr(cwd, String(args.id ?? ""), {
-        skipValidation: args.skipValidation === true,
+      return exportLocalPr(cwd, String(args.id ?? ""));
+    case "record_export_gate_override":
+      return recordExportGateOverride(cwd, String(args.id ?? ""), {
+        who: String(args.who ?? ""),
+        why: String(args.why ?? ""),
       });
     case "list_learnings":
       return listLearnings(cwd, {
@@ -642,6 +651,12 @@ export const tools = [
           description:
             'RAD-97: explicit skip reason when toolchain cannot run. Records readyCi as skipped for current HEAD (stored as "CI skipped: <reason>").',
         },
+        ciSkipChecks: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "RAD-144: check names this human skip covers. Recorded as checkSkips and skipScope for the current HEAD. A prior readyCi on a different HEAD is ignored.",
+        },
         cwd: { type: "string" },
       },
     },
@@ -849,18 +864,31 @@ export const tools = [
   {
     name: "export_local_pr",
     description:
-      "Developer command: validate review status and preflight, then git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export. Export is blocked unless shepherd is ready (review complete, preflight clean, gh bound, local CI green). Unbound gh fails before CI. On prune/checkout failure after the GitHub PR opens, returns partialFailure { message, url, worktreePath } instead of silent half-success. Use skipValidation only for emergency export (env-unhealthy is first-class on the gate — do not invent a second CI selector).",
+      "Developer command: validate review status and preflight, then git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export. Export is blocked unless the export gate is ready (review complete, preflight clean, gh bound, local CI green). Re-export updates title/body on existing GitHub PRs via gh pr edit --body-file (RAD-150). Blocked export requires exportGateOverride (who/why) on the packet and each skipped check name in the body (RAD-144). Unbound gh fails before CI. On prune/checkout or body-update failure after push, returns partialFailure.",
     inputSchema: {
       type: "object",
       required: ["id"],
       properties: {
         id: { type: "string" },
         cwd: { type: "string" },
-        skipValidation: {
-          type: "boolean",
-          description:
-            "Skip export validation (review status + preflight + CI). Emergency override only — prefer fixing CI env unhealthy via the existing worktree gate.",
+      },
+    },
+  },
+  {
+    name: "record_export_gate_override",
+    description:
+      "Record exportGateOverride (who/why) bound to the loop's current HEAD when export is blocked on CI. The loop body must echo who, why, and each skipped check name (or the blocked CI message) before export succeeds. Override does not bypass review, preflight, or GitHub blocks.",
+    inputSchema: {
+      type: "object",
+      required: ["id", "who", "why"],
+      properties: {
+        id: { type: "string" },
+        who: { type: "string", description: "Who authorized the override (e.g. QA lead)." },
+        why: {
+          type: "string",
+          description: "Why export is allowed while CI is blocked (e.g. check name + reason).",
         },
+        cwd: { type: "string" },
       },
     },
   },
