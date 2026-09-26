@@ -16,12 +16,26 @@ import {
   getLocalPr,
   isArchivedPr,
   listLocalPrs,
+  recordLoopGuidanceSnapshots,
   refreshLocalPrHead,
   syncReviewRoundCount,
 } from "./prs.js";
 import type { ProgressCallback } from "./progress.js";
+import { formatImplementorContextBrief, loadRepoContextSnapshot } from "./repo-context.js";
+import {
+  formatReviewerGuidanceBrief,
+  guidanceRepoRoot,
+  loadReviewGuidanceSnapshot,
+} from "./repo-guidance.js";
 import { consoleDir, parseJsonObject, withFileLock, writeJsonFile } from "./store.js";
-import type { ExportGateSnapshot, ExportGateStatus, ImplementorTier, LocalPr } from "./types.js";
+import type {
+  ExportGateSnapshot,
+  ExportGateStatus,
+  ImplementorTier,
+  LocalPr,
+  RepoContextSnapshot,
+  ReviewGuidanceSnapshot,
+} from "./types.js";
 
 export interface StewardBinding {
   loopId: string;
@@ -88,6 +102,12 @@ export interface StewardNextResult {
   reviewRoundCount: number;
   implementorRoundCount: number;
   implementorModel: string | null;
+  /** Truncated repo review guidance for reviewer Task brief (RAD-102). */
+  reviewerGuidanceBrief: string | null;
+  /** Repo context paths for implementor Task brief (RAD-102). */
+  implementorContextBrief: string | null;
+  reviewGuidance: ReviewGuidanceSnapshot | null;
+  repoContext: RepoContextSnapshot | null;
 }
 
 interface StewardMapState {
@@ -531,6 +551,28 @@ async function attachImplementorTierHint(
   return { decision: current, tierHint: hint };
 }
 
+async function loadAndPersistGuidance(
+  root: string,
+  pr: LocalPr,
+): Promise<{
+  reviewGuidance: ReviewGuidanceSnapshot | null;
+  repoContext: RepoContextSnapshot;
+  reviewerGuidanceBrief: string | null;
+  implementorContextBrief: string | null;
+}> {
+  const repoRoot = guidanceRepoRoot(root, pr.worktreePath);
+  const now = new Date().toISOString();
+  const reviewGuidance = await loadReviewGuidanceSnapshot(repoRoot, now);
+  const repoContext = await loadRepoContextSnapshot(repoRoot, now);
+  await recordLoopGuidanceSnapshots(root, pr.id, { reviewGuidance, repoContext });
+  return {
+    reviewGuidance,
+    repoContext,
+    reviewerGuidanceBrief: formatReviewerGuidanceBrief(reviewGuidance),
+    implementorContextBrief: formatImplementorContextBrief(repoContext),
+  };
+}
+
 export async function stewardNext(
   cwd: string,
   id: string,
@@ -563,6 +605,7 @@ export async function stewardNext(
 
   const baseDecision = decideStewardAction(pr, binding, options);
   const tiered = await attachImplementorTierHint(root, pr, baseDecision, options);
+  const guidance = await loadAndPersistGuidance(root, pr);
   const fresh = await getLocalPr(root, pr.id);
 
   return {
@@ -575,6 +618,10 @@ export async function stewardNext(
     reviewRoundCount: fresh.reviewRoundCount ?? syncReviewRoundCount(fresh),
     implementorRoundCount: fresh.implementorRoundCount ?? 0,
     implementorModel: fresh.implementorModel ?? null,
+    reviewerGuidanceBrief: guidance.reviewerGuidanceBrief,
+    implementorContextBrief: guidance.implementorContextBrief,
+    reviewGuidance: guidance.reviewGuidance,
+    repoContext: guidance.repoContext,
   };
 }
 
@@ -606,6 +653,14 @@ export function formatStewardDecision(result: StewardNextResult): string {
   );
   if (decision.failingCheck) lines.push(`  failingCheck=${decision.failingCheck}`);
   if (decision.gateStatus) lines.push(`  exportGate=${decision.gateStatus}`);
+  if (result.reviewGuidance?.contentHash) {
+    lines.push(
+      `  reviewGuidance=${result.reviewGuidance.sourcePath ?? "-"} hash=${result.reviewGuidance.contentHash}`,
+    );
+  }
+  if (result.repoContext?.paths.length) {
+    lines.push(`  repoContext=${result.repoContext.paths.length} path(s)`);
+  }
   lines.push(`  ${decision.reason}`);
   return lines.join("\n");
 }

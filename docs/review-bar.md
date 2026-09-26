@@ -10,10 +10,21 @@ That bar covers HIGH/MEDIUM severity, required SYSTEM IMPACT and REGRESSIONS par
 
 ## Repo-specific guidance
 
-Author stack / org standards in **`.prgenie/review.md`** at the repo root (paths, UI libs, always-fail categories, etc.). When that file is present, reviewers apply it **with** the process bar. When absent, the process bar alone is the bar.
+Author stack / org standards in **`.prgenie/review.md`** at the repo root (paths, UI libs, always-fail categories, etc.). When that file is present, reviewers apply it **with** the process bar. When absent, fallbacks and the process bar alone apply — see [repo-local-guidance.md](repo-local-guidance.md).
 
-Ingesting `.prgenie/review.md` into Task packets is tracked separately (RAD-102). Until then, the leaf reviewer reads the file from the worktree when it exists.
+PR Genie discovers guidance in this order:
+
+1. `.prgenie/review.md`
+2. `.cursor/rules/*review*`
+3. `CLAUDE.md` → `## Review` section
+4. Missing → process bar only (no error)
+
+`steward_next` records a content hash on the loop packet and returns a **truncated excerpt** (`reviewerGuidanceBrief`) for reviewer Task prompts. Zero-tolerance and stack categories from `review.md` fill opt-in process-bar keys — not the reverse.
 
 ## Token hygiene
 
-Steward Task prompts should **point** at `/review` + `process-bar.md` (and `.prgenie/review.md` when present). Do not paste the full bar or external review skills into every Task (RAD-88).
+Steward Task prompts should **point** at `/review` + `process-bar.md` and paste the `reviewerGuidanceBrief` excerpt when present. Do not paste the full bar, full `review.md`, or external review skills into every Task (RAD-88).
+
+## Implementor context
+
+Repos may list CONTRIBUTING / standards / skill **paths** in `.prgenie/context.md`. `steward_next` returns `implementorContextBrief` so implementor Tasks **Read** the same sources before coding. See [repo-local-guidance.md](repo-local-guidance.md).
