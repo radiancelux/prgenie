@@ -56,11 +56,13 @@ Task **`prgenie-implementor`** or **`prgenie-implementor-strong`** per `steward_
 
 - implement this loop only; `/local-pr` rules; do not review yourself; do not push
 - commit on the loop branch; refresh `body`
+- **Base:** branch name only (`main`) — never a pinned SHA; do not write `Base: main @ <sha>` in packet bodies
 - **Before** `set_status ready` / Review requested: run MCP `run_ci` `{ id }` or `prgenie ci <id>` (path-scoped from changed paths — `docs/ci-checks.md`). Instruct the implementor to **print** `{ checks, reason }`, and **not** run whole-repo `pnpm test` when mapping is confident. If mapping **skips**, do not escalate to full suite — skip reason or touched-package tests only (RAD-119). Fail-fast: stop after first package suite fail. Prefer fix-before-ready over discover-via-gate.
 - **On red CI (RAD-121):** instruct the implementor to open the failing log, fix the named assertion/file, and re-run **only that file** (or that one check name) once per edit — **not** relaunch the multi-check scoped plan, and **not** overlap `run_ci` copies. Still format edited files. See `docs/ci-checks.md` (Red CI retry).
 - Skip CI only if the toolchain cannot run (say so in the comment). Do not skip a red check.
 - then `set_status ready` + `add_comment` role=agent **Review requested.**
 - Include the loop id, title, and body.
+- **`steward_next` returns `implementorContextBrief`** — paste it into the Task prompt. The implementor must **Read** those repo paths (and `.prgenie/context.md` when present) before writing product code. Paths only; never inline skill bodies.
 
 Persist the Task id as soon as you have it (at spawn, not after it finishes):
 
@@ -83,7 +85,7 @@ Prompt on resume:
 
 ### `spawn_reviewer` / `resume_reviewer`
 
-Task **`prgenie-reviewer`** (`/review` leaf — never `generalPurpose`). One id only. Prompt stays **token-thin**: loop id + “follow `/review` and `skills/review/process-bar.md`” (plus `.prgenie/review.md` when present). Do **not** paste the process bar, Copilot, or `review-open-prs` skills into the Task. `claim_review` first if you want the exclusive HEAD lock. File findings, resolve fixed threads, **always `complete_review`**. Persist `reviewerTaskId` via `bind_steward`. Await this Task.
+Task **`prgenie-reviewer`** (`/review` leaf — never `generalPurpose`). One id only. Prompt stays **token-thin**: loop id + “follow `/review` and `skills/review/process-bar.md`”. Paste **`reviewerGuidanceBrief`** from `steward_next` when present (truncated repo excerpt + hash — not full `review.md`). Do **not** paste the process bar, Copilot, or `review-open-prs` skills into the Task. `claim_review` first if you want the exclusive HEAD lock. File findings, resolve fixed threads, **always `complete_review`**. Persist `reviewerTaskId` via `bind_steward`. Await this Task.
 
 On **auth / host failure** before complete: MCP `mark_review_interrupted` / `prgenie review-interrupted` (status `review_interrupted`). Resume with Task `resume` on the **same** `reviewerTaskId` (or `resume_review` / `prgenie review-resume` then resume) — **no re-brief**. `steward_next` on `review_interrupted` returns `resume_reviewer` when the Task id is still bound.
 

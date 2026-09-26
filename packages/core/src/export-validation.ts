@@ -127,8 +127,10 @@ export async function evaluateAndStoreExportGate(
     // changedPathsForCi already sees the new tip (RAD-117 CI-resume).
     const pr = await refreshLocalPrHead(cwd, id);
     throwIfAborted(controller.signal);
-    // RAD-94: same declared-base gate as ready / run_ci / export.
-    const { assertDeclaredBaseAligned } = await import("./base-ref.js");
+    // RAD-145 / RAD-94: branch-only baseRef, then declared-base alignment.
+    const { assertDeclaredBaseAligned, assertStoredBaseRefIsBranch } =
+      await import("./base-ref.js");
+    await assertStoredBaseRefIsBranch(cwd, pr);
     await assertDeclaredBaseAligned(cwd, pr);
     throwIfAborted(controller.signal);
     const key = gateKey(cwd, id, pr.headSha);
@@ -405,9 +407,10 @@ export async function validateExport(
   // still names the failing check — do not greenwash or drop those reasons.
   // RAD-123: never adopt a stale full-suite snapshot (forces re-evaluate).
   const pr = await refreshLocalPrHead(cwd, id);
-  // RAD-94: fail export when merge-base ≠ declared base (or ahead-of-base is stacked).
-  const { assertDeclaredBaseAligned } = await import("./base-ref.js");
+  // RAD-145: legacy SHA baseRef packets fail before gh pr create.
+  const { assertDeclaredBaseAligned, assertStoredBaseRefIsBranch } = await import("./base-ref.js");
   try {
+    await assertStoredBaseRefIsBranch(cwd, pr);
     await assertDeclaredBaseAligned(cwd, pr);
   } catch (err) {
     return {
