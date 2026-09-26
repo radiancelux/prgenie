@@ -16,6 +16,7 @@ import {
   editLocalPrComment,
   enableLearning,
   exportLocalPr,
+  recordExportGateOverride,
   ensureWorktreeForLoop,
   findLocalPrForCurrentWorktree,
   resolveMcpGitRoot,
@@ -322,6 +323,11 @@ export async function handleTool(
     case "export_local_pr":
       mcpProgress?.report("exporting local PR");
       return exportLocalPr(cwd, String(args.id ?? ""));
+    case "record_export_gate_override":
+      return recordExportGateOverride(cwd, String(args.id ?? ""), {
+        who: String(args.who ?? ""),
+        why: String(args.why ?? ""),
+      });
     case "list_learnings":
       return listLearnings(cwd, {
         disabled: typeof args.disabled === "boolean" ? args.disabled : undefined,
@@ -853,6 +859,24 @@ export const tools = [
       required: ["id"],
       properties: {
         id: { type: "string" },
+        cwd: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "record_export_gate_override",
+    description:
+      "Record exportGateOverride (who/why) bound to the loop's current HEAD when export is blocked on CI. The loop body must echo who and why before export succeeds. Override does not bypass review, preflight, or GitHub blocks.",
+    inputSchema: {
+      type: "object",
+      required: ["id", "who", "why"],
+      properties: {
+        id: { type: "string" },
+        who: { type: "string", description: "Who authorized the override (e.g. QA lead)." },
+        why: {
+          type: "string",
+          description: "Why export is allowed while CI is blocked (e.g. check name + reason).",
+        },
         cwd: { type: "string" },
       },
     },

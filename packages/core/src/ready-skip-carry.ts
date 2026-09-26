@@ -55,13 +55,15 @@ export function planReadySkipCarry(options: {
     return { checksToRun: planned, carriedResults: [], scopeInvalidated: false };
   }
 
-  const hasReadySkips =
-    record.outcome === "skipped" || (record.checkSkips?.length ?? 0) > 0;
+  const hasReadySkips = record.outcome === "skipped" || (record.checkSkips?.length ?? 0) > 0;
   if (!hasReadySkips) {
     return { checksToRun: planned, carriedResults: [], scopeInvalidated: false };
   }
 
   const readyScope = readyCiPlannedScope(record);
+  if (planned.length > 0 && readyScope.length === 0) {
+    return { checksToRun: planned, carriedResults: [], scopeInvalidated: true };
+  }
   if (readyScope.length > 0 && !skipScopesEqual(readyScope, planned)) {
     return { checksToRun: planned, carriedResults: [], scopeInvalidated: true };
   }

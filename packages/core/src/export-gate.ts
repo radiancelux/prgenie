@@ -14,9 +14,11 @@ export function normalizeExportGateOverride(raw: unknown): ExportGateOverride | 
   const row = raw as Partial<ExportGateOverride>;
   if (typeof row.who !== "string" || !row.who.trim()) return null;
   if (typeof row.why !== "string" || !row.why.trim()) return null;
+  if (typeof row.headSha !== "string" || !row.headSha.trim()) return null;
   return {
     who: row.who.trim(),
     why: row.why.trim(),
+    headSha: row.headSha.trim(),
     recordedAt:
       typeof row.recordedAt === "string" && row.recordedAt
         ? row.recordedAt
@@ -24,20 +26,26 @@ export function normalizeExportGateOverride(raw: unknown): ExportGateOverride | 
   };
 }
 
-/** Override must be on the packet and echoed in the loop body (RAD-144). */
+/** Override must be on the packet, bound to this HEAD, and echoed in the loop body (RAD-144). */
 export function exportGateOverrideDocumented(
-  pr: Pick<LocalPr, "body" | "exportGateOverride">,
+  pr: Pick<LocalPr, "body" | "exportGateOverride" | "headSha">,
 ): boolean {
   const override = normalizeExportGateOverride(pr.exportGateOverride);
   if (!override) return false;
+  if (override.headSha !== pr.headSha) return false;
   const body = pr.body ?? "";
   return body.includes(override.who) && body.includes(override.why);
 }
 
+/** Override bypasses CI blocks only — not review, preflight, or GitHub (RAD-144). */
 export function exportGateOverrideAllowsBlockedExport(
-  pr: Pick<LocalPr, "body" | "exportGateOverride">,
+  pr: Pick<LocalPr, "body" | "exportGateOverride" | "headSha">,
+  shepherd: Pick<ShepherdResult, "reasons">,
 ): boolean {
-  return exportGateOverrideDocumented(pr);
+  if (!exportGateOverrideDocumented(pr)) return false;
+  const reasons = shepherd.reasons ?? [];
+  if (reasons.length === 0) return false;
+  return reasons.every((r) => r.check === "ci");
 }
 
 export type HumanExportKind = "exportable" | "blocked" | "pending" | "other";

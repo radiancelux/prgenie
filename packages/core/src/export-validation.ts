@@ -435,7 +435,7 @@ export async function validateExport(
     return { ok: true, issues: [], ciEnvUnhealthy: shepherd.ciEnvUnhealthy };
   }
 
-  if (exportGateOverrideAllowsBlockedExport(pr)) {
+  if (exportGateOverrideAllowsBlockedExport(pr, shepherd)) {
     return {
       ok: true,
       issues: [],

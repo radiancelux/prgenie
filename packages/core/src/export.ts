@@ -338,12 +338,14 @@ export async function exportLocalPr(
       if (!url) throw new Error("gh pr create succeeded but returned no URL");
       bodyUpdated = true;
     }
-    onProgress?.({
-      phase: "create_pr",
-      state: "pass",
-      command: alreadyExisted ? "gh pr edit --body-file" : createCmd,
-      elapsedMs: Date.now() - createStarted,
-    });
+    if (!(alreadyExisted && bodyUpdateError)) {
+      onProgress?.({
+        phase: "create_pr",
+        state: "pass",
+        command: alreadyExisted ? "gh pr edit --body-file" : createCmd,
+        elapsedMs: Date.now() - createStarted,
+      });
+    }
 
     if (pr.status !== "approved") {
       await setLocalPrStatus(cwd, pr.id, "approved");

@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import { git } from "./git.js";
 import {
   createLocalPr,
+  getLocalPr,
   exportPartialFailureFromRelease,
   formatReadyCarriedSkipReason,
   githubPrEditArgs,
@@ -61,6 +62,17 @@ describe("planReadySkipCarry (RAD-144)", () => {
       plannedChecks: ["test:core"],
     });
     assert.deepEqual(plan.checksToRun, ["test:core"]);
+    assert.equal(plan.carriedResults.length, 0);
+  });
+
+  it("fail-closes when skipScope is empty and gate plan is non-empty", () => {
+    const plan = planReadySkipCarry({
+      headSha: "abc",
+      readyCi: readyCiFromSkipReason("abc", "flaky test:core"),
+      plannedChecks: ["format:check", "lint", "test:core"],
+    });
+    assert.equal(plan.scopeInvalidated, true);
+    assert.deepEqual(plan.checksToRun, ["format:check", "lint", "test:core"]);
     assert.equal(plan.carriedResults.length, 0);
   });
 
@@ -198,6 +210,66 @@ describe("export refusal and override (RAD-144)", () => {
       });
       const validation = await validateExport(repo, pr.id);
       assert.equal(validation.ok, true);
+      const fresh = await getLocalPr(repo, pr.id);
+      assert.equal(fresh.exportGateOverride?.headSha, pr.headSha);
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("does not allow override after HEAD moves", async () => {
+    const repo = await createTempGitRepo({ prefix: "prgenie-export-override-move-" });
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(path.join(repo, "test.txt"), "x\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "feat"]);
+      const pr = await createLocalPr(repo, {
+        title: "Override move",
+        body: "Override by QA Lead because test:core timed out on green.",
+        base: "main",
+      });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      await setLocalPrExportGate(repo, pr.id, {
+        status: "blocked",
+        reasons: [{ check: "ci", message: "CI check failed: test:core — timeout" }],
+        headSha: pr.headSha,
+        evaluatedAt: new Date().toISOString(),
+      });
+      await recordExportGateOverride(repo, pr.id, {
+        who: "QA Lead",
+        why: "test:core timed out on green",
+      });
+      await writeFile(path.join(repo, "test.txt"), "y\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "follow-up"]);
+      const validation = await validateExport(repo, pr.id);
+      assert.equal(validation.ok, false);
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("does not allow override to bypass review blocks", async () => {
+    const repo = await createTempGitRepo({ prefix: "prgenie-export-override-review-" });
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(path.join(repo, "test.txt"), "x\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "feat"]);
+      const pr = await createLocalPr(repo, {
+        title: "Override review",
+        body: "Override by QA Lead because test:core timed out on green.",
+        base: "main",
+      });
+      await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
+      await recordExportGateOverride(repo, pr.id, {
+        who: "QA Lead",
+        why: "test:core timed out on green",
+      });
+      const validation = await validateExport(repo, pr.id);
+      assert.equal(validation.ok, false);
+      assert.ok(validation.issues.some((i) => /Review:/.test(i)));
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
@@ -211,7 +283,15 @@ describe("githubPrEditArgs (RAD-150)", () => {
       title: "New title",
       bodyFile: "C:\\tmp\\body.md",
     });
-    assert.deepEqual(args, ["pr", "edit", "lp-abc", "--title", "New title", "--body-file", "C:\\tmp\\body.md"]);
+    assert.deepEqual(args, [
+      "pr",
+      "edit",
+      "lp-abc",
+      "--title",
+      "New title",
+      "--body-file",
+      "C:\\tmp\\body.md",
+    ]);
   });
 });
 

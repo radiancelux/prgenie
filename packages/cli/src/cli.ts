@@ -13,6 +13,7 @@ import {
   deleteLocalPrComment,
   editLocalPrComment,
   exportLocalPr,
+  recordExportGateOverride,
   ensureWorktreeForLoop,
   findGitRoot,
   findLocalPrForCurrentWorktree,
@@ -80,6 +81,7 @@ Usage:
   prgenie doctor
   prgenie sessions [--limit N] [--hook <name>] [--since <iso>] [--json]
   prgenie export <id> [--verbose]
+  prgenie export-gate-override <id> --who <name> --why <reason>
   prgenie show <id>
   prgenie shepherd <id> [--verbose]
   prgenie ci <id> [--failing <checks>] [--no-fail-fast] [--no-parallel] [--skip-cache]
@@ -438,6 +440,19 @@ export async function run(argv: string[]): Promise<number> {
     for (const event of events) {
       process.stdout.write(formatSessionEvent(event) + "\n");
     }
+    return 0;
+  }
+  if (sub === "export-gate-override") {
+    const overrideId = rest[0];
+    const who = arg(rest, "--who");
+    const why = arg(rest, "--why");
+    if (!overrideId || !who || !why) {
+      process.stderr.write(
+        "prgenie export-gate-override <id> --who <name> --why <reason>\n\nRecord exportGateOverride for the current HEAD. Echo who and why in the loop body before export.\n",
+      );
+      return 1;
+    }
+    printPr(await recordExportGateOverride(repo, overrideId, { who, why }));
     return 0;
   }
   if (sub === "export") {

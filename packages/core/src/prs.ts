@@ -187,6 +187,9 @@ async function applyHeadRefresh(cwd: string, pr: LocalPr): Promise<void> {
   const tip = await resolveLoopHeadTip(cwd, pr);
   pr.headRef = tip.headRef;
   pr.headSha = tip.headSha;
+  if (previousHeadSha && pr.headSha !== previousHeadSha) {
+    pr.exportGateOverride = null;
+  }
   invalidateReviewedOnHeadMove(pr, previousHeadSha);
   pr.updatedAt = nowIso();
 }
@@ -507,15 +510,16 @@ export async function setLocalPrStatus(
 
 /** Soft-block / record skip for ready (RAD-97). Mutates pr.readyCi. */
 function applyReadyCiGate(pr: LocalPr, ciSkipReason?: string): void {
+  const priorScope = normalizeReadyCi(pr.readyCi)?.skipScope ?? [];
   if (ciSkipReason?.trim()) {
-    pr.readyCi = readyCiFromSkipReason(pr.headSha, ciSkipReason.trim());
+    pr.readyCi = readyCiFromSkipReason(pr.headSha, ciSkipReason.trim(), undefined, priorScope);
     return;
   }
   if (isReadyCiSatisfied(pr)) return;
   // Promote only tip-scoped "CI skipped: …" comments (forSha === HEAD) into readyCi.
   const tipSkip = tipScopedCiSkipReason(pr, pr.headSha);
   if (tipSkip) {
-    pr.readyCi = readyCiFromSkipReason(pr.headSha, tipSkip);
+    pr.readyCi = readyCiFromSkipReason(pr.headSha, tipSkip, undefined, priorScope);
     return;
   }
   assertReadyCiSatisfied(pr);
@@ -547,9 +551,9 @@ export async function recordExportGateOverride(
   const who = override.who.trim();
   const why = override.why.trim();
   if (!who || !why) throw new Error("exportGateOverride requires who and why");
-  const row: ExportGateOverride = { who, why, recordedAt: nowIso() };
   return withPrLock(cwd, id, async (pr) => {
-    pr.exportGateOverride = row;
+    await applyHeadRefresh(cwd, pr);
+    pr.exportGateOverride = { who, why, headSha: pr.headSha, recordedAt: nowIso() };
     pr.updatedAt = nowIso();
   });
 }
@@ -932,7 +936,8 @@ export async function addLocalPrComment(
     const skipReason = role === "agent" ? parseCiSkipReason(text) : null;
     if (skipReason && !options.replyTo) {
       await applyHeadRefresh(cwd, pr);
-      pr.readyCi = readyCiFromSkipReason(pr.headSha, skipReason, now);
+      const priorScope = normalizeReadyCi(pr.readyCi)?.skipScope ?? [];
+      pr.readyCi = readyCiFromSkipReason(pr.headSha, skipReason, now, priorScope);
     }
 
     const comment: LocalPrComment = {

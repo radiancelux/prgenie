@@ -27,6 +27,8 @@ export interface ReadyCiRecord {
 export interface ExportGateOverride {
   who: string;
   why: string;
+  /** HEAD this override authorizes — cleared when the tip moves. */
+  headSha: string;
   recordedAt: string;
 }
 
