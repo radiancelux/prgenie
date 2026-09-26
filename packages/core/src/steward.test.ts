@@ -452,9 +452,10 @@ test("RAD-126: decideStewardAction labels refused plan as ci-select not test", (
 });
 
 test("RAD-102: stewardNext records reviewGuidance hash on packet", async () => {
-  await mkdir(path.join(repo, ".prgenie"), { recursive: true });
-  await writeFile(path.join(repo, ".prgenie", "review.md"), "- Always validate input\n");
   const pr = await createLocalPr(repo, { title: "Guidance hash", body: "Body" });
+  assert.ok(pr.worktreePath, "loop worktree required");
+  await mkdir(path.join(pr.worktreePath, ".prgenie"), { recursive: true });
+  await writeFile(path.join(pr.worktreePath, ".prgenie", "review.md"), "- Always validate input\n");
   const next = await stewardNext(repo, pr.id, { evaluateGate: false });
   assert.ok(next.reviewGuidance?.contentHash);
   assert.equal(next.reviewGuidance?.sourcePath, ".prgenie/review.md");
