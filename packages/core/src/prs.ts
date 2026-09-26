@@ -532,11 +532,13 @@ function recordHumanSkip(
 ): void {
   const fromText = parseNamedSkipChecks(reason);
   const named = namedChecks?.length ? namedChecks : fromText;
+  // Keep the same-HEAD plan as skipScope. Named checks are checkSkips.
+  // Blanking the plan here made a one-check skip look like a full-plan mismatch.
   pr.readyCi = readyCiFromSkipReason(
     pr.headSha,
     reason,
     recordedAt,
-    named.length ? [] : skipScopeFromSameHead(pr),
+    skipScopeFromSameHead(pr),
     named,
   );
 }

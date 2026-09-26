@@ -43,7 +43,8 @@ export interface ReadySkipCarryPlan {
 
 /**
  * Decide which export-gate checks can be carried from readyCi without re-running (RAD-144).
- * HEAD mismatch or skip-scope change → fail closed (re-run everything).
+ * HEAD mismatch, a dropped recorded check, or a broader plan that no longer matches → fail closed.
+ * A named human skip (scope is only those checkSkips) is carried when the gate plan still includes them.
  */
 export function planReadySkipCarry(options: {
   readyCi: unknown;
@@ -67,8 +68,16 @@ export function planReadySkipCarry(options: {
   if (planned.length > 0 && readyScope.length === 0) {
     return { checksToRun: planned, carriedResults: [], scopeInvalidated: true };
   }
+  const namedOnly = normalizeSkipScope((record.checkSkips ?? []).map((skip) => skip.name));
+  const namedListIsScope = namedOnly.length > 0 && skipScopesEqual(readyScope, namedOnly);
+  const planCoversNamedScope = readyScope.every((name) => planned.includes(name));
   if (readyScope.length > 0 && !skipScopesEqual(readyScope, planned)) {
-    return { checksToRun: planned, carriedResults: [], scopeInvalidated: true };
+    // A named list is not a full-plan scope. Carry those checks when the gate
+    // plan still includes every one of them, and run the rest. Fail closed
+    // when the plan drops a recorded check, or when a broader plan no longer matches.
+    if (!(namedListIsScope && planCoversNamedScope)) {
+      return { checksToRun: planned, carriedResults: [], scopeInvalidated: true };
+    }
   }
 
   const carriedResults: CiCheckResult[] = [];

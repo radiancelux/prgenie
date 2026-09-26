@@ -178,7 +178,10 @@ export function readyCiFromSkipReason(
   const skipReason = parseCiSkipReason(reason)?.trim() || reason.trim();
   if (!skipReason) throw new Error("CI skip reason is empty");
   const named = normalizeSkipScope(namedChecks);
-  const scope = named.length ? named : normalizeSkipScope(skipScope);
+  const inherited = normalizeSkipScope(skipScope);
+  // A same-HEAD plan stays the scope. Names replace it only when there is
+  // no plan to keep. Named checks are always checkSkips, not a new plan.
+  const scope = inherited.length ? inherited : named;
   return {
     headSha,
     recordedAt,

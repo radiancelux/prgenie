@@ -106,6 +106,49 @@ describe("planReadySkipCarry (RAD-144)", () => {
     assert.equal(plan.carriedResults.length, 2);
     assert.match(plan.carriedResults[0]?.reason ?? "", /skipped \(ready: toolchain missing\)/);
   });
+
+  it("keeps a same-HEAD plan and carries only the named checks", () => {
+    const plan = planReadySkipCarry({
+      headSha: "abc",
+      readyCi: readyCiFromSkipReason(
+        "abc",
+        "flaky on Windows",
+        undefined,
+        ["format:check", "lint", "typecheck", "test:core"],
+        ["test:core"],
+      ),
+      plannedChecks: ["format:check", "lint", "typecheck", "test:core"],
+    });
+    assert.equal(plan.scopeInvalidated, false);
+    assert.deepEqual(plan.checksToRun, ["format:check", "lint", "typecheck"]);
+    assert.equal(plan.carriedResults.length, 1);
+    assert.equal(plan.carriedResults[0]?.name, "test:core");
+    assert.match(plan.carriedResults[0]?.reason ?? "", /skipped \(ready: flaky on Windows\)/);
+  });
+
+  it("carries a named-only skip when the gate plan is a superset", () => {
+    const plan = planReadySkipCarry({
+      headSha: "abc",
+      readyCi: readyCiFromSkipReason("abc", "flaky on Windows", undefined, [], ["test:core"]),
+      plannedChecks: ["format:check", "lint", "typecheck", "test:core"],
+    });
+    assert.equal(plan.scopeInvalidated, false);
+    assert.deepEqual(plan.checksToRun, ["format:check", "lint", "typecheck"]);
+    assert.equal(plan.carriedResults.length, 1);
+    assert.equal(plan.carriedResults[0]?.name, "test:core");
+    assert.match(plan.carriedResults[0]?.reason ?? "", /skipped \(ready: flaky on Windows\)/);
+  });
+
+  it("fail-closes when the gate plan drops a named check", () => {
+    const plan = planReadySkipCarry({
+      headSha: "abc",
+      readyCi: readyCiFromSkipReason("abc", "flaky", undefined, [], ["lint", "test:core"]),
+      plannedChecks: ["format:check", "test:core"],
+    });
+    assert.equal(plan.scopeInvalidated, true);
+    assert.deepEqual(plan.checksToRun, ["format:check", "test:core"]);
+    assert.equal(plan.carriedResults.length, 0);
+  });
 });
 
 describe("export gate honour ready skips", () => {
@@ -159,7 +202,7 @@ describe("export gate honour ready skips", () => {
     }
   });
 
-  it("carries a human skip that names checks with no prior readyCi", async () => {
+  it("carries a named human skip when the gate plan is a superset and no prior readyCi", async () => {
     const repo = await createTempGitRepo({ prefix: "prgenie-human-skip-" });
     try {
       await git(repo, ["checkout", "-b", "feature"]);
@@ -183,7 +226,12 @@ describe("export gate honour ready skips", () => {
         path.join(pr.worktreePath, "package.json"),
         JSON.stringify({
           name: "test-repo",
-          scripts: { test: "exit 1" },
+          scripts: {
+            "format:check": "exit 0",
+            lint: "exit 0",
+            typecheck: "exit 0",
+            test: "exit 1",
+          },
         }),
       );
       await writeFile(path.join(pr.worktreePath, ".gitignore"), "node_modules\n");
@@ -194,15 +242,21 @@ describe("export gate honour ready skips", () => {
         type,
       );
       await setLocalPrStatus(repo, pr.id, "reviewed");
+      const gatePlan = ["format:check", "lint", "typecheck", "test:core"];
       const shepherd = await shepherdStatus(repo, pr.id, {
         skipGithubCheck: true,
         skipToolchainEnsure: true,
-        selection: fixtureRootSelection(["test:core"]),
+        selection: fixtureRootSelection(gatePlan),
       });
       assert.equal(shepherd.status, "ready");
       const carried = shepherd.ciChecks?.find((c) => c.name === "test:core");
       assert.ok(carried?.skipped);
       assert.match(carried?.reason ?? "", /skipped \(ready: flaky on Windows\)/);
+      for (const name of ["format:check", "lint", "typecheck"]) {
+        const ran = shepherd.ciChecks?.find((c) => c.name === name);
+        assert.equal(ran?.passed, true, name);
+        assert.equal(ran?.skipped ?? false, false, name);
+      }
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
@@ -232,6 +286,42 @@ describe("export gate honour ready skips", () => {
       assert.equal(ready.readyCi?.headSha, pr.headSha);
       assert.deepEqual(ready.readyCi?.skipScope, ["test:core"]);
       assert.deepEqual(ready.readyCi?.checkSkips, [{ name: "test:core", reason: "flaky" }]);
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("keeps a same-HEAD plan when a human names a subset", async () => {
+    const repo = await createTempGitRepo({ prefix: "prgenie-human-skip-plan-" });
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(path.join(repo, "test.txt"), "x\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "feat"]);
+      const pr = await createLocalPr(repo, { title: "Keep plan", body: "Body", base: "main" });
+      const gatePlan = ["format:check", "lint", "typecheck", "test:core"];
+      await recordLocalPrReadyCi(repo, pr.id, {
+        headSha: pr.headSha,
+        recordedAt: new Date().toISOString(),
+        outcome: "passed",
+        skipScope: gatePlan,
+        checks: gatePlan,
+      });
+      const ready = await setLocalPrStatus(repo, pr.id, "ready", {
+        skipPreflight: true,
+        ciSkipReason: "flaky on Windows",
+        ciSkipChecks: ["test:core"],
+      });
+      assert.equal(ready.readyCi?.headSha, pr.headSha);
+      assert.deepEqual(ready.readyCi?.skipScope, [
+        "format:check",
+        "lint",
+        "test:core",
+        "typecheck",
+      ]);
+      assert.deepEqual(ready.readyCi?.checkSkips, [
+        { name: "test:core", reason: "flaky on Windows" },
+      ]);
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
