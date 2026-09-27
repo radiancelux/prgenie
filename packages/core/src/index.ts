@@ -257,7 +257,12 @@ export {
   isHeavyTestRun,
   listHeavySlotHolders,
 } from "./ci-heavy-slot.js";
-export type { AcquireHeavySlotOptions, HeavySlotHandle, HeavySlotRecord, HeavySlotTiming } from "./ci-heavy-slot.js";
+export type {
+  AcquireHeavySlotOptions,
+  HeavySlotHandle,
+  HeavySlotRecord,
+  HeavySlotTiming,
+} from "./ci-heavy-slot.js";
 export {
   abortError,
   ciCheckCommand,

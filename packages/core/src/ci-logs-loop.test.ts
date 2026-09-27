@@ -85,7 +85,10 @@ describe("RAD-136 per-loop CI logs", () => {
         },
       });
       const check = result.checks.find((c) => c.name === "test");
-      assert.ok(check?.logPath?.includes(`ci-logs${path.sep}${pr.id}`) || check?.logPath?.includes(`ci-logs/${pr.id}`));
+      assert.ok(
+        check?.logPath?.includes(`ci-logs${path.sep}${pr.id}`) ||
+          check?.logPath?.includes(`ci-logs/${pr.id}`),
+      );
       assert.ok(failLog?.includes(pr.id));
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);

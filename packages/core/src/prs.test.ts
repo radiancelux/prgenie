@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import {
@@ -47,7 +47,6 @@ import {
   resolveLocalPrComment,
   setLocalPrStatus,
   shouldSpawnReviewer,
-  markReviewRequested,
   markReviewerNotified,
   markReviewInterrupted,
   updateLocalPr,
@@ -58,35 +57,60 @@ import {
 } from "./index.js";
 import { prsDir, prFile, parseJsonObject, writeJsonFile } from "./store.js";
 import type { LocalPr } from "./types.js";
+import { createTempGitRepo } from "./test-git-fixture.js";
 
 let repo = "";
+
+const HEAD_DRIFT_TEST_NAME = "complete_review refuses when HEAD moved after Review requested";
+
+function isHeadDriftTest(ctx: { name?: string }): boolean {
+  return ctx.name === HEAD_DRIFT_TEST_NAME;
+}
 
 function git(args: string[], cwd = repo): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
+function featWidgetBranchExists(): boolean {
+  try {
+    git(["rev-parse", "--verify", "feat/widget"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ensureFeatWidgetBranch(): void {
+  if (featWidgetBranchExists()) {
+    try {
+      git(["checkout", "feat/widget"]);
+      return;
+    } catch {
+      // branch exists but checkout failed — recreate below
+    }
+  }
+  git(["checkout", "main"]);
+  git(["checkout", "-B", "feat/widget"]);
+  writeFileSync(path.join(repo, "widget.txt"), "n=1\n");
+  git(["add", "widget.txt"]);
+  git(["commit", "-m", "add widget"]);
+}
+
 before(async () => {
-  repo = await mkdtemp(path.join(tmpdir(), "prgenie-"));
-  git(["init", "-b", "main"]);
+  repo = await createTempGitRepo({ prefix: "prgenie-prs-" });
   git(["config", "user.email", "test@prgenie.ai"]);
   git(["config", "user.name", "PR Genie Test"]);
-  await writeFile(path.join(repo, "README.md"), "hello\n");
-  git(["add", "."]);
-  git(["commit", "-m", "initial"]);
-  git(["checkout", "-b", "feat/widget"]);
-  await writeFile(path.join(repo, "widget.txt"), "n=1\n");
-  git(["add", "."]);
-  git(["commit", "-m", "add widget"]);
 });
 
-beforeEach(async () => {
+beforeEach(async (ctx) => {
   if (!repo) return;
+  await rm(await prsDir(repo), { recursive: true, force: true });
+  if (isHeadDriftTest(ctx)) return;
   const trees = await listWorktrees(repo);
   if (trees.some((t) => loopWorktreeIdentity(t.path))) {
     await pruneLoopWorktrees(repo);
   }
-  // Shared feat/widget checkout: drop live packets so the next case can create again.
-  await rm(await prsDir(repo), { recursive: true, force: true });
+  ensureFeatWidgetBranch();
   try {
     git(["checkout", "feat/widget"]);
   } catch {
@@ -968,10 +992,7 @@ test("complete_review refuses when HEAD moved after Review requested", async () 
   await writeFile(path.join(repo, "drift.txt"), "moved\n");
   git(["add", "drift.txt"]);
   git(["commit", "-m", "move head after review requested"]);
-  await assert.rejects(
-    () => completeLocalPrReview(repo, id),
-    /HEAD moved since Review requested/,
-  );
+  await assert.rejects(() => completeLocalPrReview(repo, id), /HEAD moved since Review requested/);
   assert.equal((await getLocalPr(repo, id)).status, "ready");
   const forced = await completeLocalPrReview(repo, id, { allowDrift: true });
   assert.equal(forced.headDrift, true);

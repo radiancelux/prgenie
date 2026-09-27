@@ -208,9 +208,7 @@ async function runCiSlot(repo: string, rest: string[]): Promise<number> {
         cwd: repo,
         stdio: "inherit",
         shell: false,
-        env: slotDir
-          ? { ...process.env, PRGENIE_CI_HEAVY_SLOT_HELD: slotDir }
-          : process.env,
+        env: slotDir ? { ...process.env, PRGENIE_CI_HEAVY_SLOT_HELD: slotDir } : process.env,
       });
       child.on("error", reject);
       child.on("close", (code, signal) => {

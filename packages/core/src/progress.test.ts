@@ -53,7 +53,7 @@ describe("progress helpers", () => {
       }),
       "[ci:test:core] waiting — waiting for heavy-test slot (2/2 busy)",
     );
-    let snap = applyCiProgressEvent(emptyCiProgressSnapshot(), {
+    const snap = applyCiProgressEvent(emptyCiProgressSnapshot(), {
       phase: "ci",
       check: "test:core",
       state: "waiting",

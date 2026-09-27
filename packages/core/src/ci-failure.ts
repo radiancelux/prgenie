@@ -409,10 +409,7 @@ export async function listCiFailureLogs(
 }
 
 /** Newest failure per loop (shared counts as null), for doctor (RAD-136 R10). */
-export async function latestCiFailuresByLoop(
-  cwd: string,
-  limit = 5,
-): Promise<CiFailureLogMeta[]> {
+export async function latestCiFailuresByLoop(cwd: string, limit = 5): Promise<CiFailureLogMeta[]> {
   const entries: CiFailureLogMeta[] = [];
   try {
     const base = await ciLogsDir(cwd, false, null);

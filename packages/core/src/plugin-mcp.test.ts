@@ -168,7 +168,7 @@ test("pinPluginMcpJson writes stdio + absolute node + absolute server (no BOM)",
         prgenie: {
           command: "node",
           args: ["${CURSOR_PLUGIN_ROOT}/mcp/server.cjs"],
-          timeout: 3600,
+          timeout: 4800,
         },
       },
     }),
@@ -177,8 +177,8 @@ test("pinPluginMcpJson writes stdio + absolute node + absolute server (no BOM)",
   assert.equal(
     (JSON.parse(keptHigh) as { mcpServers: { prgenie: { timeout?: number } } }).mcpServers.prgenie
       .timeout,
-    3600,
-    "RAD-100: explicit higher timeout still wins",
+    4800,
+    "RAD-134: explicit timeout above the 4200 floor still wins",
   );
 });
 

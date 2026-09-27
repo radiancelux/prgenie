@@ -127,11 +127,7 @@ function readSlot(file: string): HeavySlotRecord | null {
   }
 }
 
-function slotStale(
-  file: string,
-  record: HeavySlotRecord | null,
-  staleMs: number,
-): boolean {
+function slotStale(file: string, record: HeavySlotRecord | null, staleMs: number): boolean {
   if (record) {
     if (!pidAlive(record.pid)) return true;
     const hb = Date.parse(record.heartbeatAt);
@@ -281,17 +277,7 @@ export async function acquireHeavyTestSlot(
         } finally {
           closeSync(fd);
         }
-        let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
-        const release = (): void => {
-          if (heartbeatTimer) clearInterval(heartbeatTimer);
-          try {
-            const cur = readSlot(file);
-            if (cur?.token === token) unlinkSync(file);
-          } catch {
-            // raced
-          }
-        };
-        heartbeatTimer = setInterval(() => {
+        const heartbeatTimer = setInterval(() => {
           try {
             const cur = readSlot(file);
             if (!cur || cur.token !== token) return;
@@ -302,6 +288,15 @@ export async function acquireHeavyTestSlot(
           }
         }, heartbeatMs);
         heartbeatTimer.unref?.();
+        const release = (): void => {
+          clearInterval(heartbeatTimer);
+          try {
+            const cur = readSlot(file);
+            if (cur?.token === token) unlinkSync(file);
+          } catch {
+            // raced
+          }
+        };
 
         return { release, waitedMs, slotDir };
       } catch {
