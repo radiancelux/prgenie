@@ -208,6 +208,40 @@ describe("decideStatusPanelPaint (RAD-110)", () => {
     assert.equal(own.mode, "gate");
     assert.equal(own.showProgress, true);
     assert.equal(own.progressStep, "Running lint");
+
+    const exportBusy = decideStatusPanelPaint({
+      liveCount: 1,
+      selected: loop("reviewed"),
+      progress: null,
+      shepherd: null,
+      exportingId: "lp-a",
+    });
+    assert.equal(exportBusy.mode, "gate");
+    assert.equal(exportBusy.showProgress, true);
+
+    const foreignExport = decideStatusPanelPaint({
+      liveCount: 1,
+      selected: loop("reviewed"),
+      progress: null,
+      shepherd: null,
+      exportingId: "lp-other",
+    });
+    assert.equal(foreignExport.mode, "quiet");
+    assert.equal(foreignExport.showProgress, false);
+
+    const exportEnded = decideStatusPanelPaint({
+      liveCount: 1,
+      selected: loop("reviewed"),
+      progress: null,
+      shepherd: null,
+      exportingId: null,
+    });
+    assert.equal(exportEnded.mode, "quiet");
+    assert.equal(exportEnded.showProgress, false);
+
+    assert.ok(laneViewSrc.includes('"exportingId" in payload'));
+    assert.ok(laneViewSrc.includes("this.exportingId = null"));
+    assert.ok(laneViewSrc.includes("await this.pushSnapshot(true)"));
   });
 
   it("RAD-110: reviewed loop without gate result shows pending hint", () => {

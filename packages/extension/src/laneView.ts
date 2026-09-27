@@ -530,6 +530,8 @@ export class LaneHub implements vscode.Disposable {
           onProgress: (event) => this.emitProgress("export", id, event),
         });
         this.clearLiveProgress();
+        // Drop exportingId before the post-export snapshot so STATUS leaves gate mode (RAD-110).
+        this.exportingId = null;
         await this.pushSnapshot(true);
         // RAD-95: prune/checkout incomplete after PR open is not a pure success.
         if (result.partialFailure) {
@@ -563,6 +565,7 @@ export class LaneHub implements vscode.Disposable {
         }
         this.clearLiveProgress();
         void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
+        this.exportingId = null;
         await this.pushSnapshot(true);
       } finally {
         this.exportAbort = null;
@@ -1208,6 +1211,7 @@ function snapshotKey(payload: Snapshot | { type: "snapshot"; error: string; prs:
     ciChecks: "ciChecks" in payload ? payload.ciChecks : null,
     ciCwd: "ciCwd" in payload ? payload.ciCwd : null,
     searchQuery: "searchQuery" in payload ? payload.searchQuery : "",
+    exportingId: "exportingId" in payload ? (payload.exportingId ?? null) : null,
     prs: payload.prs,
     archivedPrs: "archivedPrs" in payload ? payload.archivedPrs : [],
   });
