@@ -1094,13 +1094,28 @@ export class LaneHub implements vscode.Disposable {
       for (const id of ids) this.knownIds.add(id);
       // RAD-124: while export is busy, keep the exporting loop selected even if a
       // draft sibling updates and would otherwise become "fresh" / top of list.
+      // A user click on a different loop (userPinned to another id) stays, so
+      // STATUS can show quiet DRAFT during export (RAD-110 R16).
+      const userChoseOther =
+        this.userPinned && !!this.selectedId && this.selectedId !== this.exportingId;
       if (
         this.exportBusy &&
         this.exportingId &&
-        selectable.some((p) => p.id === this.exportingId)
+        selectable.some((p) => p.id === this.exportingId) &&
+        !userChoseOther
       ) {
         this.selectedId = this.exportingId;
-      } else {
+      } else if (
+        this.exportBusy &&
+        this.exportingId &&
+        this.selectedId &&
+        !selectable.some((p) => p.id === this.selectedId) &&
+        !archived.some((p) => p.id === this.selectedId)
+      ) {
+        this.selectedId = selectable.some((p) => p.id === this.exportingId)
+          ? this.exportingId
+          : (live[0]?.id ?? archived[0]?.id);
+      } else if (!(this.exportBusy && this.exportingId)) {
         if (freshIds.length && !this.userPinned) this.selectedId = freshIds[0];
         if (this.selectedId && !selectable.some((p) => p.id === this.selectedId)) {
           // Keep selection if it is an archived loop (panel still works while section collapsed).

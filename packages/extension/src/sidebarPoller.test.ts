@@ -336,6 +336,11 @@ test("laneView STATUS quiet until reviewed; idle clear; no vertical reason layou
   assert.ok(src.includes("cheapShepherdTargetId"));
   assert.ok(src.includes("flex-direction: column"));
   assert.ok(src.includes("exportingId"));
+  assert.match(
+    src,
+    /userPinned && !!this\.selectedId && this\.selectedId !== this\.exportingId/,
+    "a user-selected draft stays selected while another loop is exporting",
+  );
   assert.ok(src.includes("Reusing green gate"));
   assert.ok(src.includes("Re-running gate CI"));
   assert.ok(src.includes("exportBusyHint"));
