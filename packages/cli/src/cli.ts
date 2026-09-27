@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -53,6 +54,10 @@ import {
   humanExportUi,
   runLoopCi,
   isAbortError,
+  acquireHeavyTestSlot,
+  HeavySlotMaxWaitError,
+  HeavySlotUnavailableError,
+  loopWorktreeIdentity,
   bindSteward,
   formatStewardBinding,
   formatStewardDecision,
@@ -85,6 +90,7 @@ Usage:
   prgenie show <id>
   prgenie shepherd <id> [--verbose]
   prgenie ci <id> [--failing <checks>] [--no-fail-fast] [--no-parallel] [--skip-cache]
+  prgenie ci-slot [--check <name>] -- <command> [args...]
   prgenie update <id> [--title <t>] [--body <summary>]
   prgenie diff <id> [--stat] [-- <path>...]
   prgenie delete <id> [--yes]
@@ -151,6 +157,83 @@ export function messageArg(args: string[]): string | undefined {
 
 export function flag(args: string[], name: string): boolean {
   return args.includes(name);
+}
+
+async function runCiSlot(repo: string, rest: string[]): Promise<number> {
+  const dash = rest.indexOf("--");
+  if (dash < 0 || dash >= rest.length - 1) {
+    process.stderr.write(
+      "prgenie ci-slot [--check <name>] -- <command> [args...]\n\nRun a command under a heavy-test slot (reviewer backstop / manual full suite).\n",
+    );
+    return 1;
+  }
+  const flags = rest.slice(0, dash);
+  const cmdArgv = rest.slice(dash + 1);
+  const check = arg(flags, "--check") ?? "full-suite";
+  const ident = loopWorktreeIdentity(repo);
+  const ac = new AbortController();
+  const onSigint = (): void => ac.abort();
+  process.on("SIGINT", onSigint);
+  let release: (() => void) | undefined;
+  let slotDir: string | undefined;
+  try {
+    try {
+      const slot = await acquireHeavyTestSlot({
+        cwd: repo,
+        loopId: ident?.id ?? null,
+        check,
+        signal: ac.signal,
+        onWaiting: (message) => {
+          process.stderr.write(`${message}\n`);
+        },
+      });
+      release = slot.release;
+      slotDir = slot.slotDir;
+    } catch (err) {
+      if (err instanceof HeavySlotMaxWaitError) {
+        process.stderr.write(`${err.message}\n`);
+        return 1;
+      }
+      if (isAbortError(err) || ac.signal.aborted) {
+        return 130;
+      }
+      if (err instanceof HeavySlotUnavailableError) {
+        process.stderr.write(`heavy-test slot unavailable: ${err.message}\n`);
+      } else {
+        throw err;
+      }
+    }
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      const child = spawn(cmdArgv[0]!, cmdArgv.slice(1), {
+        cwd: repo,
+        stdio: "inherit",
+        shell: false,
+        env: slotDir
+          ? { ...process.env, PRGENIE_CI_HEAVY_SLOT_HELD: slotDir }
+          : process.env,
+      });
+      child.on("error", reject);
+      child.on("close", (code, signal) => {
+        if (signal === "SIGINT") resolve(130);
+        else resolve(typeof code === "number" ? code : 1);
+      });
+      ac.signal.addEventListener(
+        "abort",
+        () => {
+          try {
+            child.kill("SIGINT");
+          } catch {
+            // ignore
+          }
+        },
+        { once: true },
+      );
+    });
+    return exitCode;
+  } finally {
+    process.off("SIGINT", onSigint);
+    release?.();
+  }
 }
 
 function printPr(pr: LocalPr): void {
@@ -690,6 +773,9 @@ export async function run(argv: string[]): Promise<number> {
       }
     }
     return result.status === "ready" ? 0 : 1;
+  }
+  if (sub === "ci-slot") {
+    return runCiSlot(repo, rest);
   }
   if (sub === "ci") {
     if (flag(rest, "-h") || flag(rest, "--help")) {

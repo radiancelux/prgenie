@@ -43,6 +43,33 @@ describe("progress helpers", () => {
     assert.match(formatProgressLine({ phase: "review", state: "start" }), /\[review\] running/);
   });
 
+  it("RAD-134: waiting state formats in line, card and step", () => {
+    assert.equal(
+      formatProgressLine({
+        phase: "ci",
+        check: "test:core",
+        state: "waiting",
+        message: "waiting for heavy-test slot (2/2 busy)",
+      }),
+      "[ci:test:core] waiting — waiting for heavy-test slot (2/2 busy)",
+    );
+    let snap = applyCiProgressEvent(emptyCiProgressSnapshot(), {
+      phase: "ci",
+      check: "test:core",
+      state: "waiting",
+      message: "waiting for heavy-test slot",
+    });
+    assert.match(formatProgressCard(snap), /waiting — waiting for heavy-test slot/);
+    assert.equal(
+      formatProgressStep({ phase: "ci", check: "test:core", state: "waiting" }, "gate"),
+      "CI checks → test:core (waiting)",
+    );
+    assert.equal(
+      formatProgressStep({ phase: "ci", check: "test:core", state: "waiting" }, "export"),
+      "Re-running gate CI → test:core (waiting)",
+    );
+  });
+
   it("formats sidebar steps for gate vs full export", () => {
     assert.equal(
       formatProgressStep({ phase: "ci", check: "format:check", state: "start" }, "gate"),

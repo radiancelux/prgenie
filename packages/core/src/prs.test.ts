@@ -932,19 +932,48 @@ test("ready handoff arms reviewRequestedSha for the drift guard", async () => {
 
 test("complete_review refuses when HEAD moved after Review requested", async () => {
   git(["checkout", "main"]);
-  const pr = await createLocalPr(repo, { title: "Drift guard", base: "main" });
-  assert.ok(pr.worktreePath);
-  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
-  const marked = await markReviewRequested(repo, pr.id);
-  await writeFile(path.join(pr.worktreePath, "drift.txt"), "moved\n");
-  git(["add", "drift.txt"], pr.worktreePath);
-  git(["commit", "-m", "move head after review requested"], pr.worktreePath);
+  git(["checkout", "-b", "feat/drift-guard"]);
+  await writeFile(path.join(repo, "drift-seed.txt"), "1\n");
+  git(["add", "drift-seed.txt"]);
+  git(["commit", "-m", "seed drift branch"]);
+  const headSha = git(["rev-parse", "HEAD"]);
+  const baseSha = git(["rev-parse", "main"]);
+  const now = new Date().toISOString();
+  const id = "lp-deadbee1";
+  const packet: LocalPr = {
+    id,
+    title: "Drift guard",
+    body: "",
+    status: "ready",
+    headRef: "feat/drift-guard",
+    baseRef: "main",
+    headSha,
+    baseSha,
+    worktreePath: null,
+    comments: [],
+    source: { kind: "cli" },
+    createdAt: now,
+    updatedAt: now,
+    reviewRequestedSha: headSha,
+    reviewerNotifiedSha: null,
+    readyCi: null,
+    exportGateOverride: null,
+    implementorTier: null,
+    implementorModel: null,
+    reviewRoundCount: 0,
+    implementorRoundCount: 0,
+    lastTierBumpReason: null,
+  };
+  await writeFile(prFile(await prsDir(repo), id), `${JSON.stringify(packet, null, 2)}\n`);
+  await writeFile(path.join(repo, "drift.txt"), "moved\n");
+  git(["add", "drift.txt"]);
+  git(["commit", "-m", "move head after review requested"]);
   await assert.rejects(
-    () => completeLocalPrReview(repo, marked.id),
+    () => completeLocalPrReview(repo, id),
     /HEAD moved since Review requested/,
   );
-  assert.equal((await getLocalPr(repo, marked.id)).status, "ready");
-  const forced = await completeLocalPrReview(repo, marked.id, { allowDrift: true });
+  assert.equal((await getLocalPr(repo, id)).status, "ready");
+  const forced = await completeLocalPrReview(repo, id, { allowDrift: true });
   assert.equal(forced.headDrift, true);
   assert.equal(forced.status, "reviewed");
 });

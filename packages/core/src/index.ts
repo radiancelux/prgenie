@@ -243,6 +243,22 @@ export {
   watchCiAbort,
 } from "./ci-abort.js";
 export {
+  acquireHeavyTestSlot,
+  CI_HEAVY_SLOT_DEFAULT_CONCURRENCY,
+  CI_HEAVY_SLOT_HEARTBEAT_MS,
+  CI_HEAVY_SLOT_MAX_WAIT_MS,
+  CI_HEAVY_SLOT_POLL_MS,
+  CI_HEAVY_SLOT_STALE_MS,
+  ciHeavySlotDir,
+  formatHeavySlotWaitMessage,
+  heavyTestConcurrency,
+  HeavySlotMaxWaitError,
+  HeavySlotUnavailableError,
+  isHeavyTestRun,
+  listHeavySlotHolders,
+} from "./ci-heavy-slot.js";
+export type { AcquireHeavySlotOptions, HeavySlotHandle, HeavySlotRecord, HeavySlotTiming } from "./ci-heavy-slot.js";
+export {
   abortError,
   ciCheckCommand,
   applyCiProgressEvent,
@@ -495,7 +511,10 @@ export {
   formatCiCheckError,
   formatFailureExcerpt,
   latestCiFailure,
+  latestCiFailuresByLoop,
   listCiFailureLogs,
+  isValidLoopLogKey,
+  resolveCiLogLoopKey,
   parseFirstFailingTest,
   parseGateExcerpt,
   readCiFailureLog,

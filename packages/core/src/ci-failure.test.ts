@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import path from "node:path";
 import { join } from "node:path";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
@@ -12,6 +13,7 @@ import {
   formatFailureExcerpt,
   lastNonEmptyLines,
   latestCiFailure,
+  listCiFailureLogs,
   parseFirstFailingTest,
   parseGateExcerpt,
   stripAnsi,
@@ -109,6 +111,228 @@ describe("ci failure excerpts", () => {
       }),
       "pnpm test — not ok 1 - foo — full log: .git/agent-console/ci-logs/test.log",
     );
+  });
+
+  it("RAD-136: writeCiFailureLog writes under ci-logs/<loopId>/", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-log-loop-"));
+    try {
+      await execAsync("git init", { cwd: repo });
+      const display = await writeCiFailureLog(
+        repo,
+        "test",
+        "pnpm test",
+        {
+          firstLine: "fail",
+          stdout: "",
+          stderr: "not ok 1 - widget\n",
+          combined: "not ok 1 - widget\n",
+        },
+        "not ok 1 - widget",
+        "failed",
+        "lp-12345678",
+      );
+      assert.match(display ?? "", /ci-logs[\\/]lp-12345678/);
+      const latest = await latestCiFailure(repo, "lp-12345678");
+      assert.equal(latest?.loopId, "lp-12345678");
+      assert.equal(latest?.check, "test");
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-136: loop key falls back to the .loops worktree id, then the shared dir", async () => {
+    const primary = await mkdtemp(join(tmpdir(), "prgenie-primary-"));
+    const loops = join(path.dirname(primary), `${path.basename(primary)}.loops`);
+    const loopPath = join(loops, "lp-aabbccdd");
+    try {
+      await execAsync("git init", { cwd: primary });
+      await mkdir(loopPath, { recursive: true });
+      await execAsync("git init", { cwd: loopPath });
+      await writeCiFailureLog(
+        loopPath,
+        "lint",
+        "pnpm lint",
+        { firstLine: "x", stdout: "", stderr: "err\n", combined: "err\n" },
+        "err",
+        "failed",
+      );
+      const scoped = await latestCiFailure(loopPath, "lp-aabbccdd");
+      assert.equal(scoped?.check, "lint");
+      await writeCiFailureLog(
+        primary,
+        "build",
+        "pnpm build",
+        { firstLine: "x", stdout: "", stderr: "b\n", combined: "b\n" },
+        "b",
+        "failed",
+      );
+      const shared = await latestCiFailure(primary);
+      assert.equal(shared?.loopId ?? null, null);
+    } finally {
+      await rm(primary, { recursive: true, force: true });
+      await rm(loops, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("RAD-136: invalid loop ids never escape ci-logs", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-log-bad-"));
+    try {
+      await execAsync("git init", { cwd: repo });
+      for (const bad of ["", "..", "../x", "a/b", "a.b"]) {
+        const display = await writeCiFailureLog(
+          repo,
+          "test",
+          "pnpm test",
+          { firstLine: "f", stdout: "", stderr: "e\n", combined: "e\n" },
+          "e",
+          "failed",
+          bad,
+        );
+        assert.ok(display);
+        assert.doesNotMatch(display ?? "", /\.\./);
+        assert.match(display ?? "", /ci-logs[\\/]test\.log$/);
+      }
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-136: latest.json is replaced atomically", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-log-atomic-"));
+    try {
+      await execAsync("git init", { cwd: repo });
+      await writeCiFailureLog(
+        repo,
+        "lint",
+        "pnpm lint",
+        { firstLine: "f", stdout: "", stderr: "e\n", combined: "e\n" },
+        "e",
+        "failed",
+        "lp-deadbeef",
+      );
+      const common = await import("./git.js").then((m) => m.gitCommonDir(repo));
+      const latestPath = join(common, "agent-console", "ci-logs", "lp-deadbeef", "latest.json");
+      const raw = await readFile(latestPath, "utf8");
+      JSON.parse(raw);
+      const dir = join(common, "agent-console", "ci-logs", "lp-deadbeef");
+      const names = (await readdir(dir)).filter(
+        (n) => n.startsWith("latest.") && n.endsWith(".json") && n !== "latest.json",
+      );
+      assert.equal(names.length, 0);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-136: latestCiFailure scopes to one loop and never falls back", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-log-scope-"));
+    try {
+      await execAsync("git init", { cwd: repo });
+      await writeCiFailureLog(
+        repo,
+        "a",
+        "pnpm a",
+        { firstLine: "f", stdout: "", stderr: "1\n", combined: "1\n" },
+        "1",
+        "failed",
+        "lp-11111111",
+      );
+      await writeCiFailureLog(
+        repo,
+        "b",
+        "pnpm b",
+        { firstLine: "f", stdout: "", stderr: "2\n", combined: "2\n" },
+        "2",
+        "failed",
+        "lp-22222222",
+      );
+      assert.equal((await latestCiFailure(repo, "lp-11111111"))?.check, "a");
+      assert.equal(await latestCiFailure(repo, "lp-99999999"), null);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-136: listCiFailureLogs never returns another loop's logs", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-log-list-"));
+    try {
+      await execAsync("git init", { cwd: repo });
+      await writeCiFailureLog(
+        repo,
+        "a",
+        "pnpm a",
+        { firstLine: "f", stdout: "", stderr: "1\n", combined: "1\n" },
+        "1",
+        "failed",
+        "lp-11111111",
+      );
+      await writeCiFailureLog(
+        repo,
+        "b",
+        "pnpm b",
+        { firstLine: "f", stdout: "", stderr: "2\n", combined: "2\n" },
+        "2",
+        "failed",
+        "lp-22222222",
+      );
+      const one = await listCiFailureLogs(repo, "lp-11111111");
+      assert.ok(one.every((e) => e.loopId === "lp-11111111"));
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-136: readers without a loop id cover all loops and the shared dir", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-log-all-"));
+    try {
+      await execAsync("git init", { cwd: repo });
+      await writeCiFailureLog(
+        repo,
+        "shared",
+        "pnpm shared",
+        { firstLine: "f", stdout: "", stderr: "s\n", combined: "s\n" },
+        "s",
+        "failed",
+      );
+      await writeCiFailureLog(
+        repo,
+        "loop",
+        "pnpm loop",
+        { firstLine: "f", stdout: "", stderr: "l\n", combined: "l\n" },
+        "l",
+        "failed",
+        "lp-33333333",
+      );
+      const all = await listCiFailureLogs(repo);
+      const keys = new Set(all.map((e) => e.loopId ?? null));
+      assert.ok(keys.has(null));
+      assert.ok(keys.has("lp-33333333"));
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-136: legacy shared logs stay readable as shared", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-log-legacy-"));
+    try {
+      await execAsync("git init", { cwd: repo });
+      await writeCiFailureLog(
+        repo,
+        "test",
+        "pnpm test",
+        {
+          firstLine: "Command failed: pnpm test",
+          stdout: "",
+          stderr: "legacy\n",
+          combined: "legacy\n",
+        },
+        "legacy",
+      );
+      const latest = await latestCiFailure(repo);
+      assert.equal(latest?.loopId ?? null, null);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
   });
 
   it("writes a capped log under .git/agent-console/ci-logs", async () => {

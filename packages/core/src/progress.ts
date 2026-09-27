@@ -1,8 +1,8 @@
 export type ProgressPhase = "review" | "preflight" | "github" | "ci" | "push" | "create_pr";
-export type ProgressState = "start" | "pass" | "fail" | "skip" | "cached";
+export type ProgressState = "start" | "pass" | "fail" | "skip" | "cached" | "waiting";
 export type ProgressKind = "gate" | "export";
 
-export type CiCheckProgressState = ProgressState | "queued" | "cancelled";
+export type CiCheckProgressState = ProgressState | "queued" | "cancelled" | "waiting";
 
 export interface CiCheckProgress {
   name: string;
@@ -120,6 +120,10 @@ export function formatProgressLine(event: ProgressEvent): string {
   if (event.state === "skip") {
     return `[${label}] skip`;
   }
+  if (event.state === "waiting") {
+    const msg = event.message ? ` — ${event.message}` : "";
+    return `[${label}] waiting${msg}`;
+  }
   const elapsed = event.elapsedMs != null ? ` (${formatElapsed(event.elapsedMs)})` : "";
   if (event.state === "cached") {
     return `[${label}] cached${elapsed}`;
@@ -142,8 +146,9 @@ export function formatProgressStep(event: ProgressEvent, kind: ProgressKind = "g
     if (event.phase === "create_pr") return "Creating PR";
     if (event.phase === "push") return "Pushing";
     if (event.phase === "ci") {
+      const wait = event.state === "waiting" ? " (waiting)" : "";
       return event.check
-        ? `Re-running gate CI → ${shortCheckName(event.check)}`
+        ? `Re-running gate CI → ${shortCheckName(event.check)}${wait}`
         : "Re-running gate CI";
     }
     if (event.phase === "preflight") {
@@ -156,7 +161,8 @@ export function formatProgressStep(event: ProgressEvent, kind: ProgressKind = "g
     return "Exporting";
   }
   if (event.phase === "ci") {
-    return event.check ? `CI checks → ${shortCheckName(event.check)}` : "CI checks";
+    const wait = event.state === "waiting" ? " (waiting)" : "";
+    return event.check ? `CI checks → ${shortCheckName(event.check)}${wait}` : "CI checks";
   }
   if (event.phase === "review") return "Review";
   if (event.phase === "preflight") return "Preflight";
@@ -238,9 +244,11 @@ export function formatProgressCard(snapshot: CiProgressSnapshot): string {
     const extra =
       state === "fail" && row?.message
         ? ` — ${row.message}`
-        : state === "start" && row?.command
-          ? ` (${row.command})`
-          : "";
+        : state === "waiting" && row?.message
+          ? ` — ${row.message}`
+          : state === "start" && row?.command
+            ? ` (${row.command})`
+            : "";
     lines.push(`  ${shortCheckName(name).padEnd(10)} ${state}${elapsed}${extra}`);
   }
   return lines.join("\n");

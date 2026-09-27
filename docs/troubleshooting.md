@@ -22,7 +22,7 @@ Start with `prgenie doctor` from any worktree of the repo. It reports the checks
 | `mcp-config`       | Installed plugin `mcp.json` invalid, UTF-8 BOM, or `${PLUGIN_ROOT}`    | `pnpm link-plugin` (rewrites UTF-8 no BOM + absolute `node` + `server.cjs`)     |
 | `mcp-duplicate`    | Workspace `.cursor/mcp.json` registers `prgenie` (same name as plugin) | Delete workspace `mcp.json` (plugin is canonical). Enable **only one** prgenie  |
 | `mcp-node`         | Plugin MCP `command` is missing / not a real file                      | `pnpm link-plugin` pins `node.exe`; or set an absolute Node path                |
-| `ci-failure-log`   | Last shepherd/export CI failure (informational)                        | Open the path or `prgenie shepherd <id> --verbose`                              |
+| `ci-failure-log`   | Newest failure per loop (informational)                                | Open `.git/agent-console/ci-logs/<loopId>/…` or `prgenie shepherd <id> --verbose` |
 
 Example FAIL line:
 
@@ -193,7 +193,7 @@ pnpm exec prettier --check --end-of-line auto .
 
 **Fix (already in product after rebuild + `pnpm link-plugin`):**
 
-1. Installed `mcp.json` pins `timeout: 1200` (seconds) for hosts that honor it.
+1. Installed `mcp.json` pins `timeout: 4200` (seconds) for hosts that honor it (40m package test + 30m max heavy-slot wait).
 2. Heavy tools stream `notifications/message` heartbeats so the session does not look dead. `notifications/progress` is **off by default** (RAD-128) — set `PRGENIE_MCP_PROGRESS=1` only if a host is known to honor the token.
 3. MCP refuses a stale root full-suite `pnpm lint` / `test` / turbo plan (RAD-119) instead of blocking without progress.
 
@@ -207,9 +207,19 @@ Default cwd stays with RAD-86 — pass `cwd` when the host lands in the wrong re
 
 **Fix:**
 
-1. Ship/use code that **does not** send `notifications/progress` by default (this ticket). Keep the 1200s timeout pin.
+1. Ship/use code that **does not** send `notifications/progress` by default (this ticket). Keep the 4200s timeout pin.
 2. Rebuild + `pnpm link-plugin`, then Customize → Plugins → PR Genie **off/on** (or reload the window) so the MCP process picks up the new server.
 3. Do **not** set `PRGENIE_MCP_PROGRESS=1` unless you have confirmed the host accepts the tokens.
+
+## CI shows "waiting for heavy-test slot" (RAD-134)
+
+**Symptoms:** Progress / sidebar shows `[ci:test:core] waiting — waiting for heavy-test slot (2/2 busy: …)`. The check has **not** started yet; elapsed time on the check does not advance.
+
+**Meaning:** Another loop (or `prgenie ci-slot`) holds one of the **N** heavy-test slots for this clone (default **N = 2**). This is normal when several loops run package-glob tests together.
+
+**Change N:** set `PRGENIE_CI_HEAVY_CONCURRENCY` (Windows: `setx PRGENIE_CI_HEAVY_CONCURRENCY 3`, then fully restart Cursor). Every process must see the same value.
+
+**Clear a stuck slot:** only when **no** CI is running, delete `.git/agent-console/ci-heavy/slot-*.json` in the repo’s git common dir (primary + `.loops` worktrees share it).
 
 ## Windows CLI not on PATH
 
@@ -236,7 +246,7 @@ Doctor `package-versions` fails when root / `packages/*/package.json` disagree, 
 
 ## Shepherd / export CI failure toast
 
-A blocked export used to toast only `Command failed: pnpm test`. The toast, CLI `prgenie shepherd` / `prgenie export`, and sidebar reasons now include the **check name** (format/lint/typecheck/test/build) and a **short excerpt** (first failing test name when parseable, otherwise the last few stderr/stdout lines). The capped full log is written to `.git/agent-console/ci-logs/<check>.log`. Doctor `ci-failure-log` names that path; `prgenie shepherd <id> --verbose` prints it.
+A blocked export used to toast only `Command failed: pnpm test`. The toast, CLI `prgenie shepherd` / `prgenie export`, and sidebar reasons now include the **check name** (format/lint/typecheck/test/build) and a **short excerpt** (first failing test name when parseable, otherwise the last few stderr/stdout lines). The capped full log is written to `.git/agent-console/ci-logs/<loopId>/<check>.log` (or the shared `ci-logs/` root when no loop id applies). Doctor `ci-failure-log` lists the newest failure per loop; `prgenie shepherd <id> --verbose` prints the path.
 
 ## Legacy push-gate
 

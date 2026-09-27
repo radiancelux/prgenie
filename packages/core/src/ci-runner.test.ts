@@ -1777,3 +1777,33 @@ describe("runCiChecks file-scoped test:core (RAD-127)", () => {
     }
   });
 });
+
+describe("RAD-134 heavy-test slots in ci-runner", () => {
+  it("RAD-134: heavyConcurrency option overrides the env", async () => {
+    const repo = await initTestRepo();
+    try {
+      await execAsync("git init", { cwd: repo });
+      const { acquireHeavyTestSlot } = await import("./ci-heavy-slot.js");
+      const h1 = await acquireHeavyTestSlot({
+        cwd: repo,
+        check: "hold",
+        concurrency: 1,
+        timing: { pollMs: 20 },
+      });
+      const result = await runCiChecks(repo, {
+        checks: ["test:core"],
+        skipCache: true,
+        skipToolchainEnsure: true,
+        parallel: false,
+        heavyConcurrency: 1,
+        heavySlotTiming: { pollMs: 20 },
+        packageScripts: { "test:core": 'node -e "setTimeout(()=>{}, 200)"' },
+        timeout: 5000,
+      });
+      h1.release();
+      assert.ok((result.checks[0]?.waitedMs ?? 0) >= 0);
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+});

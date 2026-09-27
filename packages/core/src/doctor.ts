@@ -20,7 +20,7 @@ import {
   sameFsPath,
 } from "./worktrees.js";
 import { checkReleaseVersions, findPackageRoot } from "./versions.js";
-import { latestCiFailure } from "./ci-failure.js";
+import { latestCiFailuresByLoop, listCiFailureLogs } from "./ci-failure.js";
 import {
   PRGENIE_MCP_NAME,
   commandLooksRunnable,
@@ -419,13 +419,24 @@ export async function runDoctor(cwd: string, options?: { home?: string }): Promi
   const legacyGate = packageRoot
     ? path.join(packageRoot, "packages", "plugin", "hooks", "push-gate.mjs")
     : path.join(installedPlugin, "hooks", "push-gate.mjs");
-  const ciFail = await latestCiFailure(root);
-  if (ciFail) {
-    const excerpt = ciFail.excerpt ? ` — ${ciFail.excerpt}` : "";
+  const perLoop = await latestCiFailuresByLoop(root, 5);
+  const allLogs = await listCiFailureLogs(root);
+  const loopKeys = new Set<string | null>();
+  for (const entry of allLogs) {
+    loopKeys.add(entry.loopId ?? null);
+  }
+  const extraLoops = Math.max(0, loopKeys.size - perLoop.length);
+  if (perLoop.length > 0) {
+    const lines = perLoop.map((ciFail) => {
+      const label = ciFail.loopId ?? "shared";
+      const excerpt = ciFail.excerpt ? ` — ${ciFail.excerpt}` : "";
+      return `${label}: ${ciFail.check} at ${ciFail.logPath}${excerpt}`;
+    });
+    const more = extraLoops > 0 ? ` +${extraLoops} more` : "";
     checks.push({
       id: "ci-failure-log",
       ok: true,
-      summary: `Last shepherd CI failure (${ciFail.check}) logged at ${ciFail.logPath}${excerpt}`,
+      summary: `${lines.join("; ")}${more}`,
       fix: "prgenie shepherd <id> --verbose (or open the log) for the full stdout/stderr.",
     });
   } else {

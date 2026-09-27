@@ -122,6 +122,12 @@ test("review process bar requires the reviewer CI backstop (RAD-154)", () => {
   assert.match(bar, /BACKSTOP:/);
 });
 
+test("RAD-134: reviewer backstop full suite runs under ci-slot", () => {
+  const bar = readFileSync(path.join(skillsRoot, "review", "process-bar.md"), "utf8");
+  assert.match(bar, /node packages\/cli\/dist\/prgenie\.cjs ci-slot --check full-suite --/);
+  assert.match(bar, /slot: none/);
+});
+
 test("steward skill names PR Genie subagent types (RAD-89)", () => {
   const steward = skillBody("steward");
   assert.match(steward, /Model tiers \(RAD-89\)/);

@@ -245,3 +245,16 @@ test("cli learnings --category works", () => {
   assert.equal(result.code, 0);
   assert.match(result.stdout, /No learnings/);
 });
+
+test("RAD-134: ci-slot runs the command under a heavy slot and returns its exit code", async () => {
+  const run = prgenie([
+    "ci-slot",
+    "--check",
+    "full-suite",
+    "--",
+    process.execPath,
+    "-e",
+    "process.exit(3)",
+  ]);
+  assert.equal(run.code, 3, run.stderr || run.stdout);
+});

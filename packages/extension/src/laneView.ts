@@ -1392,7 +1392,9 @@ function ciUiScript(): string {
         if (detail.log) parts.push("Log:\\n" + detail.log);
         if (detail.logPath && !detail.log) parts.push("Log path: " + detail.logPath);
         if (!parts.length) {
-          if (state === "start" || state === "running" || state === "queued") {
+          if (state === "waiting") {
+            body.innerHTML = '<p class="ci-empty">Waiting for a heavy-test slot — not started yet. Cancel from the panel.</p>';
+          } else if (state === "start" || state === "running" || state === "queued") {
             body.innerHTML = '<p class="ci-empty">Still running — no log yet. Wait for a pass/fail, or cancel from the panel.</p>';
           } else {
             body.innerHTML = '<p class="ci-empty">No excerpt or log for this check. Cached or skipped runs have no failure output.</p>';

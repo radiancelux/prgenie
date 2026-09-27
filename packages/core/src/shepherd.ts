@@ -258,6 +258,7 @@ export async function shepherdStatus(
           failFast: options.failFast,
           parallel: options.parallel,
           skipToolchainEnsure: options.skipToolchainEnsure,
+          loopId: pr.id,
         });
         ciResult = {
           ...ciResult,
