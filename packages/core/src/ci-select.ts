@@ -4,8 +4,58 @@ import { git } from "./git.js";
 import { isPluginBuildArtifact } from "./plugin-dirt.js";
 import { getLocalPr, getLocalPrNameStatus, refreshLocalPrHead } from "./prs.js";
 
-/** Default local CI suite names (legacy / host callers). Local run_ci never selects this full set (RAD-119). */
+/** Default local CI suite names (legacy / host callers and RAD-154 hard-config loops). */
 export const DEFAULT_CI_CHECKS = ["format:check", "lint", "typecheck", "test", "build"] as const;
+
+/** Extensions prettier commonly formats (aligned with ci-runner blob format filter). */
+const PRETTIER_EXTS = new Set([
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".mjs",
+  ".cjs",
+  ".json",
+  ".css",
+  ".scss",
+  ".less",
+  ".html",
+  ".md",
+  ".yml",
+  ".yaml",
+  ".xml",
+]);
+
+const PRETTIER_SKIP_BASENAMES = new Set([
+  ".gitignore",
+  ".prettierignore",
+  ".eslintignore",
+  ".dockerignore",
+  "pnpm-lock.yaml",
+  "package-lock.json",
+  "yarn.lock",
+]);
+
+/**
+ * Prettier-able paths from the loop diff / dirty tree (RAD-117 format scope).
+ * Does not require source/test classification — docs/style markdown and CSS count.
+ */
+export function prettierPathsFromChanged(changedPaths: string[]): string[] {
+  const out: string[] = [];
+  for (const file of changedPaths) {
+    const p = normalizeCiPath(file);
+    const base = path.posix.basename(p);
+    if (PRETTIER_SKIP_BASENAMES.has(base)) continue;
+    const ext = path.posix.extname(p).toLowerCase();
+    if (!PRETTIER_EXTS.has(ext)) continue;
+    out.push(p);
+  }
+  return [...new Set(out)];
+}
+
+function formattedPathsForSelection(changedPaths: string[]): string[] {
+  return prettierPathsFromChanged(changedPaths).filter((p) => !isPluginBuildArtifact(p));
+}
 
 /** Packages that support path-scoped lint / typecheck / unit tests (not full-monorepo `pnpm test`). */
 export const SCOPABLE_PACKAGES = ["core", "cli", "extension"] as const;
@@ -374,6 +424,50 @@ export function shouldScopeFormatCheck(selection: CiCheckSelection | undefined):
   return selection.checks.length === 1 && selection.checks[0] === "format:check";
 }
 
+function fullLocalPlan(paths: string[]): CiCheckSelection {
+  const stamp = "RAD-154: hard config/CI changed → full local plan";
+  const reason = [
+    stamp,
+    "confident mapping — root pnpm format:check, lint, typecheck, test, build",
+  ];
+  const mapping: CiCheckMapping[] = DEFAULT_CI_CHECKS.map((check) => ({
+    check,
+    reason: `${stamp}; root pnpm ${check}`,
+  }));
+  return {
+    checks: [...DEFAULT_CI_CHECKS],
+    reason,
+    mapping,
+    uncertain: false,
+    changedPaths: paths,
+    packageScoped: false,
+    skipped: false,
+  };
+}
+
+function formatOnlyUncertainPlan(
+  paths: string[],
+  uncertain: boolean,
+  branchReason: string,
+): CiCheckSelection {
+  const stamp = `RAD-154: ${branchReason} → format:check`;
+  const reason = [stamp, "confident mapping — not full monorepo pnpm test"];
+  return {
+    checks: ["format:check"],
+    reason,
+    mapping: [
+      {
+        check: "format:check",
+        reason: `${stamp}; scoped to changed prettier paths`,
+      },
+    ],
+    uncertain,
+    changedPaths: paths,
+    packageScoped: false,
+    skipped: false,
+  };
+}
+
 /** Intentional empty plan — printable skip, never root `pnpm test` (RAD-119). */
 function skipCi(reasons: string[], paths: string[], uncertain: boolean): CiCheckSelection {
   const reason = reasons.length
@@ -505,7 +599,8 @@ function scopablePackageFromConfigPath(filePath: string): ScopablePackage | null
 /**
  * Path-aware check selection for implementor preflight and shepherd/export.
  * Confident package mapping → scoped lint/typecheck/unit (never root `pnpm test`).
- * Uncertain / hard-config mapping → skip with an explicit reason (RAD-119) — never full suite.
+ * Hard config / CI → full local plan (RAD-154). Other uncertain paths → format-only
+ * when prettier-able files change, else skip with an explicit reason (RAD-119).
  */
 export function selectCiChecks(
   changedPaths: string[],
@@ -524,8 +619,16 @@ export function selectCiChecks(
     );
   }
 
+  const hardConfig = paths.filter(isHardConfigPath);
+  if (hardConfig.length > 0) {
+    return fullLocalPlan(paths);
+  }
+
   const kinds = paths.map(classifyCiPath);
   if (kinds.some((kind) => kind === "unknown")) {
+    if (formattedPathsForSelection(paths).length > 0) {
+      return formatOnlyUncertainPlan(paths, true, "uncertain path mapping with formatted files");
+    }
     return skipCi(
       [
         "uncertain path mapping",
@@ -534,19 +637,6 @@ export function selectCiChecks(
       ],
       paths,
       true,
-    );
-  }
-
-  const hardConfig = paths.filter(isHardConfigPath);
-  if (hardConfig.length > 0) {
-    return skipCi(
-      [
-        "config/CI scripts changed; cannot confidently scope",
-        "skip local CI — origin is the cleanliness bar; agent may run touched-package tests",
-        "never full monorepo pnpm test",
-      ],
-      paths,
-      false,
     );
   }
 
@@ -613,6 +703,13 @@ export function selectCiChecks(
   }
 
   if (unscoping) {
+    if (formattedPathsForSelection(paths).length > 0) {
+      return formatOnlyUncertainPlan(
+        paths,
+        true,
+        "changed paths outside scopable packages with formatted files",
+      );
+    }
     return skipCi(
       [
         "changed paths outside scopable packages/core|cli|extension",
@@ -669,6 +766,10 @@ export function selectCiChecks(
       paths,
       true,
     );
+  }
+
+  if (formattedPathsForSelection(paths).length > 0) {
+    return formatOnlyUncertainPlan(paths, true, "no scopable package changes with formatted files");
   }
 
   return skipCi(

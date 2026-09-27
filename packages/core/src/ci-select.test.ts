@@ -51,13 +51,95 @@ describe("selectCiChecks", () => {
     assert.ok(!result.checks.some((c) => c === "test" || c.startsWith("test:")));
   });
 
-  it("skips (never full suite) when hard config or CI scripts change (RAD-119)", () => {
-    const result = selectCiChecks(["package.json", "README.md"]);
-    assert.equal(result.skipped, true);
-    assert.deepEqual(result.checks, []);
-    assert.ok(result.reason.some((r) => /config\/CI/.test(r)));
-    assert.ok(result.reason.some((r) => /skip local CI/.test(r)));
-    assertNotFullSuite(result);
+  it("RAD-154: root package.json, lockfiles, tsconfig.base.json and .github/workflows select the full local plan", () => {
+    for (const p of [
+      "package.json",
+      "pnpm-lock.yaml",
+      "package-lock.json",
+      "tsconfig.base.json",
+      ".github/workflows/ci.yml",
+    ]) {
+      const result = selectCiChecks([p]);
+      assert.equal(result.skipped, false, p);
+      assert.equal(result.uncertain, false, p);
+      assert.equal(result.packageScoped, false, p);
+      assert.deepEqual(result.checks, [...DEFAULT_CI_CHECKS], p);
+      assert.equal(result.testFiles, undefined, p);
+      assert.equal(result.mapping.length, DEFAULT_CI_CHECKS.length, p);
+      for (const check of DEFAULT_CI_CHECKS) {
+        assert.ok(
+          result.mapping.some((m) => m.check === check),
+          `${p} mapping ${check}`,
+        );
+      }
+    }
+  });
+
+  it("RAD-154: other hard-config paths select the full local plan", () => {
+    for (const p of [
+      "tsconfig.json",
+      "pnpm-workspace.yaml",
+      "eslint.config.mjs",
+      ".prettierrc.json",
+      ".prettierignore",
+      "scripts/build.mjs",
+      "packages/plugin/package.json",
+    ]) {
+      const result = selectCiChecks([p]);
+      assert.deepEqual(result.checks, [...DEFAULT_CI_CHECKS], p);
+      assert.equal(result.skipped, false, p);
+    }
+  });
+
+  it("RAD-154: hard config wins over unknown, out-of-package and package-scoped paths", () => {
+    const mixed = selectCiChecks([
+      "package.json",
+      "bin/mystery.bin",
+      "apps/mobile/foo.ts",
+      "packages/core/src/git.ts",
+    ]);
+    assert.deepEqual(mixed.checks, [...DEFAULT_CI_CHECKS]);
+    assert.equal(mixed.skipped, false);
+  });
+
+  it("RAD-154: full plan reason is stamped and is not a skip or legacy stale reason", () => {
+    const result = selectCiChecks(["package.json"]);
+    assert.ok(result.reason.some((r) => /RAD-154/.test(r) && /hard config\/CI changed/.test(r)));
+    assert.ok(!result.reason.some((r) => /skip local CI/.test(r)));
+    assert.ok(
+      !result.reason.some((r) =>
+        /source\/test changed — format,\s*lint,\s*typecheck,\s*test,\s*build/i.test(r),
+      ),
+    );
+  });
+
+  it("RAD-154: formatted files add format:check to uncertain and out-of-package plans", () => {
+    const mixedUnknown = selectCiChecks(["README.md", "bin/mystery.bin"]);
+    assert.deepEqual(mixedUnknown.checks, ["format:check"]);
+    assert.equal(mixedUnknown.skipped, false);
+    assert.equal(mixedUnknown.uncertain, true);
+    assert.equal(mixedUnknown.packageScoped, false);
+    assert.equal(mixedUnknown.mapping.length, 1);
+    assert.equal(mixedUnknown.mapping[0]?.check, "format:check");
+    assert.ok(mixedUnknown.reason.some((r) => /RAD-154/.test(r) && /format:check/.test(r)));
+
+    const gitattributes = selectCiChecks([".gitattributes", "docs/x.md"]);
+    assert.deepEqual(gitattributes.checks, ["format:check"]);
+    assert.ok(gitattributes.reason.some((r) => /RAD-154/.test(r) && /format:check/.test(r)));
+  });
+
+  it("RAD-154: every non-empty plan starts with format:check", () => {
+    const samples = [
+      selectCiChecks(["package.json"]),
+      selectCiChecks(["README.md", "bin/mystery.bin"]),
+      selectCiChecks(["packages/core/src/git.ts"]),
+      selectCiChecks(["packages/plugin/skills/start/SKILL.md"]),
+      selectCiChecks(["docs/ci-checks.md"]),
+    ];
+    for (const result of samples) {
+      if (result.checks.length === 0) continue;
+      assert.equal(result.checks[0], "format:check", result.reason.join("; "));
+    }
   });
 
   it("maps packages/core-only (+ docs) to scoped core lint/typecheck/unit — not full pnpm test", () => {
@@ -102,9 +184,9 @@ describe("selectCiChecks", () => {
 
     const mixed = selectCiChecks(["README.md", "bin/mystery.bin"]);
     assert.equal(mixed.uncertain, true);
-    assert.equal(mixed.skipped, true);
-    assert.deepEqual(mixed.checks, []);
-    assert.ok(mixed.reason.some((r) => /skip local CI/.test(r)));
+    assert.equal(mixed.skipped, false);
+    assert.deepEqual(mixed.checks, ["format:check"]);
+    assert.ok(mixed.reason.some((r) => /RAD-154/.test(r)));
     assertNotFullSuite(mixed);
   });
 
@@ -204,7 +286,7 @@ describe("selectCiChecks", () => {
       "lint:core",
       "typecheck:core",
     ]);
-    const skipped = selectCiChecks(["package.json"]);
+    const skipped = selectCiChecks(["assets/logo.png"]);
     assert.equal(skipped.skipped, true);
     // CI-resume must keep named checks on a skip plan (not greenwash via empty + skipped).
     assert.deepEqual(expandFailingChecks(["test", "lint", "format:check"], skipped), [

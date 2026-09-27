@@ -93,6 +93,35 @@ test("/review skill points at stack-agnostic process bar (RAD-103)", () => {
   assert.match(steward, /Do \*\*not\*\* paste the process bar/);
 });
 
+test("review process bar requires the reviewer CI backstop (RAD-154)", () => {
+  const bar = readFileSync(path.join(skillsRoot, "review", "process-bar.md"), "utf8");
+  const reviewSkill = skillBody("review");
+  const reviewerAgent = readFileSync(
+    path.join(pluginRoot, "agents", "prgenie-reviewer.md"),
+    "utf8",
+  );
+  for (const cmd of [
+    "pnpm build",
+    "pnpm lint",
+    "pnpm typecheck",
+    "pnpm exec prettier --check --end-of-line auto .",
+  ]) {
+    assert.match(bar, new RegExp(cmd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.match(bar, /readyCi/);
+  assert.match(
+    bar,
+    /node node_modules\/tsx\/dist\/cli\.mjs --test "packages\/\*\/src\/\*\*\/\*\.test\.ts"/,
+  );
+  assert.match(bar, /HIGH.*add_comment.*role=reviewer/s);
+  assert.match(bar, /pnpm install --frozen-lockfile/);
+  assert.match(reviewSkill, /re-run the reviewer CI backstop/);
+  assert.match(reviewerAgent, /reviewer CI backstop/);
+  assert.match(bar, /not defined/);
+  assert.doesNotMatch(bar, /Missing green ready is a process note/);
+  assert.match(bar, /BACKSTOP:/);
+});
+
 test("steward skill names PR Genie subagent types (RAD-89)", () => {
   const steward = skillBody("steward");
   assert.match(steward, /Model tiers \(RAD-89\)/);

@@ -422,6 +422,36 @@ test("RAD-89: export-gate restart spawn stays cheap even with tier marker brief"
   assert.equal(stored.implementorTier, "cheap");
 });
 
+test("RAD-154: blocked ci-plan gate tells the steward run_ci cannot fix it", () => {
+  const decided = decideStewardAction(
+    prStub({
+      status: "reviewed",
+      exportGate: {
+        status: "blocked",
+        reasons: [
+          {
+            check: "ci",
+            message:
+              "CI check failed: ci-plan — local CI plan is empty for 1 changed path(s); fail closed (RAD-154)",
+          },
+        ],
+        headSha: "abc123",
+        evaluatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    }),
+    {
+      loopId: "lp-loop1",
+      implementorTaskId: "task-impl-1",
+      reviewerTaskId: "task-rev-1",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+  );
+  assert.equal(decided.failingCheck, "ci-plan");
+  assert.match(decided.reason, /empty for a non-empty diff/);
+  assert.match(decided.reason, /run_ci.*ci-plan cannot fix/);
+  assert.match(decided.reason, /exportGateOverride.*`ci-plan`/);
+});
+
 test("RAD-126: decideStewardAction labels refused plan as ci-select not test", () => {
   const decided = decideStewardAction(
     prStub({

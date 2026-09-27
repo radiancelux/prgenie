@@ -376,7 +376,7 @@ export function looksLikeStaleFullSuitePlan(
   // Exact default suite, but stamped as fixture / RAD-119 skip / worktree — not dogfood stale.
   if (
     reasons.some((r) =>
-      /fixture|RAD-123|worktree ci-select|per-package|confident mapping|skip local CI|caller-forced/i.test(
+      /fixture|RAD-123|RAD-154|worktree ci-select|per-package|confident mapping|skip local CI|caller-forced/i.test(
         r,
       ),
     )

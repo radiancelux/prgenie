@@ -1,40 +1,17 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { classifyCiPath, normalizeCiPath, packageFromScopedCheck } from "./ci-select.js";
+import {
+  classifyCiPath,
+  normalizeCiPath,
+  packageFromScopedCheck,
+  prettierPathsFromChanged,
+} from "./ci-select.js";
+export { prettierPathsFromChanged };
 import type { CiCheckSelection } from "./ci-select.js";
 import { ciCheckCommand } from "./progress.js";
 
 /** Extensions eslint (and similar JS linters) can take as path args. */
 const ESLINT_EXTS = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".vue"]);
-
-/** Extensions prettier commonly formats (aligned with ci-runner blob format filter). */
-const PRETTIER_EXTS = new Set([
-  ".js",
-  ".jsx",
-  ".ts",
-  ".tsx",
-  ".mjs",
-  ".cjs",
-  ".json",
-  ".css",
-  ".scss",
-  ".less",
-  ".html",
-  ".md",
-  ".yml",
-  ".yaml",
-  ".xml",
-]);
-
-const PRETTIER_SKIP_BASENAMES = new Set([
-  ".gitignore",
-  ".prettierignore",
-  ".eslintignore",
-  ".dockerignore",
-  "pnpm-lock.yaml",
-  "package-lock.json",
-  "yarn.lock",
-]);
 
 export type HostScopeTool = "eslint" | "prettier" | "turbo" | "pnpm-recursive";
 
@@ -226,23 +203,6 @@ export function eslintPathsFromChanged(changedPaths: string[]): string[] {
     if (kind !== "source" && kind !== "test") continue;
     const ext = path.posix.extname(p).toLowerCase();
     if (!ESLINT_EXTS.has(ext)) continue;
-    out.push(p);
-  }
-  return [...new Set(out)];
-}
-
-/**
- * Prettier-able paths from the loop diff / dirty tree (RAD-117 format scope).
- * Does not require source/test classification — docs/style markdown and CSS count.
- */
-export function prettierPathsFromChanged(changedPaths: string[]): string[] {
-  const out: string[] = [];
-  for (const file of changedPaths) {
-    const p = normalizeCiPath(file);
-    const base = path.posix.basename(p);
-    if (PRETTIER_SKIP_BASENAMES.has(base)) continue;
-    const ext = path.posix.extname(p).toLowerCase();
-    if (!PRETTIER_EXTS.has(ext)) continue;
     out.push(p);
   }
   return [...new Set(out)];
