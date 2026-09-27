@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   CHEAP_SHEPHERD_DEBOUNCE_MS,
+  cheapShepherdTargetId,
   createCheapShepherdScheduler,
   createCoalescingFlight,
   createExportGateScheduler,
@@ -14,6 +15,12 @@ import {
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+test("RAD-110: cheap shepherd targets reviewed loops only", () => {
+  assert.equal(cheapShepherdTargetId({ id: "lp-a", status: "reviewed" }), "lp-a");
+  assert.equal(cheapShepherdTargetId({ id: "lp-b", status: "draft" }), undefined);
+  assert.equal(cheapShepherdTargetId(null), undefined);
+});
 
 test("SIDEBAR_SHEPHERD_OPTIONS skips CI (Slice 0 cheap path)", () => {
   assert.equal(SIDEBAR_SHEPHERD_OPTIONS.skipCiCheck, true);
@@ -325,7 +332,8 @@ test("laneView STATUS quiet until reviewed; idle clear; no vertical reason layou
   assert.ok(src.includes("statusPanelIdleBody"));
   assert.ok(src.includes("STATUS_PHASE"));
   assert.ok(src.includes("shepherdEmpty"));
-  assert.ok(src.includes("shepherd-header-row"));
+  assert.ok(src.includes("shepherd-badge-row"));
+  assert.ok(src.includes("cheapShepherdTargetId"));
   assert.ok(src.includes("flex-direction: column"));
   assert.ok(src.includes("exportingId"));
   assert.ok(src.includes("Reusing green gate"));

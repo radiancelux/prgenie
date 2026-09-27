@@ -71,6 +71,13 @@ export type CheapShepherdScheduler = {
   schedule(root: string, id: string | undefined): void;
 };
 
+/** Cheap shepherd fetch only for reviewed loops (RAD-110). */
+export function cheapShepherdTargetId(
+  selected: { id: string; status: string } | null | undefined,
+): string | undefined {
+  return selected?.status === "reviewed" ? selected.id : undefined;
+}
+
 /**
  * Debounced, single-flight cheap shepherd fetch. Ignores stale results when
  * the selected loop changes mid-flight. Does not run full CI (caller must pass

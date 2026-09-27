@@ -1,7 +1,7 @@
 {
   "name": "prgenie",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local pull requests for agent work. GitHub when you say so.",
   "license": "MIT",
   "packageManager": "pnpm@10.33.0",
