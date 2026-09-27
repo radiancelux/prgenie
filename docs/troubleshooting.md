@@ -139,6 +139,35 @@ Doctor `corrupt-prs` lists unparsable files under `.git/agent-console/prs/`. Cor
 - Never treat the primary checkout as a disposable loop worktree; never implement loop work in the primary when a loop worktree exists — Switch into `.loops/<id>` after create.
 - Orphans: `.loops` path still registered in `git worktree list` but no live (non-archived) local PR with that id → `git worktree remove <path>`.
 
+## Windows: `pnpm format:check` flags every file (CRLF)
+
+**Symptoms:** On Windows with `core.autocrlf=true`, `pnpm format:check` flags most or all tracked files.
+
+**Cause:** Git checks out text files as CRLF while `.prettierrc.json` sets `"endOfLine": "lf"`, so Prettier reports line-ending mismatches on the working tree.
+
+**After `.gitattributes`:** New checkouts and fresh worktrees from a commit that includes repo-root `.gitattributes` get LF in the working tree with no `git config` change — `eol=lf` in `.gitattributes` overrides `core.autocrlf` for classified text files.
+
+**Dirty tree:** If `git status --porcelain` is not empty, commit or `git stash` before the refresh below. Do not run `git reset --hard` on a dirty tree — it will discard uncommitted changes to tracked files.
+
+**One-time refresh for an existing clone (clean tree only):**
+
+1. `git status --porcelain` prints nothing (otherwise commit or `git stash` first).
+2. `git rm --cached -r -q .`
+3. `git reset --hard`
+4. `git ls-files --eol` shows `w/lf` for text files.
+
+**What the refresh overwrites:** Step 2 clears only the index (staged entries). Step 3 rewrites every tracked file in the working tree from `HEAD` and discards any uncommitted change to tracked files. Untracked and ignored paths (`node_modules/`, `dist/`, other worktrees) are not touched. No commits are changed.
+
+**Loop worktrees:** Each existing loop worktree (`../<repo>.loops/<id>`) has its own index and working tree. Run the four steps above inside each live, clean loop worktree that was created before `.gitattributes` landed. Loop worktrees created from a base that already contains `.gitattributes` need no refresh.
+
+**`git add --renormalize .`:** Rewrites only the index (not working-tree files). Use it when the index still holds CRLF text entries — not the case on a fresh `main` checkout after this change (see R3/R4 in RAD-156). It does not replace the working-tree refresh above.
+
+**Interim workaround (no `.gitattributes` yet, or not refreshed):**
+
+```bash
+pnpm exec prettier --check --end-of-line auto .
+```
+
 ## Worktree CI toolchain (Windows)
 
 **Symptoms:** `run_ci` / shepherd in a `.loops/<id>` worktree fails with `eslint` / `tsc` / `tsx` “not recognized”, `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL`, or “Missing toolchain in worktree”.
