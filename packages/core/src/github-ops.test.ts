@@ -53,6 +53,21 @@ process.exit(0);
   return { file: process.execPath, kind: "exe", prefixArgs: [recorder] };
 }
 
+/** Contract gh.cmd shim (@node) with PATH limited to mockDir — needs node.cmd beside gh.cmd (142-R11). */
+async function writeGhCmdContractShim(mockDir: string, capturePath: string): Promise<void> {
+  const recorder = path.join(mockDir, "rec.cjs");
+  await writeFile(
+    recorder,
+    `const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({ args: process.argv.slice(2) }), "utf8");
+process.exit(0);
+`,
+  );
+  await writeFile(path.join(mockDir, "gh.cmd"), `@node "%~dp0rec.cjs" %*\r\n`);
+  const nodeExe = process.execPath.replace(/"/g, '""');
+  await writeFile(path.join(mockDir, "node.cmd"), `@echo off\r\n"${nodeExe}" %*\r\n`);
+}
+
 test("quoteWindowsShellArg refuses multiline argv (RAD-129)", () => {
   assert.throws(
     () => quoteWindowsShellArg("## Why\n\nfull body"),
@@ -237,26 +252,30 @@ test("RAD-142: resolveGhExecutable prefers gh.exe, then gh.cmd, then null", asyn
 });
 
 test("RAD-142: escapeCmdArg moves percent outside quotes", () => {
-  assert.equal(escapeCmdArg("pct %USERNAME% end"), '"pct ^%USERNAME^% end"');
-  assert.equal(escapeCmdArg("100%"), '"100^%"');
+  assert.equal(escapeCmdArg("pct %USERNAME% end"), '"pct "^%"USERNAME"^%" end"');
+  assert.equal(escapeCmdArg("100%"), '"100"^%"');
   assert.equal(escapeCmdArg('a"b'), '"a""b"');
   assert.equal(escapeCmdArg(""), '""');
   assert.throws(() => escapeCmdArg("line\nbreak"), /multiline|--body-file/);
 });
 
-test("RAD-142: missing gh rejects with a clear error", async () => {
-  const originalPath = process.env.PATH;
-  const originalPath2 = process.env.Path;
-  process.env.PATH = "";
-  process.env.Path = "";
-  try {
-    await assert.rejects(() => runGh(["auth", "status"]), /gh CLI not found on PATH/);
-  } finally {
-    process.env.PATH = originalPath;
-    if (originalPath2 !== undefined) process.env.Path = originalPath2;
-    else delete process.env.Path;
-  }
-});
+test(
+  "RAD-142: missing gh rejects with a clear error",
+  { skip: process.platform !== "win32" ? "Windows-only empty PATH (142-R4)" : false },
+  async () => {
+    const originalPath = process.env.PATH;
+    const originalPath2 = process.env.Path;
+    process.env.PATH = "";
+    process.env.Path = "";
+    try {
+      await assert.rejects(() => runGh(["auth", "status"]), /gh CLI not found on PATH/);
+    } finally {
+      process.env.PATH = originalPath;
+      if (originalPath2 !== undefined) process.env.Path = originalPath2;
+      else delete process.env.Path;
+    }
+  },
+);
 
 test("RAD-142: -b, --body and --body= all become --body-file", async () => {
   const mockDir = await mkdtemp(path.join(tmpdir(), "gh-body-forms-"));
@@ -313,37 +332,27 @@ test("RAD-142: exe spawn passes %VAR% literally", async () => {
   }
 });
 
-test("RAD-142: gh.cmd shim receives %VAR% literally (Windows)", async () => {
-  if (process.platform !== "win32") {
-    return;
-  }
-  const mockDir = await mkdtemp(path.join(tmpdir(), "gh-cmd-shim-"));
-  const capturePath = path.join(mockDir, "capture.json");
-  const recorder = path.join(mockDir, "rec.cjs");
-  await writeFile(
-    recorder,
-    `const fs = require("node:fs");
-fs.writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({ args: process.argv.slice(2) }), "utf8");
-process.exit(0);
-`,
-  );
-  await writeFile(
-    path.join(mockDir, "gh.cmd"),
-    `@echo off\r\n"${process.execPath.replace(/"/g, '""')}" "%~dp0rec.cjs" %*\r\n`,
-  );
-  const originalPath = process.env.PATH;
-  process.env.PATH = mockDir;
-  try {
-    const result = await runGh(["pr", "create", "--title", "pct %USERNAME% end"]);
-    assert.equal(result.code, 0);
-    const capture = JSON.parse(await readFile(capturePath, "utf8")) as { args: string[] };
-    const titleAt = capture.args.indexOf("--title");
-    assert.equal(capture.args[titleAt + 1], "pct %USERNAME% end");
-  } finally {
-    process.env.PATH = originalPath;
-    await rm(mockDir, { recursive: true, force: true });
-  }
-});
+test(
+  "RAD-142: gh.cmd shim receives %VAR% literally (Windows)",
+  { skip: process.platform !== "win32" ? "Windows-only (142-R11)" : false },
+  async () => {
+    const mockDir = await mkdtemp(path.join(tmpdir(), "gh-cmd-shim-"));
+    const capturePath = path.join(mockDir, "capture.json");
+    await writeGhCmdContractShim(mockDir, capturePath);
+    const originalPath = process.env.PATH;
+    process.env.PATH = mockDir;
+    try {
+      const result = await runGh(["pr", "create", "--title", "pct %USERNAME% end"]);
+      assert.equal(result.code, 0);
+      const capture = JSON.parse(await readFile(capturePath, "utf8")) as { args: string[] };
+      const titleAt = capture.args.indexOf("--title");
+      assert.equal(capture.args[titleAt + 1], "pct %USERNAME% end");
+    } finally {
+      process.env.PATH = originalPath;
+      await rm(mockDir, { recursive: true, force: true });
+    }
+  },
+);
 
 test("RAD-138: non-ASCII title and body round-trip through gh argv and body file", async () => {
   const mockDir = await mkdtemp(path.join(tmpdir(), "gh-unicode-"));
@@ -402,34 +411,24 @@ test("RAD-138: pr edit keeps non-ASCII title and body", async () => {
   }
 });
 
-test("RAD-138: gh.cmd shim receives non-ASCII title intact (Windows)", async () => {
-  if (process.platform !== "win32") {
-    return;
-  }
-  const mockDir = await mkdtemp(path.join(tmpdir(), "gh-cmd-unicode-"));
-  const capturePath = path.join(mockDir, "capture.json");
-  const recorder = path.join(mockDir, "rec.cjs");
-  await writeFile(
-    recorder,
-    `const fs = require("node:fs");
-fs.writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({ args: process.argv.slice(2) }), "utf8");
-process.exit(0);
-`,
-  );
-  await writeFile(
-    path.join(mockDir, "gh.cmd"),
-    `@echo off\r\n"${process.execPath.replace(/"/g, '""')}" "%~dp0rec.cjs" %*\r\n`,
-  );
-  const originalPath = process.env.PATH;
-  process.env.PATH = mockDir;
-  try {
-    const result = await runGh(["pr", "create", "--title", UNICODE_TITLE]);
-    assert.equal(result.code, 0);
-    const capture = JSON.parse(await readFile(capturePath, "utf8")) as { args: string[] };
-    const titleAt = capture.args.indexOf("--title");
-    assert.equal(capture.args[titleAt + 1], UNICODE_TITLE);
-  } finally {
-    process.env.PATH = originalPath;
-    await rm(mockDir, { recursive: true, force: true });
-  }
-});
+test(
+  "RAD-138: gh.cmd shim receives non-ASCII title intact (Windows)",
+  { skip: process.platform !== "win32" ? "Windows-only (138-R11)" : false },
+  async () => {
+    const mockDir = await mkdtemp(path.join(tmpdir(), "gh-cmd-unicode-"));
+    const capturePath = path.join(mockDir, "capture.json");
+    await writeGhCmdContractShim(mockDir, capturePath);
+    const originalPath = process.env.PATH;
+    process.env.PATH = mockDir;
+    try {
+      const result = await runGh(["pr", "create", "--title", UNICODE_TITLE]);
+      assert.equal(result.code, 0);
+      const capture = JSON.parse(await readFile(capturePath, "utf8")) as { args: string[] };
+      const titleAt = capture.args.indexOf("--title");
+      assert.equal(capture.args[titleAt + 1], UNICODE_TITLE);
+    } finally {
+      process.env.PATH = originalPath;
+      await rm(mockDir, { recursive: true, force: true });
+    }
+  },
+);

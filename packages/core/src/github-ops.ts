@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -47,45 +47,28 @@ export function escapeCmdArg(arg: string): string {
     );
   }
   if (arg.length === 0) return '""';
-  return `"${arg.replace(/"/g, '""').replace(/%/g, "^%")}"`;
+  if (!arg.includes("%")) {
+    return `"${arg.replace(/"/g, '""')}"`;
+  }
+  const parts = arg.split("%");
+  let out = "";
+  for (let i = 0; i < parts.length; i++) {
+    if (i > 0) {
+      const trailingEmpty = i === parts.length - 1 && parts[i] === "";
+      out += trailingEmpty ? '^%"' : "^%";
+    }
+    const segment = parts[i]!;
+    const isTrailingEmpty = i === parts.length - 1 && segment === "";
+    if (!isTrailingEmpty) {
+      out += `"${segment.replace(/"/g, '""')}"`;
+    }
+  }
+  return out;
 }
 
 function pathEntries(env: NodeJS.ProcessEnv): string[] {
   const raw = env.PATH ?? env.Path ?? "";
   return raw.split(path.delimiter).filter(Boolean);
-}
-
-/** Expand a gh.cmd/gh.bat shim to its real executable when the layout is recognizable. */
-export function resolveCmdShimLaunch(
-  cmdPath: string,
-): { file: string; prefixArgs: string[] } | null {
-  let content: string;
-  try {
-    content = readFileSync(cmdPath, "utf8");
-  } catch {
-    return null;
-  }
-  const dir = path.dirname(cmdPath);
-  const dp0 = `${dir}${path.sep}`;
-
-  const quotedPair = content.match(/"([^"]+)"\s+"%~dp0([^"]+)"/);
-  if (quotedPair) {
-    const exe = quotedPair[1]!.replace(/%~dp0/gi, dp0);
-    const script = path.join(dir, quotedPair[2]!.replace(/\//g, path.sep));
-    if (existsSync(exe) && existsSync(script)) {
-      return { file: exe, prefixArgs: [script] };
-    }
-  }
-
-  const dp0Quoted = content.match(/"%~dp0([^"]+)"/i);
-  if (dp0Quoted) {
-    const target = path.join(dir, dp0Quoted[1]!.replace(/\\+/g, path.sep));
-    if (existsSync(target)) {
-      return { file: target, prefixArgs: [] };
-    }
-  }
-
-  return null;
 }
 
 /** Resolve gh on PATH: gh.exe before gh.cmd/gh.bat on Windows (142-R1). */
@@ -231,25 +214,17 @@ function gh(
         stdio: ["ignore", "pipe", "pipe"],
       });
     } else {
-      const deShimmed = resolveCmdShimLaunch(resolved.file);
-      if (deShimmed) {
-        child = spawn(deShimmed.file, [...deShimmed.prefixArgs, ...prefix, ...args], {
-          cwd: options.cwd,
-          windowsHide: true,
-          shell: false,
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-      } else {
-        const comSpec = process.env.ComSpec ?? "cmd.exe";
-        const line = `""${[escapeCmdArg(resolved.file), ...args.map(escapeCmdArg)].join(" ")}""`;
-        child = spawn(comSpec, ["/d", "/s", "/c", line], {
-          cwd: options.cwd,
-          windowsHide: true,
-          shell: false,
-          windowsVerbatimArguments: true,
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-      }
+      const comSpec = process.env.ComSpec ?? "cmd.exe";
+      const inner = [escapeCmdArg(resolved.file), ...args.map(escapeCmdArg)].join(" ");
+      // cmd /d /s /c expects ""<quoted-cmd>" "<arg1>" ..."" (142-R3).
+      const line = `"${inner}"`;
+      child = spawn(comSpec, ["/d", "/s", "/c", line], {
+        cwd: options.cwd,
+        windowsHide: true,
+        shell: false,
+        windowsVerbatimArguments: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
     }
 
     let stdout = "";
