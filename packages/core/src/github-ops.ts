@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, readFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -6,13 +7,20 @@ import { findGitRoot } from "./git.js";
 import { consoleDir, parseJsonObject, writeJsonFile } from "./store.js";
 import { parseGhAuthStatus, type GhAccount, type RepoGithubBind } from "./github.js";
 
+export type GhExecutable = { file: string; kind: "exe" | "cmd"; prefixArgs?: string[] };
+
+export type GhRunOptions = {
+  cwd?: string;
+  signal?: AbortSignal;
+  /** Test-only override for gh resolution (142-R5). */
+  ghExecutable?: GhExecutable;
+};
+
 /**
- * Quote one argv for cmd.exe when Node spawn({ shell: true }) joins args with spaces.
- * Without this, `gh pr create --title "RAD-95 — Foo bar"` splits on spaces (RAD-95 dogfood).
+ * Quote one argv for cmd.exe when spawning a gh.cmd / gh.bat shim (142-R3).
+ * Multiline payloads must use `--body-file` (RAD-129).
  *
- * Multiline payloads must **not** go through cmd.exe argv: even inside quotes, cmd truncates
- * at the first newline. Use `withGhBodyFile` + `gh --body-file` instead (RAD-129).
- * `%` is never safe-unquoted — cmd expands `%VAR%` in unquoted tokens.
+ * Double quotes alone do **not** stop `%VAR%` expansion under cmd.exe — use `escapeCmdArg()`.
  */
 export function quoteWindowsShellArg(arg: string): string {
   if (arg.length === 0) return '""';
@@ -21,15 +29,81 @@ export function quoteWindowsShellArg(arg: string): string {
       "Refusing to pass a multiline argument through Windows cmd.exe argv (RAD-129). Use --body-file instead.",
     );
   }
-  // Safe unquoted token — no whitespace, %, or cmd metacharacters.
   if (/^[A-Za-z0-9_./:\\@+=,:-]+$/.test(arg)) return arg;
   return `"${arg.replace(/"/g, '""')}"`;
 }
 
-/** Apply Windows shell quoting when spawn will use shell:true. */
+/** Legacy helper for callers that still quote before cmd.exe; prefer `escapeCmdArg()` for `%`. */
 export function quoteGhArgsForSpawn(args: string[]): string[] {
   if (process.platform !== "win32") return args;
   return args.map(quoteWindowsShellArg);
+}
+
+/** Escape one argv token for `cmd.exe /d /s /c` when the gh shim is gh.cmd (142-R3). */
+export function escapeCmdArg(arg: string): string {
+  if (/[\r\n]/.test(arg)) {
+    throw new Error(
+      "Refusing to pass a multiline argument through Windows cmd.exe argv (RAD-129). Use --body-file instead.",
+    );
+  }
+  if (arg.length === 0) return '""';
+  return `"${arg.replace(/"/g, '""').replace(/%/g, "^%")}"`;
+}
+
+function pathEntries(env: NodeJS.ProcessEnv): string[] {
+  const raw = env.PATH ?? env.Path ?? "";
+  return raw.split(path.delimiter).filter(Boolean);
+}
+
+/** Expand a gh.cmd/gh.bat shim to its real executable when the layout is recognizable. */
+export function resolveCmdShimLaunch(
+  cmdPath: string,
+): { file: string; prefixArgs: string[] } | null {
+  let content: string;
+  try {
+    content = readFileSync(cmdPath, "utf8");
+  } catch {
+    return null;
+  }
+  const dir = path.dirname(cmdPath);
+  const dp0 = `${dir}${path.sep}`;
+
+  const quotedPair = content.match(/"([^"]+)"\s+"%~dp0([^"]+)"/);
+  if (quotedPair) {
+    const exe = quotedPair[1]!.replace(/%~dp0/gi, dp0);
+    const script = path.join(dir, quotedPair[2]!.replace(/\//g, path.sep));
+    if (existsSync(exe) && existsSync(script)) {
+      return { file: exe, prefixArgs: [script] };
+    }
+  }
+
+  const dp0Quoted = content.match(/"%~dp0([^"]+)"/i);
+  if (dp0Quoted) {
+    const target = path.join(dir, dp0Quoted[1]!.replace(/\\+/g, path.sep));
+    if (existsSync(target)) {
+      return { file: target, prefixArgs: [] };
+    }
+  }
+
+  return null;
+}
+
+/** Resolve gh on PATH: gh.exe before gh.cmd/gh.bat on Windows (142-R1). */
+export function resolveGhExecutable(env: NodeJS.ProcessEnv = process.env): GhExecutable | null {
+  if (process.platform !== "win32") {
+    return { file: "gh", kind: "exe" };
+  }
+  for (const dir of pathEntries(env)) {
+    const exe = path.join(dir, "gh.exe");
+    if (existsSync(exe)) return { file: exe, kind: "exe" };
+  }
+  for (const dir of pathEntries(env)) {
+    for (const name of ["gh.cmd", "gh.bat"]) {
+      const shim = path.join(dir, name);
+      if (existsSync(shim)) return { file: shim, kind: "cmd" };
+    }
+  }
+  return null;
 }
 
 /**
@@ -90,18 +164,48 @@ export function githubPrEditArgs(options: {
   return args;
 }
 
-/** Swap `--body <text>` for `--body-file <path>` (RAD-129). */
-export function replaceGhBodyWithFile(args: string[], bodyFile: string): string[] {
+function inlineGhBody(args: string[]): string | null {
   const bodyIdx = args.indexOf("--body");
-  if (bodyIdx < 0 || bodyIdx + 1 >= args.length) return args;
-  const next = args.slice();
-  next.splice(bodyIdx, 2, "--body-file", bodyFile);
-  return next;
+  if (bodyIdx >= 0 && bodyIdx + 1 < args.length) return args[bodyIdx + 1]!;
+  const bIdx = args.indexOf("-b");
+  if (bIdx >= 0 && bIdx + 1 < args.length) return args[bIdx + 1]!;
+  const eq = args.find((a) => a.startsWith("--body="));
+  if (eq) return eq.slice("--body=".length);
+  return null;
 }
 
+/** Swap inline body flags for `--body-file <path>` (142-R6, RAD-129). */
+export function replaceGhBodyWithFile(args: string[], bodyFile: string): string[] {
+  const bodyIdx = args.indexOf("--body");
+  if (bodyIdx >= 0 && bodyIdx + 1 < args.length) {
+    const next = args.slice();
+    next.splice(bodyIdx, 2, "--body-file", bodyFile);
+    return next;
+  }
+  const bIdx = args.indexOf("-b");
+  if (bIdx >= 0 && bIdx + 1 < args.length) {
+    const next = args.slice();
+    next.splice(bIdx, 2, "--body-file", bodyFile);
+    return next;
+  }
+  const eqIdx = args.findIndex((a) => a.startsWith("--body="));
+  if (eqIdx >= 0) {
+    const next = args.slice();
+    next.splice(eqIdx, 1, "--body-file", bodyFile);
+    return next;
+  }
+  return args;
+}
+
+/**
+ * Spawn GitHub CLI without cmd.exe when `gh.exe` is on PATH (142-R2).
+ * Node passes argv to CreateProcessW as UTF-16 — no OEM code-page conversion for titles.
+ * We do not use process-wide `chcp 65001` (does not stop `%VAR%` expansion) or `gh api`
+ * with a JSON file (export must keep `gh pr create` / `--body-file`).
+ */
 function gh(
   args: string[],
-  options: { cwd?: string; signal?: AbortSignal } = {},
+  options: GhRunOptions = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve, reject) => {
     if (options.signal?.aborted) {
@@ -110,16 +214,44 @@ function gh(
       reject(err);
       return;
     }
-    // On Windows, spawn without shell resolves gh.exe and skips gh.cmd shims
-    // (PATH mocks in tests, and some install layouts). shell:true uses PATHEXT.
-    // Quote args so titles/bodies with spaces are not split by cmd.exe (RAD-95).
-    const spawnArgs = quoteGhArgsForSpawn(args);
-    const child = spawn("gh", spawnArgs, {
-      cwd: options.cwd,
-      windowsHide: true,
-      shell: process.platform === "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+
+    const resolved = options.ghExecutable ?? resolveGhExecutable();
+    if (!resolved) {
+      reject(new Error("gh CLI not found on PATH (install GitHub CLI or add it to PATH)"));
+      return;
+    }
+
+    const prefix = resolved.prefixArgs ?? [];
+    let child;
+    if (resolved.kind === "exe") {
+      child = spawn(resolved.file, [...prefix, ...args], {
+        cwd: options.cwd,
+        windowsHide: true,
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } else {
+      const deShimmed = resolveCmdShimLaunch(resolved.file);
+      if (deShimmed) {
+        child = spawn(deShimmed.file, [...deShimmed.prefixArgs, ...prefix, ...args], {
+          cwd: options.cwd,
+          windowsHide: true,
+          shell: false,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } else {
+        const comSpec = process.env.ComSpec ?? "cmd.exe";
+        const line = `""${[escapeCmdArg(resolved.file), ...args.map(escapeCmdArg)].join(" ")}""`;
+        child = spawn(comSpec, ["/d", "/s", "/c", line], {
+          cwd: options.cwd,
+          windowsHide: true,
+          shell: false,
+          windowsVerbatimArguments: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      }
+    }
+
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");
@@ -153,17 +285,15 @@ function gh(
 }
 
 /**
- * Run `gh` with argv. Any `--body <text>` is rewritten to a temp `--body-file`
- * so multiline / `%VAR%` payloads never travel through Windows cmd.exe argv (RAD-129).
- * Call sites may still pass `--body`; spawn always sees `--body-file` when body was set.
+ * Run `gh` with argv. Inline body flags (`--body`, `-b`, `--body=`) rewrite to a temp
+ * `--body-file` so multiline / `%VAR%` payloads never travel through cmd.exe argv (142-R6).
  */
 export function runGh(
   args: string[],
-  options: { cwd?: string; signal?: AbortSignal } = {},
+  options: GhRunOptions = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
-  const bodyIdx = args.indexOf("--body");
-  if (bodyIdx >= 0 && bodyIdx + 1 < args.length) {
-    const body = args[bodyIdx + 1]!;
+  const body = inlineGhBody(args);
+  if (body !== null) {
     return withGhBodyFile(body, (bodyFile) => gh(replaceGhBodyWithFile(args, bodyFile), options));
   }
   return gh(args, options);

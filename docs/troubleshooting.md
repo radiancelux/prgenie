@@ -168,6 +168,22 @@ Doctor `corrupt-prs` lists unparsable files under `.git/agent-console/prs/`. Cor
 pnpm exec prettier --check --end-of-line auto .
 ```
 
+## Windows: GitHub title or body garbled, or %VAR% expanded (RAD-138 / RAD-142)
+
+**Symptoms:** After **Push to origin** / export, the GitHub PR title shows mojibake (for example em dashes or emoji wrong), or `%USERNAME%`-style text in the title was replaced with your Windows account name.
+
+**Cause:** Older builds spawned `gh` through `cmd.exe` (`shell: true`), which expands `%VAR%` in argv and can mishandle non-ASCII when arguments are re-encoded.
+
+**Fix (current):** PR Genie resolves `gh.exe` on `PATH` and spawns it with **no shell**, passing argv unchanged (UTF-16 on Windows). PR bodies always go through **`--body-file`** (UTF-8, no BOM). If `PATH` only has a **`gh.cmd` / `gh.bat` shim**, PR Genie falls back to `cmd.exe` with `%` escaped via `escapeCmdArg()` so env vars are not expanded.
+
+**Check which binary you use:**
+
+```powershell
+where gh
+```
+
+Prefer the directory that lists **`gh.exe`** first. If only `gh.cmd` appears, update GitHub CLI or put the real `gh.exe` earlier on `PATH`.
+
 ## Worktree CI toolchain (Windows)
 
 **Symptoms:** `run_ci` / shepherd in a `.loops/<id>` worktree fails with `eslint` / `tsc` / `tsx` “not recognized”, `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL`, or “Missing toolchain in worktree”.
