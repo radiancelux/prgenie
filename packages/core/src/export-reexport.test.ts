@@ -79,11 +79,19 @@ process.stderr.write("unexpected gh " + args.join(" ") + "\\n");
 process.exit(1);
 `;
     await writeFile(mockGhPath, mockGhScript);
-    await writeFile(path.join(mockGhDir, "gh.cmd"), `@echo off\r\nnode "%~dp0gh" %*\r\n`);
+    if (process.platform === "win32") {
+      await writeFile(
+        path.join(mockGhDir, "gh.cmd"),
+        `@echo off\r\n"${process.execPath.replace(/"/g, '""')}" "%~dp0gh" %*\r\n`,
+      );
+    }
     if (process.platform !== "win32") await chmod(mockGhPath, 0o755);
 
     const originalPath = process.env.PATH;
-    process.env.PATH = `${mockGhDir}${path.delimiter}${originalPath ?? ""}`;
+    process.env.PATH =
+      process.platform === "win32"
+        ? mockGhDir
+        : `${mockGhDir}${path.delimiter}${originalPath ?? ""}`;
     try {
       await git(bare, ["init", "--bare"]);
       await git(repo, ["remote", "add", "origin", bare]);
