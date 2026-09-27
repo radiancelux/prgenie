@@ -341,6 +341,11 @@ test("laneView STATUS quiet until reviewed; idle clear; no vertical reason layou
     /userPinned && !!this\.selectedId && this\.selectedId !== this\.exportingId/,
     "a user-selected draft stays selected while another loop is exporting",
   );
+  assert.match(
+    src,
+    /\.run-progress\[hidden\], \.shepherd-progress\[hidden\]\s*\{[^}]*display:\s*none !important/s,
+    "hidden progress must stay hidden when display:flex is set, so quiet DRAFT does not show the export step",
+  );
   assert.ok(src.includes("Reusing green gate"));
   assert.ok(src.includes("Re-running gate CI"));
   assert.ok(src.includes("exportBusyHint"));

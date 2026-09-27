@@ -1362,6 +1362,10 @@ function sharedCss(): string {
     .run-progress, .shepherd-progress {
       display: flex; align-items: center; gap: 8px; font-size: 11px;
     }
+    /* Author display:flex overrides the hidden attribute, which kept the export step visible on quiet DRAFT. */
+    .run-progress[hidden], .shepherd-progress[hidden] {
+      display: none !important;
+    }
     .shepherd-progress { padding-left: 0; }
     .run-progress .step, .shepherd-progress .step {
       flex: 1; min-width: 0;
