@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { rm, writeFile, symlink } from "node:fs/promises";
+import { mkdir, rm, writeFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { shepherdStatus } from "./shepherd.js";
 import { createTempGitRepo } from "./test-git-fixture.js";
@@ -9,7 +9,7 @@ import { git } from "./git.js";
 import { createLocalPr, setLocalPrStatus, addLocalPrComment } from "./prs.js";
 import { addLearnings } from "./learnings.js";
 import type { Learning } from "./types.js";
-import type { CiCheckSelection } from "./ci-select.js";
+import { DEFAULT_CI_CHECKS, type CiCheckSelection } from "./ci-select.js";
 
 /** Test-only: force root check names so fixtures that stub package.json scripts still exercise the runner. */
 function fixtureRootSelection(checks: string[], paths: string[] = ["test.txt"]): CiCheckSelection {
@@ -621,6 +621,110 @@ describe("shepherdStatus", () => {
             /widget renders/.test(e.message ?? ""),
         ),
       );
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-154: empty local CI plan for a non-empty diff blocks the gate", async () => {
+    const repo = await initRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await mkdir(join(repo, "assets"), { recursive: true });
+      await writeFile(join(repo, "assets", "logo.bin"), "binary\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "Add logo"]);
+      const pr = await createLocalPr(repo, { title: "Logo only", body: "Body", base: "main" });
+      assert.ok(pr.worktreePath);
+      await writeFile(join(pr.worktreePath, ".gitignore"), "node_modules\n");
+      await linkNodeModules(pr.worktreePath, join(process.cwd(), "node_modules"));
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      const result = await shepherdStatus(repo, pr.id, {
+        skipGithubCheck: true,
+        skipToolchainEnsure: true,
+      });
+      assert.equal(result.status, "blocked");
+      assert.ok(
+        result.reasons.some((r) => r.check === "ci" && /CI check failed: ci-plan/.test(r.message)),
+      );
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-154: empty diff keeps the skip without a ci-plan block", async () => {
+    const repo = await initRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(join(repo, "test.txt"), "x\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "feat"]);
+      const pr = await createLocalPr(repo, { title: "Empty diff CI", body: "Body", base: "main" });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      const result = await shepherdStatus(repo, pr.id, {
+        skipGithubCheck: true,
+        skipToolchainEnsure: true,
+        changedPaths: [],
+      });
+      assert.ok(!result.reasons.some((r) => /ci-plan/.test(r.message)));
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-154: skipCiCheck never adds the ci-plan block", async () => {
+    const repo = await initRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await mkdir(join(repo, "assets"), { recursive: true });
+      await writeFile(join(repo, "assets", "logo.bin"), "x\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "logo"]);
+      const pr = await createLocalPr(repo, { title: "Skip CI", body: "Body", base: "main" });
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      const result = await shepherdStatus(repo, pr.id, {
+        skipGithubCheck: true,
+        skipCiCheck: true,
+      });
+      assert.ok(!result.reasons.some((r) => /ci-plan/.test(r.message)));
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-154: root package.json change runs the full plan at the gate", async () => {
+    const repo = await initRepo();
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(join(repo, "test.txt"), "x\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "feat"]);
+      const pr = await createLocalPr(repo, { title: "Pkg json", body: "Body", base: "main" });
+      assert.ok(pr.worktreePath);
+      await writeFile(
+        join(pr.worktreePath, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            "format:check": "exit 0",
+            lint: "exit 1",
+            typecheck: "exit 0",
+            test: "exit 0",
+            build: "exit 0",
+          },
+        }),
+      );
+      await writeFile(join(pr.worktreePath, ".gitignore"), "node_modules\n");
+      await linkNodeModules(pr.worktreePath, join(process.cwd(), "node_modules"));
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      const result = await shepherdStatus(repo, pr.id, {
+        skipGithubCheck: true,
+        skipToolchainEnsure: true,
+        changedPaths: ["package.json"],
+      });
+      assert.deepEqual(result.ciPlan?.checks, [...DEFAULT_CI_CHECKS]);
+      assert.equal(result.status, "blocked");
+      assert.ok(result.reasons.some((r) => /CI check failed: lint/.test(r.message)));
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

@@ -6,7 +6,7 @@ Steward-spawned reviewer Tasks use **`prgenie-reviewer`** (strong tier; model in
 
 [`packages/plugin/skills/review/process-bar.md`](../packages/plugin/skills/review/process-bar.md)
 
-That bar covers HIGH/MEDIUM severity, required SYSTEM IMPACT and REGRESSIONS paragraphs, tests, a pointer to mechanical CI (`run_ci` / shepherd — see [ci-checks.md](ci-checks.md)), generic `package.json` supply-chain checks, and a `VERDICT` / SUMMARY output shape. It does **not** encode app or framework rules.
+That bar covers HIGH/MEDIUM severity, required SYSTEM IMPACT and REGRESSIONS paragraphs, tests, the **reviewer CI backstop** (quick checks plus full suite when ready CI is unreliable — see [ci-checks.md](ci-checks.md)), generic `package.json` supply-chain checks, and a `VERDICT` / `BACKSTOP` / SUMMARY output shape. It does **not** encode app or framework rules.
 
 ## Repo-specific guidance
 

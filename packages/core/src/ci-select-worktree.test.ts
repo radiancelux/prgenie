@@ -9,6 +9,7 @@ import {
   clearWorktreeCiSelectCache,
   isCiSelectionSourcePath,
   loadWorktreeSelectCiChecks,
+  looksLikeStaleFullSuitePlan,
   resolveCiSelection,
   touchesCiSelectionSource,
 } from "./ci-select-worktree.js";
@@ -196,6 +197,34 @@ describe("ci-select-worktree (RAD-123)", () => {
       clearWorktreeCiSelectCache();
       await rm(wt, { recursive: true, force: true });
     }
+  });
+
+  it("RAD-154: hard-config full plan is not a stale full suite", () => {
+    const plan = selectCiChecks(["package.json"]);
+    assert.deepEqual(plan.checks, [...DEFAULT_CI_CHECKS]);
+    assert.equal(looksLikeStaleFullSuitePlan(plan), false);
+    const stamped = {
+      ...plan,
+      reason: [...plan.reason, "RAD-123: using worktree ci-select"],
+    };
+    assert.equal(looksLikeStaleFullSuitePlan(stamped), false);
+    assert.equal(
+      looksLikeStaleFullSuitePlan({
+        checks: [...DEFAULT_CI_CHECKS],
+        reason: ["core source/test changed — format, lint, typecheck, test, build"],
+      }),
+      true,
+    );
+  });
+
+  it("RAD-154: missing worktree module still returns the installed full plan for package.json", async () => {
+    const result = await resolveCiSelection({
+      changedPaths: ["package.json"],
+      worktreePath: path.join(tmpdir(), "prgenie-rad154-missing-wt"),
+      installedSelect: selectCiChecks,
+    });
+    assert.deepEqual(result.selection.checks, [...DEFAULT_CI_CHECKS]);
+    assert.equal(result.source, "installed");
   });
 
   it("refuses when ci-select is touched but worktree module is missing", async () => {

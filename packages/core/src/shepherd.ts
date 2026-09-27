@@ -206,6 +206,12 @@ export async function shepherdStatus(
         headSha: pr.headSha,
         plannedChecks: checks,
       });
+      if (selection.checks.length === 0 && paths.length > 0) {
+        reasons.push({
+          check: "ci",
+          message: `CI check failed: ci-plan — local CI plan is empty for ${paths.length} changed path(s); fail closed (RAD-154)`,
+        });
+      }
       if (carryPlan.scopeInvalidated) {
         onProgress?.({
           phase: "ci",

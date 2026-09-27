@@ -26,6 +26,7 @@ import {
   exportGateSnapshotIsAdoptable,
   exportReadyEnterKey,
   formatExportBlockLabel,
+  reasonsLookLikeSelectionRefusal,
   HUMAN_EXPORT_HINT,
   HUMAN_EXPORT_PRIMARY_ACTION,
   HUMAN_EXPORT_STATUS_LABEL,
@@ -173,6 +174,27 @@ describe("humanExportState", () => {
     assert.equal(needsExportGateEvaluation(pr), true);
   });
 
+  it("RAD-154: snapshot with the full plan is adoptable", () => {
+    const fullPlan = {
+      checks: ["format:check", "lint", "typecheck", "test", "build"],
+      reason: ["RAD-154: hard config/CI changed → full local plan"],
+      uncertain: false,
+    };
+    const pr = reviewedPr({
+      exportGate: {
+        status: "ready",
+        reasons: [],
+        headSha: "abc123",
+        evaluatedAt: "2026-01-01T00:00:00.000Z",
+        ciPlan: fullPlan,
+        ciCwd: null,
+      },
+    });
+    assert.equal(exportGateHasStaleFullSuiteCiPlan(pr.exportGate), false);
+    assert.equal(exportGateSnapshotIsAdoptable(pr.exportGate, "abc123"), true);
+    assert.equal(needsExportGateEvaluation(pr), false);
+  });
+
   it("does not treat draft/ready as human-exportable", () => {
     assert.equal(isHumanExportable(reviewedPr({ status: "draft" })), false);
     assert.equal(isHumanExportable(reviewedPr({ status: "ready" })), false);
@@ -196,6 +218,13 @@ describe("formatExportBlockLabel", () => {
       formatExportBlockLabel([{ check: "github", message: "Repo not bound" }]),
       "github",
     );
+  });
+
+  it("RAD-154: formatExportBlockLabel returns ci-plan for the empty-plan block", () => {
+    const message =
+      "CI check failed: ci-plan — local CI plan is empty for 2 changed path(s); fail closed (RAD-154)";
+    assert.equal(formatExportBlockLabel([{ check: "ci", message }]), "ci-plan");
+    assert.equal(reasonsLookLikeSelectionRefusal([{ check: "ci", message }]), false);
   });
 
   it("labels stale/refused plans as ci-select, never root test (RAD-126)", () => {

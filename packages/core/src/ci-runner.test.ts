@@ -16,7 +16,7 @@ import {
   runCiChecks,
   runLoopCi,
 } from "./ci-runner.js";
-import { selectCiChecks, shouldScopeFormatCheck } from "./ci-select.js";
+import { DEFAULT_CI_CHECKS, selectCiChecks, shouldScopeFormatCheck } from "./ci-select.js";
 import { git } from "./git.js";
 import { isAbortError } from "./progress.js";
 import { createLocalPr } from "./prs.js";
@@ -647,8 +647,8 @@ describe("runCiChecks", () => {
 
       const configPaths = ["package.json"];
       const configSel = selectCiChecks(configPaths);
-      assert.equal(configSel.skipped, true);
-      assert.deepEqual(configSel.checks, []);
+      assert.equal(configSel.skipped, false);
+      assert.deepEqual(configSel.checks, [...DEFAULT_CI_CHECKS]);
       assert.equal(shouldScopeFormatCheck(configSel), false);
 
       const uncertainPaths = ["assets/logo.png"];
@@ -663,9 +663,9 @@ describe("runCiChecks", () => {
       // Caller may still run full-tree format explicitly (not via selectCiChecks full suite).
       const result = await runCiChecks(repo, {
         checks: ["format:check"],
-        changedPaths: configPaths,
+        changedPaths: uncertainPaths,
         selection: {
-          ...configSel,
+          ...uncertainSel,
           checks: ["format:check"],
           skipped: false,
           mapping: [

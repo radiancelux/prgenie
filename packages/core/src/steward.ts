@@ -333,7 +333,9 @@ export function decideStewardAction(
           reason:
             failingCheck === "ci-select"
               ? `Export gate blocked (${failingCheck}): stale/refused CI plan — re-run the gate with worktree select (do not fix root pnpm test). Resume the same implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer — do not show Push to origin.`
-              : `Export gate blocked (${failingCheck}). Resume the same implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer — do not show Push to origin.`,
+              : failingCheck === "ci-plan"
+                ? `Export gate blocked (ci-plan): local CI plan was empty for a non-empty diff — run_ci / --failing ci-plan cannot fix this. Record exportGateOverride naming \`ci-plan\` on this HEAD. Resume the same implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer — do not show Push to origin.`
+                : `Export gate blocked (${failingCheck}). Resume the same implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer — do not show Push to origin.`,
         };
       }
       return {
@@ -349,7 +351,9 @@ export function decideStewardAction(
         reason:
           failingCheck === "ci-select"
             ? `Export gate blocked (${failingCheck}): stale/refused CI plan — re-run the gate with worktree select (do not fix root pnpm test). Spawn an implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer — do not show Push to origin.`
-            : `Export gate blocked (${failingCheck}). Spawn an implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer — do not show Push to origin.`,
+            : failingCheck === "ci-plan"
+              ? `Export gate blocked (ci-plan): local CI plan was empty for a non-empty diff — run_ci / --failing ci-plan cannot fix this. Record exportGateOverride naming \`ci-plan\` on this HEAD. Spawn an implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer — do not show Push to origin.`
+              : `Export gate blocked (${failingCheck}). Spawn an implementor Task, then evaluate_export_gate again. Do not auto-spawn a reviewer — do not show Push to origin.`,
       };
     }
     return {

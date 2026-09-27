@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { git } from "./git.js";
@@ -16,6 +16,7 @@ import {
   setLocalPrExportGate,
   setLocalPrStatus,
   validateExport,
+  evaluateAndStoreExportGate,
 } from "./index.js";
 import { shepherdStatus } from "./shepherd.js";
 import { createTempGitRepo } from "./test-git-fixture.js";
@@ -194,9 +195,79 @@ describe("export gate honour ready skips", () => {
         selection: fixtureRootSelection(["lint", "test:core"]),
       });
       assert.equal(shepherd.status, "ready");
+      assert.ok(!shepherd.reasons.some((r) => /ci-plan/.test(r.message)));
       const carried = shepherd.ciChecks?.find((c) => c.name === "test:core");
       assert.ok(carried?.skipped);
       assert.match(carried?.reason ?? "", /skipped \(ready: recorded at ready\)/);
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("RAD-154: empty plan with changed files is not exportable", async () => {
+    const repo = await createTempGitRepo({ prefix: "prgenie-rad154-empty-" });
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await mkdir(path.join(repo, "assets"), { recursive: true });
+      await writeFile(path.join(repo, "assets", "logo.bin"), "x\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "logo"]);
+      const pr = await createLocalPr(repo, { title: "Empty plan", body: "Body", base: "main" });
+      assert.ok(pr.worktreePath);
+      await writeFile(path.join(pr.worktreePath, ".gitignore"), "node_modules\n");
+      const type = process.platform === "win32" ? "junction" : "dir";
+      await symlink(
+        path.join(process.cwd(), "node_modules"),
+        path.join(pr.worktreePath, "node_modules"),
+        type,
+      );
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      const shepherd = await evaluateAndStoreExportGate(repo, pr.id, {
+        skipGithubCheck: true,
+        skipToolchainEnsure: true,
+      });
+      assert.equal(shepherd.status, "blocked");
+      const stored = await getLocalPr(repo, pr.id);
+      assert.equal(stored.exportGate?.status, "blocked");
+      const validation = await validateExport(repo, pr.id);
+      assert.equal(validation.ok, false);
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("RAD-154: documented override naming ci-plan allows export", async () => {
+    const repo = await createTempGitRepo({ prefix: "prgenie-rad154-override-" });
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await mkdir(path.join(repo, "assets"), { recursive: true });
+      await writeFile(path.join(repo, "assets", "logo.bin"), "x\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "logo"]);
+      const pr = await createLocalPr(repo, {
+        title: "Override",
+        body: "Override by brett because the diff is binary-only assets.\nSkipped checks: `ci-plan`",
+        base: "main",
+      });
+      assert.ok(pr.worktreePath);
+      await writeFile(path.join(pr.worktreePath, ".gitignore"), "node_modules\n");
+      const type = process.platform === "win32" ? "junction" : "dir";
+      await symlink(
+        path.join(process.cwd(), "node_modules"),
+        path.join(pr.worktreePath, "node_modules"),
+        type,
+      );
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      await evaluateAndStoreExportGate(repo, pr.id, {
+        skipGithubCheck: true,
+        skipToolchainEnsure: true,
+      });
+      await recordExportGateOverride(repo, pr.id, {
+        who: "brett",
+        why: "the diff is binary-only assets",
+      });
+      const validation = await validateExport(repo, pr.id);
+      assert.equal(validation.ok, true);
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
