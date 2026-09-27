@@ -226,7 +226,9 @@ test("attachLocalPr rejects branch with merged GitHub PR", async () => {
   git(["push", "-u", "origin", "feat/merged-pr-test"]);
   git(["checkout", "main"]);
 
-  // Cross-platform mock `gh` (Node script + gh.cmd). No Unix-only chmod binary.
+  // Cross-platform mock `gh` (Node script + gh.cmd). On Windows, PATH is only
+  // this directory so resolveGhExecutable (142-R1) returns the mock gh.cmd
+  // instead of a later gh.exe. node.cmd keeps `node` resolvable there.
   const mockGhDir = await mkdtemp(path.join(tmpdir(), "mock-gh-"));
   const mockGhPath = path.join(mockGhDir, "gh");
   const mockGhScript = `#!/usr/bin/env node
@@ -238,13 +240,17 @@ if (args[0] === "pr" && args[1] === "view" && args[2] === "feat/merged-pr-test")
 process.exit(1);
 `;
   await writeFile(mockGhPath, mockGhScript);
-  await writeFile(path.join(mockGhDir, "gh.cmd"), `@echo off\r\nnode "%~dp0gh" %*\r\n`);
-  if (process.platform !== "win32") {
+  if (process.platform === "win32") {
+    const nodeExe = process.execPath.replace(/"/g, '""');
+    await writeFile(path.join(mockGhDir, "gh.cmd"), `@echo off\r\nnode "%~dp0gh" %*\r\n`);
+    await writeFile(path.join(mockGhDir, "node.cmd"), `@echo off\r\n"${nodeExe}" %*\r\n`);
+  } else {
     await chmod(mockGhPath, 0o755);
   }
 
   const originalPath = process.env.PATH;
-  process.env.PATH = `${mockGhDir}${path.delimiter}${originalPath}`;
+  process.env.PATH =
+    process.platform === "win32" ? mockGhDir : `${mockGhDir}${path.delimiter}${originalPath ?? ""}`;
 
   try {
     await assert.rejects(
