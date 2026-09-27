@@ -235,6 +235,14 @@ export type {
   ExportValidationResult,
 } from "./export-validation.js";
 export {
+  assertLoopNotCancelled,
+  clearLoopCancel,
+  loopCancelFile,
+  readLoopCancel,
+  writeLoopCancel,
+} from "./loop-cancel.js";
+export type { LoopCancelMarker, WriteLoopCancelFields } from "./loop-cancel.js";
+export {
   acquireCiLock,
   ciAbortFile,
   pidAlive,

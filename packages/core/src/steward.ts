@@ -27,6 +27,7 @@ import {
   guidanceRepoRoot,
   loadReviewGuidanceSnapshot,
 } from "./repo-guidance.js";
+import { clearLoopCancel, readLoopCancel } from "./loop-cancel.js";
 import { consoleDir, parseJsonObject, withFileLock, writeJsonFile } from "./store.js";
 import type {
   ExportGateSnapshot,
@@ -51,7 +52,8 @@ export type StewardActionKind =
   | "resume_reviewer"
   | "evaluate_export_gate"
   | "handoff_human"
-  | "done";
+  | "done"
+  | "cancelled";
 
 export interface StewardDecision {
   kind: StewardActionKind;
@@ -577,12 +579,67 @@ async function loadAndPersistGuidance(
   };
 }
 
+function cancelledStewardDecision(
+  id: string,
+  marker: NonNullable<ReturnType<typeof readLoopCancel>>,
+  binding: StewardBinding,
+): StewardDecision {
+  const at = marker.cancelledAt ?? "unknown time";
+  const taskId = marker.implementorTaskId ?? binding.implementorTaskId;
+  const stopTask = taskId != null ? ` Stop implementor Task ${taskId} if it is still running.` : "";
+  return {
+    kind: "cancelled",
+    loopId: id,
+    implementorTaskId: binding.implementorTaskId,
+    reviewerTaskId: binding.reviewerTaskId,
+    resumeSameImplementor: false,
+    humanExportable: false,
+    yourTurn: false,
+    failingCheck: null,
+    gateStatus: null,
+    reason: `Loop cancelled from panel at ${at}.${stopTask} Do not spawn or resume agents until the cancel marker is cleared (panel Resume loop, MCP clear_loop_cancel, or steward_next with restart).`,
+  };
+}
+
 export async function stewardNext(
   cwd: string,
   id: string,
   options: StewardNextOptions & BindStewardInput = {},
 ): Promise<StewardNextResult> {
   const root = await requireGitRoot(cwd);
+  if (options.restart) {
+    clearLoopCancel(root, id);
+  } else {
+    const marker = readLoopCancel(root, id);
+    if (marker) {
+      const pr = await getLocalPr(root, id);
+      const existing = await getStewardBinding(cwd, id);
+      const binding: StewardBinding =
+        existing ??
+        ({
+          loopId: id,
+          implementorTaskId: null,
+          reviewerTaskId: null,
+          updatedAt: new Date().toISOString(),
+        } satisfies StewardBinding);
+      syncReviewRoundCount(pr);
+      return {
+        binding,
+        decision: cancelledStewardDecision(id, marker, binding),
+        status: pr.status,
+        exportGate: pr.exportGate ?? null,
+        implementorTierHint: null,
+        implementorTier: pr.implementorTier ?? null,
+        reviewRoundCount: pr.reviewRoundCount ?? syncReviewRoundCount(pr),
+        implementorRoundCount: pr.implementorRoundCount ?? 0,
+        implementorModel: pr.implementorModel ?? null,
+        reviewerGuidanceBrief: null,
+        implementorContextBrief: null,
+        reviewGuidance: pr.reviewGuidance ?? null,
+        repoContext: pr.repoContext ?? null,
+      };
+    }
+  }
   // RAD-125: refresh packet headSha from worktree/branch tip BEFORE reading
   // exportGate / blocked-check labels (stale HEAD matched the wrong gate).
   // RAD-126: refresh also invalidates reviewed → ready when tip moved.
