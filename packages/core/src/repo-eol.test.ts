@@ -23,15 +23,7 @@ test("RAD-156: git index has no CRLF text files", () => {
   for (const line of out.split(/\r?\n/)) {
     if (!line.trim()) continue;
     const indexEol = line.split(/\s+/)[0];
-    assert.notEqual(
-      indexEol,
-      "i/crlf",
-      `index must not store CRLF: ${line}`,
-    );
-    assert.notEqual(
-      indexEol,
-      "i/mixed",
-      `index must not store mixed EOL: ${line}`,
-    );
+    assert.notEqual(indexEol, "i/crlf", `index must not store CRLF: ${line}`);
+    assert.notEqual(indexEol, "i/mixed", `index must not store mixed EOL: ${line}`);
   }
 });
