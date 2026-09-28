@@ -135,8 +135,9 @@ describe("RAD-136 per-loop CI logs", () => {
       const loopIds = ["lp-11111111", "lp-22222222", "lp-33333333", "lp-44444444"] as const;
       const slotTiming = { pollMs: 20, maxWaitMs: 5000, noticeMs: 50 };
       wtParent = await mkdtemp(join(tmpdir(), "prgenie-ci-logs-wts-"));
+      const parent = wtParent;
       for (const loopId of loopIds) {
-        const wt = join(wtParent, loopId);
+        const wt = join(parent, loopId);
         await git(repo, ["worktree", "add", "--detach", wt]);
         worktrees.push(wt);
         await writeFile(
@@ -155,7 +156,7 @@ describe("RAD-136 per-loop CI logs", () => {
       }
       await Promise.all(
         loopIds.map((loopId) =>
-          runCiChecks(join(wtParent, loopId), {
+          runCiChecks(join(parent, loopId), {
             checks: ["test"],
             skipCache: true,
             skipToolchainEnsure: true,
