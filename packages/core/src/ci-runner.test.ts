@@ -1783,25 +1783,36 @@ describe("RAD-134 heavy-test slots in ci-runner", () => {
     const repo = await initTestRepo();
     try {
       await execAsync("git init", { cwd: repo });
+      await mkdir(join(repo, "packages", "core", "src"), { recursive: true });
+      await writeFile(
+        join(repo, "packages", "core", "src", "slot-queue.test.ts"),
+        `import assert from "node:assert/strict";\nimport { test } from "node:test";\ntest("ok", () => assert.ok(true));\n`,
+      );
+      await linkNodeModules(repo, join(process.cwd(), "node_modules"));
+      const slotTiming = { pollMs: 20, maxWaitMs: 5000 };
       const { acquireHeavyTestSlot } = await import("./ci-heavy-slot.js");
       const h1 = await acquireHeavyTestSlot({
         cwd: repo,
         check: "hold",
         concurrency: 1,
-        timing: { pollMs: 20 },
+        timing: slotTiming,
       });
+      const releaseHeld = setTimeout(() => h1.release(), 300);
       const result = await runCiChecks(repo, {
         checks: ["test:core"],
         skipCache: true,
         skipToolchainEnsure: true,
         parallel: false,
         heavyConcurrency: 1,
-        heavySlotTiming: { pollMs: 20 },
-        packageScripts: { "test:core": 'node -e "setTimeout(()=>{}, 200)"' },
-        timeout: 5000,
+        heavySlotTiming: slotTiming,
+        timeout: 60_000,
       });
+      clearTimeout(releaseHeld);
       h1.release();
-      assert.ok((result.checks[0]?.waitedMs ?? 0) >= 0);
+      const check = result.checks[0];
+      assert.equal(result.allPassed, true);
+      assert.equal(check?.passed, true);
+      assert.ok((check?.waitedMs ?? 0) >= 250, `expected queue wait, got ${check?.waitedMs}`);
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
