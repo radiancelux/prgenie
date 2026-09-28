@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -276,26 +276,68 @@ test("RAD-134: ci-slot runs the command under a heavy slot and returns its exit 
       heartbeatAt: now,
     })}\n`,
   );
-  setTimeout(() => {
+  const child = spawn(
+    process.execPath,
+    [cliJs, "ci-slot", "--check", "queued", "--", process.execPath, "-e", "process.exit(3)"],
+    {
+      cwd: repo,
+      env: { ...process.env, NO_COLOR: "1", PRGENIE_CI_HEAVY_CONCURRENCY: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let stderr = "";
+  let sawWaiting = false;
+  const closed = new Promise<number>((resolve) => {
+    child.on("close", (status) => {
+      resolve(typeof status === "number" ? status : 1);
+    });
+  });
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    stderr += chunk;
+    if (stderr.includes("waiting for heavy-test slot")) sawWaiting = true;
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`no waiting line before release:\n${stderr}`));
+      }, 8000);
+      const tick = (): void => {
+        if (sawWaiting) {
+          clearTimeout(timer);
+          resolve();
+        }
+      };
+      child.stderr?.on("data", tick);
+      child.on("close", () => {
+        if (sawWaiting) return;
+        clearTimeout(timer);
+        reject(new Error(`ci-slot exited before a waiting line:\n${stderr}`));
+      });
+      tick();
+    });
+    assert.match(stderr, /waiting for heavy-test slot/);
+    assert.equal(existsSync(slotFile), true);
+    unlinkSync(slotFile);
+    const code = await Promise.race([
+      closed,
+      new Promise<number>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`ci-slot did not exit after the slot was released:\n${stderr}`));
+        }, 8000);
+      }),
+    ]);
+    assert.equal(code, 3, stderr);
+    const names = existsSync(slotDir)
+      ? readdirSync(slotDir).filter((n) => n.startsWith("slot-") && n.endsWith(".json"))
+      : [];
+    assert.equal(names.length, 0);
+  } finally {
+    if (child.exitCode == null && !child.killed) child.kill();
     try {
       unlinkSync(slotFile);
     } catch {
-      // ignore
+      // hold already released
     }
-  }, 300);
-  const queued = prgenie([
-    "ci-slot",
-    "--check",
-    "queued",
-    "--",
-    process.execPath,
-    "-e",
-    "process.exit(3)",
-  ]);
-  assert.equal(queued.code, 3, queued.stderr || queued.stdout);
-  const { readdirSync, existsSync } = await import("node:fs");
-  const names = existsSync(slotDir)
-    ? readdirSync(slotDir).filter((n) => n.startsWith("slot-") && n.endsWith(".json"))
-    : [];
-  assert.equal(names.length, 0);
+  }
 });

@@ -402,15 +402,11 @@ async function runOneCheck(
     selection,
     testFiles: scopedTestFiles,
   });
-  // Progress may show a descriptive blob-scope label; shell fallback stays pnpm <check>.
+  // Progress and the shell both use the resolved command, including a
+  // path-scoped host rewrite. packageScripts is resolver input only.
   const progressCommand = resolved.command;
-  const hostFailClosed = Boolean(hostScopeFailClosedReason(changedPaths));
   const shellCommand =
-    packageScripts?.[check] != null && !hostFailClosed
-      ? packageScripts[check]!
-      : check === "format:check" && formatScoped
-        ? ciCheckCommand(check)
-        : resolved.command;
+    check === "format:check" && formatScoped ? ciCheckCommand(check) : resolved.command;
   const reason = [options.reason, resolved.reason].filter(Boolean).join("; ");
   const cacheScope: CheckInputScopeOptions = {
     changedPaths,

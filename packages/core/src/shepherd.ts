@@ -54,10 +54,6 @@ export interface ShepherdOptions {
   hardBlockCiEnv?: boolean;
   /** Skip worktree node_modules junction (unit fixtures with exit-script package.json). */
   skipToolchainEnsure?: boolean;
-  /** Fixture overrides forwarded to runCiChecks (tests). */
-  packageScripts?: Record<string, string> | null;
-  skipCache?: boolean;
-  timeout?: number;
 }
 
 /**
@@ -262,9 +258,6 @@ export async function shepherdStatus(
           failFast: options.failFast,
           parallel: options.parallel,
           skipToolchainEnsure: options.skipToolchainEnsure,
-          packageScripts: options.packageScripts,
-          skipCache: options.skipCache,
-          timeout: options.timeout,
           loopId: pr.id,
         });
         ciResult = {
