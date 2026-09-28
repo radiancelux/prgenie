@@ -404,8 +404,9 @@ async function runOneCheck(
   });
   // Progress may show a descriptive blob-scope label; shell fallback stays pnpm <check>.
   const progressCommand = resolved.command;
+  const hostFailClosed = Boolean(hostScopeFailClosedReason(changedPaths));
   const shellCommand =
-    packageScripts?.[check] != null
+    packageScripts?.[check] != null && !hostFailClosed
       ? packageScripts[check]!
       : check === "format:check" && formatScoped
         ? ciCheckCommand(check)

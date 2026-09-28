@@ -125,6 +125,8 @@ describe("RAD-136 per-loop CI logs", () => {
     const repo = await initRepo();
     try {
       const loopIds = ["lp-11111111", "lp-22222222", "lp-33333333", "lp-44444444"] as const;
+      // Source path (not package.json) so host-scope stays open and packageScripts run.
+      const fixturePaths = ["packages/core/src/ci-select.ts"];
       await Promise.all(
         loopIds.map((loopId) =>
           runCiChecks(repo, {
@@ -134,6 +136,14 @@ describe("RAD-136 per-loop CI logs", () => {
             parallel: false,
             timeout: 15_000,
             loopId,
+            changedPaths: fixturePaths,
+            selection: {
+              checks: ["test"],
+              reason: ["fixture: concurrent loop logs"],
+              mapping: [{ check: "test", reason: "fixture" }],
+              uncertain: false,
+              changedPaths: fixturePaths,
+            },
             packageScripts: {
               "format:check": "exit 0",
               lint: "exit 0",
