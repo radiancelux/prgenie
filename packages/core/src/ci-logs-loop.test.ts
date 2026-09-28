@@ -61,7 +61,7 @@ describe("RAD-136 per-loop CI logs", () => {
           reason: ["fixture: shepherd log path"],
           mapping: [{ check: "test", reason: "fixture" }],
           uncertain: false,
-          changedPaths: ["package.json"],
+          changedPaths: ["packages/core/src/ci-select.ts"],
         },
         packageScripts: {
           test: 'node -e "console.error(\\"MARKER-SHEPHERD\\"); process.exit(1)"',
