@@ -259,7 +259,8 @@ export function isValidLoopLogKey(loopId: string): boolean {
 
 /** Resolve loop key for log paths: explicit id, .loops worktree, or shared (null). */
 export function resolveCiLogLoopKey(cwd: string, loopId?: string | null): string | null {
-  if (loopId != null && loopId !== "") {
+  if (loopId !== undefined) {
+    if (loopId === null || loopId === "") return null;
     return isValidLoopLogKey(loopId) ? loopId : null;
   }
   const ident = loopWorktreeIdentity(cwd);

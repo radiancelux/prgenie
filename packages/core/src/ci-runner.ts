@@ -405,7 +405,11 @@ async function runOneCheck(
   // Progress may show a descriptive blob-scope label; shell fallback stays pnpm <check>.
   const progressCommand = resolved.command;
   const shellCommand =
-    check === "format:check" && formatScoped ? ciCheckCommand(check) : resolved.command;
+    packageScripts?.[check] != null
+      ? packageScripts[check]!
+      : check === "format:check" && formatScoped
+        ? ciCheckCommand(check)
+        : resolved.command;
   const reason = [options.reason, resolved.reason].filter(Boolean).join("; ");
   const cacheScope: CheckInputScopeOptions = {
     changedPaths,

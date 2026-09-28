@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import { pidAlive } from "./ci-abort.js";
-import {
-  acquireHeavyTestSlot,
-  ciHeavySlotDir,
-  heavyTestConcurrency,
-  listHeavySlotHolders,
-} from "./ci-heavy-slot.js";
+import { acquireHeavyTestSlot, ciHeavySlotDir, heavyTestConcurrency } from "./ci-heavy-slot.js";
 
 function git(args: string[], cwd: string): void {
   execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true });
@@ -36,8 +38,23 @@ describe("RAD-134 heavy slot module", () => {
   });
 
   it("RAD-134: invalid concurrency values fall back to 2 with one warning", () => {
-    for (const v of ["0", "33", "2.5", "abc"]) {
-      assert.equal(heavyTestConcurrency({ PRGENIE_CI_HEAVY_CONCURRENCY: v }), 2);
+    const writes: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk, encoding, cb) => {
+      writes.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+      return orig(chunk, encoding, cb);
+    }) as typeof process.stderr.write;
+    try {
+      for (const v of ["0", "33", "2.5", "abc"]) {
+        assert.equal(heavyTestConcurrency({ PRGENIE_CI_HEAVY_CONCURRENCY: v }), 2);
+      }
+      assert.equal(
+        writes.filter((w) => w.includes("PRGENIE_CI_HEAVY_CONCURRENCY") && w.includes("invalid"))
+          .length,
+        1,
+      );
+    } finally {
+      process.stderr.write = orig;
     }
   });
 
@@ -163,9 +180,18 @@ describe("RAD-134 heavy slot module", () => {
           heartbeatAt: new Date().toISOString(),
         })}\n`,
       );
+      const hDead = await acquireHeavyTestSlot({
+        cwd: repo,
+        check: "after-dead",
+        concurrency: 1,
+        timing: { pollMs: 20, staleMs: 90_000 },
+      });
+      assert.equal(readdirSync(dir).filter((n) => n.startsWith("slot-")).length, 1);
+      hDead.release();
+
       const old = new Date(Date.now() - 120_000).toISOString();
       writeFileSync(
-        path.join(dir, "slot-1.json"),
+        path.join(dir, "slot-0.json"),
         `${JSON.stringify({
           token: "old",
           pid: process.pid,
@@ -176,15 +202,26 @@ describe("RAD-134 heavy slot module", () => {
           heartbeatAt: old,
         })}\n`,
       );
-      writeFileSync(path.join(dir, "slot-2.json"), "not-json\n");
-      const h = await acquireHeavyTestSlot({
+      const hOld = await acquireHeavyTestSlot({
         cwd: repo,
-        check: "z",
-        concurrency: 3,
+        check: "after-old-hb",
+        concurrency: 1,
         timing: { pollMs: 20, staleMs: 90_000 },
       });
-      assert.equal(listHeavySlotHolders(dir).length, 1);
-      h.release();
+      hOld.release();
+
+      const corruptPath = path.join(dir, "slot-0.json");
+      writeFileSync(corruptPath, "not-json\n");
+      const corruptOld = Date.now() - 120_000;
+      utimesSync(corruptPath, corruptOld / 1000, corruptOld / 1000);
+      const hCorrupt = await acquireHeavyTestSlot({
+        cwd: repo,
+        check: "after-corrupt",
+        concurrency: 1,
+        timing: { pollMs: 20, staleMs: 90_000 },
+      });
+      assert.equal(readdirSync(dir).filter((n) => n.startsWith("slot-")).length, 1);
+      hCorrupt.release();
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

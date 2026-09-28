@@ -5,10 +5,11 @@ import { describe, it } from "node:test";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runCiChecks, runLoopCi } from "./ci-runner.js";
-import { createLocalPr } from "./prs.js";
+import { createLocalPr, setLocalPrStatus } from "./prs.js";
 import { git } from "./git.js";
 import { gitCommonDir } from "./git.js";
 import { createTempGitRepo } from "./test-git-fixture.js";
+import { shepherdStatus } from "./shepherd.js";
 
 describe("RAD-136 per-loop CI logs", () => {
   async function initRepo(): Promise<string> {
@@ -48,6 +49,31 @@ describe("RAD-136 per-loop CI logs", () => {
       const logPath = path.join(logDir, "test.log");
       const body = await readFile(logPath, "utf8");
       assert.match(body, /MARKER-LOOP/);
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      await shepherdStatus(repo, prefix, {
+        skipGithubCheck: true,
+        skipCache: true,
+        skipToolchainEnsure: true,
+        parallel: false,
+        timeout: 15_000,
+        selection: {
+          checks: ["test"],
+          reason: ["fixture: shepherd log path"],
+          mapping: [{ check: "test", reason: "fixture" }],
+          uncertain: false,
+          changedPaths: ["package.json"],
+        },
+        packageScripts: {
+          test: 'node -e "console.error(\\"MARKER-SHEPHERD\\"); process.exit(1)"',
+          lint: "exit 0",
+          typecheck: "exit 0",
+          build: "exit 0",
+          "format:check": "exit 0",
+        },
+      });
+      const shepherdLog = path.join(common, "agent-console", "ci-logs", pr.id, "test.log");
+      const shepherdBody = await readFile(shepherdLog, "utf8");
+      assert.match(shepherdBody, /MARKER-SHEPHERD/);
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
@@ -98,45 +124,42 @@ describe("RAD-136 per-loop CI logs", () => {
   it("RAD-136: four concurrent runs with different loop ids keep separate logs", async () => {
     const repo = await initRepo();
     try {
-      const specs = [
-        { loopId: "lp-11111111", check: "test", file: "test.log" },
-        { loopId: "lp-22222222", check: "lint", file: "lint.log" },
-        { loopId: "lp-33333333", check: "typecheck", file: "typecheck.log" },
-        { loopId: "lp-44444444", check: "build", file: "build.log" },
-      ] as const;
-      await writeFile(
-        join(repo, "package.json"),
-        JSON.stringify({
-          name: "test-repo",
-          scripts: Object.fromEntries(
-            specs.map((s) => [
-              s.check,
-              `node -e "console.error('MARKER-${s.loopId}'); process.exit(1)"`,
-            ]),
-          ),
-        }),
-      );
+      const loopIds = ["lp-11111111", "lp-22222222", "lp-33333333", "lp-44444444"] as const;
       await Promise.all(
-        specs.map((s) =>
+        loopIds.map((loopId) =>
           runCiChecks(repo, {
-            checks: [s.check],
+            checks: ["test"],
             skipCache: true,
             skipToolchainEnsure: true,
             parallel: false,
             timeout: 15_000,
-            loopId: s.loopId,
+            loopId,
+            packageScripts: {
+              "format:check": "exit 0",
+              lint: "exit 0",
+              typecheck: "exit 0",
+              build: "exit 0",
+              test: `node -e "console.error('MARKER-${loopId}'); process.exit(1)"`,
+            },
           }),
         ),
       );
       const common = await gitCommonDir(repo);
-      for (const s of specs) {
-        const logPath = path.join(common, "agent-console", "ci-logs", s.loopId, s.file);
+      for (const loopId of loopIds) {
+        const logPath = path.join(common, "agent-console", "ci-logs", loopId, "test.log");
         const body = await readFile(logPath, "utf8");
-        assert.match(body, new RegExp(`MARKER-${s.loopId}`));
-        for (const other of specs) {
-          if (other.loopId === s.loopId) continue;
-          assert.doesNotMatch(body, new RegExp(`MARKER-${other.loopId}`));
+        assert.match(body, new RegExp(`MARKER-${loopId}`));
+        for (const other of loopIds) {
+          if (other === loopId) continue;
+          assert.doesNotMatch(body, new RegExp(`MARKER-${other}`));
         }
+        const latestRaw = await readFile(
+          path.join(common, "agent-console", "ci-logs", loopId, "latest.json"),
+          "utf8",
+        );
+        const latest = JSON.parse(latestRaw) as { loopId?: string; excerpt?: string };
+        assert.equal(latest.loopId, loopId);
+        assert.match(latest.excerpt ?? "", new RegExp(`MARKER-${loopId}`));
       }
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);

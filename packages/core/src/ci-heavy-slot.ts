@@ -23,7 +23,7 @@ export const CI_HEAVY_SLOT_HEARTBEAT_MS = 10_000;
 export const CI_HEAVY_SLOT_STALE_MS = 90_000;
 export const CI_HEAVY_SLOT_MAX_WAIT_MS = 30 * 60 * 1000;
 
-const WARNED_INVALID_CONCURRENCY = new Set<string>();
+let warnedInvalidConcurrency = false;
 
 export interface HeavySlotRecord {
   token: string;
@@ -85,9 +85,8 @@ export function heavyTestConcurrency(env: NodeJS.ProcessEnv = process.env): numb
   if (raw == null || raw.trim() === "") return CI_HEAVY_SLOT_DEFAULT_CONCURRENCY;
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 1 || n > 32) {
-    const key = raw;
-    if (!WARNED_INVALID_CONCURRENCY.has(key)) {
-      WARNED_INVALID_CONCURRENCY.add(key);
+    if (!warnedInvalidConcurrency) {
+      warnedInvalidConcurrency = true;
       process.stderr.write(
         `PRGENIE_CI_HEAVY_CONCURRENCY=${JSON.stringify(raw)} is invalid; using ${CI_HEAVY_SLOT_DEFAULT_CONCURRENCY}.\n`,
       );
@@ -247,15 +246,6 @@ export async function acquireHeavyTestSlot(
   }
 
   const token = randomUUID();
-  const record: HeavySlotRecord = {
-    token,
-    pid: process.pid,
-    loopId: options.loopId ?? null,
-    check: options.check,
-    cwd: options.cwd,
-    acquiredAt: new Date().toISOString(),
-    heartbeatAt: new Date().toISOString(),
-  };
 
   for (;;) {
     throwIfAborted(options.signal);
@@ -267,11 +257,21 @@ export async function acquireHeavyTestSlot(
     for (let k = 0; k < n; k++) {
       const file = slotFilePath(slotDir, k);
       if (existsSync(file)) {
-        if (tryDeleteStaleSlot(file, staleMs)) continue;
-        continue;
+        if (!tryDeleteStaleSlot(file, staleMs)) continue;
+        // Stale slot removed — retry exclusive create on this index at once (134-R11).
       }
       try {
         const fd = openSync(file, "wx");
+        const now = new Date().toISOString();
+        const record: HeavySlotRecord = {
+          token,
+          pid: process.pid,
+          loopId: options.loopId ?? null,
+          check: options.check,
+          cwd: options.cwd,
+          acquiredAt: now,
+          heartbeatAt: now,
+        };
         try {
           writeFileSync(fd, `${JSON.stringify(record)}\n`, "utf8");
         } finally {

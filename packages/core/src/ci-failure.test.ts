@@ -192,6 +192,28 @@ describe("ci failure excerpts", () => {
         assert.doesNotMatch(display ?? "", /\.\./);
         assert.match(display ?? "", /ci-logs[\\/]test\.log$/);
       }
+      const primary = await mkdtemp(join(tmpdir(), "prgenie-primary-r4-"));
+      const loops = join(path.dirname(primary), `${path.basename(primary)}.loops`);
+      const loopPath = join(loops, "lp-aabbccdd");
+      try {
+        await execAsync("git init", { cwd: primary });
+        await mkdir(loopPath, { recursive: true });
+        await execAsync("git init", { cwd: loopPath });
+        const sharedDisplay = await writeCiFailureLog(
+          loopPath,
+          "lint",
+          "pnpm lint",
+          { firstLine: "f", stdout: "", stderr: "e\n", combined: "e\n" },
+          "e",
+          "failed",
+          "",
+        );
+        assert.match(sharedDisplay ?? "", /ci-logs[\\/]lint\.log$/);
+        assert.doesNotMatch(sharedDisplay ?? "", /lp-aabbccdd/);
+      } finally {
+        await rm(primary, { recursive: true, force: true });
+        await rm(loops, { recursive: true, force: true }).catch(() => undefined);
+      }
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
@@ -307,6 +329,19 @@ describe("ci failure excerpts", () => {
       const keys = new Set(all.map((e) => e.loopId ?? null));
       assert.ok(keys.has(null));
       assert.ok(keys.has("lp-33333333"));
+      await new Promise((r) => setTimeout(r, 10));
+      await writeCiFailureLog(
+        repo,
+        "newer",
+        "pnpm newer",
+        { firstLine: "f", stdout: "", stderr: "n\n", combined: "n\n" },
+        "newer-excerpt",
+        "failed",
+        "lp-44444444",
+      );
+      const newest = await latestCiFailure(repo);
+      assert.equal(newest?.excerpt, "newer-excerpt");
+      assert.equal(newest?.loopId, "lp-44444444");
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

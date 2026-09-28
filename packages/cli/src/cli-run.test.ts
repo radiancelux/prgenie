@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -257,4 +258,44 @@ test("RAD-134: ci-slot runs the command under a heavy slot and returns its exit 
     "process.exit(3)",
   ]);
   assert.equal(run.code, 3, run.stderr || run.stdout);
+  const commonRaw = git(["rev-parse", "--git-common-dir"]);
+  const common = path.isAbsolute(commonRaw) ? commonRaw : path.join(repo, commonRaw);
+  const slotDir = path.join(common, "agent-console", "ci-heavy");
+  mkdirSync(slotDir, { recursive: true });
+  const slotFile = path.join(slotDir, "slot-0.json");
+  const now = new Date().toISOString();
+  writeFileSync(
+    slotFile,
+    `${JSON.stringify({
+      token: "hold-test",
+      pid: process.pid,
+      loopId: null,
+      check: "hold",
+      cwd: repo,
+      acquiredAt: now,
+      heartbeatAt: now,
+    })}\n`,
+  );
+  setTimeout(() => {
+    try {
+      unlinkSync(slotFile);
+    } catch {
+      // ignore
+    }
+  }, 300);
+  const queued = prgenie([
+    "ci-slot",
+    "--check",
+    "queued",
+    "--",
+    process.execPath,
+    "-e",
+    "process.exit(3)",
+  ]);
+  assert.equal(queued.code, 3, queued.stderr || queued.stdout);
+  const { readdirSync, existsSync } = await import("node:fs");
+  const names = existsSync(slotDir)
+    ? readdirSync(slotDir).filter((n) => n.startsWith("slot-") && n.endsWith(".json"))
+    : [];
+  assert.equal(names.length, 0);
 });
