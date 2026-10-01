@@ -1,3 +1,4 @@
+import os from "node:os";
 import {
   addLocalPrComment,
   addressLocalPrComment,
@@ -328,11 +329,16 @@ export async function handleTool(
     case "export_local_pr":
       mcpProgress?.report("exporting local PR");
       return exportLocalPr(cwd, String(args.id ?? ""));
-    case "record_export_gate_override":
+    case "record_export_gate_override": {
+      const who = os.userInfo().username.trim();
+      if (!who) {
+        throw new Error("Cannot record export gate override: OS username is empty");
+      }
       return recordExportGateOverride(cwd, String(args.id ?? ""), {
-        who: String(args.who ?? ""),
+        who,
         why: String(args.why ?? ""),
       });
+    }
     case "list_learnings":
       return listLearnings(cwd, {
         disabled: typeof args.disabled === "boolean" ? args.disabled : undefined,

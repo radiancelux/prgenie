@@ -42,6 +42,12 @@
       {
         "command": "node ./hooks/github-gate.cjs"
       }
+    ],
+    "beforeMCPExecution": [
+      {
+        "command": "node ./hooks/github-gate.cjs",
+        "failClosed": true
+      }
     ]
   }
 }

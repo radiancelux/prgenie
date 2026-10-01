@@ -229,6 +229,48 @@ test("cli comment requires -m", () => {
   assert.match(result.stderr, /comment <id> -m/);
 });
 
+test("RAD-164: cli status approved refuses from changes_requested unless --force", () => {
+  const created = prgenie([
+    "create",
+    "--title",
+    "Approve guard",
+    "--body",
+    "Exercise approved guard.",
+    "--base",
+    "main",
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+  const idMatch = created.stdout.match(/lp-[0-9a-f]{8}/);
+  assert.ok(idMatch, created.stdout);
+  const id = idMatch![0];
+  assert.equal(prgenie(["status", id, "changes_requested"]).code, 0);
+  const blocked = prgenie(["status", id, "approved"]);
+  assert.notEqual(blocked.code, 0);
+  assert.match(blocked.stderr, /review is not complete/i);
+  assert.match(blocked.stderr, /--force/i);
+  const forced = prgenie(["status", id, "approved", "--force"]);
+  assert.equal(forced.code, 0, forced.stderr);
+  assert.match(forced.stdout, /approved/);
+});
+
+test("RAD-164: cli comment --role human succeeds without extra prompts", () => {
+  const created = prgenie([
+    "create",
+    "--title",
+    "Human comment",
+    "--body",
+    "CLI human comment.",
+    "--base",
+    "main",
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+  const idMatch = created.stdout.match(/lp-[0-9a-f]{8}/);
+  assert.ok(idMatch, created.stdout);
+  const id = idMatch![0];
+  const comment = prgenie(["comment", id, "-m", "Please fix", "--role", "human"]);
+  assert.equal(comment.code, 0, comment.stderr);
+});
+
 test("cli learnings with no args lists repo learnings", () => {
   const result = prgenie(["learnings"]);
   assert.equal(result.code, 0);

@@ -95,7 +95,7 @@ Usage:
   prgenie diff <id> [--stat] [-- <path>...]
   prgenie delete <id> [--yes]
   prgenie reopen <id>
-  prgenie approve <id>
+  prgenie approve <id> [--force]
   prgenie ready <id> [--ci-skip <reason>]
   prgenie review-interrupted <id> [--reason <text>]
   prgenie review-resume <id>
@@ -107,7 +107,7 @@ Usage:
   prgenie edit-comment <id> <commentId> -m <message>
   prgenie delete-comment <id> <commentId> [--yes]
   prgenie complete-review <id> [-m <message>] [--force]
-  prgenie status <id> <draft|ready|review_interrupted|changes_requested|reviewed|approved>
+  prgenie status <id> <draft|ready|review_interrupted|changes_requested|reviewed|approved> [--force]
   prgenie worktrees
   prgenie worktree <id>
   prgenie learnings [--disabled] [--category <name>]
@@ -157,6 +157,21 @@ export function messageArg(args: string[]): string | undefined {
 
 export function flag(args: string[], name: string): boolean {
   return args.includes(name);
+}
+
+/** RAD-164: CLI-only guard before approved from changes_requested. */
+async function refuseApprovedUnlessReviewComplete(
+  repo: string,
+  id: string,
+  force: boolean,
+): Promise<void> {
+  if (force) return;
+  const pr = await getLocalPr(repo, id);
+  if (pr.status === "changes_requested") {
+    throw new Error(
+      "Cannot set approved: review is not complete. Finish review or pass --force.",
+    );
+  }
 }
 
 async function runCiSlot(repo: string, rest: string[]): Promise<number> {
@@ -858,6 +873,7 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (sub === "approve") {
+    await refuseApprovedUnlessReviewComplete(repo, id, flag(rest, "--force"));
     printPr(await setLocalPrStatus(repo, id, "approved"));
     return 0;
   }
@@ -995,6 +1011,9 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "status") {
     const status = rest[1] as LocalPrStatus;
+    if (status === "approved") {
+      await refuseApprovedUnlessReviewComplete(repo, id, flag(rest, "--force"));
+    }
     if (status === "reviewed") {
       await requireGithubBindForReviewed(repo);
     }

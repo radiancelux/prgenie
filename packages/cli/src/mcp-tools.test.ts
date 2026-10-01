@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
@@ -255,4 +256,21 @@ test("handleTool bind_steward + steward_next resume same implementor", async () 
       .reviewerTaskId.type,
     "string",
   );
+});
+
+test("RAD-164: record_export_gate_override persists OS username, not agent who", async () => {
+  const created = (await handleTool("create_local_pr", {
+    cwd: repo,
+    title: "Override who",
+    body: "Override by Fake Agent because test:core was flaky.",
+    base: "main",
+  })) as LocalPr;
+  const updated = (await handleTool("record_export_gate_override", {
+    cwd: repo,
+    id: created.id,
+    who: "Fake Agent Name",
+    why: "test:core was flaky",
+  })) as LocalPr;
+  assert.equal(updated.exportGateOverride?.who, os.userInfo().username);
+  assert.notEqual(updated.exportGateOverride?.who, "Fake Agent Name");
 });
