@@ -9,6 +9,7 @@ import {
   clearWorktreeCiSelectCache,
   isCiSelectionSourcePath,
   isPrGenieRepo,
+  loadBaseRefSelectCiChecks,
   loadWorktreeSelectCiChecks,
   looksLikeStaleFullSuitePlan,
   resolveCiSelection,
@@ -516,5 +517,57 @@ describe("ci-select-worktree (RAD-123)", () => {
     const fromWorktree = loaded!(paths);
     assert.deepEqual(fromWorktree.checks, expected.checks);
     assert.deepEqual(fromWorktree.reason, expected.reason);
+  });
+
+  it("167-R1 base loader keeps detached worktree for CLI fallback after dead tsImport", async () => {
+    clearWorktreeCiSelectCache();
+    const gitRoot = repoRoot();
+    const baseFn = await loadBaseRefSelectCiChecks(gitRoot, "main", gitRoot, {
+      tsImport: async () => {
+        throw new Error("The service is no longer running");
+      },
+    });
+    assert.ok(baseFn, "expected base-commit select via CLI fallback");
+    const plan = baseFn!(["packages/core/src/git.ts"]);
+    assert.ok(plan.checks.length > 0);
+    assert.ok(!plan.checks.includes("test"));
+    clearWorktreeCiSelectCache();
+  });
+
+  it("167-R1 does not stamp base provenance when base loader returns null", async () => {
+    clearWorktreeCiSelectCache();
+    const wt = await mkdtemp(path.join(tmpdir(), "prgenie-rad167-null-base-"));
+    try {
+      await writeFakeWorktreeSelect(
+        wt,
+        `export function selectCiChecks(changedPaths) {
+  return {
+    checks: ["format:check"],
+    reason: ["narrow worktree"],
+    mapping: [],
+    uncertain: false,
+    changedPaths,
+    packageScoped: false,
+    skipped: false,
+  };
+}
+`,
+      );
+      const result = await resolveCiSelection({
+        changedPaths: ["packages/core/src/git.ts"],
+        worktreePath: wt,
+        installedSelect: () => scopedCoreSelect(["packages/core/src/git.ts"]),
+        primaryPath: repoRoot(),
+        loadBaseRefSelect: async () => null,
+      });
+      assert.equal(result.source, "installed");
+      assert.ok(
+        !result.selection.reason.some((r) => /RAD-167-R1: export gate uses base-commit/i.test(r)),
+        "must not claim base selector when base load failed",
+      );
+    } finally {
+      clearWorktreeCiSelectCache();
+      await rm(wt, { recursive: true, force: true });
+    }
   });
 });

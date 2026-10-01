@@ -140,6 +140,25 @@ describe("planReadySkipCarry (RAD-144)", () => {
     assert.match(plan.carriedResults[0]?.reason ?? "", /skipped \(ready: flaky on Windows\)/);
   });
 
+  it("162-R3 does not carry checks marked not run when other checks are still missing", () => {
+    const plan = planReadySkipCarry({
+      headSha: "abc",
+      readyCi: {
+        headSha: "abc",
+        recordedAt: "2026-01-01T00:00:00.000Z",
+        outcome: "incomplete",
+        checkResults: [
+          { name: "lint", outcome: "passed" },
+          { name: "typecheck", outcome: "skipped", reason: "not run" },
+        ],
+      },
+      plannedChecks: ["lint", "typecheck", "test:core"],
+    });
+    assert.deepEqual(plan.checksToRun.sort(), ["test:core", "typecheck"]);
+    assert.equal(plan.carriedResults.length, 1);
+    assert.equal(plan.carriedResults[0]?.name, "lint");
+  });
+
   it("fail-closes when the gate plan drops a named check", () => {
     const plan = planReadySkipCarry({
       headSha: "abc",
@@ -444,6 +463,63 @@ describe("export gate honour ready skips", () => {
       assert.match(lint?.reason ?? "", /passed at ready \(RAD-162\)/);
       const testCore = shepherd.ciChecks?.find((c) => c.name === "test:core");
       assert.ok(testCore?.passed && !testCore.skipped);
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("partial readyCi with not run row re-runs that check on export (162-R3)", async () => {
+    const repo = await createTempGitRepo({ prefix: "prgenie-partial-notrun-" });
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(path.join(repo, "test.txt"), "x\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "feat"]);
+      const pr = await createLocalPr(repo, { title: "Not run row", body: "Body", base: "main" });
+      assert.ok(pr.worktreePath);
+      const headSha = pr.headSha;
+      await recordLocalPrReadyCi(repo, pr.id, {
+        headSha,
+        recordedAt: new Date().toISOString(),
+        outcome: "incomplete",
+        skipScope: ["lint", "typecheck", "test:core"],
+        checks: ["lint"],
+        checkResults: [
+          { name: "lint", outcome: "passed" },
+          { name: "typecheck", outcome: "skipped", reason: "not run" },
+        ],
+      });
+      await writeFile(
+        path.join(pr.worktreePath, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: "exit 0",
+            typecheck: "exit 0",
+            "test:core": "exit 0",
+          },
+        }),
+      );
+      await writeFile(path.join(pr.worktreePath, ".gitignore"), "node_modules\n");
+      const type = process.platform === "win32" ? "junction" : "dir";
+      await symlink(
+        path.join(process.cwd(), "node_modules"),
+        path.join(pr.worktreePath, "node_modules"),
+        type,
+      );
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      const shepherd = await shepherdStatus(repo, pr.id, {
+        skipGithubCheck: true,
+        skipToolchainEnsure: true,
+        selection: fixtureRootSelection(["lint", "typecheck", "test:core"]),
+      });
+      assert.equal(shepherd.status, "ready");
+      const typecheck = shepherd.ciChecks?.find((c) => c.name === "typecheck");
+      assert.ok(typecheck?.passed && !typecheck.skipped);
+      assert.ok(
+        !(typecheck?.reason ?? "").includes("passed at ready"),
+        "not run must not be carried as passed at ready",
+      );
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }

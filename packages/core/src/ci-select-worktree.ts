@@ -107,12 +107,29 @@ export function isPrGenieRepo(cwd: string): boolean {
 
 type CacheEntry = { mtimeMs: number; select: CiSelectFn };
 const worktreeSelectCache = new Map<string, CacheEntry>();
-const baseSelectCache = new Map<string, CiSelectFn>();
+type BaseSelectCacheEntry = { select: CiSelectFn; tempWt: string; gitRoot: string };
+const baseSelectCache = new Map<string, BaseSelectCacheEntry>();
+
+function baseSelectCacheKey(gitRoot: string, baseSha: string): string {
+  return `${path.resolve(gitRoot)}:${baseSha}`;
+}
+
+function dropBaseSelectCacheEntry(cacheKey: string): void {
+  const entry = baseSelectCache.get(cacheKey);
+  if (!entry) return;
+  baseSelectCache.delete(cacheKey);
+  spawnSync("git", ["-C", entry.gitRoot, "worktree", "remove", "--force", entry.tempWt], {
+    windowsHide: true,
+  });
+  rm(entry.tempWt, { recursive: true, force: true }).catch(() => undefined);
+}
 
 /** Test helper — clear the worktree selector cache. */
 export function clearWorktreeCiSelectCache(): void {
   worktreeSelectCache.clear();
-  baseSelectCache.clear();
+  for (const key of [...baseSelectCache.keys()]) {
+    dropBaseSelectCacheEntry(key);
+  }
 }
 
 function warnLoud(message: string): void {
@@ -390,13 +407,14 @@ export async function loadBaseRefSelectCiChecks(
   gitRoot: string,
   baseRef: string,
   primaryPath?: string | null,
+  worktreeLoadOptions: LoadWorktreeSelectOptions = {},
 ): Promise<CiSelectFn | null> {
   const resolved = await git(gitRoot, ["rev-parse", baseRef], { allowFail: true });
   if (resolved.code !== 0) return null;
   const baseSha = resolved.stdout.trim();
-  const cacheKey = `${path.resolve(gitRoot)}:${baseSha}`;
+  const cacheKey = baseSelectCacheKey(gitRoot, baseSha);
   const cached = baseSelectCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached) return cached.select;
 
   const tempWt = mkdtempSync(path.join(tmpdir(), "prgenie-base-wt-"));
   const add = spawnSync("git", ["-C", gitRoot, "worktree", "add", "--detach", tempWt, baseRef], {
@@ -407,16 +425,20 @@ export async function loadBaseRefSelectCiChecks(
     await rm(tempWt, { recursive: true, force: true }).catch(() => undefined);
     return null;
   }
-  try {
-    const select = await loadWorktreeSelectCiChecks(tempWt, { primaryPath });
-    if (select) baseSelectCache.set(cacheKey, select);
-    return select;
-  } finally {
+  const select = await loadWorktreeSelectCiChecks(tempWt, {
+    primaryPath,
+    ...worktreeLoadOptions,
+  });
+  if (!select) {
     spawnSync("git", ["-C", gitRoot, "worktree", "remove", "--force", tempWt], {
       windowsHide: true,
     });
     await rm(tempWt, { recursive: true, force: true }).catch(() => undefined);
+    return null;
   }
+  // Keep the detached checkout until process exit — CLI fallback needs paths on disk (167-R1).
+  baseSelectCache.set(cacheKey, { select, tempWt, gitRoot });
+  return select;
 }
 
 /**
@@ -504,8 +526,24 @@ export async function resolveCiSelection(
     ((root: string, ref: string, primary?: string | null) =>
       loadBaseRefSelectCiChecks(root, ref, primary));
   const baseSelectFn = await baseLoader(gitRoot, baseRef, options.primaryPath);
-  const gateSelectFn = baseSelectFn ?? installedSelect;
-  const gatePlan = gateSelectFn(paths, selectOpts);
+  const baseResolved = await git(gitRoot, ["rev-parse", baseRef], { allowFail: true });
+  const baseCacheKey =
+    baseResolved.code === 0 ? baseSelectCacheKey(gitRoot, baseResolved.stdout.trim()) : null;
+
+  let gatePlan: CiCheckSelection;
+  let gateSource: "base" | "installed";
+  if (baseSelectFn) {
+    try {
+      gatePlan = baseSelectFn(paths, selectOpts);
+      gateSource = "base";
+    } catch (err) {
+      if (baseCacheKey) dropBaseSelectCacheEntry(baseCacheKey);
+      throw err;
+    }
+  } else {
+    gatePlan = installed;
+    gateSource = "installed";
+  }
 
   const loader =
     options.loadWorktreeSelect ??
@@ -536,6 +574,11 @@ export async function resolveCiSelection(
     );
   }
 
+  const gateSelection =
+    gateSource === "base"
+      ? withBaseGateProvenance(gatePlan, diverged, advisorySelection)
+      : gatePlan;
+
   if (diverged && advisorySelection) {
     const warning =
       `CI selection DIVERGED (RAD-167-R2): base gate vs loop worktree (advisory). ` +
@@ -543,8 +586,8 @@ export async function resolveCiSelection(
       `worktree={checks:${JSON.stringify(advisorySelection.checks)},reason:${JSON.stringify(advisorySelection.reason)}}`;
     warnLoud(warning);
     return {
-      selection: withBaseGateProvenance(gatePlan, true, advisorySelection),
-      source: baseSelectFn ? "base" : "installed",
+      selection: gateSelection,
+      source: gateSource,
       diverged: true,
       warning,
       advisorySelection,
@@ -552,8 +595,8 @@ export async function resolveCiSelection(
   }
 
   return {
-    selection: withBaseGateProvenance(gatePlan, false, advisorySelection),
-    source: baseSelectFn ? "base" : "installed",
+    selection: gateSelection,
+    source: gateSource,
     diverged: false,
     advisorySelection,
   };

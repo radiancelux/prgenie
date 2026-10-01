@@ -47,7 +47,8 @@ function perCheckResultsFromRun(
   });
 }
 
-function isMissingPlanCheck(row: ReadyCiCheckResult): boolean {
+/** Planned check never reached by the runner (162-R3 carry must not treat as executed). */
+export function isMissingPlanCheck(row: ReadyCiCheckResult): boolean {
   return row.outcome === "skipped" && (row.reason?.trim() === "not run" || !row.reason?.trim());
 }
 
@@ -74,11 +75,11 @@ function outcomeFromRun(
 export function readyCiExecutedCheckNames(record: ReadyCiRecord): string[] {
   if (record.checkResults?.length) {
     return record.checkResults
-      .filter(
-        (row) =>
-          row.outcome === "passed" ||
-          (row.outcome === "skipped" && isIntentionalReadySkip(row.reason ?? undefined)),
-      )
+      .filter((row) => {
+        if (isMissingPlanCheck(row)) return false;
+        if (row.outcome === "passed") return true;
+        return row.outcome === "skipped" && isIntentionalReadySkip(row.reason ?? undefined);
+      })
       .map((row) => row.name);
   }
   const names = normalizeSkipScope(record.checks ?? []);

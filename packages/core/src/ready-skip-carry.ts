@@ -78,7 +78,7 @@ export function planReadySkipCarry(options: {
             skipped: true,
             reason: formatReadyCarriedSkipReason(perCheck.reason),
           });
-        } else if (row?.outcome === "passed" || executed.has(name)) {
+        } else if (row?.outcome === "passed") {
           carriedResults.push({
             name,
             passed: true,
