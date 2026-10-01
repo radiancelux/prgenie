@@ -65,6 +65,7 @@ import {
 import { openAllChanges, openFileChange } from "./gitDiff.js";
 import {
   CHEAP_SHEPHERD_DEBOUNCE_MS,
+  cheapShepherdTargetId,
   createCheapShepherdScheduler,
   createCoalescingFlight,
   createExportGateScheduler,
@@ -72,6 +73,7 @@ import {
 } from "./sidebarPoller.js";
 import {
   STATUS_PANEL_TITLE,
+  decideStatusPanelPaint,
   exportBusyHelper,
   statusPanelGuidanceForLoop,
   statusPanelIdleBody,
@@ -189,6 +191,7 @@ type Snapshot = {
   /** Persisted path CI ran in (exportGate.ciCwd) — shown after live progress clears. */
   ciCwd?: string | null;
   searchQuery?: string;
+  exportingId?: string | null;
 };
 
 export class LaneHub implements vscode.Disposable {
@@ -527,6 +530,8 @@ export class LaneHub implements vscode.Disposable {
           onProgress: (event) => this.emitProgress("export", id, event),
         });
         this.clearLiveProgress();
+        // Drop exportingId before the post-export snapshot so STATUS leaves gate mode (RAD-110).
+        this.exportingId = null;
         await this.pushSnapshot(true);
         // RAD-95: prune/checkout incomplete after PR open is not a pure success.
         if (result.partialFailure) {
@@ -560,6 +565,7 @@ export class LaneHub implements vscode.Disposable {
         }
         this.clearLiveProgress();
         void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
+        this.exportingId = null;
         await this.pushSnapshot(true);
       } finally {
         this.exportAbort = null;
@@ -1088,13 +1094,28 @@ export class LaneHub implements vscode.Disposable {
       for (const id of ids) this.knownIds.add(id);
       // RAD-124: while export is busy, keep the exporting loop selected even if a
       // draft sibling updates and would otherwise become "fresh" / top of list.
+      // A user click on a different loop (userPinned to another id) stays, so
+      // STATUS can show quiet DRAFT during export (RAD-110 R16).
+      const userChoseOther =
+        this.userPinned && !!this.selectedId && this.selectedId !== this.exportingId;
       if (
         this.exportBusy &&
         this.exportingId &&
-        selectable.some((p) => p.id === this.exportingId)
+        selectable.some((p) => p.id === this.exportingId) &&
+        !userChoseOther
       ) {
         this.selectedId = this.exportingId;
-      } else {
+      } else if (
+        this.exportBusy &&
+        this.exportingId &&
+        this.selectedId &&
+        !selectable.some((p) => p.id === this.selectedId) &&
+        !archived.some((p) => p.id === this.selectedId)
+      ) {
+        this.selectedId = selectable.some((p) => p.id === this.exportingId)
+          ? this.exportingId
+          : (live[0]?.id ?? archived[0]?.id);
+      } else if (!(this.exportBusy && this.exportingId)) {
         if (freshIds.length && !this.userPinned) this.selectedId = freshIds[0];
         if (this.selectedId && !selectable.some((p) => p.id === this.selectedId)) {
           // Keep selection if it is an archived loop (panel still works while section collapsed).
@@ -1166,10 +1187,11 @@ export class LaneHub implements vscode.Disposable {
           })),
           ciCwd: selected?.exportGate?.ciCwd ?? null,
           searchQuery: this.searchQuery,
+          exportingId: this.exportBusy ? this.exportingId : null,
         },
         force,
       );
-      this.cheapShepherd.schedule(root, selected?.id);
+      this.cheapShepherd.schedule(root, cheapShepherdTargetId(selected));
       this.exportGate.schedule(root, selected);
       await this.watchStore();
     } catch (err) {
@@ -1204,6 +1226,7 @@ function snapshotKey(payload: Snapshot | { type: "snapshot"; error: string; prs:
     ciChecks: "ciChecks" in payload ? payload.ciChecks : null,
     ciCwd: "ciCwd" in payload ? payload.ciCwd : null,
     searchQuery: "searchQuery" in payload ? payload.searchQuery : "",
+    exportingId: "exportingId" in payload ? (payload.exportingId ?? null) : null,
     prs: payload.prs,
     archivedPrs: "archivedPrs" in payload ? payload.archivedPrs : [],
   });
@@ -1338,6 +1361,10 @@ function sharedCss(): string {
     }
     .run-progress, .shepherd-progress {
       display: flex; align-items: center; gap: 8px; font-size: 11px;
+    }
+    /* Author display:flex overrides the hidden attribute, which kept the export step visible on quiet DRAFT. */
+    .run-progress[hidden], .shepherd-progress[hidden] {
+      display: none !important;
     }
     .shepherd-progress { padding-left: 0; }
     .run-progress .step, .shepherd-progress .step {
@@ -1525,43 +1552,46 @@ function laneHtml(webview: vscode.Webview): string {
       border: 1px solid var(--vscode-widget-border, rgba(127,127,127,0.35));
       min-width: 0;
     }
-    .shepherd-header {
-      display: flex; flex-direction: column; align-items: stretch; gap: 4px; font-size: 11px;
-      min-width: 0;
+    .shepherd-title-row, .shepherd-badge-row, .shepherd-progress,
+    .shepherd-empty, .shepherd-reasons, .shepherd .ci-card {
+      width: 100%; min-width: 0;
     }
-    .shepherd-header .label {
-      display: block; width: auto; flex: none;
+    .shepherd-title-row .label {
+      display: block;
       text-transform: uppercase; letter-spacing: 0.04em;
       font-size: 10px; color: var(--vscode-descriptionForeground);
     }
-    .shepherd-header-row {
-      display: flex; align-items: center; gap: 8px; min-width: 0;
+    .shepherd-badge-row {
+      display: flex; align-items: center; gap: 8px; font-size: 11px;
     }
-    .shepherd-header .status {
+    .shepherd-badge-row .status {
       flex: 1; min-width: 0; font-weight: 600;
       white-space: normal; overflow-wrap: break-word; word-break: normal;
     }
-    .shepherd-header .status.ready { color: var(--vscode-charts-green, #3fb950); }
-    .shepherd-header .status.blocked { color: var(--vscode-charts-orange, #f59f00); }
-    .shepherd-header .status.running { color: var(--vscode-foreground); }
+    .shepherd-badge-row .status.ready { color: var(--vscode-charts-green, #3fb950); }
+    .shepherd-badge-row .status.blocked { color: var(--vscode-charts-orange, #f59f00); }
+    .shepherd-badge-row .status.running { color: var(--vscode-foreground); }
     .shepherd-reasons {
       display: flex; flex-direction: column; gap: 2px;
       font-size: 10px;
       color: var(--vscode-descriptionForeground);
-      min-width: 0;
     }
-    .shepherd-empty {
+    .shepherd-empty, #shepherdEmpty {
       margin: 0; font-size: 10px;
       color: var(--vscode-descriptionForeground);
-      min-width: 0; max-width: 100%;
+      max-width: 100%;
       white-space: normal; overflow-wrap: break-word; word-break: normal;
     }
-    .shepherd-header .status.quiet {
+    .shepherd-progress .step {
+      min-width: 0;
+      white-space: normal; overflow-wrap: break-word; word-break: normal;
+    }
+    .shepherd-badge-row .status.quiet {
       font-weight: 500; text-transform: none; letter-spacing: normal;
       color: var(--vscode-descriptionForeground);
     }
     /* Column layout + no width:100% on the check button — row + .ci-check{width:100%}
-       squeezed .message to ~1ch and overflow-wrap:anywhere stacked one char per line. */
+       squeezed .message to ~1ch and stacked one char per line. */
     .shepherd-reason {
       display: flex; flex-direction: column; gap: 2px; min-width: 0;
     }
@@ -1675,13 +1705,13 @@ function laneHtml(webview: vscode.Webview): string {
       <div class="gh-bind-warning" id="ghBindWarning" hidden></div>
     </div>
     <div class="shepherd" id="shepherd" hidden>
-      <div class="shepherd-header">
+      <div class="shepherd-title-row">
         <span class="label">${STATUS_PANEL_TITLE}</span>
-        <div class="shepherd-header-row">
-          <span class="status" id="shepherdStatus">—</span>
-          <button type="button" class="secondary" id="cancelProgress" hidden>Cancel</button>
-          <button type="button" class="secondary" id="retryProgress" hidden>Retry CI</button>
-        </div>
+      </div>
+      <div class="shepherd-badge-row">
+        <span class="status" id="shepherdStatus">—</span>
+        <button type="button" class="secondary" id="cancelProgress" hidden>Cancel</button>
+        <button type="button" class="secondary" id="retryProgress" hidden>Retry CI</button>
       </div>
       <div class="shepherd-progress" id="shepherdProgress" hidden>
         <span class="spinner" id="shepherdSpinner"></span>
@@ -1731,6 +1761,8 @@ function laneHtml(webview: vscode.Webview): string {
       changes_requested: statusPanelGuidanceForLoop("changes_requested"),
       approved: statusPanelGuidanceForLoop("approved"),
     })};
+    const decideStatusPanelPaint = ${decideStatusPanelPaint.toString()};
+    let lastPaintedShepherdId = null;
     const cancelBtn = document.getElementById("cancelProgress");
     const retryBtn = document.getElementById("retryProgress");
     if (cancelBtn) cancelBtn.onclick = () => vscode.postMessage({ type: "cancelProgress" });
@@ -1853,6 +1885,32 @@ function laneHtml(webview: vscode.Webview): string {
       const progress = liveProgress && (!selected || liveProgress.id === selected.id)
         ? liveProgress
         : null;
+      const paintInput = {
+        liveCount: prs.length,
+        archivedCount: msg.archivedCount || archivedPrs.length || 0,
+        searchQuery: msg.searchQuery || "",
+        selected: selected
+          ? {
+              id: selected.id,
+              status: selected.status,
+              humanHint: selected.humanExport && selected.humanExport.hint,
+              humanKind: selected.humanExport && selected.humanExport.kind,
+            }
+          : null,
+        progress: progress
+          ? {
+              id: progress.id,
+              step: progress.step,
+              state: progress.state,
+              cancelled: progress.cancelled,
+              failed: progress.failed,
+            }
+          : null,
+        shepherd: msg.shepherdStatus || null,
+        exportingId: msg.exportingId || null,
+      };
+      const decision = decideStatusPanelPaint(paintInput);
+      const selectedKey = selected ? selected.id : null;
 
       const clearExportExtras = () => {
         shepherdReasons.innerHTML = '';
@@ -1866,94 +1924,39 @@ function laneHtml(webview: vscode.Webview): string {
         renderCiCard(document.getElementById("ciCard"), null, null, null, null);
       };
 
-      const showQuiet = (statusLabel, emptyText) => {
-        shepherdBox.hidden = false;
-        shepherdStatus.textContent = statusLabel;
-        shepherdStatus.className = "status quiet";
+      if (decision.mode === "quiet" || selectedKey !== lastPaintedShepherdId) {
         clearExportExtras();
+      }
+      lastPaintedShepherdId = selectedKey;
+
+      shepherdBox.hidden = false;
+      shepherdStatus.textContent = decision.badge;
+      shepherdStatus.className = "status " + decision.statusClass;
+
+      if (decision.mode === "quiet") {
         if (shepherdEmpty) {
           shepherdEmpty.hidden = false;
-          shepherdEmpty.textContent = emptyText;
+          shepherdEmpty.textContent = decision.body;
         }
-      };
-
-      // 0 live loops / no selection — idle STATUS, never a prior loop's READY/FAIL list (RAD-110).
-      if (!prs.length && !selected) {
-        const archived = msg.archivedCount || archivedPrs.length || 0;
-        let emptyText;
-        if (msg.searchQuery && msg.searchQuery.trim()) {
-          emptyText = STATUS_IDLE.search;
-        } else if (archived) {
-          emptyText = STATUS_IDLE.archived;
-        } else {
-          emptyText = STATUS_IDLE.noLoops;
-        }
-        showQuiet("IDLE", emptyText);
         return;
       }
 
-      if (!selected) {
-        showQuiet("—", "Select a live loop to see draft, review, CI, or export status.");
-        return;
-      }
-
-      // Pre-review / archived: phase-correct STATUS, never EXPORT BLOCKED + FAIL lists.
-      if (selected && selected.status !== "reviewed" && !progress) {
-        if (selected.status === "approved") {
-          showQuiet(STATUS_PHASE.approved.badge, STATUS_PHASE.approved.body);
-          return;
-        }
-        const phase = STATUS_PHASE[selected.status] || {
-          badge: (selected.status || "—").replace("_", " ").toUpperCase(),
-          body: "Implement or review this loop — STATUS is not an export gate yet.",
-        };
-        showQuiet(phase.badge, phase.body);
-        return;
-      }
-
-      const shepherd = msg.shepherdStatus;
-      if (!shepherd && !progress) {
-        if (selected && selected.status === "reviewed") {
-          const hint = (selected.humanExport && selected.humanExport.hint)
-            || "Review is done. Shepherd CI must pass before Open on GitHub is available.";
-          const badge = selected.humanExport && selected.humanExport.kind === "pending" ? "PENDING" : "—";
-          showQuiet(badge, hint);
-          return;
-        }
-        shepherdBox.hidden = true;
-        clearExportExtras();
-        return;
-      }
-      
-      shepherdBox.hidden = false;
       if (shepherdEmpty) {
         shepherdEmpty.hidden = true;
         shepherdEmpty.textContent = '';
       }
-      if (progress && progress.cancelled) {
-        shepherdStatus.textContent = "cancelled";
-        shepherdStatus.className = "status blocked";
-      } else if (progress && (progress.state === "start" || progress.state === "cached" || progress.state === "pass")) {
-        shepherdStatus.textContent = "running";
-        shepherdStatus.className = "status running";
-      } else if (shepherd) {
-        shepherdStatus.textContent = shepherd.status;
-        shepherdStatus.className = "status " + shepherd.status;
-      } else {
-        shepherdStatus.textContent = "running";
-        shepherdStatus.className = "status running";
-      }
-      
+
       if (progressBox && stepEl) {
-        if (progress) {
+        if (decision.showProgress) {
           progressBox.hidden = false;
-          const extra = progress.failed
+          const extra = progress && progress.failed
             ? [progress.command, progress.message].filter(Boolean).length
               ? " — " + [progress.command, progress.message].filter(Boolean).join(" — ")
               : ""
             : "";
-          stepEl.textContent = (progress.step || "CI checks") + extra;
-          if (spinner) spinner.hidden = !!progress.cancelled;
+          const stepLabel = (decision.progressStep || progress && progress.step || "CI checks") + extra;
+          stepEl.textContent = stepLabel;
+          if (spinner) spinner.hidden = !!(progress && progress.cancelled);
         } else {
           progressBox.hidden = true;
         }
@@ -1964,9 +1967,10 @@ function laneHtml(webview: vscode.Webview): string {
       if (retry) {
         retry.hidden = !(progress && progress.cancelled);
       }
-      
+
+      const shepherd = msg.shepherdStatus;
       shepherdReasons.innerHTML = '';
-      if (shepherd && shepherd.reasons && shepherd.reasons.length > 0 && !(progress && !progress.cancelled && !progress.failed)) {
+      if (decision.showReasons && shepherd && shepherd.reasons && shepherd.reasons.length > 0) {
         for (const reason of shepherd.reasons) {
           const reasonEl = document.createElement('div');
           reasonEl.className = 'shepherd-reason';
@@ -1985,7 +1989,11 @@ function laneHtml(webview: vscode.Webview): string {
           }
         }
       }
-      renderCiCard(document.getElementById("ciCard"), progress, msg.ciPlan, msg.ciChecks, msg.ciCwd);
+      if (decision.showCiCard) {
+        renderCiCard(document.getElementById("ciCard"), progress, msg.ciPlan, msg.ciChecks, msg.ciCwd);
+      } else {
+        renderCiCard(document.getElementById("ciCard"), null, null, null, null);
+      }
     }
     function prRow(id) {
       const el = document.createElement("div");
