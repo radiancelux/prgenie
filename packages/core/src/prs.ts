@@ -173,6 +173,15 @@ async function resolveLoopHeadTip(
   return { headRef: pr.headRef, headSha: pr.headSha };
 }
 
+/** Only completeLocalPrReview may set this. Comment text is not a clear. */
+function clearCompleteReviewMarker(pr: LocalPr): void {
+  delete pr.completeReviewClear;
+}
+
+function stampCompleteReviewClear(pr: LocalPr, at: string): void {
+  pr.completeReviewClear = { at, headSha: pr.headSha };
+}
+
 /**
  * When a reviewed loop's tip moves, clear the review verdict until Reviewer
  * re-clears that SHA (RAD-126). Default is re-review — no mechanical allowlist.
@@ -184,6 +193,7 @@ export function invalidateReviewedOnHeadMove(pr: LocalPr, previousHeadSha: strin
   pr.reviewRequestedSha = pr.headSha;
   pr.reviewerNotifiedSha = null;
   pr.exportGate = null;
+  clearCompleteReviewMarker(pr);
   return true;
 }
 
@@ -508,6 +518,9 @@ export async function setLocalPrStatus(
       }
     }
     pr.status = status;
+    // Status hops are not complete_review. Export and archive call this for approved
+    // and must not be blocked here — the CLI approve guard reads the marker first.
+    clearCompleteReviewMarker(pr);
     if (status === "reviewed") pr.exportGate = pendingExportGate(pr.headSha);
     if (status !== "ready" && status !== "review_interrupted") {
       // Leaving the review lane — readyCi stays as evidence for this SHA.
@@ -847,6 +860,7 @@ function maybePromoteToReviewed(pr: LocalPr): void {
   pr.status = "reviewed";
   pr.exportGate = pendingExportGate(pr.headSha);
   pr.failedAcRoundCount = 0;
+  clearCompleteReviewMarker(pr);
 }
 
 async function armReviewRequest(cwd: string, pr: LocalPr): Promise<void> {
@@ -872,6 +886,7 @@ async function maybeHandoffToReviewer(
   await assertStoredBaseRefIsBranch(cwd, pr);
   await assertDeclaredBaseAligned(cwd, pr);
   pr.status = "ready";
+  clearCompleteReviewMarker(pr);
   upsertReviewRequestedComment(pr, now, author, pr.headSha, newId("c"));
   pr.updatedAt = now;
 }
@@ -1034,6 +1049,7 @@ export async function addLocalPrComment(
       // a new finding must flip to changes_requested or the implementor inbox never sees it.
       if (role === "human" || (role === "reviewer" && pr.status === "reviewed")) {
         pr.status = "changes_requested";
+        clearCompleteReviewMarker(pr);
       }
     }
     pr.updatedAt = comment.createdAt;
@@ -1252,7 +1268,12 @@ export async function completeLocalPrReview(
     });
     if (!isArchivedPr(pr)) {
       pr.status = handedToImplementor ? "changes_requested" : "reviewed";
-      if (pr.status === "reviewed") pr.exportGate = pendingExportGate(pr.headSha);
+      if (pr.status === "reviewed") {
+        pr.exportGate = pendingExportGate(pr.headSha);
+        stampCompleteReviewClear(pr, now);
+      } else {
+        clearCompleteReviewMarker(pr);
+      }
       if (handedToImplementor) {
         pr.failedAcRoundCount = (pr.failedAcRoundCount ?? 0) + 1;
       } else {
@@ -1408,6 +1429,7 @@ export async function reopenLocalPr(cwd: string, id: string): Promise<LocalPr> {
       throw new Error(`Loop ${pr.id} is not archived; only approved loops can be reopened.`);
     }
     pr.status = "changes_requested";
+    clearCompleteReviewMarker(pr);
     pr.reviewRequestedSha = null;
     pr.reviewerNotifiedSha = null;
     await applyHeadRefresh(cwd, pr);

@@ -159,13 +159,14 @@ export function flag(args: string[], name: string): boolean {
   return args.includes(name);
 }
 
-/** Root reviewer comment from complete_review (not a CLI status hop). */
+/** Packet field written only by complete_review — not a substring of comment text. */
 function reviewClearedByCompleteReview(pr: LocalPr): boolean {
-  return (pr.comments ?? []).some(
-    (c) =>
-      c.role === "reviewer" &&
-      !c.replyTo &&
-      (/review cleared/i.test(c.body) || /review complete\.\s*findings/i.test(c.body)),
+  const marker = pr.completeReviewClear;
+  return (
+    pr.status === "reviewed" &&
+    typeof marker?.at === "string" &&
+    marker.at.length > 0 &&
+    marker.headSha === pr.headSha
   );
 }
 
