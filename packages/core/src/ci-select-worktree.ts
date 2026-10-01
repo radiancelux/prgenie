@@ -580,8 +580,15 @@ export async function resolveCiSelection(
       : gatePlan;
 
   if (diverged && advisorySelection) {
+    // RAD-167-R1: "base gate" only when base-commit ci-select actually loaded.
+    const gateLabel = gateSource === "base" ? "base gate" : "installed gate";
+    const installedProvenance =
+      gateSource === "installed"
+        ? "RAD-167-R1: base-commit ci-select did not load; export gate uses the installed plugin. "
+        : "";
     const warning =
-      `CI selection DIVERGED (RAD-167-R2): base gate vs loop worktree (advisory). ` +
+      `CI selection DIVERGED (RAD-167-R2): ${gateLabel} vs loop worktree (advisory). ` +
+      installedProvenance +
       `gate={checks:${JSON.stringify(gatePlan.checks)},reason:${JSON.stringify(gatePlan.reason)}} ` +
       `worktree={checks:${JSON.stringify(advisorySelection.checks)},reason:${JSON.stringify(advisorySelection.reason)}}`;
     warnLoud(warning);

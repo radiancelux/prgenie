@@ -144,6 +144,7 @@ describe("ci-select-worktree (RAD-123)", () => {
       assert.equal(result.source, "base");
       assert.equal(result.diverged, true);
       assert.ok(result.warning);
+      assert.match(result.warning, /base gate/);
       assert.ok(!result.selection.checks.includes("test"));
       assert.ok(!result.selection.checks.includes("build"));
       assert.notDeepEqual(result.selection.checks, [...DEFAULT_CI_CHECKS]);
@@ -559,8 +560,26 @@ describe("ci-select-worktree (RAD-123)", () => {
         installedSelect: () => scopedCoreSelect(["packages/core/src/git.ts"]),
         primaryPath: repoRoot(),
         loadBaseRefSelect: async () => null,
+        loadWorktreeSelect: async () => (changedPaths) => ({
+          checks: ["format:check"],
+          reason: ["narrow worktree"],
+          mapping: [],
+          uncertain: false,
+          changedPaths,
+          packageScoped: false,
+          skipped: false,
+        }),
       });
       assert.equal(result.source, "installed");
+      assert.equal(result.diverged, true);
+      assert.ok(result.warning, "diverged installed gate must warn");
+      assert.doesNotMatch(
+        result.warning,
+        /base gate/,
+        "installed plan must not be described as the base gate (RAD-167-R1)",
+      );
+      assert.match(result.warning, /installed gate/);
+      assert.match(result.warning, /RAD-167-R1/);
       assert.ok(
         !result.selection.reason.some((r) => /RAD-167-R1: export gate uses base-commit/i.test(r)),
         "must not claim base selector when base load failed",
