@@ -168,9 +168,7 @@ async function refuseApprovedUnlessReviewComplete(
   if (force) return;
   const pr = await getLocalPr(repo, id);
   if (pr.status === "changes_requested") {
-    throw new Error(
-      "Cannot set approved: review is not complete. Finish review or pass --force.",
-    );
+    throw new Error("Cannot set approved: review is not complete. Finish review or pass --force.");
   }
 }
 
