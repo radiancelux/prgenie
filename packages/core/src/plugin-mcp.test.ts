@@ -9,6 +9,7 @@ import {
   argHasUnresolvedPluginRoot,
   bufferHasUtf8Bom,
   inspectMcpJson,
+  MCP_SERVER_TIMEOUT_SEC,
   pinPluginMcpJson,
   sameNameCollision,
   stripBom,
@@ -104,8 +105,8 @@ test("pinPluginMcpJson writes stdio + absolute node + absolute server (no BOM)",
   assert.equal(parsed.mcpServers.prgenie.type, "stdio");
   assert.equal(
     (parsed.mcpServers.prgenie as { timeout?: number }).timeout,
-    2400,
-    "RAD-100/RAD-133: pin 40m tools/call timeout (seconds)",
+    4200,
+    "RAD-134: pin max slot wait plus package-test timeout (seconds)",
   );
   const expectCmd = process.platform === "win32" && /\s/.test(process.execPath);
   if (expectCmd) {
@@ -157,8 +158,8 @@ test("pinPluginMcpJson writes stdio + absolute node + absolute server (no BOM)",
   };
   assert.equal(
     raisedParsed.mcpServers.prgenie.timeout,
-    2400,
-    "RAD-100: pin raises sub-2400 timeouts to the floor",
+    4200,
+    "RAD-100: pin raises sub-4200 timeouts to the floor",
   );
 
   const keptHigh = pinPluginMcpJson(
@@ -167,7 +168,7 @@ test("pinPluginMcpJson writes stdio + absolute node + absolute server (no BOM)",
         prgenie: {
           command: "node",
           args: ["${CURSOR_PLUGIN_ROOT}/mcp/server.cjs"],
-          timeout: 3600,
+          timeout: 4800,
         },
       },
     }),
@@ -176,8 +177,8 @@ test("pinPluginMcpJson writes stdio + absolute node + absolute server (no BOM)",
   assert.equal(
     (JSON.parse(keptHigh) as { mcpServers: { prgenie: { timeout?: number } } }).mcpServers.prgenie
       .timeout,
-    3600,
-    "RAD-100: explicit higher timeout still wins",
+    4800,
+    "RAD-134: explicit timeout above the 4200 floor still wins",
   );
 });
 
@@ -206,8 +207,8 @@ test("pin-plugin-mcp.mjs writes UTF-8 without BOM and pins execPath", async () =
   assert.equal(pinned.mcpServers.prgenie.type, "stdio");
   assert.equal(
     (pinned.mcpServers.prgenie as { timeout?: number }).timeout,
-    2400,
-    "pin-plugin-mcp.mjs preserves/raises timeout (RAD-100/RAD-133)",
+    4200,
+    "pin-plugin-mcp.mjs preserves/raises timeout (RAD-134)",
   );
   const expectCmd = process.platform === "win32" && /\s/.test(process.execPath);
   if (expectCmd) {
@@ -218,4 +219,15 @@ test("pin-plugin-mcp.mjs writes UTF-8 without BOM and pins execPath", async () =
     assert.equal(pinned.mcpServers.prgenie.command, process.execPath);
   }
   assert.ok(pinned.mcpServers.prgenie.args.some((a) => a.endsWith("mcp/server.cjs")));
+});
+
+test("RAD-134: MCP timeout covers max slot wait plus package-test timeout", async () => {
+  assert.equal(MCP_SERVER_TIMEOUT_SEC, 4200);
+  const mcpJson = JSON.parse(
+    await readFile(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../plugin/mcp.json"),
+      "utf8",
+    ),
+  ) as { mcpServers: { prgenie: { timeout?: number } } };
+  assert.equal(mcpJson.mcpServers.prgenie.timeout, 4200);
 });

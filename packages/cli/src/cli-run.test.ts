@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -244,4 +245,99 @@ test("cli learnings --category works", () => {
   const result = prgenie(["learnings", "--category", "testing"]);
   assert.equal(result.code, 0);
   assert.match(result.stdout, /No learnings/);
+});
+
+test("RAD-134: ci-slot runs the command under a heavy slot and returns its exit code", async () => {
+  const run = prgenie([
+    "ci-slot",
+    "--check",
+    "full-suite",
+    "--",
+    process.execPath,
+    "-e",
+    "process.exit(3)",
+  ]);
+  assert.equal(run.code, 3, run.stderr || run.stdout);
+  const commonRaw = git(["rev-parse", "--git-common-dir"]);
+  const common = path.isAbsolute(commonRaw) ? commonRaw : path.join(repo, commonRaw);
+  const slotDir = path.join(common, "agent-console", "ci-heavy");
+  mkdirSync(slotDir, { recursive: true });
+  const slotFile = path.join(slotDir, "slot-0.json");
+  const now = new Date().toISOString();
+  writeFileSync(
+    slotFile,
+    `${JSON.stringify({
+      token: "hold-test",
+      pid: process.pid,
+      loopId: null,
+      check: "hold",
+      cwd: repo,
+      acquiredAt: now,
+      heartbeatAt: now,
+    })}\n`,
+  );
+  const child = spawn(
+    process.execPath,
+    [cliJs, "ci-slot", "--check", "queued", "--", process.execPath, "-e", "process.exit(3)"],
+    {
+      cwd: repo,
+      env: { ...process.env, NO_COLOR: "1", PRGENIE_CI_HEAVY_CONCURRENCY: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let stderr = "";
+  let sawWaiting = false;
+  const closed = new Promise<number>((resolve) => {
+    child.on("close", (status) => {
+      resolve(typeof status === "number" ? status : 1);
+    });
+  });
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    stderr += chunk;
+    if (stderr.includes("waiting for heavy-test slot")) sawWaiting = true;
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`no waiting line before release:\n${stderr}`));
+      }, 8000);
+      const tick = (): void => {
+        if (sawWaiting) {
+          clearTimeout(timer);
+          resolve();
+        }
+      };
+      child.stderr?.on("data", tick);
+      child.on("close", () => {
+        if (sawWaiting) return;
+        clearTimeout(timer);
+        reject(new Error(`ci-slot exited before a waiting line:\n${stderr}`));
+      });
+      tick();
+    });
+    assert.match(stderr, /waiting for heavy-test slot/);
+    assert.equal(existsSync(slotFile), true);
+    unlinkSync(slotFile);
+    const code = await Promise.race([
+      closed,
+      new Promise<number>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`ci-slot did not exit after the slot was released:\n${stderr}`));
+        }, 8000);
+      }),
+    ]);
+    assert.equal(code, 3, stderr);
+    const names = existsSync(slotDir)
+      ? readdirSync(slotDir).filter((n) => n.startsWith("slot-") && n.endsWith(".json"))
+      : [];
+    assert.equal(names.length, 0);
+  } finally {
+    if (child.exitCode == null && !child.killed) child.kill();
+    try {
+      unlinkSync(slotFile);
+    } catch {
+      // hold already released
+    }
+  }
 });

@@ -137,7 +137,18 @@ Hard-config mapping selects the **full local plan** (RAD-154). Other uncertain m
   - Unreadable inputs, or `test:*` when `HEAD^{tree}` cannot be resolved.
   - A check that passed while its inputs changed mid-run (hash before; re-hash after; record only if unchanged).
 
-- **Per-check timeout** (RAD-133): format/lint/typecheck/build default to **20 minutes**; `test` / `test:*` (including full `packages/core/src/*.test.ts` globs on Windows) default to **40 minutes** so ~28 min suites finish inside `run_ci` / `prgenie ci`. MCP `mcp.json` / `MCP_SERVER_TIMEOUT_SEC` matches the **40-minute** package-test wall so `run_ci` and `shepherd_status` are not cut off at 20 minutes (RAD-100).
+- **Per-check timeout** (RAD-133): format/lint/typecheck/build default to **20 minutes**; `test` / `test:*` (including full `packages/core/src/*.test.ts` globs on Windows) default to **40 minutes** so ~28 min suites finish inside `run_ci` / `prgenie ci`. **Waiting for a heavy-test slot does not count** toward that per-check wall (RAD-134). MCP `mcp.json` / `MCP_SERVER_TIMEOUT_SEC` is **4200 s** (40-minute package test + 30-minute max slot wait) so queued `run_ci` / `shepherd_status` are not cut off early (RAD-100 / RAD-134).
+- **Parallel loops: heavy-test slots** (RAD-134): when several loops run package-glob `test` / `test:*` CI at once, the runner **queues** heavy runs instead of scaling timeouts. Default **N = 2** concurrent heavy runs per clone (`PRGENIE_CI_HEAVY_CONCURRENCY`; Windows: `setx PRGENIE_CI_HEAVY_CONCURRENCY 3`, then fully restart Cursor so every process sees the same value). Slot dir: `.git/agent-console/ci-heavy/slot-<k>.json`. Progress shows `waiting for heavy-test slot (…)`. Stale slots (dead pid or **90 s** without heartbeat) are stolen; max wait **30 minutes** then the check fails closed without starting. File-scoped `test:*` (RAD-127), non-test checks, manual `tsx --test`, and other clones are not counted; the reviewer backstop full suite runs under `prgenie ci-slot` (RAD-134 R26). **134-R25 Windows dogfood** (2026-09-27, N=2, four parallel `test:core` glob `runCiChecks`, no competing CI): solo glob wall **684,049 ms** (~11.4 min).
+
+  | loopId  |  waitedMs | elapsedMs | passed |
+  | ------- | --------: | --------: | -----: |
+  | lp-r25a | 1,417,198 | 1,003,538 |   true |
+  | lp-r25b |       530 | 1,416,181 |   true |
+  | lp-r25c |       380 | 1,415,693 |   true |
+  | lp-r25d | 1,417,511 | 1,004,482 |   true |
+
+- **CI failure logs are per loop (RAD-136):** failed checks write `.git/agent-console/ci-logs/<loopId>/<check>.log` and `latest.json` when a valid loop id is passed (R2). When **no** loop id is passed, a `../<repo>.loops/<id>` worktree cwd uses that worktree’s loop key (R3); invalid ids (`""`, `..`, `a/b`, …) use the shared `ci-logs/` root (R4). Overlapping `run_ci` and steward gate on the same loop share that loop dir; last writer wins for a check name. Legacy files in the shared `ci-logs/` root stay put (no migration).
+- **prs.test.ts solo timing (134-R22, Windows):** three runs of `node node_modules/tsx/dist/cli.mjs --test --test-name-pattern "HEAD moved after Review requested" packages/core/src/prs.test.ts` — **5.5s**, **5.0s**, **5.0s** (mean **5.2s**). Fixture uses `createTempGitRepo`; head-drift reject path no longer retries `withFileLock` on intentional `completeLocalPrReview` throws.
 - Progress UI shows **elapsed time per check** and the **actual command** (including path args / blob scope).
 
 ## Who runs what
@@ -224,7 +235,7 @@ After a blocked export gate: steward `resume_implementor` → implementor fixes 
 
 After the **first** `run_ci` / `prgenie ci` plan is selected, print `{ checks, reason }`. If a check goes red:
 
-1. Open the failing log (progress card / `.git/agent-console/ci-logs/<check>.log`).
+1. Open the failing log (progress card / `.git/agent-console/ci-logs/<loopId>/<check>.log`, or shared `.git/agent-console/ci-logs/<check>.log` when no loop id applies).
 2. Fix the named assertion or file.
 3. Re-run **only that file** (e.g. `pnpm exec tsx --test path/to/file.test.ts`) or **that one check name** (`prgenie ci <id> --failing test:core`) once per edit.
 4. Still format the files you edited (`format:check` on the diff / Prettier on touched paths). The ban is **not** “skip format.”

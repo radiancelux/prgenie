@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import {
@@ -47,7 +47,6 @@ import {
   resolveLocalPrComment,
   setLocalPrStatus,
   shouldSpawnReviewer,
-  markReviewRequested,
   markReviewerNotified,
   markReviewInterrupted,
   updateLocalPr,
@@ -58,35 +57,60 @@ import {
 } from "./index.js";
 import { prsDir, prFile, parseJsonObject, writeJsonFile } from "./store.js";
 import type { LocalPr } from "./types.js";
+import { createTempGitRepo } from "./test-git-fixture.js";
 
 let repo = "";
+
+const HEAD_DRIFT_TEST_NAME = "complete_review refuses when HEAD moved after Review requested";
+
+function isHeadDriftTest(ctx: { name?: string }): boolean {
+  return ctx.name === HEAD_DRIFT_TEST_NAME;
+}
 
 function git(args: string[], cwd = repo): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
+function featWidgetBranchExists(): boolean {
+  try {
+    git(["rev-parse", "--verify", "feat/widget"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ensureFeatWidgetBranch(): void {
+  if (featWidgetBranchExists()) {
+    try {
+      git(["checkout", "feat/widget"]);
+      return;
+    } catch {
+      // branch exists but checkout failed — recreate below
+    }
+  }
+  git(["checkout", "main"]);
+  git(["checkout", "-B", "feat/widget"]);
+  writeFileSync(path.join(repo, "widget.txt"), "n=1\n");
+  git(["add", "widget.txt"]);
+  git(["commit", "-m", "add widget"]);
+}
+
 before(async () => {
-  repo = await mkdtemp(path.join(tmpdir(), "prgenie-"));
-  git(["init", "-b", "main"]);
+  repo = await createTempGitRepo({ prefix: "prgenie-prs-" });
   git(["config", "user.email", "test@prgenie.ai"]);
   git(["config", "user.name", "PR Genie Test"]);
-  await writeFile(path.join(repo, "README.md"), "hello\n");
-  git(["add", "."]);
-  git(["commit", "-m", "initial"]);
-  git(["checkout", "-b", "feat/widget"]);
-  await writeFile(path.join(repo, "widget.txt"), "n=1\n");
-  git(["add", "."]);
-  git(["commit", "-m", "add widget"]);
 });
 
-beforeEach(async () => {
+beforeEach(async (ctx) => {
   if (!repo) return;
+  await rm(await prsDir(repo), { recursive: true, force: true });
+  if (isHeadDriftTest(ctx)) return;
   const trees = await listWorktrees(repo);
   if (trees.some((t) => loopWorktreeIdentity(t.path))) {
     await pruneLoopWorktrees(repo);
   }
-  // Shared feat/widget checkout: drop live packets so the next case can create again.
-  await rm(await prsDir(repo), { recursive: true, force: true });
+  ensureFeatWidgetBranch();
   try {
     git(["checkout", "feat/widget"]);
   } catch {
@@ -932,19 +956,45 @@ test("ready handoff arms reviewRequestedSha for the drift guard", async () => {
 
 test("complete_review refuses when HEAD moved after Review requested", async () => {
   git(["checkout", "main"]);
-  const pr = await createLocalPr(repo, { title: "Drift guard", base: "main" });
-  assert.ok(pr.worktreePath);
-  await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
-  const marked = await markReviewRequested(repo, pr.id);
-  await writeFile(path.join(pr.worktreePath, "drift.txt"), "moved\n");
-  git(["add", "drift.txt"], pr.worktreePath);
-  git(["commit", "-m", "move head after review requested"], pr.worktreePath);
-  await assert.rejects(
-    () => completeLocalPrReview(repo, marked.id),
-    /HEAD moved since Review requested/,
-  );
-  assert.equal((await getLocalPr(repo, marked.id)).status, "ready");
-  const forced = await completeLocalPrReview(repo, marked.id, { allowDrift: true });
+  git(["checkout", "-b", "feat/drift-guard"]);
+  await writeFile(path.join(repo, "drift-seed.txt"), "1\n");
+  git(["add", "drift-seed.txt"]);
+  git(["commit", "-m", "seed drift branch"]);
+  const headSha = git(["rev-parse", "HEAD"]);
+  const baseSha = git(["rev-parse", "main"]);
+  const now = new Date().toISOString();
+  const id = "lp-deadbee1";
+  const packet: LocalPr = {
+    id,
+    title: "Drift guard",
+    body: "",
+    status: "ready",
+    headRef: "feat/drift-guard",
+    baseRef: "main",
+    headSha,
+    baseSha,
+    worktreePath: null,
+    comments: [],
+    source: { kind: "cli" },
+    createdAt: now,
+    updatedAt: now,
+    reviewRequestedSha: headSha,
+    reviewerNotifiedSha: null,
+    readyCi: null,
+    exportGateOverride: null,
+    implementorTier: null,
+    implementorModel: null,
+    reviewRoundCount: 0,
+    implementorRoundCount: 0,
+    lastTierBumpReason: null,
+  };
+  await writeFile(prFile(await prsDir(repo), id), `${JSON.stringify(packet, null, 2)}\n`);
+  await writeFile(path.join(repo, "drift.txt"), "moved\n");
+  git(["add", "drift.txt"]);
+  git(["commit", "-m", "move head after review requested"]);
+  await assert.rejects(() => completeLocalPrReview(repo, id), /HEAD moved since Review requested/);
+  assert.equal((await getLocalPr(repo, id)).status, "ready");
+  const forced = await completeLocalPrReview(repo, id, { allowDrift: true });
   assert.equal(forced.headDrift, true);
   assert.equal(forced.status, "reviewed");
 });

@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { CI_HEAVY_SLOT_MAX_WAIT_MS } from "./ci-heavy-slot.js";
 import { CI_PACKAGE_TEST_TIMEOUT_MS } from "./ci-runner.js";
 
 export const PRGENIE_MCP_NAME = "prgenie";
@@ -10,7 +11,8 @@ export const PRGENIE_MCP_NAME = "prgenie";
  * (~40m for `test:core` globs on Windows, RAD-133) instead of dying with
  * `-32001 Request timed out` (RAD-100).
  */
-export const MCP_SERVER_TIMEOUT_SEC = CI_PACKAGE_TEST_TIMEOUT_MS / 1000;
+export const MCP_SERVER_TIMEOUT_SEC =
+  (CI_PACKAGE_TEST_TIMEOUT_MS + CI_HEAVY_SLOT_MAX_WAIT_MS) / 1000;
 
 export type McpServerEntry = {
   type?: string;

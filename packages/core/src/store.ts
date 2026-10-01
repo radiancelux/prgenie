@@ -101,23 +101,30 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isLockContention(err: unknown): boolean {
+  return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EEXIST";
+}
+
 /** Cross-process lock so two reviewer chats cannot drop each other's comments. */
 export async function withFileLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
   const lock = `${file}.lock`;
   let lastErr: unknown;
   // ~30s under Windows suite load: claim holders may stay inside fn() for seconds.
   for (let i = 0; i < 300; i++) {
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
-      const handle = await open(lock, "wx");
-      try {
-        return await fn();
-      } finally {
-        await handle.close();
-        await unlink(lock).catch(() => undefined);
-      }
+      handle = await open(lock, "wx");
     } catch (err) {
+      if (!isLockContention(err)) throw err;
       lastErr = err;
       await delay(100);
+      continue;
+    }
+    try {
+      return await fn();
+    } finally {
+      await handle.close();
+      await unlink(lock).catch(() => undefined);
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(`Timed out locking ${file}`);

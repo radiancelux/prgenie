@@ -33,6 +33,14 @@ import {
   resolveCiCheckCommand,
 } from "./ci-host-scope.js";
 import { requestCiAbort, watchCiAbort } from "./ci-abort.js";
+import {
+  acquireHeavyTestSlot,
+  HeavySlotMaxWaitError,
+  HeavySlotUnavailableError,
+  heavyTestConcurrency,
+  isHeavyTestRun,
+  type HeavySlotTiming,
+} from "./ci-heavy-slot.js";
 import { git } from "./git.js";
 import { getLocalPr, recordLocalPrReadyCi } from "./prs.js";
 import { readyCiFromRunnerResult } from "./ready-ci.js";
@@ -109,6 +117,8 @@ export interface CiCheckResult {
   /** Relative or absolute path to the capped full log. */
   logPath?: string;
   elapsedMs?: number;
+  /** Wall time waiting for a heavy-test slot before the check started (RAD-134). */
+  waitedMs?: number;
   reason?: string;
   /** Env/setup failure (missing bins) vs product lint/test fail (RAD-92). */
   kind?: "product" | "env";
@@ -165,6 +175,12 @@ export interface CiRunnerOptions {
    * When omitted, scripts are read from `cwd/package.json`.
    */
   packageScripts?: Record<string, string> | null;
+  /** Resolved loop id for per-loop CI logs and slot records (RAD-136 / RAD-134). */
+  loopId?: string;
+  /** Override PRGENIE_CI_HEAVY_CONCURRENCY (RAD-134). */
+  heavyConcurrency?: number;
+  /** Test-only heavy slot timing knobs. */
+  heavySlotTiming?: HeavySlotTiming;
 }
 
 /**
@@ -357,10 +373,23 @@ async function runOneCheck(
     changedPaths?: string[];
     packageScripts?: Record<string, string> | null;
     selection?: CiCheckSelection;
+    loopId?: string;
+    heavyConcurrency?: number;
+    heavySlotTiming?: HeavySlotTiming;
   },
 ): Promise<CiCheckResult> {
-  const { timeout, skipCache, onProgress, signal, changedPaths, packageScripts, selection } =
-    options;
+  const {
+    timeout,
+    skipCache,
+    onProgress,
+    signal,
+    changedPaths,
+    packageScripts,
+    selection,
+    loopId,
+    heavyConcurrency,
+    heavySlotTiming,
+  } = options;
   const formatScoped = check === "format:check" && shouldScopeFormatCheck(selection);
   const scopedTestFiles = check.startsWith("test:") ? selection?.testFiles?.[check] : undefined;
   const resolved = resolveCiCheckCommand({
@@ -373,7 +402,8 @@ async function runOneCheck(
     selection,
     testFiles: scopedTestFiles,
   });
-  // Progress may show a descriptive blob-scope label; shell fallback stays pnpm <check>.
+  // Progress and the shell both use the resolved command, including a
+  // path-scoped host rewrite. packageScripts is resolver input only.
   const progressCommand = resolved.command;
   const shellCommand =
     check === "format:check" && formatScoped ? ciCheckCommand(check) : resolved.command;
@@ -404,6 +434,72 @@ async function runOneCheck(
     scopedTestFiles && scopedTestFiles.length > 0
       ? `${scopedTestFiles.length} file(s), not package glob`
       : undefined;
+
+  let slotRelease: (() => void) | undefined;
+  let waitedMs = 0;
+  let slotUnavailableNote: string | undefined;
+  let shellEnvExtra: NodeJS.ProcessEnv | undefined;
+  const needsHeavySlot = isHeavyTestRun(check, selection);
+
+  if (needsHeavySlot) {
+    try {
+      const slot = await acquireHeavyTestSlot({
+        cwd,
+        loopId: loopId ?? null,
+        check,
+        concurrency: heavyConcurrency ?? heavyTestConcurrency(),
+        signal,
+        timing: heavySlotTiming,
+        onWaiting: (message) => {
+          onProgress?.({
+            phase: "ci",
+            check,
+            state: "waiting",
+            command: progressCommand,
+            message,
+          });
+        },
+      });
+      waitedMs = slot.waitedMs;
+      slotRelease = slot.release;
+      shellEnvExtra = { PRGENIE_CI_HEAVY_SLOT_HELD: slot.slotDir };
+    } catch (err) {
+      if (err instanceof HeavySlotMaxWaitError) {
+        const msg = err.message;
+        onProgress?.({
+          phase: "ci",
+          check,
+          state: "fail",
+          command: progressCommand,
+          message: msg,
+        });
+        return {
+          name: check,
+          passed: false,
+          error: msg,
+          excerpt: msg,
+          waitedMs: err.waitedMs,
+          reason: [reason || options.reason, msg].filter(Boolean).join("; "),
+        };
+      }
+      if (isAbortError(err) || signal?.aborted) {
+        onProgress?.({
+          phase: "ci",
+          check,
+          state: "skip",
+          command: progressCommand,
+          message: `${check} cancelled while waiting for a heavy-test slot`,
+        });
+        throw abortError();
+      }
+      if (err instanceof HeavySlotUnavailableError) {
+        slotUnavailableNote = `heavy-test slot unavailable: ${err.message}`;
+      } else {
+        throw err;
+      }
+    }
+  }
+
   onProgress?.({
     phase: "ci",
     check,
@@ -445,11 +541,20 @@ async function runOneCheck(
           const scopeNote = scoped
             ? `scoped ${tracked.length} changed file(s)`
             : `full tree ${tracked.length} file(s)`;
+          const passReason = [
+            reason || options.reason,
+            scopeNote,
+            slotUnavailableNote,
+            waitedMs > 0 ? `waited ${Math.round(waitedMs / 1000)}s for heavy-test slot` : undefined,
+          ]
+            .filter(Boolean)
+            .join("; ");
           return {
             name: check,
             passed: true,
             elapsedMs,
-            reason: [reason || options.reason, scopeNote].filter(Boolean).join("; "),
+            waitedMs: waitedMs > 0 ? waitedMs : undefined,
+            reason: passReason,
           };
         }
       }
@@ -476,7 +581,7 @@ async function runOneCheck(
           timeout,
           signal,
           maxBuffer: 2 * 1024 * 1024,
-          env: ciShellEnv(),
+          env: ciShellEnv(shellEnvExtra),
         });
       }
     } else {
@@ -486,7 +591,7 @@ async function runOneCheck(
         timeout,
         signal,
         maxBuffer: 2 * 1024 * 1024,
-        env: ciShellEnv(),
+        env: ciShellEnv(shellEnvExtra),
       });
     }
     const elapsedMs = Date.now() - started;
@@ -496,7 +601,20 @@ async function runOneCheck(
     } catch {
       // Check passed; cache write failed — ignore and continue without cache
     }
-    return { name: check, passed: true, elapsedMs, reason: reason || options.reason };
+    const passReason = [
+      reason || options.reason,
+      slotUnavailableNote,
+      waitedMs > 0 ? `waited ${Math.round(waitedMs / 1000)}s for heavy-test slot` : undefined,
+    ]
+      .filter(Boolean)
+      .join("; ");
+    return {
+      name: check,
+      passed: true,
+      elapsedMs,
+      waitedMs: waitedMs > 0 ? waitedMs : undefined,
+      reason: passReason,
+    };
   } catch (err) {
     if (err instanceof CiShellError && err.kind === "cancelled") {
       const output = collectShellOutput(err);
@@ -511,6 +629,7 @@ async function runOneCheck(
           output,
           progressMessage,
           "cancelled",
+          loopId,
         );
       }
       onProgress?.({
@@ -538,6 +657,7 @@ async function runOneCheck(
       output,
       progressMessage,
       logOutcome,
+      loopId,
     );
     const elapsedMs = Date.now() - started;
     const error = formatCiCheckError({
@@ -555,6 +675,13 @@ async function runOneCheck(
       message: progressMessage,
       logPath: logPath ?? undefined,
     });
+    const failReason = [
+      reason || options.reason,
+      slotUnavailableNote,
+      waitedMs > 0 ? `waited ${Math.round(waitedMs / 1000)}s for heavy-test slot` : undefined,
+    ]
+      .filter(Boolean)
+      .join("; ");
     return {
       name: check,
       passed: false,
@@ -562,9 +689,12 @@ async function runOneCheck(
       excerpt,
       logPath: logPath ?? undefined,
       elapsedMs,
-      reason: reason || options.reason,
+      waitedMs: waitedMs > 0 ? waitedMs : undefined,
+      reason: failReason,
       kind: envFail ? "env" : "product",
     };
+  } finally {
+    slotRelease?.();
   }
 }
 
@@ -727,6 +857,9 @@ export async function runCiChecks(
           changedPaths,
           packageScripts,
           selection,
+          loopId: options.loopId,
+          heavyConcurrency: options.heavyConcurrency,
+          heavySlotTiming: options.heavySlotTiming,
         }).then((result) => {
           if (!result.passed && failFast) child.abort();
           return result;
@@ -771,6 +904,9 @@ export async function runCiChecks(
             changedPaths,
             packageScripts,
             selection,
+            loopId: options.loopId,
+            heavyConcurrency: options.heavyConcurrency,
+            heavySlotTiming: options.heavySlotTiming,
           }),
         );
       } catch (err) {
@@ -879,6 +1015,7 @@ export async function runLoopCi(
       selection: runSelection,
       changedPaths: paths,
       signal: controller.signal,
+      loopId: pr.id,
     });
     // RAD-97: persist green / intentional-skip onto the loop so ready soft-block can pass.
     try {

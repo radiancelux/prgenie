@@ -1,6 +1,7 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { gitCommonDir } from "./git.js";
+import { loopWorktreeIdentity } from "./worktrees.js";
 
 /** Last N lines shown in toast / CLI when no first-failing-test parse. */
 export const CI_EXCERPT_LINES = 8;
@@ -31,6 +32,8 @@ export interface CiFailureLogMeta {
   excerpt: string;
   logPath: string;
   writtenAt: string;
+  /** Loop key when stored under ci-logs/<loopId>/; null for the shared dir (RAD-136). */
+  loopId?: string | null;
 }
 
 const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, "g");
@@ -248,9 +251,30 @@ export function displayLogPath(cwd: string, absPath: string): string {
   return rel && !rel.startsWith("..") ? rel : absPath;
 }
 
-export async function ciLogsDir(cwd: string, create = true): Promise<string> {
+const LOOP_KEY_RE = /^lp-[0-9a-f]{8}$/i;
+
+export function isValidLoopLogKey(loopId: string): boolean {
+  return LOOP_KEY_RE.test(loopId);
+}
+
+/** Resolve loop key for log paths: explicit id, .loops worktree, or shared (null). */
+export function resolveCiLogLoopKey(cwd: string, loopId?: string | null): string | null {
+  if (loopId !== undefined) {
+    if (loopId === null || loopId === "") return null;
+    return isValidLoopLogKey(loopId) ? loopId : null;
+  }
+  const ident = loopWorktreeIdentity(cwd);
+  return ident?.id ?? null;
+}
+
+export async function ciLogsDir(
+  cwd: string,
+  create = true,
+  loopKey: string | null = null,
+): Promise<string> {
   const common = await gitCommonDir(cwd);
-  const dir = path.join(common, "agent-console", "ci-logs");
+  const base = path.join(common, "agent-console", "ci-logs");
+  const dir = loopKey ? path.join(base, loopKey) : base;
   if (create) await mkdir(dir, { recursive: true });
   return dir;
 }
@@ -276,9 +300,11 @@ export async function writeCiFailureLog(
   output: ExecFailureOutput,
   excerpt: string,
   outcome: CiFailureLogOutcome = "failed",
+  loopId?: string | null,
 ): Promise<string | null> {
   try {
-    const dir = await ciLogsDir(cwd);
+    const loopKey = resolveCiLogLoopKey(cwd, loopId);
+    const dir = await ciLogsDir(cwd, true, loopKey);
     const logPath = path.join(dir, `${safeCheckFile(check)}.log`);
     const header = `# ${check} (${command}) ${outcome} ${new Date().toISOString()}\n\n`;
     const body = truncateBytes(
@@ -292,47 +318,115 @@ export async function writeCiFailureLog(
       excerpt,
       logPath,
       writtenAt: new Date().toISOString(),
+      loopId: loopKey,
     };
-    await writeFile(path.join(dir, "latest.json"), `${JSON.stringify(meta, null, 2)}\n`, "utf8");
+    const latestPath = path.join(dir, "latest.json");
+    const tempPath = path.join(dir, `latest.${process.pid}.${Date.now()}.json`);
+    await writeFile(tempPath, `${JSON.stringify(meta, null, 2)}\n`, "utf8");
+    try {
+      await rename(tempPath, latestPath);
+    } catch {
+      try {
+        await unlink(tempPath);
+      } catch {
+        // ignore
+      }
+    }
     return displayLogPath(cwd, logPath);
   } catch {
     return null;
   }
 }
 
-export async function listCiFailureLogs(cwd: string): Promise<CiFailureLogMeta[]> {
+async function readLatestInDir(
+  cwd: string,
+  dir: string,
+  loopId: string | null,
+): Promise<CiFailureLogMeta | null> {
   try {
-    const dir = await ciLogsDir(cwd, false);
-    const names = (await readdir(dir)).filter((n) => n.endsWith(".log"));
-    const latestRaw = await readFile(path.join(dir, "latest.json"), "utf8").catch(() => null);
-    let latest: CiFailureLogMeta | null = null;
-    if (latestRaw) {
-      try {
-        latest = JSON.parse(latestRaw) as CiFailureLogMeta;
-      } catch {
-        latest = null;
-      }
+    const raw = await readFile(path.join(dir, "latest.json"), "utf8");
+    const meta = JSON.parse(raw) as CiFailureLogMeta;
+    if (!meta || typeof meta.check !== "string" || typeof meta.logPath !== "string") return null;
+    return {
+      ...meta,
+      loopId: meta.loopId !== undefined ? meta.loopId : loopId,
+      logPath: displayLogPath(cwd, meta.logPath),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function listCiFailureLogsInDir(
+  cwd: string,
+  dir: string,
+  loopId: string | null,
+): Promise<CiFailureLogMeta[]> {
+  const names = (await readdir(dir)).filter((n) => n.endsWith(".log"));
+  const latest = await readLatestInDir(cwd, dir, loopId);
+  const out: CiFailureLogMeta[] = [];
+  for (const name of names.sort()) {
+    const logPath = path.join(dir, name);
+    const check = name.replace(/\.log$/, "").replace(/_/g, ":");
+    if (latest && path.resolve(latest.logPath) === path.resolve(logPath)) {
+      out.push({ ...latest, logPath: displayLogPath(cwd, logPath), loopId });
+      continue;
     }
+    out.push({
+      check,
+      command: `pnpm ${check}`,
+      excerpt: "",
+      logPath: displayLogPath(cwd, logPath),
+      writtenAt: "",
+      loopId,
+    });
+  }
+  return out;
+}
+
+export async function listCiFailureLogs(
+  cwd: string,
+  loopId?: string | null,
+): Promise<CiFailureLogMeta[]> {
+  try {
+    if (loopId != null && loopId !== "") {
+      if (!isValidLoopLogKey(loopId)) return [];
+      const dir = await ciLogsDir(cwd, false, loopId);
+      return listCiFailureLogsInDir(cwd, dir, loopId);
+    }
+    const base = await ciLogsDir(cwd, false, null);
+    const entries = await readdir(base).catch(() => [] as string[]);
     const out: CiFailureLogMeta[] = [];
-    for (const name of names.sort()) {
-      const logPath = path.join(dir, name);
-      const check = name.replace(/\.log$/, "").replace(/_/g, ":");
-      if (latest && path.resolve(latest.logPath) === path.resolve(logPath)) {
-        out.push({ ...latest, logPath: displayLogPath(cwd, logPath) });
-        continue;
-      }
-      out.push({
-        check,
-        command: `pnpm ${check}`,
-        excerpt: "",
-        logPath: displayLogPath(cwd, logPath),
-        writtenAt: "",
-      });
+    out.push(...(await listCiFailureLogsInDir(cwd, base, null)));
+    for (const name of entries) {
+      if (!isValidLoopLogKey(name)) continue;
+      const sub = path.join(base, name);
+      out.push(...(await listCiFailureLogsInDir(cwd, sub, name)));
     }
     return out;
   } catch {
     return [];
   }
+}
+
+/** Newest failure per loop (shared counts as null), for doctor (RAD-136 R10). */
+export async function latestCiFailuresByLoop(cwd: string, limit = 5): Promise<CiFailureLogMeta[]> {
+  const entries: CiFailureLogMeta[] = [];
+  try {
+    const base = await ciLogsDir(cwd, false, null);
+    const shared = await readLatestInDir(cwd, base, null);
+    if (shared) entries.push(shared);
+    const names = await readdir(base).catch(() => [] as string[]);
+    for (const name of names) {
+      if (!isValidLoopLogKey(name)) continue;
+      const sub = await readLatestInDir(cwd, path.join(base, name), name);
+      if (sub) entries.push(sub);
+    }
+  } catch {
+    return [];
+  }
+  entries.sort((a, b) => (b.writtenAt ?? "").localeCompare(a.writtenAt ?? ""));
+  return entries.slice(0, limit);
 }
 
 export async function readCiFailureLog(cwd: string, logPath: string): Promise<string | null> {
@@ -344,13 +438,22 @@ export async function readCiFailureLog(cwd: string, logPath: string): Promise<st
   }
 }
 
-export async function latestCiFailure(cwd: string): Promise<CiFailureLogMeta | null> {
+export async function latestCiFailure(
+  cwd: string,
+  loopId?: string | null,
+): Promise<CiFailureLogMeta | null> {
   try {
-    const dir = await ciLogsDir(cwd, false);
-    const raw = await readFile(path.join(dir, "latest.json"), "utf8");
-    const meta = JSON.parse(raw) as CiFailureLogMeta;
-    if (!meta || typeof meta.check !== "string" || typeof meta.logPath !== "string") return null;
-    return { ...meta, logPath: displayLogPath(cwd, meta.logPath) };
+    if (loopId != null && loopId !== "") {
+      if (!isValidLoopLogKey(loopId)) return null;
+      const dir = await ciLogsDir(cwd, false, loopId);
+      return readLatestInDir(cwd, dir, loopId);
+    }
+    const newest = await latestCiFailuresByLoop(cwd, Number.MAX_SAFE_INTEGER);
+    if (newest.length === 0) {
+      const sharedDir = await ciLogsDir(cwd, false, null);
+      return readLatestInDir(cwd, sharedDir, null);
+    }
+    return newest[0] ?? null;
   } catch {
     return null;
   }

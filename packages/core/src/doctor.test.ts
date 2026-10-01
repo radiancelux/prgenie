@@ -118,6 +118,34 @@ test("doctor reports git-path ok with resolved absolute git binary", async () =>
   assert.match(gitPath.summary, /resolvable from this process at /);
 });
 
+test("RAD-136: ci-failure-log lists the newest failure per loop", async () => {
+  const repo = await initRepo("ci-failure-per-loop");
+  const { writeCiFailureLog } = await import("./ci-failure.js");
+  await writeCiFailureLog(
+    repo,
+    "lint",
+    "pnpm lint",
+    { firstLine: "f", stdout: "", stderr: "one\n", combined: "one\n" },
+    "one",
+    "failed",
+    "lp-11111111",
+  );
+  await writeCiFailureLog(
+    repo,
+    "test",
+    "pnpm test",
+    { firstLine: "f", stdout: "", stderr: "two\n", combined: "two\n" },
+    "two",
+    "failed",
+    "lp-22222222",
+  );
+  const report = await runDoctor(repo, { home: path.join(dir, "home-ci-failure-log") });
+  const row = report.checks.find((c) => c.id === "ci-failure-log");
+  assert.ok(row?.ok);
+  assert.match(row?.summary ?? "", /lp-11111111.*lint/);
+  assert.match(row?.summary ?? "", /lp-22222222.*test/);
+});
+
 test("doctor fails git-path when PRGENIE_GIT points at a missing binary", async () => {
   const prev = process.env[PRGENIE_GIT_ENV];
   const missing = path.join(dir, "no-such-git.exe");

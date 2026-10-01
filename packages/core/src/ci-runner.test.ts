@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -1772,6 +1773,497 @@ describe("runCiChecks file-scoped test:core (RAD-127)", () => {
         !err.includes("ok.test.ts"),
         `error should be the failing file command, not the earlier pass: ${err}`,
       );
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+});
+
+describe("RAD-134 heavy-test slots in ci-runner", () => {
+  const slotTiming = { pollMs: 20, maxWaitMs: 5000, noticeMs: 50 };
+
+  async function heavyRunnerRepo(): Promise<string> {
+    const repo = await initTestRepo();
+    await execAsync("git init", { cwd: repo });
+    await mkdir(join(repo, "packages", "core", "src"), { recursive: true });
+    await writeFile(
+      join(repo, "packages", "core", "src", "slot-queue.test.ts"),
+      `import { test } from "node:test";\ntest("ok", () => {});\n`,
+    );
+    await linkNodeModules(repo, join(process.cwd(), "node_modules"));
+    return repo;
+  }
+
+  async function heavySlotDir(repo: string): Promise<string> {
+    const { ciHeavySlotDir } = await import("./ci-heavy-slot.js");
+    return ciHeavySlotDir(repo);
+  }
+
+  function countSlotFiles(dir: string): number {
+    if (!existsSync(dir)) return 0;
+    return readdirSync(dir).filter((n) => n.startsWith("slot-") && n.endsWith(".json")).length;
+  }
+
+  async function writeRepoScripts(repo: string, scripts: Record<string, string>): Promise<void> {
+    await writeFile(
+      join(repo, "package.json"),
+      JSON.stringify({
+        name: "test-repo",
+        scripts: {
+          "format:check": "exit 0",
+          lint: "exit 0",
+          typecheck: "exit 0",
+          build: "exit 0",
+          test: "exit 0",
+          ...scripts,
+        },
+      }),
+    );
+  }
+
+  function slotToken(dir: string): string | undefined {
+    const file = join(dir, "slot-0.json");
+    if (!existsSync(file)) return undefined;
+    try {
+      const parsed = JSON.parse(readFileSync(file, "utf8")) as { token?: string };
+      return parsed.token;
+    } catch {
+      return undefined;
+    }
+  }
+
+  it("RAD-134: heavyConcurrency option overrides the env", async () => {
+    const repo = await initTestRepo();
+    try {
+      await execAsync("git init", { cwd: repo });
+      await mkdir(join(repo, "packages", "core", "src"), { recursive: true });
+      await writeFile(
+        join(repo, "packages", "core", "src", "slot-queue.test.ts"),
+        `import assert from "node:assert/strict";\nimport { test } from "node:test";\ntest("ok", () => assert.ok(true));\n`,
+      );
+      await linkNodeModules(repo, join(process.cwd(), "node_modules"));
+      const slotTiming = { pollMs: 20, maxWaitMs: 5000 };
+      const { acquireHeavyTestSlot } = await import("./ci-heavy-slot.js");
+      const h1 = await acquireHeavyTestSlot({
+        cwd: repo,
+        check: "hold",
+        concurrency: 1,
+        timing: slotTiming,
+      });
+      const releaseHeld = setTimeout(() => h1.release(), 300);
+      const result = await runCiChecks(repo, {
+        checks: ["test:core"],
+        skipCache: true,
+        skipToolchainEnsure: true,
+        parallel: false,
+        heavyConcurrency: 1,
+        heavySlotTiming: slotTiming,
+        timeout: 60_000,
+      });
+      clearTimeout(releaseHeld);
+      h1.release();
+      const check = result.checks[0];
+      assert.equal(result.allPassed, true);
+      assert.equal(check?.passed, true);
+      assert.ok((check?.waitedMs ?? 0) >= 250, `expected queue wait, got ${check?.waitedMs}`);
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("RAD-134: only heavy test runs take a slot", async () => {
+    const repo = await heavyRunnerRepo();
+    try {
+      await writeFile(
+        join(repo, "packages", "core", "package.json"),
+        JSON.stringify({ name: "@prgenie/core", private: true }),
+      );
+      await execAsync('git config user.email "test@test.com"', { cwd: repo });
+      await execAsync('git config user.name "Test"', { cwd: repo });
+      await execAsync(
+        "git add package.json packages/core/package.json packages/core/src/slot-queue.test.ts",
+        { cwd: repo },
+      );
+      await execAsync('git commit -m "fixture"', { cwd: repo });
+      const dir = await heavySlotDir(repo);
+      const { acquireHeavyTestSlot } = await import("./ci-heavy-slot.js");
+      const waitOpts = {
+        skipCache: true,
+        skipToolchainEnsure: true,
+        parallel: false,
+        heavyConcurrency: 1,
+        heavySlotTiming: slotTiming,
+        timeout: 60_000,
+      };
+      const hold = await acquireHeavyTestSlot({
+        cwd: repo,
+        check: "hold",
+        concurrency: 1,
+        timing: slotTiming,
+      });
+      const rootWait = runCiChecks(repo, { checks: ["test"], ...waitOpts });
+      await new Promise((r) => setTimeout(r, 80));
+      assert.equal(countSlotFiles(dir), 1);
+      setTimeout(() => hold.release(), 200);
+      const rootResult = await rootWait;
+      assert.ok((rootResult.checks[0]?.waitedMs ?? 0) >= 50);
+      const hold2 = await acquireHeavyTestSlot({
+        cwd: repo,
+        check: "hold2",
+        concurrency: 1,
+        timing: slotTiming,
+      });
+      const globWait = runCiChecks(repo, { checks: ["test:core"], ...waitOpts });
+      await new Promise((r) => setTimeout(r, 80));
+      setTimeout(() => hold2.release(), 200);
+      const globResult = await globWait;
+      assert.ok((globResult.checks[0]?.waitedMs ?? 0) >= 50);
+      assert.equal(globResult.checks[0]?.passed, true);
+      const holdNeg = await acquireHeavyTestSlot({
+        cwd: repo,
+        check: "hold-negative",
+        concurrency: 1,
+        timing: slotTiming,
+      });
+      try {
+        const heldToken = slotToken(dir);
+        assert.ok(heldToken, "pre-held slot-0 should exist before negative cases");
+        const cached = await runCiChecks(repo, {
+          checks: ["test:core"],
+          ...waitOpts,
+          skipCache: false,
+        });
+        assert.equal(
+          cached.checks[0]?.passed,
+          true,
+          cached.checks[0]?.error ?? cached.checks[0]?.reason,
+        );
+        assert.equal(cached.checks[0]?.waitedMs ?? 0, 0);
+        assert.equal(cached.checks[0]?.elapsedMs, 0);
+        assert.equal(slotToken(dir), heldToken);
+        const fileScoped = await runCiChecks(repo, {
+          checks: ["test:core"],
+          ...waitOpts,
+          selection: {
+            checks: ["test:core"],
+            reason: ["file-scoped"],
+            mapping: [],
+            uncertain: false,
+            changedPaths: [],
+            testFiles: { "test:core": ["packages/core/src/slot-queue.test.ts"] },
+          },
+        });
+        assert.equal(fileScoped.checks[0]?.waitedMs ?? 0, 0);
+        assert.equal(slotToken(dir), heldToken);
+        const lint = await runCiChecks(repo, {
+          checks: ["lint:core"],
+          ...waitOpts,
+        });
+        assert.equal(lint.checks[0]?.waitedMs ?? 0, 0);
+        assert.equal(slotToken(dir), heldToken);
+        assert.equal(countSlotFiles(dir), 1);
+      } finally {
+        holdNeg.release();
+      }
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("RAD-134: queued check emits waiting progress with holders before start", async () => {
+    const repo = await heavyRunnerRepo();
+    try {
+      const { acquireHeavyTestSlot } = await import("./ci-heavy-slot.js");
+      const h1 = await acquireHeavyTestSlot({
+        cwd: repo,
+        loopId: "lp-11111111",
+        check: "busy",
+        concurrency: 1,
+        timing: slotTiming,
+      });
+      const events: { state: string; message?: string }[] = [];
+      const pending = runCiChecks(repo, {
+        checks: ["test:core"],
+        skipCache: true,
+        skipToolchainEnsure: true,
+        parallel: false,
+        heavyConcurrency: 1,
+        heavySlotTiming: slotTiming,
+        timeout: 60_000,
+        onProgress: (e) => {
+          if (e.check === "test:core") events.push({ state: e.state, message: e.message });
+        },
+      });
+      await new Promise((r) => setTimeout(r, 400));
+      assert.ok(
+        events.some((e) => e.state === "waiting"),
+        `expected waiting events, got ${JSON.stringify(events)}`,
+      );
+      assert.ok(events.some((e) => e.message?.includes("lp-11111111")));
+      assert.ok(!events.some((e) => e.state === "start"));
+      h1.release();
+      await pending;
+      assert.ok(events.some((e) => e.state === "start"));
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("RAD-134: waiting time does not count against the check timeout", async () => {
+    const repo = await heavyRunnerRepo();
+    try {
+      const { acquireHeavyTestSlot } = await import("./ci-heavy-slot.js");
+      const h1 = await acquireHeavyTestSlot({
+        cwd: repo,
+        check: "hold",
+        concurrency: 1,
+        timing: slotTiming,
+      });
+      setTimeout(() => h1.release(), 3000);
+      await writeRepoScripts(repo, {
+        test: 'node -e "setTimeout(() => process.exit(0), 200)"',
+      });
+      const result = await runCiChecks(repo, {
+        checks: ["test"],
+        skipCache: true,
+        skipToolchainEnsure: true,
+        parallel: false,
+        heavyConcurrency: 1,
+        heavySlotTiming: slotTiming,
+        timeout: 2000,
+      });
+      const check = result.checks[0];
+      assert.equal(check?.passed, true);
+      assert.ok((check?.waitedMs ?? 0) >= 2500);
+      assert.ok((check?.elapsedMs ?? 9999) < 2000);
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("RAD-134: slot is released after pass, fail, timeout and cancel", async () => {
+    const repo = await heavyRunnerRepo();
+    try {
+      const dir = await heavySlotDir(repo);
+      const base = {
+        skipCache: true,
+        skipToolchainEnsure: true,
+        parallel: false,
+        heavyConcurrency: 1,
+        heavySlotTiming: slotTiming,
+      };
+      await runCiChecks(repo, { checks: ["test"], ...base, timeout: 5000 });
+      assert.equal(countSlotFiles(dir), 0);
+      await writeRepoScripts(repo, { test: "exit 1" });
+      const failed = await runCiChecks(repo, {
+        checks: ["test"],
+        ...base,
+        timeout: 5000,
+      });
+      assert.equal(failed.checks[0]?.passed, false);
+      assert.equal(countSlotFiles(dir), 0);
+      await writeRepoScripts(repo, {
+        test: 'node -e "setTimeout(() => {}, 5000)"',
+      });
+      const timedOut = await runCiChecks(repo, {
+        checks: ["test"],
+        ...base,
+        timeout: 500,
+      });
+      assert.equal(timedOut.checks[0]?.passed, false);
+      assert.equal(countSlotFiles(dir), 0);
+      const { acquireHeavyTestSlot } = await import("./ci-heavy-slot.js");
+      const hold = await acquireHeavyTestSlot({
+        cwd: repo,
+        check: "hold",
+        concurrency: 1,
+        timing: slotTiming,
+      });
+      const ac = new AbortController();
+      const pending = runCiChecks(repo, {
+        checks: ["test"],
+        ...base,
+        timeout: 5000,
+        signal: ac.signal,
+      });
+      await new Promise((r) => setTimeout(r, 50));
+      ac.abort();
+      await assert.rejects(
+        () => pending,
+        (e: unknown) => isAbortError(e),
+      );
+      hold.release();
+      assert.equal(countSlotFiles(dir), 0);
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("RAD-134: cancel while waiting stops within one poll and leaves no slot", async () => {
+    const repo = await heavyRunnerRepo();
+    try {
+      const dir = await heavySlotDir(repo);
+      const { acquireHeavyTestSlot } = await import("./ci-heavy-slot.js");
+      const h1 = await acquireHeavyTestSlot({
+        cwd: repo,
+        check: "hold",
+        concurrency: 1,
+        timing: slotTiming,
+      });
+      const ac = new AbortController();
+      const pending = runCiChecks(repo, {
+        checks: ["test"],
+        skipCache: true,
+        skipToolchainEnsure: true,
+        parallel: false,
+        heavyConcurrency: 1,
+        heavySlotTiming: slotTiming,
+        timeout: 5000,
+        signal: ac.signal,
+      });
+      await new Promise((r) => setTimeout(r, 40));
+      ac.abort();
+      await assert.rejects(
+        () => pending,
+        (e: unknown) => isAbortError(e),
+      );
+      assert.equal(countSlotFiles(dir), 1, "pre-hold slot should remain after cancel");
+      h1.release();
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("RAD-134: max wait fails the check without running it", async () => {
+    const repo = await heavyRunnerRepo();
+    try {
+      const { acquireHeavyTestSlot } = await import("./ci-heavy-slot.js");
+      const h1 = await acquireHeavyTestSlot({
+        cwd: repo,
+        check: "hold",
+        concurrency: 1,
+        timing: slotTiming,
+      });
+      const result = await runCiChecks(repo, {
+        checks: ["test"],
+        skipCache: true,
+        skipToolchainEnsure: true,
+        parallel: false,
+        heavyConcurrency: 1,
+        heavySlotTiming: { ...slotTiming, maxWaitMs: 100 },
+        timeout: 5000,
+      });
+      h1.release();
+      const check = result.checks[0];
+      assert.equal(check?.passed, false);
+      assert.match(check?.error ?? "", /not started/);
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("RAD-134: runs without a slot outside a git repo", async () => {
+    const repo = await initTestRepo();
+    try {
+      const result = await runCiChecks(repo, {
+        checks: ["test"],
+        skipCache: true,
+        skipToolchainEnsure: true,
+        parallel: false,
+        timeout: 5000,
+      });
+      assert.equal(result.checks[0]?.passed, true);
+      assert.match(result.checks[0]?.reason ?? "", /heavy-test slot unavailable/);
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("RAD-134: nested run under a held slot does not acquire again", async () => {
+    const repo = await heavyRunnerRepo();
+    try {
+      const { acquireHeavyTestSlot } = await import("./ci-heavy-slot.js");
+      const h1 = await acquireHeavyTestSlot({
+        cwd: repo,
+        check: "hold",
+        concurrency: 1,
+        timing: slotTiming,
+      });
+      const dir = await heavySlotDir(repo);
+      process.env.PRGENIE_CI_HEAVY_SLOT_HELD = dir;
+      try {
+        await runCiChecks(repo, {
+          checks: ["test"],
+          skipCache: true,
+          skipToolchainEnsure: true,
+          parallel: false,
+          heavyConcurrency: 1,
+          heavySlotTiming: slotTiming,
+          timeout: 5000,
+        });
+        assert.equal(countSlotFiles(dir), 1);
+      } finally {
+        delete process.env.PRGENIE_CI_HEAVY_SLOT_HELD;
+        h1.release();
+      }
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("RAD-134: slot record names the resolved loop id", async () => {
+    const repo = await createTempGitRepo({ prefix: "prgenie-slot-loop-", template: "loop-ci" });
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            "format:check": "exit 0",
+            lint: "exit 0",
+            typecheck: "exit 0",
+            build: "exit 0",
+            test: 'node -e "setTimeout(() => {}, 800)"',
+          },
+        }),
+      );
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "slow test"]);
+      const pr = await createLocalPr(repo, { title: "Slot loop", body: "b", base: "main" });
+      const prefix = pr.id.slice(0, 6);
+      const dir = await heavySlotDir(repo);
+      const { acquireHeavyTestSlot, listHeavySlotHolders } = await import("./ci-heavy-slot.js");
+      await mkdir(join(repo, "packages", "core", "src"), { recursive: true });
+      await writeFile(
+        join(repo, "packages", "core", "src", "slot-queue.test.ts"),
+        `import { test } from "node:test";\ntest("ok", () => {});\n`,
+      );
+      await linkNodeModules(repo, join(process.cwd(), "node_modules"));
+      const h1 = await acquireHeavyTestSlot({
+        cwd: repo,
+        check: "hold",
+        concurrency: 1,
+        timing: slotTiming,
+      });
+      const pending = runLoopCi(repo, prefix, {
+        checks: ["test:core"],
+        skipCache: true,
+        skipToolchainEnsure: true,
+        parallel: false,
+        heavyConcurrency: 1,
+        heavySlotTiming: slotTiming,
+        timeout: 120_000,
+      });
+      await new Promise((r) => setTimeout(r, 100));
+      h1.release();
+      let sawLoop = false;
+      for (let i = 0; i < 60 && !sawLoop; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        sawLoop = listHeavySlotHolders(dir).some((h) => h.loopId === pr.id);
+      }
+      assert.ok(sawLoop, `expected slot record for ${pr.id}`);
+      await pending;
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
