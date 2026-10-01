@@ -883,13 +883,16 @@ export const tools = [
   {
     name: "record_export_gate_override",
     description:
-      "Record exportGateOverride (who/why) bound to the loop's current HEAD when export is blocked on CI. The loop body must echo who, why, and each skipped check name (or the blocked CI message) before export succeeds. Override does not bypass review, preflight, or GitHub blocks.",
+      "Record exportGateOverride (why) bound to the loop's current HEAD when export is blocked on CI. who is taken from the OS username (agent-supplied who is ignored). The loop body must include that stored username, why, and each skipped check name (or the blocked CI message) before export succeeds. Override does not bypass review, preflight, or GitHub blocks.",
     inputSchema: {
       type: "object",
-      required: ["id", "who", "why"],
+      required: ["id", "why"],
       properties: {
         id: { type: "string" },
-        who: { type: "string", description: "Who authorized the override (e.g. QA lead)." },
+        who: {
+          type: "string",
+          description: "Ignored — who is always the OS username stored on the packet.",
+        },
         why: {
           type: "string",
           description: "Why export is allowed while CI is blocked (e.g. check name + reason).",

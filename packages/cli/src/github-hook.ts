@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { ensureRepoGithub, findGitRoot, getRepoGithubBind } from "@prgenie/core";
+import { ensureRepoGithub, findGitRoot, getRepoGithubBind, parseCiSkipReason } from "@prgenie/core";
 
 type HookInput = Record<string, unknown>;
 
@@ -85,7 +85,13 @@ export function mcpHumanConfirmationGate(
     case "add_comment": {
       if (toolInput === null) return "invalid";
       const role = toolInput.role;
-      if (role === "agent" || role === "reviewer") return "allow";
+      if (role === "reviewer") return "allow";
+      if (role === "human" || role === undefined) return "ask";
+      if (role === "agent") {
+        const body = String(toolInput.body ?? "");
+        if (parseCiSkipReason(body)) return "ask";
+        return "allow";
+      }
       return "ask";
     }
     default:

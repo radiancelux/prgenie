@@ -159,7 +159,17 @@ export function flag(args: string[], name: string): boolean {
   return args.includes(name);
 }
 
-/** RAD-164: CLI-only guard before approved from changes_requested. */
+/** Root reviewer comment from complete_review (not a CLI status hop). */
+function reviewClearedByCompleteReview(pr: LocalPr): boolean {
+  return (pr.comments ?? []).some(
+    (c) =>
+      c.role === "reviewer" &&
+      !c.replyTo &&
+      (/review cleared/i.test(c.body) || /review complete\.\s*findings/i.test(c.body)),
+  );
+}
+
+/** RAD-164: CLI-only guard before approved — real reviewed state, not a status hop. */
 async function refuseApprovedUnlessReviewComplete(
   repo: string,
   id: string,
@@ -167,8 +177,20 @@ async function refuseApprovedUnlessReviewComplete(
 ): Promise<void> {
   if (force) return;
   const pr = await getLocalPr(repo, id);
-  if (pr.status === "changes_requested") {
-    throw new Error("Cannot set approved: review is not complete. Finish review or pass --force.");
+  if (pr.status !== "reviewed") {
+    throw new Error(
+      "Cannot set approved: review is not complete. Finish review (complete_review) or pass --force.",
+    );
+  }
+  if (pendingReviewComments(pr).length > 0) {
+    throw new Error(
+      "Cannot set approved: open review findings remain. Finish review or pass --force.",
+    );
+  }
+  if (!reviewClearedByCompleteReview(pr)) {
+    throw new Error(
+      "Cannot set approved: reviewed status was not set by complete_review. Finish review or pass --force.",
+    );
   }
 }
 

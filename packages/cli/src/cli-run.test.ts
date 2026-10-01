@@ -229,6 +229,38 @@ test("cli comment requires -m", () => {
   assert.match(result.stderr, /comment <id> -m/);
 });
 
+test("RAD-164: cli approve refuses reviewed status hop without complete_review", () => {
+  const created = prgenie([
+    "create",
+    "--title",
+    "Review hop guard",
+    "--body",
+    "Exercise approve after status hop.",
+    "--base",
+    "main",
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+  const idMatch = created.stdout.match(/lp-[0-9a-f]{8}/);
+  assert.ok(idMatch, created.stdout);
+  const id = idMatch![0];
+  assert.equal(prgenie(["status", id, "changes_requested"]).code, 0);
+  const bindDir = path.join(git(["rev-parse", "--git-common-dir"]), "agent-console");
+  const common = path.isAbsolute(bindDir) ? bindDir : path.join(repo, bindDir);
+  mkdirSync(common, { recursive: true });
+  writeFileSync(
+    path.join(common, "github.json"),
+    JSON.stringify({ host: "github.com", login: "test-user" }),
+  );
+  assert.equal(prgenie(["status", id, "reviewed"]).code, 0);
+  const blockedApprove = prgenie(["approve", id]);
+  assert.notEqual(blockedApprove.code, 0);
+  assert.match(blockedApprove.stderr, /complete_review/i);
+  const blockedStatus = prgenie(["status", id, "approved"]);
+  assert.notEqual(blockedStatus.code, 0);
+  assert.match(blockedStatus.stderr, /complete_review/i);
+  assert.equal(prgenie(["approve", id, "--force"]).code, 0);
+});
+
 test("RAD-164: cli status approved refuses from changes_requested unless --force", () => {
   const created = prgenie([
     "create",

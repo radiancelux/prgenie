@@ -104,6 +104,13 @@ test("RAD-164: mcpHumanConfirmationGate asks for human-only MCP tools", () => {
   assert.equal(mcpHumanConfirmationGate("add_comment", { role: "human" }), "ask");
   assert.equal(mcpHumanConfirmationGate("add_comment", {}), "ask");
   assert.equal(mcpHumanConfirmationGate("add_comment", { role: "agent" }), "allow");
+  assert.equal(
+    mcpHumanConfirmationGate("add_comment", {
+      role: "agent",
+      body: "CI skipped: toolchain missing on this machine",
+    }),
+    "ask",
+  );
   assert.equal(mcpHumanConfirmationGate("add_comment", { role: "reviewer" }), "allow");
   assert.equal(mcpHumanConfirmationGate("get_local_pr", { id: "lp-deadbeef" }), "allow");
   assert.equal(mcpHumanConfirmationGate("set_status", null), "invalid");
@@ -161,6 +168,18 @@ test("RAD-164: built github-gate.cjs allows ungated MCP tools", () => {
       tool_input: { id: "lp-deadbeef", body: "ok", role: "agent" },
     }).permission,
     "allow",
+  );
+  assert.equal(
+    runGate({
+      mcp_server_name: "plugin-prgenie-prgenie",
+      tool_name: "add_comment",
+      tool_input: {
+        id: "lp-deadbeef",
+        role: "agent",
+        body: "CI skipped: no node on PATH",
+      },
+    }).permission,
+    "ask",
   );
   assert.equal(
     runGate({
