@@ -1,8 +1,15 @@
 export type LocalPrStatus =
   "draft" | "ready" | "review_interrupted" | "changes_requested" | "reviewed" | "approved";
 
-/** Last implementor CI result for soft-blocking ready (RAD-97). */
-export type ReadyCiOutcome = "passed" | "skipped";
+/** Last implementor CI result for soft-blocking ready (RAD-97 / RAD-162). */
+export type ReadyCiOutcome = "passed" | "skipped" | "failed" | "incomplete";
+
+/** Per-check result stored on readyCi (RAD-162-R4). */
+export interface ReadyCiCheckResult {
+  name: string;
+  outcome: "passed" | "failed" | "skipped";
+  reason?: string | null;
+}
 
 /** Per-check skip recorded at ready (RAD-144). */
 export interface ReadyCiCheckSkip {
@@ -17,6 +24,8 @@ export interface ReadyCiRecord {
   /** Present when outcome is skipped — body form is "CI skipped: <reason>". */
   skipReason?: string | null;
   checks?: string[];
+  /** Every planned check with its result when readyCi was recorded (RAD-162-R4). */
+  checkResults?: ReadyCiCheckResult[];
   /** Planned check names when readyCi was recorded — export gate scope must match to carry skips. */
   skipScope?: string[];
   /** Individual checks skipped at ready with an intentional reason (not fail-fast). */

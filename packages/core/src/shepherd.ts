@@ -179,15 +179,26 @@ export async function shepherdStatus(
       // Caller-forced selection (tests / resume) wins — never re-select and empty a real plan.
       // RAD-123: otherwise prefer worktree selectCiChecks when the loop edits CI selection
       // (or when the installed plugin plan diverges from the worktree module).
-      const selection =
-        options.selection ??
-        (
-          await resolveCiSelection({
-            changedPaths: paths,
-            worktreePath: pr.worktreePath ?? resolvedCwd,
-            primaryPath: cwd,
-          })
-        ).selection;
+      let selection: typeof options.selection;
+      if (options.selection) {
+        selection = options.selection;
+      } else {
+        const resolved = await resolveCiSelection({
+          changedPaths: paths,
+          worktreePath: pr.worktreePath ?? resolvedCwd,
+          primaryPath: cwd,
+          baseRef: pr.baseRef,
+        });
+        if (resolved.warning) {
+          onProgress?.({
+            phase: "ci",
+            state: "start",
+            message: resolved.warning,
+            cwd: resolvedCwd,
+          });
+        }
+        selection = resolved.selection;
+      }
       // Never run root pnpm test / full suite from a stale installed or replayed plan.
       // Caller-forced `options.selection` is allowed for unit fixtures only.
       if (!options.selection && looksLikeStaleFullSuitePlan(selection)) {

@@ -17,6 +17,8 @@ import {
   runCiChecks,
   runLoopCi,
 } from "./ci-runner.js";
+import { readyCiFromRunnerResult } from "./ready-ci.js";
+import type { CiRunnerResult } from "./ci-runner.js";
 import { DEFAULT_CI_CHECKS, selectCiChecks, shouldScopeFormatCheck } from "./ci-select.js";
 import { git } from "./git.js";
 import { isAbortError } from "./progress.js";
@@ -2267,5 +2269,48 @@ describe("RAD-134 heavy-test slots in ci-runner", () => {
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
+  });
+
+  it("readyCi passes only when full plan ran (162-R1)", () => {
+    const plan = ["format:check", "lint:core", "typecheck:core"];
+    const result = {
+      allPassed: true,
+      cwd: process.cwd(),
+      checks: plan.map((name) => ({ name, passed: true })),
+      selection: {
+        checks: plan,
+        reason: ["fixture"],
+        mapping: plan.map((check) => ({ check, reason: "fixture" })),
+        uncertain: false,
+        changedPaths: ["packages/core/src/foo.ts"],
+        packageScoped: true,
+        skipped: false,
+      },
+    } satisfies CiRunnerResult;
+    const record = readyCiFromRunnerResult("abc123", result);
+    assert.equal(record.outcome, "passed");
+    assert.equal(record.checkResults?.length, plan.length);
+    assert.ok(record.checkResults?.every((row) => row.outcome === "passed"));
+  });
+
+  it("fail-fast readyCi is not recorded as passed (162-R2)", () => {
+    const plan = ["format:check", "lint:core", "typecheck:core"];
+    const result = {
+      allPassed: true,
+      cwd: process.cwd(),
+      checks: [{ name: "typecheck:core", passed: true }],
+      selection: {
+        checks: plan,
+        reason: ["fixture"],
+        mapping: [],
+        uncertain: false,
+        changedPaths: ["packages/core/src/foo.ts"],
+        packageScoped: true,
+        skipped: false,
+      },
+    } satisfies CiRunnerResult;
+    const record = readyCiFromRunnerResult("abc123", result);
+    assert.notEqual(record.outcome, "passed");
+    assert.equal(record.outcome, "incomplete");
   });
 });

@@ -8,10 +8,12 @@ import {
   ciSelectionPlansEqual,
   clearWorktreeCiSelectCache,
   isCiSelectionSourcePath,
+  isPrGenieRepo,
   loadWorktreeSelectCiChecks,
   looksLikeStaleFullSuitePlan,
   resolveCiSelection,
   touchesCiSelectionSource,
+  type CiSelectFn,
 } from "./ci-select-worktree.js";
 import type { CiCheckSelection } from "./ci-select.js";
 
@@ -19,12 +21,32 @@ function repoRoot(): string {
   return process.cwd();
 }
 
+function scopedCoreSelect(changedPaths: string[]): CiCheckSelection {
+  return {
+    checks: ["format:check", "lint:core", "typecheck:core", "test:core"],
+    reason: [
+      "packages/core/** → per-package format + lint + typecheck + unit tests",
+      "confident mapping — not full monorepo pnpm test",
+      "worktree stub scoped",
+    ],
+    mapping: [],
+    uncertain: false,
+    changedPaths,
+    packageScoped: true,
+    skipped: false,
+  };
+}
+
+function scopedCoreSelectFn(): CiSelectFn {
+  return (changedPaths) => scopedCoreSelect(changedPaths);
+}
+
 async function writeFakeWorktreeSelect(root: string, body: string): Promise<void> {
   const dir = path.join(root, "packages", "core", "src");
   await mkdir(dir, { recursive: true });
   await writeFile(
     path.join(root, "package.json"),
-    JSON.stringify({ name: "fake-wt", private: true }),
+    JSON.stringify({ name: "prgenie", private: true }),
   );
   await writeFile(path.join(dir, "ci-select.ts"), body, "utf8");
 }
@@ -115,9 +137,10 @@ describe("ci-select-worktree (RAD-123)", () => {
         worktreePath: wt,
         installedSelect: staleInstalled,
         primaryPath: repoRoot(),
+        loadBaseRefSelect: async () => scopedCoreSelectFn(),
       });
 
-      assert.equal(result.source, "worktree");
+      assert.equal(result.source, "base");
       assert.equal(result.diverged, true);
       assert.ok(result.warning);
       assert.ok(!result.selection.checks.includes("test"));
@@ -129,7 +152,7 @@ describe("ci-select-worktree (RAD-123)", () => {
         "typecheck:core",
         "test:core",
       ]);
-      assert.ok(result.selection.reason.some((r) => /RAD-123.*diverged/.test(r)));
+      assert.ok(result.selection.reason.some((r) => /RAD-167-R1/.test(r)));
     } finally {
       clearWorktreeCiSelectCache();
       await rm(wt, { recursive: true, force: true });
@@ -178,11 +201,11 @@ describe("ci-select-worktree (RAD-123)", () => {
         worktreePath: wt,
         installedSelect: staleInstalled,
         primaryPath: repoRoot(),
+        loadBaseRefSelect: async () => scopedCoreSelectFn(),
       });
 
-      assert.equal(result.source, "worktree");
+      assert.equal(result.source, "base");
       assert.equal(result.diverged, true);
-      assert.ok(result.warning);
       assert.ok(!result.selection.checks.includes("test"));
       assert.ok(!result.selection.checks.includes("build"));
       assert.notDeepEqual(result.selection.checks, [...DEFAULT_CI_CHECKS]);
@@ -228,15 +251,25 @@ describe("ci-select-worktree (RAD-123)", () => {
   });
 
   it("refuses when ci-select is touched but worktree module is missing", async () => {
-    await assert.rejects(
-      () =>
-        resolveCiSelection({
-          changedPaths: ["packages/core/src/ci-runner.ts"],
-          worktreePath: path.join(tmpdir(), "prgenie-missing-wt-nope"),
-          installedSelect: selectCiChecks,
-        }),
-      /Refusing stale installed CI selection/,
-    );
+    const wt = await mkdtemp(path.join(tmpdir(), "prgenie-missing-wt-"));
+    try {
+      await writeFile(
+        path.join(wt, "package.json"),
+        JSON.stringify({ name: "prgenie", private: true }),
+      );
+      await assert.rejects(
+        () =>
+          resolveCiSelection({
+            changedPaths: ["packages/core/src/ci-runner.ts"],
+            worktreePath: wt,
+            installedSelect: selectCiChecks,
+            loadBaseRefSelect: async () => null,
+          }),
+        /Refusing stale installed CI selection/,
+      );
+    } finally {
+      await rm(wt, { recursive: true, force: true });
+    }
   });
 
   it("always uses worktree when module loads even if plans match and paths do not touch selection", async () => {
@@ -250,10 +283,10 @@ describe("ci-select-worktree (RAD-123)", () => {
       installedSelect: () => installed,
       primaryPath: repoRoot(),
     });
-    assert.equal(result.source, "worktree");
+    assert.equal(result.source, "base");
     assert.equal(result.diverged, false);
     assert.deepEqual(result.selection.checks, installed.checks);
-    assert.ok(result.selection.reason.some((r) => /RAD-123: using worktree ci-select/.test(r)));
+    assert.ok(result.selection.reason.some((r) => /RAD-167-R1/.test(r)));
   });
 
   it("refuses when worktree load fails and installed plan looks like a stale full suite", async () => {
@@ -271,6 +304,7 @@ describe("ci-select-worktree (RAD-123)", () => {
             packageScoped: false,
             skipped: false,
           }),
+          loadBaseRefSelect: async () => null,
           loadWorktreeSelect: async () => null,
         }),
       /Refusing stale installed CI selection|full suite/,
@@ -331,6 +365,7 @@ describe("ci-select-worktree (RAD-123)", () => {
           skipped: false,
         }),
         primaryPath: repoRoot(),
+        loadBaseRefSelect: async () => scopedCoreSelectFn(),
         loadWorktreeSelect: (p) =>
           loadWorktreeSelectCiChecks(p, {
             primaryPath: repoRoot(),
@@ -339,7 +374,7 @@ describe("ci-select-worktree (RAD-123)", () => {
             },
           }),
       });
-      assert.equal(result.source, "worktree");
+      assert.equal(result.source, "base");
       assert.ok(!result.selection.checks.includes("test"));
       assert.notDeepEqual(result.selection.checks, [...DEFAULT_CI_CHECKS]);
     } finally {
@@ -358,10 +393,118 @@ describe("ci-select-worktree (RAD-123)", () => {
       installedSelect: () => installed,
       primaryPath: repoRoot(),
     });
-    assert.equal(result.source, "worktree");
+    assert.equal(result.source, "base");
     assert.equal(result.diverged, false);
     assert.deepEqual(result.selection.checks, installed.checks);
-    assert.ok(result.selection.reason.some((r) => /RAD-123: using worktree ci-select/.test(r)));
+    assert.ok(result.selection.reason.some((r) => /RAD-167-R1/.test(r)));
+  });
+
+  it("167-R1 loop that narrows ci-select still gets the base plan for gating", async () => {
+    clearWorktreeCiSelectCache();
+    const wt = await mkdtemp(path.join(tmpdir(), "prgenie-rad167-narrow-"));
+    try {
+      await writeFakeWorktreeSelect(
+        wt,
+        `export function selectCiChecks(changedPaths) {
+  return {
+    checks: ["format:check"],
+    reason: ["narrow worktree — should not gate"],
+    mapping: [],
+    uncertain: false,
+    changedPaths,
+    packageScoped: false,
+    skipped: false,
+  };
+}
+`,
+      );
+      const result = await resolveCiSelection({
+        changedPaths: ["packages/core/src/ci-select.ts"],
+        worktreePath: wt,
+        installedSelect: selectCiChecks,
+        primaryPath: repoRoot(),
+        loadBaseRefSelect: async () => scopedCoreSelectFn(),
+      });
+      assert.equal(result.source, "base");
+      assert.ok(result.selection.checks.length > 1);
+      assert.notDeepEqual(result.selection.checks, ["format:check"]);
+    } finally {
+      clearWorktreeCiSelectCache();
+      await rm(wt, { recursive: true, force: true });
+    }
+  });
+
+  it("167-R2 reports diff when worktree selector differs from base", async () => {
+    clearWorktreeCiSelectCache();
+    const wt = await mkdtemp(path.join(tmpdir(), "prgenie-rad167-diff-"));
+    try {
+      await writeFakeWorktreeSelect(
+        wt,
+        `export function selectCiChecks(changedPaths) {
+  return {
+    checks: ["format:check"],
+    reason: ["narrow advisory"],
+    mapping: [],
+    uncertain: false,
+    changedPaths,
+    packageScoped: false,
+    skipped: false,
+  };
+}
+`,
+      );
+      const result = await resolveCiSelection({
+        changedPaths: ["packages/core/src/git.ts"],
+        worktreePath: wt,
+        installedSelect: selectCiChecks,
+        primaryPath: repoRoot(),
+        loadBaseRefSelect: async () => scopedCoreSelectFn(),
+      });
+      assert.equal(result.diverged, true);
+      assert.ok(result.warning);
+      assert.ok(result.advisorySelection);
+      assert.deepEqual(result.advisorySelection?.checks, ["format:check"]);
+    } finally {
+      clearWorktreeCiSelectCache();
+      await rm(wt, { recursive: true, force: true });
+    }
+  });
+
+  it("167-R3 non-PR-Genie repo with ci-select path does not execute worktree module", async () => {
+    clearWorktreeCiSelectCache();
+    const wt = await mkdtemp(path.join(tmpdir(), "prgenie-rad167-host-"));
+    try {
+      await writeFile(
+        path.join(wt, "package.json"),
+        JSON.stringify({ name: "customer-app", private: true }),
+      );
+      const dir = path.join(wt, "packages", "core", "src");
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        path.join(dir, "ci-select.ts"),
+        `export function selectCiChecks() {
+  throw new Error("must not execute host ci-select");
+}
+`,
+      );
+      assert.equal(isPrGenieRepo(wt), false);
+      let executed = false;
+      const result = await resolveCiSelection({
+        changedPaths: ["packages/core/src/ci-select.ts"],
+        worktreePath: wt,
+        installedSelect: () => {
+          executed = true;
+          return selectCiChecks(["packages/core/src/git.ts"]);
+        },
+        loadWorktreeSelect: async () => {
+          throw new Error("must not load worktree select for host repo");
+        },
+      });
+      assert.ok(executed);
+      assert.equal(result.source, "installed");
+    } finally {
+      await rm(wt, { recursive: true, force: true });
+    }
   });
 
   it("loads real worktree selectCiChecks via tsx (printable plan matches unit tests)", async () => {

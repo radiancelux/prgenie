@@ -397,6 +397,57 @@ describe("export gate honour ready skips", () => {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
+
+  it("partial readyCi triggers missing checks on export (162-R3)", async () => {
+    const repo = await createTempGitRepo({ prefix: "prgenie-partial-ready-" });
+    try {
+      await git(repo, ["checkout", "-b", "feature"]);
+      await writeFile(path.join(repo, "test.txt"), "x\n");
+      await git(repo, ["add", "."]);
+      await git(repo, ["commit", "-m", "feat"]);
+      const pr = await createLocalPr(repo, { title: "Partial ready", body: "Body", base: "main" });
+      assert.ok(pr.worktreePath);
+      const headSha = pr.headSha;
+      await recordLocalPrReadyCi(repo, pr.id, {
+        headSha,
+        recordedAt: new Date().toISOString(),
+        outcome: "passed",
+        skipScope: ["lint", "test:core"],
+        checks: ["lint"],
+        checkResults: [{ name: "lint", outcome: "passed" }],
+      });
+      await writeFile(
+        path.join(pr.worktreePath, "package.json"),
+        JSON.stringify({
+          name: "test-repo",
+          scripts: {
+            lint: "exit 0",
+            "test:core": "exit 0",
+          },
+        }),
+      );
+      await writeFile(path.join(pr.worktreePath, ".gitignore"), "node_modules\n");
+      const type = process.platform === "win32" ? "junction" : "dir";
+      await symlink(
+        path.join(process.cwd(), "node_modules"),
+        path.join(pr.worktreePath, "node_modules"),
+        type,
+      );
+      await setLocalPrStatus(repo, pr.id, "reviewed");
+      const shepherd = await shepherdStatus(repo, pr.id, {
+        skipGithubCheck: true,
+        skipToolchainEnsure: true,
+        selection: fixtureRootSelection(["lint", "test:core"]),
+      });
+      assert.equal(shepherd.status, "ready");
+      const lint = shepherd.ciChecks?.find((c) => c.name === "lint");
+      assert.match(lint?.reason ?? "", /passed at ready \(RAD-162\)/);
+      const testCore = shepherd.ciChecks?.find((c) => c.name === "test:core");
+      assert.ok(testCore?.passed && !testCore.skipped);
+    } finally {
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
 });
 
 describe("export refusal and override (RAD-144)", () => {

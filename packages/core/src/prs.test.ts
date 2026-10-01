@@ -1458,3 +1458,33 @@ test("RAD-125: refreshLocalPrHead falls through when packet worktreePath is prun
   const after = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
   assert.equal(after.worktreePath, null);
 });
+
+test("readyCi record lists per-check results (162-R4)", async () => {
+  const { readyCiFromRunnerResult } = await import("./ready-ci.js");
+  const { recordLocalPrReadyCi, getLocalPr } = await import("./prs.js");
+  const pr = await createLocalPr(repo, { title: "readyCi rows", base: "main" });
+  const record = readyCiFromRunnerResult("deadbeef", {
+    allPassed: true,
+    cwd: repo,
+    checks: [
+      { name: "lint", passed: true },
+      { name: "typecheck", passed: true },
+    ],
+    selection: {
+      checks: ["lint", "typecheck"],
+      reason: ["fixture"],
+      mapping: [],
+      uncertain: false,
+      changedPaths: ["x.ts"],
+      packageScoped: false,
+      skipped: false,
+    },
+  });
+  await recordLocalPrReadyCi(repo, pr.id, record);
+  const loaded = await getLocalPr(repo, pr.id);
+  assert.equal(loaded.readyCi?.checkResults?.length, 2);
+  assert.deepEqual(
+    loaded.readyCi?.checkResults?.map((row) => row.name),
+    ["lint", "typecheck"],
+  );
+});
