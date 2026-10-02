@@ -143,6 +143,56 @@ describe("store", { concurrency: 1 }, () => {
     assert.equal(maxInside, 1, `expected no overlapping callbacks, saw ${maxInside}`);
   });
 
+  test("live age-stale holder still inside fn is not overlapped", async () => {
+    const file = path.join(dir, "live-age-holder.json");
+    const lock = `${file}.lock`;
+    await writeFile(file, "{}\n", "utf8");
+    let inside = 0;
+    let maxInside = 0;
+    let releaseFirst: () => void = () => undefined;
+    const stayInside = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let markFirstInside: () => void = () => undefined;
+    const firstHolding = new Promise<void>((resolve) => {
+      markFirstInside = resolve;
+    });
+
+    const first = withFileLock(file, async () => {
+      inside += 1;
+      maxInside = Math.max(maxInside, inside);
+      const meta = JSON.parse((await readFile(lock, "utf8")).trim()) as {
+        pid: number;
+        hostname: string;
+        acquiredAt: string;
+      };
+      assert.equal(meta.pid, process.pid);
+      meta.acquiredAt = new Date(Date.now() - STALE_LOCK_MS - 1000).toISOString();
+      await writeFile(lock, `${JSON.stringify(meta)}\n`, "utf8");
+      markFirstInside();
+      await stayInside;
+      inside -= 1;
+    });
+
+    await firstHolding;
+    let secondRan = false;
+    const second = withFileLock(file, async () => {
+      secondRan = true;
+      inside += 1;
+      maxInside = Math.max(maxInside, inside);
+      inside -= 1;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.equal(inside, 1);
+    assert.equal(maxInside, 1, "age steal admitted a second holder while fn was still running");
+    assert.equal(secondRan, false);
+    releaseFirst();
+    await first;
+    await second;
+    assert.equal(maxInside, 1);
+    assert.equal(secondRan, true);
+  });
+
   test("withFileLock steals legacy empty lock past max age (172-R2)", async () => {
     const file = path.join(dir, "legacy-target.json");
     const lock = `${file}.lock`;

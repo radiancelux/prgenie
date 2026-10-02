@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { mkdir, open, readFile, readdir, rename, stat, unlink } from "node:fs/promises";
+import { createConnection, createServer, type Server } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileLockIsStale, parseFileLockRecord, type FileLockRecord } from "./ci-abort.js";
@@ -133,6 +135,8 @@ async function releaseFileLockIfOurs(lock: string, holder: FileLockRecord): Prom
 /**
  * Remove a stale lock only when rename proves the on-disk file is still the one we read.
  * If unlink of the renamed sidecar fails, restore the lock path and report not stolen.
+ * Caller must already hold the critical section: on Windows a live holder can still be
+ * inside fn while this rename succeeds, so rename is not admission.
  */
 async function tryStealStaleFileLock(lock: string): Promise<boolean> {
   let raw: string;
@@ -206,49 +210,154 @@ export async function listAgentConsoleLockFiles(consoleDir: string): Promise<str
   return out;
 }
 
+function sectionKey(lock: string): string {
+  const resolved = path.resolve(lock);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+/** Named pipe (Windows) or unix socket. Busy until closed or the holder process exits. */
+function criticalSectionEndpoint(lock: string): string {
+  const hash = createHash("sha256").update(sectionKey(lock)).digest("hex").slice(0, 40);
+  if (process.platform === "win32") return `\\\\.\\pipe\\prgenie-flock-${hash}`;
+  return path.join(os.tmpdir(), `prgenie-flock-${hash}.sock`);
+}
+
+/**
+ * Admission gate for one lock path. On Windows, renaming or unlinking a lock that is
+ * still open succeeds, so the lock file cannot prove the incumbent left fn.
+ */
+function listenCriticalSection(name: string): Promise<Server | null> {
+  return new Promise((resolve, reject) => {
+    const server = createServer((socket) => {
+      socket.destroy();
+    });
+    let settled = false;
+    const finish = (result: Server | null, err?: unknown): void => {
+      if (settled) return;
+      settled = true;
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(result);
+    };
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      server.unref();
+      if (err.code === "EADDRINUSE" || err.code === "EACCES") {
+        finish(null);
+        return;
+      }
+      finish(null, err);
+    });
+    server.listen(name, () => finish(server));
+  });
+}
+
+function endpointHeld(name: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection(name);
+    let settled = false;
+    const done = (held: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(held);
+    };
+    const timer = setTimeout(() => done(true), 200);
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
+}
+
+async function tryAcquireCriticalSection(lock: string): Promise<Server | null> {
+  const name = criticalSectionEndpoint(lock);
+  const first = await listenCriticalSection(name);
+  if (first) return first;
+  if (process.platform === "win32" || (await endpointHeld(name))) return null;
+  await unlink(name).catch(() => undefined);
+  return listenCriticalSection(name);
+}
+
+async function releaseCriticalSection(server: Server, lock: string): Promise<void> {
+  await new Promise<void>((resolve) => {
+    server.close(() => resolve());
+  });
+  if (process.platform !== "win32") {
+    await unlink(criticalSectionEndpoint(lock)).catch(() => undefined);
+  }
+}
+
+async function lockPresence(lock: string): Promise<{ present: boolean; stale: boolean }> {
+  try {
+    const raw = await readFile(lock, "utf8");
+    const mtimeMs = (await stat(lock)).mtimeMs;
+    return { present: true, stale: fileLockIsStale(parseFileLockRecord(raw), mtimeMs) };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return { present: false, stale: false };
+    return { present: true, stale: false };
+  }
+}
+
+type LockAttempt<T> =
+  { status: "ok"; value: T } | { status: "retry"; wait: boolean; error?: unknown };
+
+/**
+ * One acquire attempt. The OS section is held through fn and released before this returns,
+ * so a waiter cannot be admitted while this callback is still running.
+ */
+async function runFileLockAttempt<T>(file: string, fn: () => Promise<T>): Promise<LockAttempt<T>> {
+  const lock = `${file}.lock`;
+  const section = await tryAcquireCriticalSection(lock);
+  if (!section) return { status: "retry", wait: true };
+  try {
+    const presence = await lockPresence(lock);
+    if (presence.present && !presence.stale) {
+      return { status: "retry", wait: true };
+    }
+    if (presence.present && presence.stale) {
+      if (!(await tryStealStaleFileLock(lock))) {
+        return { status: "retry", wait: true };
+      }
+    }
+    let handle: Awaited<ReturnType<typeof open>>;
+    try {
+      handle = await open(lock, "wx");
+    } catch (err) {
+      if (!isLockContention(err)) throw err;
+      return { status: "retry", wait: true, error: err };
+    }
+    const myRecord: FileLockRecord = {
+      pid: process.pid,
+      hostname: os.hostname(),
+      acquiredAt: new Date().toISOString(),
+    };
+    try {
+      await handle.writeFile(`${JSON.stringify(myRecord)}\n`, "utf8");
+      if (!(await lockStillHeldBy(lock, myRecord))) {
+        return { status: "retry", wait: true };
+      }
+      const value = await fn();
+      return { status: "ok", value };
+    } finally {
+      await handle.close().catch(() => undefined);
+      await releaseFileLockIfOurs(lock, myRecord);
+    }
+  } finally {
+    await releaseCriticalSection(section, lock);
+  }
+}
+
 /** Cross-process lock so two reviewer chats cannot drop each other's comments. */
 export async function withFileLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
-  const lock = `${file}.lock`;
   let lastErr: unknown;
   // ~30s under Windows suite load: claim holders may stay inside fn() for seconds.
   for (let i = 0; i < 300; i++) {
-    let handle: Awaited<ReturnType<typeof open>> | undefined;
-    let myRecord: FileLockRecord | undefined;
-    try {
-      handle = await open(lock, "wx");
-      try {
-        myRecord = {
-          pid: process.pid,
-          hostname: os.hostname(),
-          acquiredAt: new Date().toISOString(),
-        };
-        await handle.writeFile(`${JSON.stringify(myRecord)}\n`, "utf8");
-      } catch (writeErr) {
-        await handle.close().catch(() => undefined);
-        if (myRecord) await releaseFileLockIfOurs(lock, myRecord);
-        handle = undefined;
-        myRecord = undefined;
-        throw writeErr;
-      }
-    } catch (err) {
-      if (!isLockContention(err)) throw err;
-      lastErr = err;
-      if (await tryStealStaleFileLock(lock)) continue;
-      await delay(100);
-      continue;
-    }
-    if (!myRecord || !(await lockStillHeldBy(lock, myRecord))) {
-      await handle.close().catch(() => undefined);
-      continue;
-    }
-    try {
-      return await fn();
-    } finally {
-      if (handle) {
-        await handle.close().catch(() => undefined);
-        if (myRecord) await releaseFileLockIfOurs(lock, myRecord);
-      }
-    }
+    const outcome = await runFileLockAttempt(file, fn);
+    if (outcome.status === "ok") return outcome.value;
+    lastErr = outcome.error ?? lastErr;
+    if (outcome.wait) await delay(100);
   }
   throw lastErr instanceof Error ? lastErr : new Error(`Timed out locking ${file}`);
 }
