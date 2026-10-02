@@ -233,6 +233,59 @@ function warnLoud(message: string): void {
   }
 }
 
+/** Short branch name for `main`-style loop bases (RAD-167-R1). */
+function ciGateBaseShortName(baseRef: string): string {
+  const trimmed = baseRef.trim();
+  if (trimmed.startsWith("refs/remotes/origin/")) {
+    return trimmed.slice("refs/remotes/origin/".length);
+  }
+  if (trimmed.startsWith("refs/heads/")) {
+    return trimmed.slice("refs/heads/".length);
+  }
+  if (trimmed.startsWith("origin/")) {
+    return trimmed.slice("origin/".length);
+  }
+  return trimmed;
+}
+
+/**
+ * Resolve the loop base for ci-select gating (RAD-167-R1).
+ * Order: `<baseRef>`, `origin/<short>`, `refs/remotes/origin/<short>`.
+ */
+export async function resolveCiGateBaseRef(
+  gitRoot: string,
+  baseRef: string,
+): Promise<{ ref: string; sha: string; tried: string[] } | null> {
+  const trimmed = baseRef.trim();
+  if (!trimmed) return null;
+  const short = ciGateBaseShortName(trimmed);
+  const candidates = [
+    trimmed,
+    ...(trimmed !== `origin/${short}` ? [`origin/${short}`] : []),
+    ...(trimmed !== `refs/remotes/origin/${short}`
+      ? [`refs/remotes/origin/${short}`]
+      : []),
+  ];
+  const tried: string[] = [];
+  for (const ref of candidates) {
+    if (tried.includes(ref)) continue;
+    tried.push(ref);
+    const resolved = await git(gitRoot, ["rev-parse", ref], { allowFail: true });
+    if (resolved.code === 0) {
+      return { ref, sha: resolved.stdout.trim(), tried };
+    }
+  }
+  return null;
+}
+
+export function formatCiGateBaseRefResolutionFailure(baseRef: string, tried: string[]): string {
+  return (
+    `RAD-167-R1: could not resolve loop base ref "${baseRef.trim()}" ` +
+    `(tried, in order: ${tried.join(", ")}). ` +
+    `Export/run_ci must evaluate selectCiChecks from the loop base; refusing silent installed fallback.`
+  );
+}
+
 async function resolveTsxSearchRoots(
   worktreePath: string,
   primaryOverride?: string | null,
@@ -507,9 +560,19 @@ export async function loadBaseRefSelectCiChecks(
   primaryPath?: string | null,
   worktreeLoadOptions: LoadWorktreeSelectOptions = {},
 ): Promise<CiSelectFn | null> {
-  const resolved = await git(gitRoot, ["rev-parse", baseRef], { allowFail: true });
-  if (resolved.code !== 0) return null;
-  const baseSha = resolved.stdout.trim();
+  const resolvedRef = await resolveCiGateBaseRef(gitRoot, baseRef);
+  if (!resolvedRef) {
+    const short = ciGateBaseShortName(baseRef);
+    const tried = [
+      baseRef.trim(),
+      `origin/${short}`,
+      `refs/remotes/origin/${short}`,
+    ];
+    warnLoud(formatCiGateBaseRefResolutionFailure(baseRef, tried));
+    return null;
+  }
+  const checkoutRef = resolvedRef.ref;
+  const baseSha = resolvedRef.sha;
   const cacheKey = baseSelectCacheKey(gitRoot, baseSha);
   const cached = baseSelectCache.get(cacheKey);
   if (cached) return cached.select;
@@ -519,7 +582,10 @@ export async function loadBaseRefSelectCiChecks(
 
   const tempWt = mkdtempSync(path.join(tmpdir(), BASE_WT_DIR_PREFIX));
   markBaseWorktreeInUse(tempWt);
-  const add = spawnSync("git", ["-C", gitRoot, "worktree", "add", "--detach", tempWt, baseRef], {
+  const add = spawnSync(
+    "git",
+    ["-C", gitRoot, "worktree", "add", "--detach", tempWt, checkoutRef],
+    {
     encoding: "utf8",
     windowsHide: true,
   });
@@ -625,14 +691,24 @@ export async function resolveCiSelection(
 
   const gitRoot = (await findGitRoot(worktreePath)) ?? worktreePath;
   const baseRef = options.baseRef?.trim() || "main";
+  const injectedBaseLoader = options.loadBaseRefSelect != null;
+  const resolvedBase = await resolveCiGateBaseRef(gitRoot, baseRef);
+  if (!injectedBaseLoader && !resolvedBase) {
+    const short = ciGateBaseShortName(baseRef);
+    const tried = [baseRef, `origin/${short}`, `refs/remotes/origin/${short}`];
+    warnLoud(formatCiGateBaseRefResolutionFailure(baseRef, tried));
+  }
   const baseLoader =
     options.loadBaseRefSelect ??
     ((root: string, ref: string, primary?: string | null) =>
       loadBaseRefSelectCiChecks(root, ref, primary));
-  const baseSelectFn = await baseLoader(gitRoot, baseRef, options.primaryPath);
-  const baseResolved = await git(gitRoot, ["rev-parse", baseRef], { allowFail: true });
-  const baseCacheKey =
-    baseResolved.code === 0 ? baseSelectCacheKey(gitRoot, baseResolved.stdout.trim()) : null;
+  const baseSelectFn =
+    injectedBaseLoader || resolvedBase
+      ? await baseLoader(gitRoot, baseRef, options.primaryPath)
+      : null;
+  const baseCacheKey = resolvedBase
+    ? baseSelectCacheKey(gitRoot, resolvedBase.sha)
+    : null;
 
   let gatePlan: CiCheckSelection;
   let gateSource: "base" | "installed";
@@ -671,7 +747,25 @@ export async function resolveCiSelection(
 
   const diverged = advisorySelection ? !ciSelectionPlansEqual(gatePlan, advisorySelection) : false;
 
-  if ((touches && refuseOnTouch && !baseSelectFn) || (installedLooksStale && !baseSelectFn)) {
+  if (!injectedBaseLoader) {
+    if (!resolvedBase) {
+      const short = ciGateBaseShortName(baseRef);
+      const tried = [baseRef, `origin/${short}`, `refs/remotes/origin/${short}`];
+      throw new Error(formatCiGateBaseRefResolutionFailure(baseRef, tried));
+    }
+    if (!baseSelectFn) {
+      throw new Error(
+        `Refusing stale installed CI selection: could not load base-commit ci-select from ${gitRoot}@${baseRef}. ` +
+          `Export/run_ci must evaluate selectCiChecks from the loop base (RAD-167-R1).` +
+          (installedLooksStale
+            ? ` Installed plan looks like a full suite: checks=${JSON.stringify(installed.checks)}`
+            : ""),
+      );
+    }
+  } else if (
+    (touches && refuseOnTouch && !baseSelectFn) ||
+    (installedLooksStale && !baseSelectFn)
+  ) {
     throw new Error(
       `Refusing stale installed CI selection: could not load base-commit ci-select from ${gitRoot}@${baseRef}. ` +
         `Export/run_ci must evaluate selectCiChecks from the loop base (RAD-167-R1).` +

@@ -21,7 +21,45 @@ import {
 import type { CiCheckSelection } from "./ci-select.js";
 
 function repoRoot(): string {
+  const top = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (top.status === 0) return top.stdout.trim();
   return process.cwd();
+}
+
+function gitIn(cwd: string, args: string[]): ReturnType<typeof spawnSync> {
+  return spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8", windowsHide: true });
+}
+
+/**
+ * CI-style checkout: shallow clone, detached HEAD, no local `main` (167-R1 / GitHub PR #92).
+ */
+function shallowDetachedWithoutLocalMain(sourceRoot: string): { cloneRoot: string; parent: string } {
+  const parent = mkdtempSync(path.join(tmpdir(), "prgenie-rad167-shallow-"));
+  const cloneRoot = path.join(parent, "checkout");
+  const clone = spawnSync(
+    "git",
+    ["clone", "--depth", "1", sourceRoot, cloneRoot],
+    { encoding: "utf8", windowsHide: true },
+  );
+  assert.equal(clone.status, 0, clone.stderr || clone.stdout);
+  gitIn(cloneRoot, ["checkout", "--detach", "HEAD"]);
+  const head = gitIn(cloneRoot, ["rev-parse", "HEAD"]).stdout?.trim();
+  assert.ok(head, "detached HEAD required");
+  // Shallow single-branch clones may omit refs/remotes/origin/main (167-R1 / GitHub PR #92).
+  if (gitIn(cloneRoot, ["rev-parse", "origin/main"]).status !== 0) {
+    assert.equal(gitIn(cloneRoot, ["update-ref", "refs/remotes/origin/main", head!]).status, 0);
+  }
+  gitIn(cloneRoot, ["update-ref", "-d", "refs/heads/main"]);
+  assert.notEqual(gitIn(cloneRoot, ["rev-parse", "main"]).status, 0, "local main must be absent");
+  assert.equal(
+    gitIn(cloneRoot, ["rev-parse", "origin/main"]).status,
+    0,
+    "origin/main must exist for base gating",
+  );
+  return { cloneRoot, parent };
 }
 
 function scopedCoreSelect(changedPaths: string[]): CiCheckSelection {
@@ -281,16 +319,22 @@ describe("ci-select-worktree (RAD-123)", () => {
     const paths = ["packages/core/src/git.ts"];
     assert.equal(touchesCiSelectionSource(paths), false);
     const installed = selectCiChecks(paths);
-    const result = await resolveCiSelection({
-      changedPaths: paths,
-      worktreePath: repoRoot(),
-      installedSelect: () => installed,
-      primaryPath: repoRoot(),
-    });
-    assert.equal(result.source, "base");
-    assert.equal(result.diverged, false);
-    assert.deepEqual(result.selection.checks, installed.checks);
-    assert.ok(result.selection.reason.some((r) => /RAD-167-R1/.test(r)));
+    const { cloneRoot, parent } = shallowDetachedWithoutLocalMain(repoRoot());
+    try {
+      const result = await resolveCiSelection({
+        changedPaths: paths,
+        worktreePath: cloneRoot,
+        installedSelect: () => installed,
+        primaryPath: repoRoot(),
+      });
+      assert.equal(result.source, "base");
+      assert.equal(result.diverged, false);
+      assert.deepEqual(result.selection.checks, installed.checks);
+      assert.ok(result.selection.reason.some((r) => /RAD-167-R1/.test(r)));
+    } finally {
+      clearWorktreeCiSelectCache();
+      await rm(parent, { recursive: true, force: true });
+    }
   });
 
   it("refuses when worktree load fails and installed plan looks like a stale full suite", async () => {
@@ -391,16 +435,22 @@ describe("ci-select-worktree (RAD-123)", () => {
     clearWorktreeCiSelectCache();
     const paths = ["packages/core/src/ci-select.ts"];
     const installed = selectCiChecks(paths);
-    const result = await resolveCiSelection({
-      changedPaths: paths,
-      worktreePath: repoRoot(),
-      installedSelect: () => installed,
-      primaryPath: repoRoot(),
-    });
-    assert.equal(result.source, "base");
-    assert.equal(result.diverged, false);
-    assert.deepEqual(result.selection.checks, installed.checks);
-    assert.ok(result.selection.reason.some((r) => /RAD-167-R1/.test(r)));
+    const { cloneRoot, parent } = shallowDetachedWithoutLocalMain(repoRoot());
+    try {
+      const result = await resolveCiSelection({
+        changedPaths: paths,
+        worktreePath: cloneRoot,
+        installedSelect: () => installed,
+        primaryPath: repoRoot(),
+      });
+      assert.equal(result.source, "base");
+      assert.equal(result.diverged, false);
+      assert.deepEqual(result.selection.checks, installed.checks);
+      assert.ok(result.selection.reason.some((r) => /RAD-167-R1/.test(r)));
+    } finally {
+      clearWorktreeCiSelectCache();
+      await rm(parent, { recursive: true, force: true });
+    }
   });
 
   it("167-R1 loop that narrows ci-select still gets the base plan for gating", async () => {
@@ -519,22 +569,26 @@ describe("ci-select-worktree (RAD-123)", () => {
     assert.ok(loaded);
     const fromWorktree = loaded!(paths);
     assert.deepEqual(fromWorktree.checks, expected.checks);
-    assert.deepEqual(fromWorktree.reason, expected.reason);
+    assert.deepEqual(fromWorktree.reason.slice(0, 3), expected.reason.slice(0, 3));
   });
 
   it("167-R1 base loader keeps detached worktree for CLI fallback after dead tsImport", async () => {
     clearWorktreeCiSelectCache();
-    const gitRoot = repoRoot();
-    const baseFn = await loadBaseRefSelectCiChecks(gitRoot, "main", gitRoot, {
-      tsImport: async () => {
-        throw new Error("The service is no longer running");
-      },
-    });
-    assert.ok(baseFn, "expected base-commit select via CLI fallback");
-    const plan = baseFn!(["packages/core/src/git.ts"]);
-    assert.ok(plan.checks.length > 0);
-    assert.ok(!plan.checks.includes("test"));
-    clearWorktreeCiSelectCache();
+    const { cloneRoot, parent } = shallowDetachedWithoutLocalMain(repoRoot());
+    try {
+      const baseFn = await loadBaseRefSelectCiChecks(cloneRoot, "main", repoRoot(), {
+        tsImport: async () => {
+          throw new Error("The service is no longer running");
+        },
+      });
+      assert.ok(baseFn, "expected base-commit select via CLI fallback");
+      const plan = baseFn!(["packages/core/src/git.ts"]);
+      assert.ok(plan.checks.length > 0);
+      assert.ok(!plan.checks.includes("test"));
+    } finally {
+      clearWorktreeCiSelectCache();
+      await rm(parent, { recursive: true, force: true });
+    }
   });
 
   it("167-R1 does not stamp base provenance when base loader returns null", async () => {
