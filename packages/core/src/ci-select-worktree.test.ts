@@ -36,14 +36,16 @@ function gitIn(cwd: string, args: string[]): ReturnType<typeof spawnSync> {
 /**
  * CI-style checkout: shallow clone, detached HEAD, no local `main` (167-R1 / GitHub PR #92).
  */
-function shallowDetachedWithoutLocalMain(sourceRoot: string): { cloneRoot: string; parent: string } {
+function shallowDetachedWithoutLocalMain(sourceRoot: string): {
+  cloneRoot: string;
+  parent: string;
+} {
   const parent = mkdtempSync(path.join(tmpdir(), "prgenie-rad167-shallow-"));
   const cloneRoot = path.join(parent, "checkout");
-  const clone = spawnSync(
-    "git",
-    ["clone", "--depth", "1", sourceRoot, cloneRoot],
-    { encoding: "utf8", windowsHide: true },
-  );
+  const clone = spawnSync("git", ["clone", "--depth", "1", sourceRoot, cloneRoot], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
   assert.equal(clone.status, 0, clone.stderr || clone.stdout);
   gitIn(cloneRoot, ["checkout", "--detach", "HEAD"]);
   const head = gitIn(cloneRoot, ["rev-parse", "HEAD"]).stdout?.trim();

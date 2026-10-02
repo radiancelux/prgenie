@@ -262,9 +262,7 @@ export async function resolveCiGateBaseRef(
   const candidates = [
     trimmed,
     ...(trimmed !== `origin/${short}` ? [`origin/${short}`] : []),
-    ...(trimmed !== `refs/remotes/origin/${short}`
-      ? [`refs/remotes/origin/${short}`]
-      : []),
+    ...(trimmed !== `refs/remotes/origin/${short}` ? [`refs/remotes/origin/${short}`] : []),
   ];
   const tried: string[] = [];
   for (const ref of candidates) {
@@ -563,11 +561,7 @@ export async function loadBaseRefSelectCiChecks(
   const resolvedRef = await resolveCiGateBaseRef(gitRoot, baseRef);
   if (!resolvedRef) {
     const short = ciGateBaseShortName(baseRef);
-    const tried = [
-      baseRef.trim(),
-      `origin/${short}`,
-      `refs/remotes/origin/${short}`,
-    ];
+    const tried = [baseRef.trim(), `origin/${short}`, `refs/remotes/origin/${short}`];
     warnLoud(formatCiGateBaseRefResolutionFailure(baseRef, tried));
     return null;
   }
@@ -586,9 +580,10 @@ export async function loadBaseRefSelectCiChecks(
     "git",
     ["-C", gitRoot, "worktree", "add", "--detach", tempWt, checkoutRef],
     {
-    encoding: "utf8",
-    windowsHide: true,
-  });
+      encoding: "utf8",
+      windowsHide: true,
+    },
+  );
   if (add.status !== 0) {
     removeBaseWorktreeSync(gitRoot, tempWt);
     return null;
@@ -706,9 +701,7 @@ export async function resolveCiSelection(
     injectedBaseLoader || resolvedBase
       ? await baseLoader(gitRoot, baseRef, options.primaryPath)
       : null;
-  const baseCacheKey = resolvedBase
-    ? baseSelectCacheKey(gitRoot, resolvedBase.sha)
-    : null;
+  const baseCacheKey = resolvedBase ? baseSelectCacheKey(gitRoot, resolvedBase.sha) : null;
 
   let gatePlan: CiCheckSelection;
   let gateSource: "base" | "installed";
