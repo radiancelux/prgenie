@@ -144,10 +144,7 @@ test("RAD-164: isPrgenieMcpContext matches prgenie server names only", () => {
   assert.equal(isPrgenieMcpContext({ mcp_server_name: "user-figma" }), false);
   assert.equal(isPrgenieMcpContext({ command: "node packages/plugin/mcp/server.cjs" }), true);
   assert.equal(isPrgenieMcpContext({ tool_name: "export_local_pr" }), false);
-  assert.equal(
-    isPrgenieMcpContext({ tool_name: "plugin-prgenie-prgenie-export_local_pr" }),
-    true,
-  );
+  assert.equal(isPrgenieMcpContext({ tool_name: "plugin-prgenie-prgenie-export_local_pr" }), true);
   assert.equal(isPrgenieMcpContext({ providerIdentifier: "prgenie" }), true);
 });
 

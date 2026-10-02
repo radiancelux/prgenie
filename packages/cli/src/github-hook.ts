@@ -233,10 +233,7 @@ export function sanitizeBeforeMcpLogPayload(input: HookInput): Record<string, un
   return out;
 }
 
-export async function appendBeforeMcpExecutionLog(
-  cwd: string,
-  input: HookInput,
-): Promise<void> {
+export async function appendBeforeMcpExecutionLog(cwd: string, input: HookInput): Promise<void> {
   const root = await findGitRoot(cwd);
   if (!root) return;
   const dir = await consoleDir(root);
