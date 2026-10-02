@@ -107,6 +107,33 @@ function isLockContention(err: unknown): boolean {
   return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EEXIST";
 }
 
+function lockRecordMatches(a: FileLockRecord, b: FileLockRecord): boolean {
+  return a.pid === b.pid && a.hostname === b.hostname && a.acquiredAt === b.acquiredAt;
+}
+
+async function readLockRecord(lock: string): Promise<FileLockRecord | null> {
+  try {
+    return parseFileLockRecord(await readFile(lock, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/** True when the lock path still contains this holder's metadata (not a replacement lock). */
+async function lockStillHeldBy(lock: string, holder: FileLockRecord): Promise<boolean> {
+  const onDisk = await readLockRecord(lock);
+  return onDisk !== null && lockRecordMatches(onDisk, holder);
+}
+
+async function releaseFileLockIfOurs(lock: string, holder: FileLockRecord): Promise<void> {
+  if (!(await lockStillHeldBy(lock, holder))) return;
+  await unlink(lock).catch(() => undefined);
+}
+
+/**
+ * Remove a stale lock only when rename proves the on-disk file is still the one we read.
+ * If unlink of the renamed sidecar fails, restore the lock path and report not stolen.
+ */
 async function tryStealStaleFileLock(lock: string): Promise<boolean> {
   let raw: string;
   let mtimeMs: number;
@@ -121,8 +148,30 @@ async function tryStealStaleFileLock(lock: string): Promise<boolean> {
   const holder = record
     ? `pid=${record.pid} hostname=${record.hostname} acquiredAt=${record.acquiredAt}`
     : "legacy (no metadata)";
+  const sidecar = `${lock}.${process.pid}.${Date.now()}.steal`;
+  try {
+    await rename(lock, sidecar);
+  } catch {
+    return false;
+  }
+  let sideRaw: string;
+  try {
+    sideRaw = await readFile(sidecar, "utf8");
+  } catch {
+    await rename(sidecar, lock).catch(() => undefined);
+    return false;
+  }
+  if (sideRaw !== raw) {
+    await rename(sidecar, lock).catch(() => undefined);
+    return false;
+  }
+  try {
+    await unlink(sidecar);
+  } catch {
+    await rename(sidecar, lock).catch(() => undefined);
+    return false;
+  }
   console.error(`[prgenie] stole stale file lock ${lock} (${holder})`);
-  await unlink(lock).catch(() => undefined);
   return true;
 }
 
@@ -164,19 +213,21 @@ export async function withFileLock<T>(file: string, fn: () => Promise<T>): Promi
   // ~30s under Windows suite load: claim holders may stay inside fn() for seconds.
   for (let i = 0; i < 300; i++) {
     let handle: Awaited<ReturnType<typeof open>> | undefined;
+    let myRecord: FileLockRecord | undefined;
     try {
       handle = await open(lock, "wx");
       try {
-        const record: FileLockRecord = {
+        myRecord = {
           pid: process.pid,
           hostname: os.hostname(),
           acquiredAt: new Date().toISOString(),
         };
-        await handle.writeFile(`${JSON.stringify(record)}\n`, "utf8");
+        await handle.writeFile(`${JSON.stringify(myRecord)}\n`, "utf8");
       } catch (writeErr) {
         await handle.close().catch(() => undefined);
-        await unlink(lock).catch(() => undefined);
+        if (myRecord) await releaseFileLockIfOurs(lock, myRecord);
         handle = undefined;
+        myRecord = undefined;
         throw writeErr;
       }
     } catch (err) {
@@ -186,12 +237,17 @@ export async function withFileLock<T>(file: string, fn: () => Promise<T>): Promi
       await delay(100);
       continue;
     }
+    if (!myRecord || !(await lockStillHeldBy(lock, myRecord))) {
+      await handle.close().catch(() => undefined);
+      handle = undefined;
+      continue;
+    }
     try {
       return await fn();
     } finally {
       if (handle) {
         await handle.close().catch(() => undefined);
-        await unlink(lock).catch(() => undefined);
+        if (myRecord) await releaseFileLockIfOurs(lock, myRecord);
       }
     }
   }

@@ -116,6 +116,33 @@ describe("store", { concurrency: 1 }, () => {
     assert.equal(fileLockIsStale(aged, now, now), true);
   });
 
+  test("concurrent stale-lock stealers never overlap inside fn", async () => {
+    const file = path.join(dir, "concurrent-steal-target.json");
+    const lock = `${file}.lock`;
+    await writeFile(file, "{}\n", "utf8");
+    const deadRecord = {
+      pid: DEAD_PID,
+      hostname: os.hostname(),
+      acquiredAt: new Date().toISOString(),
+    };
+    let maxInside = 0;
+    for (let trial = 0; trial < 40; trial += 1) {
+      await writeFile(lock, `${JSON.stringify(deadRecord)}\n`, "utf8");
+      let inside = 0;
+      await Promise.all(
+        Array.from({ length: 4 }, () =>
+          withFileLock(file, async () => {
+            inside += 1;
+            maxInside = Math.max(maxInside, inside);
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            inside -= 1;
+          }),
+        ),
+      );
+    }
+    assert.equal(maxInside, 1, `expected no overlapping callbacks, saw ${maxInside}`);
+  });
+
   test("withFileLock steals legacy empty lock past max age (172-R2)", async () => {
     const file = path.join(dir, "legacy-target.json");
     const lock = `${file}.lock`;
