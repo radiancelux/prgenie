@@ -166,12 +166,19 @@ export async function withFileLock<T>(file: string, fn: () => Promise<T>): Promi
     let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
       handle = await open(lock, "wx");
-      const record: FileLockRecord = {
-        pid: process.pid,
-        hostname: os.hostname(),
-        acquiredAt: new Date().toISOString(),
-      };
-      await handle.writeFile(`${JSON.stringify(record)}\n`, "utf8");
+      try {
+        const record: FileLockRecord = {
+          pid: process.pid,
+          hostname: os.hostname(),
+          acquiredAt: new Date().toISOString(),
+        };
+        await handle.writeFile(`${JSON.stringify(record)}\n`, "utf8");
+      } catch (writeErr) {
+        await handle.close().catch(() => undefined);
+        await unlink(lock).catch(() => undefined);
+        handle = undefined;
+        throw writeErr;
+      }
     } catch (err) {
       if (!isLockContention(err)) throw err;
       lastErr = err;
@@ -182,8 +189,10 @@ export async function withFileLock<T>(file: string, fn: () => Promise<T>): Promi
     try {
       return await fn();
     } finally {
-      await handle.close();
-      await unlink(lock).catch(() => undefined);
+      if (handle) {
+        await handle.close().catch(() => undefined);
+        await unlink(lock).catch(() => undefined);
+      }
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(`Timed out locking ${file}`);

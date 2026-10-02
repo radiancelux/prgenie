@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, unlink, utimes, writeFile } from "node:fs/promis
 import os from "node:os";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { after, before, test } from "node:test";
+import { after, before, describe, test } from "node:test";
 import { STALE_LOCK_MS, fileLockIsStale } from "./ci-abort.js";
 import { firstJsonObject, parseJsonObject, withFileLock, writeJsonFile } from "./store.js";
 
@@ -19,6 +19,7 @@ after(async () => {
   if (dir) await rm(dir, { recursive: true, force: true });
 });
 
+describe("store", { concurrency: 1 }, () => {
 test("parseJsonObject recovers leftover bytes after a shorter overwrite", () => {
   const body = { id: "lp-test", status: "approved" };
   const raw = `${JSON.stringify(body, null, 2)}\n7.247Z"\n}`;
@@ -141,4 +142,5 @@ test("writeJsonFile truncates leftover bytes from a previous longer file", async
   JSON.parse(raw);
   assert.equal(raw.includes("changes_requested"), false);
   assert.equal(raw.includes("pad-pad-pad"), false);
+});
 });
