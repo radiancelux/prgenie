@@ -1,7 +1,13 @@
 import type { CiRunnerResult } from "./ci-runner.js";
 import { formatCiSelectionReason } from "./ci-select.js";
 import { normalizeSkipScope } from "./ready-skip-carry.js";
-import type { LocalPr, LocalPrComment, ReadyCiCheckSkip, ReadyCiRecord } from "./types.js";
+import type {
+  LocalPr,
+  LocalPrComment,
+  ReadyCiCheckResult,
+  ReadyCiCheckSkip,
+  ReadyCiRecord,
+} from "./types.js";
 
 const FAIL_FAST = /fail-fast/i;
 
@@ -14,6 +20,73 @@ function intentionalCheckSkips(result: CiRunnerResult): ReadyCiCheckSkip[] {
   return result.checks
     .filter((c) => c.skipped && isIntentionalReadySkip(c.reason))
     .map((c) => ({ name: c.name, reason: c.reason!.trim() }));
+}
+
+function resolvedPlanChecks(result: CiRunnerResult): string[] {
+  return normalizeSkipScope(result.selection?.checks ?? result.checks.map((c) => c.name));
+}
+
+function perCheckResultsFromRun(
+  planned: readonly string[],
+  result: CiRunnerResult,
+): ReadyCiCheckResult[] {
+  const byName = new Map(result.checks.map((c) => [c.name, c]));
+  return planned.map((name) => {
+    const row = byName.get(name);
+    if (!row) {
+      return { name, outcome: "skipped" as const, reason: "not run" };
+    }
+    if (row.skipped) {
+      return { name, outcome: "skipped" as const, reason: row.reason ?? null };
+    }
+    return {
+      name,
+      outcome: row.passed ? ("passed" as const) : ("failed" as const),
+      reason: row.reason ?? row.error ?? null,
+    };
+  });
+}
+
+/** Planned check never reached by the runner (162-R3 carry must not treat as executed). */
+export function isMissingPlanCheck(row: ReadyCiCheckResult): boolean {
+  return row.outcome === "skipped" && (row.reason?.trim() === "not run" || !row.reason?.trim());
+}
+
+function planFullyExecuted(checkResults: ReadyCiCheckResult[]): boolean {
+  return checkResults.every((row) => {
+    if (row.outcome === "passed") return true;
+    if (isMissingPlanCheck(row)) return false;
+    if (row.outcome === "skipped" && isIntentionalReadySkip(row.reason ?? undefined)) return true;
+    return false;
+  });
+}
+
+function outcomeFromRun(
+  result: CiRunnerResult,
+  checkResults: ReadyCiCheckResult[],
+): ReadyCiRecord["outcome"] {
+  if (result.checks.some((c) => !c.passed && !c.skipped)) return "failed";
+  if (!planFullyExecuted(checkResults)) return "incomplete";
+  if (result.allPassed && planFullyExecuted(checkResults)) return "passed";
+  return "incomplete";
+}
+
+/** Checks that actually ran green or were intentionally skipped at ready (RAD-162). */
+export function readyCiExecutedCheckNames(record: ReadyCiRecord): string[] {
+  if (record.checkResults?.length) {
+    return record.checkResults
+      .filter((row) => {
+        if (isMissingPlanCheck(row)) return false;
+        if (row.outcome === "passed") return true;
+        return row.outcome === "skipped" && isIntentionalReadySkip(row.reason ?? undefined);
+      })
+      .map((row) => row.name);
+  }
+  const names = normalizeSkipScope(record.checks ?? []);
+  for (const skip of record.checkSkips ?? []) {
+    if (isIntentionalReadySkip(skip.reason)) names.push(skip.name);
+  }
+  return normalizeSkipScope(names);
 }
 
 const CI_SKIP_BODY = /^CI skipped:\s*(.+)$/i;
@@ -51,10 +124,37 @@ export function normalizeReadyCi(raw: unknown): ReadyCiRecord | null {
   if (!raw || typeof raw !== "object") return null;
   const parsed = raw as Record<string, unknown>;
   if (typeof parsed.headSha !== "string" || !parsed.headSha) return null;
-  if (parsed.outcome !== "passed" && parsed.outcome !== "skipped") return null;
+  if (
+    parsed.outcome !== "passed" &&
+    parsed.outcome !== "skipped" &&
+    parsed.outcome !== "failed" &&
+    parsed.outcome !== "incomplete"
+  ) {
+    return null;
+  }
   const checks = Array.isArray(parsed.checks)
     ? parsed.checks.filter((c): c is string => typeof c === "string")
     : undefined;
+  const checkResults: ReadyCiCheckResult[] = [];
+  if (Array.isArray(parsed.checkResults)) {
+    for (const row of parsed.checkResults) {
+      if (!row || typeof row !== "object") continue;
+      const name = (row as ReadyCiCheckResult).name;
+      const outcome = (row as ReadyCiCheckResult).outcome;
+      if (
+        typeof name === "string" &&
+        name &&
+        (outcome === "passed" || outcome === "failed" || outcome === "skipped")
+      ) {
+        const reason = (row as ReadyCiCheckResult).reason;
+        checkResults.push({
+          name,
+          outcome,
+          reason: typeof reason === "string" ? reason : reason == null ? null : String(reason),
+        });
+      }
+    }
+  }
   const skipScope = Array.isArray(parsed.skipScope)
     ? parsed.skipScope.filter((c): c is string => typeof c === "string")
     : undefined;
@@ -78,6 +178,7 @@ export function normalizeReadyCi(raw: unknown): ReadyCiRecord | null {
     outcome: parsed.outcome,
     skipReason: typeof parsed.skipReason === "string" ? parsed.skipReason : null,
     checks,
+    checkResults: checkResults.length ? checkResults : undefined,
     skipScope: skipScope?.length ? normalizeSkipScope(skipScope) : undefined,
     checkSkips: checkSkips.length ? checkSkips : undefined,
   };
@@ -137,11 +238,8 @@ export function readyCiFromRunnerResult(
   headSha: string,
   result: CiRunnerResult,
   recordedAt: string = new Date().toISOString(),
-): ReadyCiRecord | null {
-  if (!result.allPassed) return null;
-  const skipScope = normalizeSkipScope(
-    result.selection?.checks ?? result.checks.map((c) => c.name),
-  );
+): ReadyCiRecord {
+  const skipScope = resolvedPlanChecks(result);
   const checkSkips = intentionalCheckSkips(result);
   const selectionSkipped = result.selection?.skipped === true && result.checks.length === 0;
   if (selectionSkipped) {
@@ -153,16 +251,23 @@ export function readyCiFromRunnerResult(
       outcome: "skipped",
       skipReason,
       checks: [],
+      checkResults: [],
       skipScope,
       checkSkips: [],
     };
   }
+
+  const checkResults = perCheckResultsFromRun(skipScope, result);
+  const outcome = outcomeFromRun(result, checkResults);
+  const passedNames = checkResults.filter((row) => row.outcome === "passed").map((row) => row.name);
+
   return {
     headSha,
     recordedAt,
-    outcome: "passed",
+    outcome,
     skipReason: null,
-    checks: result.checks.filter((c) => c.passed && !c.skipped).map((c) => c.name),
+    checks: outcome === "passed" ? passedNames : passedNames.length ? passedNames : undefined,
+    checkResults,
     skipScope,
     checkSkips: checkSkips.length ? checkSkips : undefined,
   };
@@ -179,8 +284,6 @@ export function readyCiFromSkipReason(
   if (!skipReason) throw new Error("CI skip reason is empty");
   const named = normalizeSkipScope(namedChecks);
   const inherited = normalizeSkipScope(skipScope);
-  // A same-HEAD plan stays the scope. Names replace it only when there is
-  // no plan to keep. Named checks are always checkSkips, not a new plan.
   const scope = inherited.length ? inherited : named;
   return {
     headSha,
@@ -188,6 +291,11 @@ export function readyCiFromSkipReason(
     outcome: "skipped",
     skipReason,
     checks: [],
+    checkResults: scope.map((name) => ({
+      name,
+      outcome: "skipped" as const,
+      reason: skipReason,
+    })),
     skipScope: scope,
     checkSkips: named.map((name) => ({ name, reason: skipReason })),
   };
@@ -214,7 +322,6 @@ export function upsertReviewRequestedComment(
     sameSha.forSha = headSha;
     return false;
   }
-  // Legacy roots without forSha: claim the newest as this SHA instead of duplicating.
   const legacy = roots
     .filter((c) => !c.forSha)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));

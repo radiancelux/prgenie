@@ -969,6 +969,7 @@ export async function runLoopCi(
           changedPaths: paths,
           worktreePath: pr.worktreePath ?? ciCwd,
           primaryPath: cwd,
+          baseRef: pr.baseRef,
         })
       ).selection;
     if (!options.selection && looksLikeStaleFullSuitePlan(selection)) {
@@ -1021,15 +1022,7 @@ export async function runLoopCi(
     try {
       const tip = await getLocalPr(cwd, id);
       const record = readyCiFromRunnerResult(tip.headSha, result);
-      if (record) {
-        await recordLocalPrReadyCi(cwd, id, record);
-      } else if (!result.allPassed) {
-        // Clear stale green for this tip so ready cannot lie.
-        const prior = tip.readyCi;
-        if (prior && prior.headSha === tip.headSha) {
-          await recordLocalPrReadyCi(cwd, id, null);
-        }
-      }
+      await recordLocalPrReadyCi(cwd, id, record);
     } catch {
       // CI result still returns to the caller even if packet write fails.
     }

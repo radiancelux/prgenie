@@ -1,5 +1,5 @@
 import type { CiCheckResult } from "./ci-runner.js";
-import { normalizeReadyCi } from "./ready-ci.js";
+import { normalizeReadyCi, readyCiExecutedCheckNames } from "./ready-ci.js";
 import type { ReadyCiRecord } from "./types.js";
 
 const FAIL_FAST = /fail-fast/i;
@@ -55,6 +55,39 @@ export function planReadySkipCarry(options: {
   const planned = normalizeSkipScope(options.plannedChecks);
   if (!record || record.headSha !== options.headSha) {
     return { checksToRun: planned, carriedResults: [], scopeInvalidated: false };
+  }
+
+  // RAD-162-R3: partial readyCi at the same HEAD — run checks that never ran at ready.
+  // Named checkSkips stay on the RAD-144 path (scope match / invalidation).
+  if (
+    (record.outcome === "passed" || record.outcome === "incomplete") &&
+    !(record.checkSkips?.length ?? 0)
+  ) {
+    const executed = new Set(readyCiExecutedCheckNames(record));
+    const missing = planned.filter((name) => !executed.has(name));
+    if (missing.length > 0) {
+      const carriedResults: CiCheckResult[] = [];
+      for (const name of planned) {
+        if (missing.includes(name)) continue;
+        const row = record.checkResults?.find((r) => r.name === name);
+        const perCheck = record.checkSkips?.find((s) => s.name === name);
+        if (perCheck && isIntentionalReadySkip(perCheck.reason)) {
+          carriedResults.push({
+            name,
+            passed: true,
+            skipped: true,
+            reason: formatReadyCarriedSkipReason(perCheck.reason),
+          });
+        } else if (row?.outcome === "passed") {
+          carriedResults.push({
+            name,
+            passed: true,
+            reason: "passed at ready (RAD-162)",
+          });
+        }
+      }
+      return { checksToRun: missing, carriedResults, scopeInvalidated: false };
+    }
   }
 
   const hasReadySkips = record.outcome === "skipped" || (record.checkSkips?.length ?? 0) > 0;
