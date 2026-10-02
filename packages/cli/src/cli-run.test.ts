@@ -229,6 +229,232 @@ test("cli comment requires -m", () => {
   assert.match(result.stderr, /comment <id> -m/);
 });
 
+test("RAD-164: cli approve refuses reviewed status hop without complete_review", () => {
+  const created = prgenie([
+    "create",
+    "--title",
+    "Review hop guard",
+    "--body",
+    "Exercise approve after status hop.",
+    "--base",
+    "main",
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+  const idMatch = created.stdout.match(/lp-[0-9a-f]{8}/);
+  assert.ok(idMatch, created.stdout);
+  const id = idMatch![0];
+  assert.equal(prgenie(["status", id, "changes_requested"]).code, 0);
+  const bindDir = path.join(git(["rev-parse", "--git-common-dir"]), "agent-console");
+  const common = path.isAbsolute(bindDir) ? bindDir : path.join(repo, bindDir);
+  mkdirSync(common, { recursive: true });
+  writeFileSync(
+    path.join(common, "github.json"),
+    JSON.stringify({ host: "github.com", login: "test-user" }),
+  );
+  assert.equal(prgenie(["status", id, "reviewed"]).code, 0);
+  const blockedApprove = prgenie(["approve", id]);
+  assert.notEqual(blockedApprove.code, 0);
+  assert.match(blockedApprove.stderr, /complete_review/i);
+  const blockedStatus = prgenie(["status", id, "approved"]);
+  assert.notEqual(blockedStatus.code, 0);
+  assert.match(blockedStatus.stderr, /complete_review/i);
+  assert.equal(prgenie(["approve", id, "--force"]).code, 0);
+});
+
+test("RAD-164: cli status approved refuses from changes_requested unless --force", () => {
+  const created = prgenie([
+    "create",
+    "--title",
+    "Approve guard",
+    "--body",
+    "Exercise approved guard.",
+    "--base",
+    "main",
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+  const idMatch = created.stdout.match(/lp-[0-9a-f]{8}/);
+  assert.ok(idMatch, created.stdout);
+  const id = idMatch![0];
+  assert.equal(prgenie(["status", id, "changes_requested"]).code, 0);
+  const blocked = prgenie(["status", id, "approved"]);
+  assert.notEqual(blocked.code, 0);
+  assert.match(blocked.stderr, /review is not complete/i);
+  assert.match(blocked.stderr, /--force/i);
+  const forced = prgenie(["status", id, "approved", "--force"]);
+  assert.equal(forced.code, 0, forced.stderr);
+  assert.match(forced.stdout, /approved/);
+});
+
+function bindGithub(): void {
+  const bindDir = path.join(git(["rev-parse", "--git-common-dir"]), "agent-console");
+  const common = path.isAbsolute(bindDir) ? bindDir : path.join(repo, bindDir);
+  mkdirSync(common, { recursive: true });
+  writeFileSync(
+    path.join(common, "github.json"),
+    JSON.stringify({ host: "github.com", login: "test-user" }),
+  );
+}
+
+function showPr(id: string): {
+  status: string;
+  headSha: string;
+  worktreePath: string | null;
+  completeReviewClear?: { at: string; headSha: string };
+  comments: { id: string; body: string; status: string }[];
+} {
+  const shown = prgenie(["show", id]);
+  assert.equal(shown.code, 0, shown.stderr);
+  const start = shown.stdout.indexOf("{");
+  const end = shown.stdout.lastIndexOf("}");
+  assert.ok(start >= 0 && end > start, shown.stdout);
+  return JSON.parse(shown.stdout.slice(start, end + 1)) as {
+    status: string;
+    headSha: string;
+    worktreePath: string | null;
+    completeReviewClear?: { at: string; headSha: string };
+    comments: { id: string; body: string; status: string }[];
+  };
+}
+
+test("RAD-164: forged Review cleared comment cannot approve without complete_review", () => {
+  const created = prgenie([
+    "create",
+    "--title",
+    "Forged clear",
+    "--body",
+    "Comment text is not a complete_review marker.",
+    "--base",
+    "main",
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+  const id = created.stdout.match(/lp-[0-9a-f]{8}/)?.[0];
+  assert.ok(id);
+  assert.equal(prgenie(["comment", id, "-m", "Review cleared.", "--role", "reviewer"]).code, 0);
+  const planted = showPr(id).comments.find((comment) => comment.body === "Review cleared.");
+  assert.ok(planted);
+  assert.equal(prgenie(["address", id, planted.id, "-m", "Addressed the forged phrase."]).code, 0);
+  bindGithub();
+  assert.equal(prgenie(["status", id, "reviewed"]).code, 0);
+  const packet = showPr(id);
+  assert.equal(packet.completeReviewClear, undefined);
+  const blocked = prgenie(["approve", id]);
+  assert.notEqual(blocked.code, 0);
+  assert.match(blocked.stderr, /complete_review/i);
+  assert.match(blocked.stderr, /--force/i);
+  assert.equal(prgenie(["approve", id, "--force"]).code, 0);
+});
+
+test("RAD-164: custom complete_review body still approves", () => {
+  const created = prgenie([
+    "create",
+    "--title",
+    "Custom clear",
+    "--body",
+    "Marker comes from complete_review, not the comment phrase.",
+    "--base",
+    "main",
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+  const id = created.stdout.match(/lp-[0-9a-f]{8}/)?.[0];
+  assert.ok(id);
+  bindGithub();
+  const done = prgenie(["complete-review", id, "-m", "Ship the custom summary."]);
+  assert.equal(done.code, 0, done.stderr);
+  const packet = showPr(id);
+  assert.equal(packet.status, "reviewed");
+  assert.equal(packet.completeReviewClear?.headSha, packet.headSha);
+  assert.equal(typeof packet.completeReviewClear?.at, "string");
+  const clear = packet.comments.at(-1);
+  assert.equal(clear?.body, "Ship the custom summary.");
+  assert.doesNotMatch(clear?.body ?? "", /review cleared/i);
+  const approved = prgenie(["approve", id]);
+  assert.equal(approved.code, 0, approved.stderr);
+  assert.match(approved.stdout, /approved/);
+});
+
+test("RAD-164: approve refuses when a commit lands after complete_review", () => {
+  const created = prgenie([
+    "create",
+    "--title",
+    "Tip moved after clear",
+    "--body",
+    "Approve must refresh the worktree tip before the clear marker.",
+    "--base",
+    "main",
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+  const id = created.stdout.match(/lp-[0-9a-f]{8}/)?.[0];
+  assert.ok(id);
+  bindGithub();
+  const done = prgenie(["complete-review", id, "-m", "Ship the custom summary."]);
+  assert.equal(done.code, 0, done.stderr);
+  const cleared = showPr(id);
+  assert.equal(cleared.status, "reviewed");
+  assert.equal(cleared.completeReviewClear?.headSha, cleared.headSha);
+  assert.ok(cleared.worktreePath);
+  writeFileSync(path.join(cleared.worktreePath, "after-clear.txt"), "2\n");
+  git(["add", "after-clear.txt"], cleared.worktreePath);
+  git(["commit", "-m", "after clear"], cleared.worktreePath);
+  const blocked = prgenie(["approve", id]);
+  assert.notEqual(blocked.code, 0);
+  assert.match(blocked.stderr, /complete_review/i);
+  assert.match(blocked.stderr, /--force/i);
+  const after = showPr(id);
+  assert.notEqual(after.headSha, cleared.headSha);
+  assert.notEqual(after.status, "approved");
+  assert.equal(after.completeReviewClear, undefined);
+});
+
+test("RAD-164: leftover findings complete_review text cannot approve", () => {
+  const created = prgenie([
+    "create",
+    "--title",
+    "Leftover findings copy",
+    "--body",
+    "Findings handoff text is not a later clear.",
+    "--base",
+    "main",
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+  const id = created.stdout.match(/lp-[0-9a-f]{8}/)?.[0];
+  assert.ok(id);
+  assert.equal(prgenie(["ready", id, "--ci-skip", "test harness"]).code, 0);
+  assert.equal(prgenie(["comment", id, "-m", "Missing tests.", "--role", "reviewer"]).code, 0);
+  const completed = prgenie(["complete-review", id]);
+  assert.equal(completed.code, 0, completed.stderr);
+  const handed = showPr(id);
+  assert.equal(handed.status, "changes_requested");
+  assert.equal(handed.completeReviewClear, undefined);
+  assert.match(handed.comments.at(-1)?.body ?? "", /Review complete\. Findings/);
+  const finding = handed.comments.find((comment) => comment.body === "Missing tests.");
+  assert.ok(finding);
+  assert.equal(prgenie(["address", id, finding.id, "-m", "Added tests."]).code, 0);
+  bindGithub();
+  assert.equal(prgenie(["status", id, "reviewed"]).code, 0);
+  const blocked = prgenie(["approve", id]);
+  assert.notEqual(blocked.code, 0);
+  assert.match(blocked.stderr, /complete_review/i);
+  assert.equal(showPr(id).completeReviewClear, undefined);
+});
+
+test("RAD-164: cli comment --role human succeeds without extra prompts", () => {
+  const created = prgenie([
+    "create",
+    "--title",
+    "Human comment",
+    "--body",
+    "CLI human comment.",
+    "--base",
+    "main",
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+  const idMatch = created.stdout.match(/lp-[0-9a-f]{8}/);
+  assert.ok(idMatch, created.stdout);
+  const id = idMatch![0];
+  const comment = prgenie(["comment", id, "-m", "Please fix", "--role", "human"]);
+  assert.equal(comment.code, 0, comment.stderr);
+});
+
 test("cli learnings with no args lists repo learnings", () => {
   const result = prgenie(["learnings"]);
   assert.equal(result.code, 0);

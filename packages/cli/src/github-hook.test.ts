@@ -4,12 +4,28 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
-import { isGithubCli, isPublish, switchUser } from "./github-hook.js";
+import {
+  isGithubCli,
+  isPrgenieMcpContext,
+  isPublish,
+  mcpHumanConfirmationGate,
+  switchUser,
+} from "./github-hook.js";
 
 const gateCjs = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../plugin/hooks/github-gate.cjs",
 );
+
+function runGate(input: Record<string, unknown>): { permission: string; agent_message?: string } {
+  const result = spawnSync(process.execPath, [gateCjs], {
+    input: JSON.stringify(input),
+    encoding: "utf8",
+    env: { ...process.env, NO_COLOR: "1" },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout) as { permission: string; agent_message?: string };
+}
 
 test("isPublish flags git push and gh pr create/merge/repo create", () => {
   assert.equal(isPublish("git push origin HEAD"), true);
@@ -62,16 +78,124 @@ test("built github-gate.cjs runs main and fail-closes push", () => {
 });
 
 test("built github-gate.cjs allows non-publish commands", () => {
-  const input = JSON.stringify({
-    command: "git status",
-    cwd: process.cwd(),
-  });
-  const result = spawnSync(process.execPath, [gateCjs], {
-    input,
-    encoding: "utf8",
-    env: { ...process.env, NO_COLOR: "1" },
-  });
-  assert.equal(result.status, 0, result.stderr);
-  const parsed = JSON.parse(result.stdout);
+  const parsed = runGate({ command: "git status", cwd: process.cwd() });
   assert.equal(parsed.permission, "allow");
+});
+
+test("RAD-164: mcpHumanConfirmationGate asks for human-only MCP tools", () => {
+  assert.equal(mcpHumanConfirmationGate("export_local_pr", {}), "ask");
+  assert.equal(mcpHumanConfirmationGate("record_export_gate_override", {}), "ask");
+  assert.equal(mcpHumanConfirmationGate("gh_use", {}), "ask");
+  assert.equal(mcpHumanConfirmationGate("set_status", { status: "approved" }), "ask");
+  assert.equal(mcpHumanConfirmationGate("set_status", { status: "reviewed" }), "ask");
+  assert.equal(
+    mcpHumanConfirmationGate("set_status", { status: "ready", skipPreflight: true }),
+    "ask",
+  );
+  assert.equal(
+    mcpHumanConfirmationGate("set_status", { status: "ready", ciSkipReason: "flaky" }),
+    "ask",
+  );
+  assert.equal(
+    mcpHumanConfirmationGate("set_status", { status: "ready", ciSkipChecks: ["test:core"] }),
+    "ask",
+  );
+  assert.equal(mcpHumanConfirmationGate("set_status", { status: "ready" }), "allow");
+  assert.equal(mcpHumanConfirmationGate("add_comment", { role: "human" }), "ask");
+  assert.equal(mcpHumanConfirmationGate("add_comment", {}), "ask");
+  assert.equal(mcpHumanConfirmationGate("add_comment", { role: "agent" }), "allow");
+  assert.equal(
+    mcpHumanConfirmationGate("add_comment", {
+      role: "agent",
+      body: "CI skipped: toolchain missing on this machine",
+    }),
+    "ask",
+  );
+  assert.equal(mcpHumanConfirmationGate("add_comment", { role: "reviewer" }), "allow");
+  assert.equal(mcpHumanConfirmationGate("get_local_pr", { id: "lp-deadbeef" }), "allow");
+  assert.equal(mcpHumanConfirmationGate("set_status", null), "invalid");
+});
+
+test("RAD-164: isPrgenieMcpContext matches prgenie server names only", () => {
+  assert.equal(isPrgenieMcpContext({ mcp_server_name: "plugin-prgenie-prgenie" }), true);
+  assert.equal(isPrgenieMcpContext({ mcp_server_name: "user-figma" }), false);
+  assert.equal(isPrgenieMcpContext({ command: "node packages/plugin/mcp/server.cjs" }), true);
+  assert.equal(isPrgenieMcpContext({ tool_name: "export_local_pr" }), true);
+});
+
+test("RAD-164: built github-gate.cjs asks for gated MCP tools on PR Genie", () => {
+  for (const [tool_name, tool_input] of [
+    ["export_local_pr", { id: "lp-deadbeef" }],
+    ["record_export_gate_override", { id: "lp-deadbeef", who: "agent", why: "x" }],
+    ["gh_use", { login: "alice" }],
+    ["set_status", { id: "lp-deadbeef", status: "approved" }],
+    ["set_status", { id: "lp-deadbeef", status: "reviewed" }],
+    ["set_status", { id: "lp-deadbeef", status: "ready", ciSkipReason: "skip" }],
+    ["add_comment", { id: "lp-deadbeef", body: "hi" }],
+    ["add_comment", { id: "lp-deadbeef", body: "hi", role: "human" }],
+  ] as const) {
+    const parsed = runGate({
+      mcp_server_name: "plugin-prgenie-prgenie",
+      tool_name,
+      tool_input,
+    });
+    assert.equal(parsed.permission, "ask", tool_name);
+    assert.match(String(parsed.agent_message ?? ""), /Human-only MCP/i);
+  }
+});
+
+test("RAD-164: built github-gate.cjs allows ungated MCP tools", () => {
+  assert.equal(
+    runGate({
+      mcp_server_name: "plugin-prgenie-prgenie",
+      tool_name: "get_local_pr",
+      tool_input: { id: "lp-deadbeef" },
+    }).permission,
+    "allow",
+  );
+  assert.equal(
+    runGate({
+      mcp_server_name: "plugin-prgenie-prgenie",
+      tool_name: "set_status",
+      tool_input: { id: "lp-deadbeef", status: "ready" },
+    }).permission,
+    "allow",
+  );
+  assert.equal(
+    runGate({
+      mcp_server_name: "plugin-prgenie-prgenie",
+      tool_name: "add_comment",
+      tool_input: { id: "lp-deadbeef", body: "ok", role: "agent" },
+    }).permission,
+    "allow",
+  );
+  assert.equal(
+    runGate({
+      mcp_server_name: "plugin-prgenie-prgenie",
+      tool_name: "add_comment",
+      tool_input: {
+        id: "lp-deadbeef",
+        role: "agent",
+        body: "CI skipped: no node on PATH",
+      },
+    }).permission,
+    "ask",
+  );
+  assert.equal(
+    runGate({
+      mcp_server_name: "user-figma",
+      tool_name: "export_local_pr",
+      tool_input: { id: "lp-deadbeef" },
+    }).permission,
+    "allow",
+  );
+});
+
+test("RAD-164: built github-gate.cjs asks when MCP tool_input JSON is invalid", () => {
+  const parsed = runGate({
+    mcp_server_name: "plugin-prgenie-prgenie",
+    tool_name: "set_status",
+    tool_input: "{not-json",
+  });
+  assert.equal(parsed.permission, "ask");
 });

@@ -95,7 +95,7 @@ Usage:
   prgenie diff <id> [--stat] [-- <path>...]
   prgenie delete <id> [--yes]
   prgenie reopen <id>
-  prgenie approve <id>
+  prgenie approve <id> [--force]
   prgenie ready <id> [--ci-skip <reason>]
   prgenie review-interrupted <id> [--reason <text>]
   prgenie review-resume <id>
@@ -107,7 +107,7 @@ Usage:
   prgenie edit-comment <id> <commentId> -m <message>
   prgenie delete-comment <id> <commentId> [--yes]
   prgenie complete-review <id> [-m <message>] [--force]
-  prgenie status <id> <draft|ready|review_interrupted|changes_requested|reviewed|approved>
+  prgenie status <id> <draft|ready|review_interrupted|changes_requested|reviewed|approved> [--force]
   prgenie worktrees
   prgenie worktree <id>
   prgenie learnings [--disabled] [--category <name>]
@@ -157,6 +157,44 @@ export function messageArg(args: string[]): string | undefined {
 
 export function flag(args: string[], name: string): boolean {
   return args.includes(name);
+}
+
+/** Packet field written only by complete_review — not a substring of comment text. */
+function reviewClearedByCompleteReview(pr: LocalPr): boolean {
+  const marker = pr.completeReviewClear;
+  return (
+    pr.status === "reviewed" &&
+    typeof marker?.at === "string" &&
+    marker.at.length > 0 &&
+    marker.headSha === pr.headSha
+  );
+}
+
+/** RAD-164: CLI-only guard before approved — real reviewed state, not a status hop. */
+async function refuseApprovedUnlessReviewComplete(
+  repo: string,
+  id: string,
+  force: boolean,
+): Promise<void> {
+  if (force) return;
+  // Same tip refresh as `prgenie show`. A commit after complete_review must drop
+  // reviewed (RAD-126) before this guard compares the clear marker to HEAD.
+  const pr = await refreshLocalPrHead(repo, id);
+  if (pr.status !== "reviewed") {
+    throw new Error(
+      "Cannot set approved: review is not complete. Finish review (complete_review) or pass --force.",
+    );
+  }
+  if (pendingReviewComments(pr).length > 0) {
+    throw new Error(
+      "Cannot set approved: open review findings remain. Finish review or pass --force.",
+    );
+  }
+  if (!reviewClearedByCompleteReview(pr)) {
+    throw new Error(
+      "Cannot set approved: reviewed status was not set by complete_review. Finish review or pass --force.",
+    );
+  }
 }
 
 async function runCiSlot(repo: string, rest: string[]): Promise<number> {
@@ -858,6 +896,7 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (sub === "approve") {
+    await refuseApprovedUnlessReviewComplete(repo, id, flag(rest, "--force"));
     printPr(await setLocalPrStatus(repo, id, "approved"));
     return 0;
   }
@@ -995,6 +1034,9 @@ export async function run(argv: string[]): Promise<number> {
   }
   if (sub === "status") {
     const status = rest[1] as LocalPrStatus;
+    if (status === "approved") {
+      await refuseApprovedUnlessReviewComplete(repo, id, flag(rest, "--force"));
+    }
     if (status === "reviewed") {
       await requireGithubBindForReviewed(repo);
     }

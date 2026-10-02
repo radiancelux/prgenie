@@ -359,6 +359,46 @@ test("complete_review with no findings clears review for the export gate", async
   assert.equal(done.comments[0].status, "resolved");
 });
 
+test("complete_review clear marker ignores comment text", async () => {
+  const forged = await createLocalPr(repo, { title: "Forged clear", base: "main" });
+  await setLocalPrStatus(repo, forged.id, "ready", { ciSkipReason: "test" });
+  const planted = await addLocalPrComment(repo, forged.id, "Review cleared.", {
+    role: "reviewer",
+  });
+  assert.equal(planted.completeReviewClear, undefined);
+  const plantedId = planted.comments.find((comment) => comment.body === "Review cleared.")?.id;
+  assert.ok(plantedId);
+  await addressLocalPrComment(repo, forged.id, plantedId, "Addressed the forged phrase.");
+  const hopped = await setLocalPrStatus(repo, forged.id, "reviewed");
+  assert.equal(hopped.status, "reviewed");
+  assert.equal(hopped.completeReviewClear, undefined);
+
+  const cleared = await completeLocalPrReview(repo, forged.id, {
+    body: "Ship the custom summary.",
+  });
+  assert.equal(cleared.status, "reviewed");
+  assert.equal(cleared.completeReviewClear?.headSha, cleared.headSha);
+  assert.equal(typeof cleared.completeReviewClear?.at, "string");
+  assert.equal(cleared.comments.at(-1)?.body, "Ship the custom summary.");
+  assert.doesNotMatch(cleared.comments.at(-1)?.body ?? "", /review cleared/i);
+});
+
+test("findings complete_review does not leave a clear marker", async () => {
+  const leftover = await createLocalPr(repo, { title: "Leftover findings copy", base: "main" });
+  await setLocalPrStatus(repo, leftover.id, "ready", { ciSkipReason: "test" });
+  const filed = await addLocalPrComment(repo, leftover.id, "Missing tests.", { role: "reviewer" });
+  const handed = await completeLocalPrReview(repo, leftover.id);
+  assert.equal(handed.status, "changes_requested");
+  assert.equal(handed.completeReviewClear, undefined);
+  assert.match(handed.comments.at(-1)?.body ?? "", /Review complete\. Findings/);
+  const findingId = filed.comments.find((comment) => comment.body === "Missing tests.")?.id;
+  assert.ok(findingId);
+  await addressLocalPrComment(repo, leftover.id, findingId, "Added tests.");
+  const hopped = await setLocalPrStatus(repo, leftover.id, "reviewed");
+  assert.equal(hopped.status, "reviewed");
+  assert.equal(hopped.completeReviewClear, undefined);
+});
+
 test("complete_review default copy is review-cleared, not ready-for-human", async () => {
   const pr = await createLocalPr(repo, { title: "Default copy", base: "main" });
   await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });

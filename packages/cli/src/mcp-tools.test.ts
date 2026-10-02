@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
-import { consoleDir } from "@prgenie/core";
+import {
+  consoleDir,
+  exportGateOverrideDocumented,
+  getLocalPr,
+  setLocalPrExportGate,
+} from "@prgenie/core";
 import { handleTool, tools } from "./mcp.js";
 import type { LocalPr } from "@prgenie/core";
 
@@ -254,5 +260,38 @@ test("handleTool bind_steward + steward_next resume same implementor", async () 
     (nextTool?.inputSchema as { properties: { reviewerTaskId: { type: string } } }).properties
       .reviewerTaskId.type,
     "string",
+  );
+});
+
+test("RAD-164: record_export_gate_override persists OS username, not agent who", async () => {
+  const osUser = os.userInfo().username;
+  const blockedMessage = "CI check failed: test:core — timeout";
+  const created = (await handleTool("create_local_pr", {
+    cwd: repo,
+    title: "Override who",
+    body: `Override by ${osUser} because test:core timed out on green. ${blockedMessage}`,
+    base: "main",
+  })) as LocalPr;
+  const atHead = await getLocalPr(repo, created.id);
+  await setLocalPrExportGate(repo, created.id, {
+    status: "blocked",
+    reasons: [{ check: "ci", message: blockedMessage }],
+    headSha: atHead.headSha,
+    evaluatedAt: new Date().toISOString(),
+  });
+  const updated = (await handleTool("record_export_gate_override", {
+    cwd: repo,
+    id: created.id,
+    who: "Fake Agent Name",
+    why: "test:core timed out on green",
+  })) as LocalPr;
+  assert.equal(updated.exportGateOverride?.who, osUser);
+  assert.notEqual(updated.exportGateOverride?.who, "Fake Agent Name");
+  const fresh = await getLocalPr(repo, created.id);
+  assert.equal(
+    exportGateOverrideDocumented(fresh, {
+      reasons: [{ check: "ci", message: blockedMessage }],
+    }),
+    true,
   );
 });

@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
-import { ensureRepoGithub, findGitRoot, getRepoGithubBind } from "@prgenie/core";
+import { ensureRepoGithub, findGitRoot, getRepoGithubBind, parseCiSkipReason } from "@prgenie/core";
 
 type HookInput = Record<string, unknown>;
+
+export type HookPermission = "allow" | "ask";
 
 export function isPublish(command: string): boolean {
   return (
@@ -21,6 +23,107 @@ export function switchUser(command: string): string | null {
   return match?.[1] ?? null;
 }
 
+export function parseToolInput(raw: unknown): Record<string, unknown> | null {
+  if (raw === null || raw === undefined) return {};
+  if (typeof raw === "object" && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  if (typeof raw === "string") {
+    if (!raw.trim()) return {};
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** True when beforeMCPExecution targets PR Genie (RAD-164). */
+export function isPrgenieMcpContext(input: HookInput): boolean {
+  const serverName = String(input.mcp_server_name ?? input.server_name ?? "");
+  const command = String(input.command ?? "");
+  if (serverName) return /prgenie/i.test(serverName);
+  if (/prgenie/i.test(command)) return true;
+  return true;
+}
+
+export function mcpToolName(input: HookInput): string {
+  return String(input.tool_name ?? input.toolName ?? "").trim();
+}
+
+export type McpGateDecision = "allow" | "ask" | "invalid";
+
+/** Whether a PR Genie MCP tool requires human confirmation before execution. */
+export function mcpHumanConfirmationGate(
+  toolName: string,
+  toolInput: Record<string, unknown> | null,
+): McpGateDecision {
+  if (!toolName) return "allow";
+  switch (toolName) {
+    case "export_local_pr":
+    case "record_export_gate_override":
+    case "gh_use":
+      return "ask";
+    case "set_status": {
+      if (toolInput === null) return "invalid";
+      const status = String(toolInput.status ?? "");
+      if (status === "approved" || status === "reviewed") return "ask";
+      if (toolInput.skipPreflight === true) return "ask";
+      const ciSkipReason = toolInput.ciSkipReason;
+      if (typeof ciSkipReason === "string" && ciSkipReason.trim()) return "ask";
+      const ciSkipChecks = toolInput.ciSkipChecks;
+      if (Array.isArray(ciSkipChecks) && ciSkipChecks.some((c) => String(c).trim())) {
+        return "ask";
+      }
+      return "allow";
+    }
+    case "add_comment": {
+      if (toolInput === null) return "invalid";
+      const role = toolInput.role;
+      if (role === "reviewer") return "allow";
+      if (role === "human" || role === undefined) return "ask";
+      if (role === "agent") {
+        const body = String(toolInput.body ?? "");
+        if (parseCiSkipReason(body)) return "ask";
+        return "allow";
+      }
+      return "ask";
+    }
+    default:
+      return "allow";
+  }
+}
+
+export function mcpAskPayload(toolName: string): {
+  permission: "ask";
+  user_message: string;
+  agent_message: string;
+} {
+  return {
+    permission: "ask",
+    user_message: `PR Genie: an agent wants to run MCP tool "${toolName}", which needs your confirmation.`,
+    agent_message: `Human-only MCP action (${toolName}). Do not retry without the user approving this call in Cursor.`,
+  };
+}
+
+export function decideBeforeMcpExecution(input: HookInput): { permission: HookPermission } | null {
+  const toolName = mcpToolName(input);
+  if (!toolName) return null;
+  if (!isPrgenieMcpContext(input)) {
+    return { permission: "allow" };
+  }
+  const parsed = parseToolInput(input.tool_input ?? input.toolInput);
+  const gate = mcpHumanConfirmationGate(toolName, parsed);
+  if (gate === "invalid") return mcpAskPayload(toolName);
+  if (gate === "ask") return mcpAskPayload(toolName);
+  return { permission: "allow" };
+}
+
 export async function main(): Promise<void> {
   let input: HookInput;
   try {
@@ -28,6 +131,12 @@ export async function main(): Promise<void> {
     input = raw ? JSON.parse(raw) : {};
   } catch {
     input = {};
+  }
+
+  const mcpDecision = decideBeforeMcpExecution(input);
+  if (mcpDecision !== null) {
+    process.stdout.write(JSON.stringify(mcpDecision));
+    return;
   }
 
   const command = String(input.command ?? "");

@@ -99,6 +99,14 @@ export interface LocalPr {
   /** HEAD sha we last told the implementor chat to spawn a reviewer for (once per HEAD). */
   reviewerNotifiedSha: string | null;
   /**
+   * Written only by completeLocalPrReview when it clears review (status reviewed).
+   * Not inferred from comment text. Any other status write removes it (RAD-164).
+   */
+  completeReviewClear?: {
+    at: string;
+    headSha: string;
+  };
+  /**
    * Last implementor `run_ci` / explicit skip for this tip (RAD-97).
    * Soft-blocks `set_status ready` until passed or skipped for current headSha.
    */
