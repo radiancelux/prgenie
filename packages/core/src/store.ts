@@ -239,7 +239,6 @@ export async function withFileLock<T>(file: string, fn: () => Promise<T>): Promi
     }
     if (!myRecord || !(await lockStillHeldBy(lock, myRecord))) {
       await handle.close().catch(() => undefined);
-      handle = undefined;
       continue;
     }
     try {
