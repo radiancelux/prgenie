@@ -298,6 +298,7 @@ function bindGithub(): void {
 function showPr(id: string): {
   status: string;
   headSha: string;
+  worktreePath: string | null;
   completeReviewClear?: { at: string; headSha: string };
   comments: { id: string; body: string; status: string }[];
 } {
@@ -309,6 +310,7 @@ function showPr(id: string): {
   return JSON.parse(shown.stdout.slice(start, end + 1)) as {
     status: string;
     headSha: string;
+    worktreePath: string | null;
     completeReviewClear?: { at: string; headSha: string };
     comments: { id: string; body: string; status: string }[];
   };
@@ -368,6 +370,39 @@ test("RAD-164: custom complete_review body still approves", () => {
   const approved = prgenie(["approve", id]);
   assert.equal(approved.code, 0, approved.stderr);
   assert.match(approved.stdout, /approved/);
+});
+
+test("RAD-164: approve refuses when a commit lands after complete_review", () => {
+  const created = prgenie([
+    "create",
+    "--title",
+    "Tip moved after clear",
+    "--body",
+    "Approve must refresh the worktree tip before the clear marker.",
+    "--base",
+    "main",
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+  const id = created.stdout.match(/lp-[0-9a-f]{8}/)?.[0];
+  assert.ok(id);
+  bindGithub();
+  const done = prgenie(["complete-review", id, "-m", "Ship the custom summary."]);
+  assert.equal(done.code, 0, done.stderr);
+  const cleared = showPr(id);
+  assert.equal(cleared.status, "reviewed");
+  assert.equal(cleared.completeReviewClear?.headSha, cleared.headSha);
+  assert.ok(cleared.worktreePath);
+  writeFileSync(path.join(cleared.worktreePath, "after-clear.txt"), "2\n");
+  git(["add", "after-clear.txt"], cleared.worktreePath);
+  git(["commit", "-m", "after clear"], cleared.worktreePath);
+  const blocked = prgenie(["approve", id]);
+  assert.notEqual(blocked.code, 0);
+  assert.match(blocked.stderr, /complete_review/i);
+  assert.match(blocked.stderr, /--force/i);
+  const after = showPr(id);
+  assert.notEqual(after.headSha, cleared.headSha);
+  assert.notEqual(after.status, "approved");
+  assert.equal(after.completeReviewClear, undefined);
 });
 
 test("RAD-164: leftover findings complete_review text cannot approve", () => {

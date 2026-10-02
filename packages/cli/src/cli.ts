@@ -177,7 +177,9 @@ async function refuseApprovedUnlessReviewComplete(
   force: boolean,
 ): Promise<void> {
   if (force) return;
-  const pr = await getLocalPr(repo, id);
+  // Same tip refresh as `prgenie show`. A commit after complete_review must drop
+  // reviewed (RAD-126) before this guard compares the clear marker to HEAD.
+  const pr = await refreshLocalPrHead(repo, id);
   if (pr.status !== "reviewed") {
     throw new Error(
       "Cannot set approved: review is not complete. Finish review (complete_review) or pass --force.",
