@@ -122,11 +122,16 @@ function serverFieldValues(input: HookInput): string[] {
   return out;
 }
 
+function serverFieldIdentifiesPrgenie(value: string): boolean {
+  if (/prgenie/i.test(value) || /^plugin-prgenie/i.test(value)) return true;
+  if (/\bPR\s+Genie\b/i.test(value)) return true;
+  return false;
+}
+
 /** True when beforeMCPExecution targets PR Genie (RAD-164). */
 export function isPrgenieMcpContext(input: HookInput): boolean {
   for (const s of serverFieldValues(input)) {
-    if (/prgenie/i.test(s) || /^plugin-prgenie/i.test(s)) return true;
-    if (s.length > 0) return false;
+    if (serverFieldIdentifiesPrgenie(s)) return true;
   }
 
   const command = String(input.command ?? "");

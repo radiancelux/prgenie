@@ -13,13 +13,21 @@ import {
   switchUser,
 } from "./github-hook.js";
 
-/** Shaped like live Cursor transcript (RAD-164 follow-up); replace when log captures real payload. */
+/** Alternate transcript shape (prefixed tool_name); kept for regression. */
 const TRANSCRIPT_SHAPED_FIXTURE = {
   tool_name: "plugin-prgenie-prgenie-export_local_pr",
   serverIdentifier: "plugin-prgenie-prgenie",
   providerIdentifier: "prgenie",
   toolName: "export_local_pr",
   tool_input: { id: "lp-deadbeef" },
+} as const;
+
+/** cursor-agent-exec Je.execute beforeMCPExecution stdin (display server name, bare tool). */
+const CURSOR_JE_EXECUTE_FIXTURE = {
+  mcp_server_name: "PR Genie",
+  tool_name: "export_local_pr",
+  tool_input: JSON.stringify({ id: "lp-deadbeef" }),
+  command: "node C:\\Users\\foo\\.cursor\\plugins\\local\\prgenie\\mcp\\server.cjs",
 } as const;
 
 const gateCjs = path.resolve(
@@ -146,6 +154,20 @@ test("RAD-164: isPrgenieMcpContext matches prgenie server names only", () => {
   assert.equal(isPrgenieMcpContext({ tool_name: "export_local_pr" }), false);
   assert.equal(isPrgenieMcpContext({ tool_name: "plugin-prgenie-prgenie-export_local_pr" }), true);
   assert.equal(isPrgenieMcpContext({ providerIdentifier: "prgenie" }), true);
+  assert.equal(
+    isPrgenieMcpContext({
+      mcp_server_name: "PR Genie",
+      tool_name: "export_local_pr",
+      command: "node C:/Users/foo/.cursor/plugins/local/prgenie/mcp/server.cjs",
+    }),
+    true,
+  );
+});
+
+test("RAD-164 follow-up: Cursor Je.execute stdin export_local_pr asks", () => {
+  const parsed = runGate({ ...CURSOR_JE_EXECUTE_FIXTURE });
+  assert.equal(parsed.permission, "ask");
+  assert.match(String(parsed.agent_message ?? ""), /Human-only MCP/i);
 });
 
 test("RAD-164 follow-up: transcript-shaped prefixed export_local_pr asks", () => {
