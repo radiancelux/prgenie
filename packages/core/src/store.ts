@@ -108,8 +108,8 @@ function isLockContention(err: unknown): boolean {
 }
 
 async function tryStealStaleFileLock(lock: string): Promise<boolean> {
-  let raw = "";
-  let mtimeMs = Date.now();
+  let raw: string;
+  let mtimeMs: number;
   try {
     raw = await readFile(lock, "utf8");
     mtimeMs = (await stat(lock)).mtimeMs;

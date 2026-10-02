@@ -319,8 +319,8 @@ export async function runDoctor(cwd: string, options?: { home?: string }): Promi
   const lockPaths = existsSync(agentConsole) ? await listAgentConsoleLockFiles(agentConsole) : [];
   const staleLocks: { path: string; holder: string }[] = [];
   for (const lockPath of lockPaths) {
-    let raw = "";
-    let mtimeMs = Date.now();
+    let raw: string;
+    let mtimeMs: number;
     try {
       raw = await readFile(lockPath, "utf8");
       mtimeMs = (await stat(lockPath)).mtimeMs;
