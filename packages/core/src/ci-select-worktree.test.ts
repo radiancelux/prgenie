@@ -48,7 +48,7 @@ function shallowDetachedWithoutLocalMain(sourceRoot: string): {
   });
   assert.equal(clone.status, 0, clone.stderr || clone.stdout);
   gitIn(cloneRoot, ["checkout", "--detach", "HEAD"]);
-  const head = gitIn(cloneRoot, ["rev-parse", "HEAD"]).stdout?.trim();
+  const head = String(gitIn(cloneRoot, ["rev-parse", "HEAD"]).stdout ?? "").trim();
   assert.ok(head, "detached HEAD required");
   // Shallow single-branch clones may omit refs/remotes/origin/main (167-R1 / GitHub PR #92).
   if (gitIn(cloneRoot, ["rev-parse", "origin/main"]).status !== 0) {
