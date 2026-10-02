@@ -1,11 +1,7 @@
 import { mkdir, open, readFile, readdir, rename, stat, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import {
-  fileLockIsStale,
-  parseFileLockRecord,
-  type FileLockRecord,
-} from "./ci-abort.js";
+import { fileLockIsStale, parseFileLockRecord, type FileLockRecord } from "./ci-abort.js";
 import { gitCommonDir } from "./git.js";
 
 export async function consoleDir(cwd: string): Promise<string> {
@@ -130,10 +126,7 @@ async function tryStealStaleFileLock(lock: string): Promise<boolean> {
   return true;
 }
 
-export function formatFileLockHolder(
-  record: FileLockRecord | null,
-  mtimeMs: number,
-): string {
+export function formatFileLockHolder(record: FileLockRecord | null, mtimeMs: number): string {
   if (!record) {
     return `legacy empty lock (mtime ${new Date(mtimeMs).toISOString()})`;
   }
