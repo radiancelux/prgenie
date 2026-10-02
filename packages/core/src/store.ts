@@ -137,17 +137,18 @@ export function formatFileLockHolder(record: FileLockRecord | null, mtimeMs: num
 export async function listAgentConsoleLockFiles(consoleDir: string): Promise<string[]> {
   const out: string[] = [];
   async function walk(dir: string): Promise<void> {
-    let entries: Awaited<ReturnType<typeof readdir>>;
+    let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
     for (const entry of entries) {
-      const full = path.join(dir, entry.name);
+      const name = String(entry.name);
+      const full = path.join(dir, name);
       if (entry.isDirectory()) {
         await walk(full);
-      } else if (entry.isFile() && entry.name.endsWith(".lock")) {
+      } else if (entry.isFile() && name.endsWith(".lock")) {
         out.push(full);
       }
     }
