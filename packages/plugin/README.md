@@ -21,7 +21,7 @@ If a PR still shows huge ±tens-of-thousands-line diffs on those `.cjs` files, y
 
 **Parallel Tasks:** soft max **2** concurrent implementor Tasks. Product concurrency guardrails are RAD-84 — this plugin does not enforce a hard limit.
 
-Then **Developer: Reload Window** is not enough for MCP tools (Cursor caches the first tool list). In **Customize → Plugins**, disable and re-enable PR Genie. Confirm:
+Then **Developer: Reload Window** is not enough for MCP tools (Cursor caches the first tool list). In **Customize → Plugins**, disable and re-enable PR Genie. After `pnpm link-plugin` or any hook bundle change, **fully quit and restart Cursor** so `beforeMCPExecution` / `beforeShellExecution` reload — reload window alone can leave stale hook code. Confirm:
 
 - Rule: do not push / open GitHub PRs
 - Command (skills, one slash name each): `/steward`, `/start`, `/local-pr`, `/review`, `/export`

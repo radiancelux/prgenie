@@ -9,8 +9,18 @@ import {
   isPrgenieMcpContext,
   isPublish,
   mcpHumanConfirmationGate,
+  normalizeBareMcpToolName,
   switchUser,
 } from "./github-hook.js";
+
+/** Shaped like live Cursor transcript (RAD-164 follow-up); replace when log captures real payload. */
+const TRANSCRIPT_SHAPED_FIXTURE = {
+  tool_name: "plugin-prgenie-prgenie-export_local_pr",
+  serverIdentifier: "plugin-prgenie-prgenie",
+  providerIdentifier: "prgenie",
+  toolName: "export_local_pr",
+  tool_input: { id: "lp-deadbeef" },
+} as const;
 
 const gateCjs = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -114,13 +124,57 @@ test("RAD-164: mcpHumanConfirmationGate asks for human-only MCP tools", () => {
   assert.equal(mcpHumanConfirmationGate("add_comment", { role: "reviewer" }), "allow");
   assert.equal(mcpHumanConfirmationGate("get_local_pr", { id: "lp-deadbeef" }), "allow");
   assert.equal(mcpHumanConfirmationGate("set_status", null), "invalid");
+  assert.equal(mcpHumanConfirmationGate("steward_next", { id: "lp-deadbeef" }), "ask");
+  assert.equal(mcpHumanConfirmationGate("unknown_prgenie_tool", {}), "ask");
+});
+
+test("RAD-164: normalizeBareMcpToolName strips plugin server prefixes", () => {
+  assert.equal(
+    normalizeBareMcpToolName({
+      tool_name: "plugin-prgenie-prgenie-export_local_pr",
+      serverIdentifier: "plugin-prgenie-prgenie",
+      toolName: "export_local_pr",
+    }),
+    "export_local_pr",
+  );
 });
 
 test("RAD-164: isPrgenieMcpContext matches prgenie server names only", () => {
   assert.equal(isPrgenieMcpContext({ mcp_server_name: "plugin-prgenie-prgenie" }), true);
   assert.equal(isPrgenieMcpContext({ mcp_server_name: "user-figma" }), false);
   assert.equal(isPrgenieMcpContext({ command: "node packages/plugin/mcp/server.cjs" }), true);
-  assert.equal(isPrgenieMcpContext({ tool_name: "export_local_pr" }), true);
+  assert.equal(isPrgenieMcpContext({ tool_name: "export_local_pr" }), false);
+  assert.equal(
+    isPrgenieMcpContext({ tool_name: "plugin-prgenie-prgenie-export_local_pr" }),
+    true,
+  );
+  assert.equal(isPrgenieMcpContext({ providerIdentifier: "prgenie" }), true);
+});
+
+test("RAD-164 follow-up: transcript-shaped prefixed export_local_pr asks", () => {
+  const parsed = runGate({ ...TRANSCRIPT_SHAPED_FIXTURE });
+  assert.equal(parsed.permission, "ask");
+  assert.match(String(parsed.agent_message ?? ""), /Human-only MCP/i);
+});
+
+test("RAD-164 follow-up: colliding add_comment on another server stays allow", () => {
+  assert.equal(
+    runGate({
+      mcp_server_name: "user-linear-linear",
+      tool_name: "add_comment",
+      tool_input: { id: "issue-1", body: "hi" },
+    }).permission,
+    "allow",
+  );
+});
+
+test("RAD-164 follow-up: unrecognized PR Genie MCP tool asks", () => {
+  const parsed = runGate({
+    mcp_server_name: "plugin-prgenie-prgenie",
+    tool_name: "plugin-prgenie-prgenie-totally_unknown_tool",
+    tool_input: {},
+  });
+  assert.equal(parsed.permission, "ask");
 });
 
 test("RAD-164: built github-gate.cjs asks for gated MCP tools on PR Genie", () => {

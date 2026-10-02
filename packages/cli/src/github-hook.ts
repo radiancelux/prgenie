@@ -1,5 +1,13 @@
+import { appendFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import { ensureRepoGithub, findGitRoot, getRepoGithubBind, parseCiSkipReason } from "@prgenie/core";
+import path from "node:path";
+import {
+  consoleDir,
+  ensureRepoGithub,
+  findGitRoot,
+  getRepoGithubBind,
+  parseCiSkipReason,
+} from "@prgenie/core";
 
 type HookInput = Record<string, unknown>;
 
@@ -43,18 +51,117 @@ export function parseToolInput(raw: unknown): Record<string, unknown> | null {
   return null;
 }
 
-/** True when beforeMCPExecution targets PR Genie (RAD-164). */
-export function isPrgenieMcpContext(input: HookInput): boolean {
-  const serverName = String(input.mcp_server_name ?? input.server_name ?? "");
-  const command = String(input.command ?? "");
-  if (serverName) return /prgenie/i.test(serverName);
-  if (/prgenie/i.test(command)) return true;
-  return true;
+function inferCwd(input: HookInput): string {
+  if (typeof input.cwd === "string" && input.cwd) return input.cwd;
+  const roots = input.workspace_roots;
+  if (Array.isArray(roots) && typeof roots[0] === "string" && roots[0]) return roots[0];
+  return process.cwd();
 }
 
-export function mcpToolName(input: HookInput): string {
-  return String(input.tool_name ?? input.toolName ?? "").trim();
+function serverIdStrings(input: HookInput): string[] {
+  const out: string[] = [];
+  for (const key of [
+    "mcp_server_name",
+    "server_name",
+    "serverIdentifier",
+    "server_identifier",
+    "mcp_server_identifier",
+  ]) {
+    const v = input[key];
+    if (typeof v === "string" && v.trim()) out.push(v.trim());
+  }
+  return [...new Set(out)];
 }
+
+/** Raw tool name field(s) Cursor may send before normalization (RAD-164). */
+export function rawMcpToolName(input: HookInput): string {
+  for (const key of ["tool_name", "toolName", "name"]) {
+    const v = input[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
+/** Strip `<server>-`, `mcp_<server>_`, and `<server>:` prefixes (RAD-164 follow-up). */
+export function normalizeBareMcpToolName(input: HookInput): string {
+  const raw = rawMcpToolName(input);
+  if (!raw) return "";
+  const serverIds = serverIdStrings(input);
+  let name = raw;
+  for (const id of serverIds) {
+    for (const prefix of [`${id}-`, `${id}:`, `mcp_${id}_`, `mcp-${id}-`]) {
+      if (name.startsWith(prefix)) {
+        name = name.slice(prefix.length);
+        break;
+      }
+    }
+  }
+  if (/^plugin-prgenie-prgenie[-:]/i.test(name)) {
+    name = name.replace(/^plugin-prgenie-prgenie[-:]/i, "");
+  }
+  if (/^mcp_plugin-prgenie-prgenie_/i.test(name)) {
+    name = name.replace(/^mcp_plugin-prgenie-prgenie_/i, "");
+  }
+  return name;
+}
+
+function serverFieldValues(input: HookInput): string[] {
+  const out: string[] = [];
+  for (const key of [
+    "mcp_server_name",
+    "server_name",
+    "serverIdentifier",
+    "server_identifier",
+    "mcp_server_identifier",
+    "providerIdentifier",
+    "provider_identifier",
+  ]) {
+    const v = input[key];
+    if (typeof v === "string" && v.trim()) out.push(v.trim());
+  }
+  return out;
+}
+
+/** True when beforeMCPExecution targets PR Genie (RAD-164). */
+export function isPrgenieMcpContext(input: HookInput): boolean {
+  for (const s of serverFieldValues(input)) {
+    if (/prgenie/i.test(s) || /^plugin-prgenie/i.test(s)) return true;
+    if (s.length > 0) return false;
+  }
+
+  const command = String(input.command ?? "");
+  if (/prgenie|plugin[/\\].*mcp[/\\]server/i.test(command)) return true;
+
+  const url = String(input.url ?? input.mcp_url ?? "");
+  if (/prgenie/i.test(url)) return true;
+
+  const rawName = rawMcpToolName(input);
+  if (/^plugin-prgenie-prgenie[-:]/i.test(rawName)) return true;
+  if (/^mcp_plugin-prgenie-prgenie_/i.test(rawName)) return true;
+
+  return false;
+}
+
+/** @deprecated use rawMcpToolName — kept for tests importing mcpToolName */
+export function mcpToolName(input: HookInput): string {
+  return normalizeBareMcpToolName(input);
+}
+
+/** Read-only PR Genie MCP tools agents may call without confirmation (RAD-164 R2). */
+export const PRGENIE_MCP_READ_ONLY_TOOLS = new Set([
+  "list_sessions",
+  "learning_digest",
+  "list_worktrees",
+  "list_local_prs",
+  "get_local_pr",
+  "get_diff",
+  "gh_list",
+  "gh_status",
+  "list_learnings",
+  "get_learning",
+  "shepherd_status",
+  "watch_status",
+]);
 
 export type McpGateDecision = "allow" | "ask" | "invalid";
 
@@ -63,7 +170,7 @@ export function mcpHumanConfirmationGate(
   toolName: string,
   toolInput: Record<string, unknown> | null,
 ): McpGateDecision {
-  if (!toolName) return "allow";
+  if (!toolName) return "ask";
   switch (toolName) {
     case "export_local_pr":
     case "record_export_gate_override":
@@ -95,7 +202,8 @@ export function mcpHumanConfirmationGate(
       return "ask";
     }
     default:
-      return "allow";
+      if (PRGENIE_MCP_READ_ONLY_TOOLS.has(toolName)) return "allow";
+      return "ask";
   }
 }
 
@@ -111,12 +219,42 @@ export function mcpAskPayload(toolName: string): {
   };
 }
 
+export function sanitizeBeforeMcpLogPayload(input: HookInput): Record<string, unknown> {
+  const out: Record<string, unknown> = { topLevelKeys: Object.keys(input) };
+  for (const [key, value] of Object.entries(input)) {
+    if (key === "tool_input" || key === "toolInput") {
+      if (value !== undefined) out[key] = "[redacted]";
+      continue;
+    }
+    out[key] = value;
+  }
+  out.normalizedToolName = normalizeBareMcpToolName(input);
+  out.rawToolName = rawMcpToolName(input);
+  return out;
+}
+
+export async function appendBeforeMcpExecutionLog(
+  cwd: string,
+  input: HookInput,
+): Promise<void> {
+  const root = await findGitRoot(cwd);
+  if (!root) return;
+  const dir = await consoleDir(root);
+  const file = path.join(dir, "before-mcp-execution.jsonl");
+  const line = JSON.stringify({
+    at: new Date().toISOString(),
+    ...sanitizeBeforeMcpLogPayload(input),
+  });
+  await appendFile(file, `${line}\n`, "utf8");
+}
+
 export function decideBeforeMcpExecution(input: HookInput): { permission: HookPermission } | null {
-  const toolName = mcpToolName(input);
-  if (!toolName) return null;
+  const rawName = rawMcpToolName(input);
+  if (!rawName) return null;
   if (!isPrgenieMcpContext(input)) {
     return { permission: "allow" };
   }
+  const toolName = normalizeBareMcpToolName(input);
   const parsed = parseToolInput(input.tool_input ?? input.toolInput);
   const gate = mcpHumanConfirmationGate(toolName, parsed);
   if (gate === "invalid") return mcpAskPayload(toolName);
@@ -131,6 +269,10 @@ export async function main(): Promise<void> {
     input = raw ? JSON.parse(raw) : {};
   } catch {
     input = {};
+  }
+
+  if (rawMcpToolName(input)) {
+    appendBeforeMcpExecutionLog(inferCwd(input), input).catch(() => {});
   }
 
   const mcpDecision = decideBeforeMcpExecution(input);
