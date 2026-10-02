@@ -1,5 +1,13 @@
 import { createRequire } from "node:module";
-import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -109,19 +117,104 @@ type CacheEntry = { mtimeMs: number; select: CiSelectFn };
 const worktreeSelectCache = new Map<string, CacheEntry>();
 type BaseSelectCacheEntry = { select: CiSelectFn; tempWt: string; gitRoot: string };
 const baseSelectCache = new Map<string, BaseSelectCacheEntry>();
+/** Detached checkouts created for base ci-select and not yet released (RAD-167-R1). */
+const baseWorktreesInUse = new Set<string>();
+const BASE_WT_DIR_PREFIX = "prgenie-base-wt-";
 
 function baseSelectCacheKey(gitRoot: string, baseSha: string): string {
   return `${path.resolve(gitRoot)}:${baseSha}`;
+}
+
+function markBaseWorktreeInUse(tempWt: string): void {
+  baseWorktreesInUse.add(path.resolve(tempWt));
+  baseWorktreesInUse.add(realPathOrResolve(tempWt));
+}
+
+function unmarkBaseWorktreeInUse(tempWt: string): void {
+  baseWorktreesInUse.delete(path.resolve(tempWt));
+  baseWorktreesInUse.delete(realPathOrResolve(tempWt));
+}
+
+function realPathOrResolve(filePath: string): string {
+  try {
+    // native expands Windows 8.3 names (`BRETTH~1` → `BrettHumphreys`).
+    return realpathSync.native(filePath);
+  } catch {
+    try {
+      return realpathSync(filePath);
+    } catch {
+      return path.resolve(filePath);
+    }
+  }
+}
+
+/** True for this process's temp base checkouts (`prgenie-base-wt-*` under tmpdir). */
+function isTempBaseWorktreePath(worktreePath: string): boolean {
+  if (!path.basename(worktreePath).startsWith(BASE_WT_DIR_PREFIX)) return false;
+  // tmpdir() may be an 8.3 path (`BRETTH~1`) while git lists the long path.
+  const rel = path.relative(realPathOrResolve(tmpdir()), realPathOrResolve(worktreePath));
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+function removeBaseWorktreeSync(gitRoot: string, tempWt: string): void {
+  unmarkBaseWorktreeInUse(tempWt);
+  worktreeSelectCache.delete(path.resolve(tempWt));
+  spawnSync("git", ["-C", gitRoot, "worktree", "remove", "--force", tempWt], {
+    windowsHide: true,
+  });
+  try {
+    rmSync(tempWt, { recursive: true, force: true });
+  } catch {
+    // directory may already be gone
+  }
+  spawnSync("git", ["-C", gitRoot, "worktree", "prune"], { windowsHide: true });
 }
 
 function dropBaseSelectCacheEntry(cacheKey: string): void {
   const entry = baseSelectCache.get(cacheKey);
   if (!entry) return;
   baseSelectCache.delete(cacheKey);
-  spawnSync("git", ["-C", entry.gitRoot, "worktree", "remove", "--force", entry.tempWt], {
+  removeBaseWorktreeSync(entry.gitRoot, entry.tempWt);
+}
+
+/**
+ * Drop stale temp base checkouts for this repo before adding another (RAD-167-R1).
+ * `git worktree prune` clears admin entries whose directories are already gone.
+ * Live `prgenie-base-wt-*` dirs under tmpdir that this process is not using are removed.
+ */
+function pruneOrphanBaseWorktrees(gitRoot: string): void {
+  const root = path.resolve(gitRoot);
+  spawnSync("git", ["-C", root, "worktree", "prune"], { windowsHide: true });
+  const listed = spawnSync("git", ["-C", root, "worktree", "list", "--porcelain"], {
+    encoding: "utf8",
     windowsHide: true,
   });
-  rm(entry.tempWt, { recursive: true, force: true }).catch(() => undefined);
+  if (listed.status !== 0 || !listed.stdout) return;
+  const rootReal = realPathOrResolve(gitRoot);
+  const cached = new Set(
+    [...baseSelectCache.values()]
+      .filter((entry) => realPathOrResolve(entry.gitRoot) === rootReal)
+      .flatMap((entry) => [path.resolve(entry.tempWt), realPathOrResolve(entry.tempWt)]),
+  );
+  const orphans: string[] = [];
+  for (const line of String(listed.stdout).split(/\r?\n/)) {
+    if (!line.startsWith("worktree ")) continue;
+    const wt = line.slice("worktree ".length).trim();
+    if (!isTempBaseWorktreePath(wt)) continue;
+    const resolved = realPathOrResolve(wt);
+    if (
+      cached.has(resolved) ||
+      cached.has(path.resolve(wt)) ||
+      baseWorktreesInUse.has(resolved) ||
+      baseWorktreesInUse.has(path.resolve(wt))
+    ) {
+      continue;
+    }
+    orphans.push(wt);
+  }
+  for (const wt of orphans) {
+    removeBaseWorktreeSync(root, wt);
+  }
 }
 
 /** Test helper — clear the worktree selector cache. */
@@ -270,6 +363,11 @@ export type LoadWorktreeSelectOptions = {
    * Throw (e.g. "The service is no longer running") to exercise CLI fallback.
    */
   tsImport?: (specifier: string, parent: string) => Promise<Record<string, unknown>>;
+  /**
+   * Skip in-process tsImport and eval via the tsx CLI. Used for the detached
+   * base checkout so the parent does not lock those files (RAD-167-R1).
+   */
+  cliOnly?: boolean;
 };
 
 /**
@@ -296,13 +394,13 @@ export async function loadWorktreeSelectCiChecks(
   const cached = worktreeSelectCache.get(cacheKey);
   if (cached && cached.mtimeMs === mtimeMs) return cached.select;
 
-  let tsImportFn = options.tsImport;
-  if (!tsImportFn) {
+  let tsImportFn = options.cliOnly ? undefined : options.tsImport;
+  if (!options.cliOnly && !tsImportFn) {
     const api = await loadTsxApi(worktreePath, options.primaryPath);
     if (api) tsImportFn = api.tsImport;
   }
 
-  if (tsImportFn) {
+  if (!options.cliOnly && tsImportFn) {
     try {
       const parent = pathToFileURL(path.join(worktreePath, "package.json")).href;
       const mod = await tsImportFn(pathToFileURL(modulePath).href, parent);
@@ -416,27 +514,33 @@ export async function loadBaseRefSelectCiChecks(
   const cached = baseSelectCache.get(cacheKey);
   if (cached) return cached.select;
 
-  const tempWt = mkdtempSync(path.join(tmpdir(), "prgenie-base-wt-"));
+  // RAD-167-R1: reap leaked prgenie-base-wt-* checkouts before adding another.
+  pruneOrphanBaseWorktrees(gitRoot);
+
+  const tempWt = mkdtempSync(path.join(tmpdir(), BASE_WT_DIR_PREFIX));
+  markBaseWorktreeInUse(tempWt);
   const add = spawnSync("git", ["-C", gitRoot, "worktree", "add", "--detach", tempWt, baseRef], {
     encoding: "utf8",
     windowsHide: true,
   });
   if (add.status !== 0) {
-    await rm(tempWt, { recursive: true, force: true }).catch(() => undefined);
+    removeBaseWorktreeSync(gitRoot, tempWt);
     return null;
   }
   const select = await loadWorktreeSelectCiChecks(tempWt, {
     primaryPath,
     ...worktreeLoadOptions,
+    // In-process import locks the checkout on Windows, so worktree remove fails.
+    // CLI eval reads ci-select.ts in a child and exits before we delete (167-R1).
+    // An injected throwing tsImport still exercises that fallback.
+    cliOnly: worktreeLoadOptions.tsImport ? false : true,
   });
   if (!select) {
-    spawnSync("git", ["-C", gitRoot, "worktree", "remove", "--force", tempWt], {
-      windowsHide: true,
-    });
-    await rm(tempWt, { recursive: true, force: true }).catch(() => undefined);
+    removeBaseWorktreeSync(gitRoot, tempWt);
     return null;
   }
-  // Keep the detached checkout until process exit — CLI fallback needs paths on disk (167-R1).
+  // Keep the checkout until the plan is computed so tsx CLI fallback can read
+  // ci-select.ts. resolveCiSelection releases it immediately after that call (167-R1).
   baseSelectCache.set(cacheKey, { select, tempWt, gitRoot });
   return select;
 }
@@ -540,6 +644,9 @@ export async function resolveCiSelection(
       if (baseCacheKey) dropBaseSelectCacheEntry(baseCacheKey);
       throw err;
     }
+    // RAD-167-R1: the plan is plain data. CLI fallback already read ci-select.ts
+    // during baseSelectFn, so the detached checkout is no longer needed.
+    if (baseCacheKey) dropBaseSelectCacheEntry(baseCacheKey);
   } else {
     gatePlan = installed;
     gateSource = "installed";

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -587,6 +589,82 @@ describe("ci-select-worktree (RAD-123)", () => {
     } finally {
       clearWorktreeCiSelectCache();
       await rm(wt, { recursive: true, force: true });
+    }
+  });
+
+  it("167-R1 removes the detached base worktree after the plan is computed", async () => {
+    clearWorktreeCiSelectCache();
+    const repo = await mkdtemp(path.join(tmpdir(), "prgenie-rad167-local-"));
+    const gitRun = (args: string[]) =>
+      spawnSync("git", ["-C", repo, ...args], { encoding: "utf8", windowsHide: true });
+    let orphan: string | null = null;
+    try {
+      const init = gitRun(["init", "-b", "main"]);
+      if (init.status !== 0) {
+        assert.equal(gitRun(["init"]).status, 0, init.stderr);
+        assert.equal(gitRun(["symbolic-ref", "HEAD", "refs/heads/main"]).status, 0);
+      }
+      await writeFakeWorktreeSelect(
+        repo,
+        `export function selectCiChecks(changedPaths) {
+  return {
+    checks: ["format:check"],
+    reason: ["temp base ci-select"],
+    mapping: [],
+    uncertain: false,
+    changedPaths,
+    packageScoped: false,
+    skipped: false,
+  };
+}
+`,
+      );
+      assert.equal(gitRun(["add", "."]).status, 0);
+      const commit = gitRun([
+        "-c",
+        "user.email=prgenie-test@example.com",
+        "-c",
+        "user.name=prgenie-test",
+        "commit",
+        "-m",
+        "base ci-select",
+      ]);
+      assert.equal(commit.status, 0, commit.stderr || commit.stdout);
+
+      orphan = mkdtempSync(path.join(tmpdir(), "prgenie-base-wt-"));
+      const orphanAdd = gitRun(["worktree", "add", "--detach", orphan, "HEAD"]);
+      assert.equal(orphanAdd.status, 0, orphanAdd.stderr);
+      assert.match(gitRun(["worktree", "list"]).stdout ?? "", /prgenie-base-wt/);
+
+      const result = await resolveCiSelection({
+        changedPaths: ["packages/core/src/git.ts"],
+        worktreePath: repo,
+        primaryPath: repoRoot(),
+        baseRef: "main",
+        installedSelect: () => scopedCoreSelect(["packages/core/src/git.ts"]),
+      });
+      assert.equal(result.source, "base");
+      const listed = gitRun(["worktree", "list"]);
+      assert.equal(listed.status, 0, listed.stderr);
+      assert.doesNotMatch(
+        listed.stdout ?? "",
+        /prgenie-base-wt/,
+        "base checkout must be gone after the plan is computed (RAD-167-R1)",
+      );
+    } finally {
+      clearWorktreeCiSelectCache();
+      const listed = gitRun(["worktree", "list", "--porcelain"]);
+      if (listed.status === 0 && listed.stdout) {
+        for (const line of listed.stdout.split(/\r?\n/)) {
+          if (!line.startsWith("worktree ")) continue;
+          const wt = line.slice("worktree ".length).trim();
+          if (path.basename(wt).startsWith("prgenie-base-wt-")) {
+            gitRun(["worktree", "remove", "--force", wt]);
+          }
+        }
+      }
+      if (orphan) await rm(orphan, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true });
     }
   });
 });
