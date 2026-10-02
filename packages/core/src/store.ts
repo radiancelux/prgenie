@@ -1,5 +1,11 @@
-import { mkdir, open, rename, unlink } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, stat, unlink } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import {
+  fileLockIsStale,
+  parseFileLockRecord,
+  type FileLockRecord,
+} from "./ci-abort.js";
 import { gitCommonDir } from "./git.js";
 
 export async function consoleDir(cwd: string): Promise<string> {
@@ -105,6 +111,58 @@ function isLockContention(err: unknown): boolean {
   return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EEXIST";
 }
 
+async function tryStealStaleFileLock(lock: string): Promise<boolean> {
+  let raw = "";
+  let mtimeMs = Date.now();
+  try {
+    raw = await readFile(lock, "utf8");
+    mtimeMs = (await stat(lock)).mtimeMs;
+  } catch {
+    return false;
+  }
+  const record = parseFileLockRecord(raw);
+  if (!fileLockIsStale(record, mtimeMs)) return false;
+  const holder = record
+    ? `pid=${record.pid} hostname=${record.hostname} acquiredAt=${record.acquiredAt}`
+    : "legacy (no metadata)";
+  console.error(`[prgenie] stole stale file lock ${lock} (${holder})`);
+  await unlink(lock).catch(() => undefined);
+  return true;
+}
+
+export function formatFileLockHolder(
+  record: FileLockRecord | null,
+  mtimeMs: number,
+): string {
+  if (!record) {
+    return `legacy empty lock (mtime ${new Date(mtimeMs).toISOString()})`;
+  }
+  return `pid=${record.pid} hostname=${record.hostname} acquiredAt=${record.acquiredAt}`;
+}
+
+/** Recursively list `*.lock` files under agent-console (172-R3). */
+export async function listAgentConsoleLockFiles(consoleDir: string): Promise<string[]> {
+  const out: string[] = [];
+  async function walk(dir: string): Promise<void> {
+    let entries: Awaited<ReturnType<typeof readdir>>;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(full);
+      } else if (entry.isFile() && entry.name.endsWith(".lock")) {
+        out.push(full);
+      }
+    }
+  }
+  await walk(consoleDir);
+  return out;
+}
+
 /** Cross-process lock so two reviewer chats cannot drop each other's comments. */
 export async function withFileLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
   const lock = `${file}.lock`;
@@ -114,9 +172,16 @@ export async function withFileLock<T>(file: string, fn: () => Promise<T>): Promi
     let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
       handle = await open(lock, "wx");
+      const record: FileLockRecord = {
+        pid: process.pid,
+        hostname: os.hostname(),
+        acquiredAt: new Date().toISOString(),
+      };
+      await handle.writeFile(`${JSON.stringify(record)}\n`, "utf8");
     } catch (err) {
       if (!isLockContention(err)) throw err;
       lastErr = err;
+      if (await tryStealStaleFileLock(lock)) continue;
       await delay(100);
       continue;
     }

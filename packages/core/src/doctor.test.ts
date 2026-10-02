@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
@@ -144,6 +145,30 @@ test("RAD-136: ci-failure-log lists the newest failure per loop", async () => {
   assert.ok(row?.ok);
   assert.match(row?.summary ?? "", /lp-11111111.*lint/);
   assert.match(row?.summary ?? "", /lp-22222222.*test/);
+});
+
+test("doctor reports stale file lock with holder and fix (172-R3)", async () => {
+  const repo = await initRepo("stale-lock");
+  const { gitCommonDir } = await import("./git.js");
+  const prs = path.join(await gitCommonDir(repo), "agent-console", "prs");
+  await mkdir(prs, { recursive: true });
+  const lockPath = path.join(prs, "lp-deadbeef.json.lock");
+  await writeFile(
+    lockPath,
+    `${JSON.stringify({
+      pid: 987_654_321,
+      hostname: os.hostname(),
+      acquiredAt: new Date().toISOString(),
+    })}\n`,
+  );
+  const report = await runDoctor(repo, { home: path.join(dir, "home-stale-lock") });
+  const row = report.checks.find((c) => c.id === "stale-file-locks");
+  assert.ok(row);
+  assert.equal(row.ok, false);
+  assert.match(row.summary, /lp-deadbeef\.json\.lock/);
+  assert.match(row.summary, /pid=987654321/);
+  assert.ok(row.fix?.includes("lp-deadbeef.json.lock"));
+  assert.match(formatDoctorReport(report), /stale-file-locks/);
 });
 
 test("doctor fails git-path when PRGENIE_GIT points at a missing binary", async () => {
