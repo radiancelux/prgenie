@@ -1,17 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat, unlink, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, unlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { STALE_LOCK_MS, fileLockIsStale } from "./ci-abort.js";
-import {
-  firstJsonObject,
-  parseJsonObject,
-  unlinkSocketIfSameInode,
-  withFileLock,
-  writeJsonFile,
-} from "./store.js";
+import { firstJsonObject, parseJsonObject, withFileLock, writeJsonFile } from "./store.js";
 
 const DEAD_PID = 987_654_321;
 
@@ -199,16 +193,16 @@ describe("store", { concurrency: 1 }, () => {
     assert.equal(secondRan, true);
   });
 
-  test("socket cleanup unlinks only the sampled inode", async () => {
-    const file = path.join(dir, "inode-guard.bin");
-    await writeFile(file, "first\n", "utf8");
-    const first = await stat(file, { bigint: true });
-    const removed = await unlinkSocketIfSameInode(file, { dev: first.dev, ino: first.ino });
-    assert.equal(removed, true);
-    await writeFile(file, "second\n", "utf8");
-    const kept = await unlinkSocketIfSameInode(file, { dev: first.dev, ino: first.ino });
-    assert.equal(kept, false);
-    assert.equal(await readFile(file, "utf8"), "second\n");
+  test("withFileLock releases the critical section when fn returns", async () => {
+    const file = path.join(dir, "section-release.json");
+    await writeFile(file, "{}\n", "utf8");
+    await withFileLock(file, async () => undefined);
+    const started = Date.now();
+    await withFileLock(file, async () => undefined);
+    assert.ok(
+      Date.now() - started < 5_000,
+      "second withFileLock waited on a critical section the first holder should have closed",
+    );
   });
 
   test("withFileLock steals legacy empty lock past max age (172-R2)", async () => {

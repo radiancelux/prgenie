@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { fstatSync } from "node:fs";
 import { mkdir, open, readFile, readdir, rename, stat, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server } from "node:net";
 import os from "node:os";
@@ -216,74 +215,27 @@ function sectionKey(lock: string): string {
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
-/** Named pipe (Windows) or unix socket. Busy until closed or the holder process exits. */
+/**
+ * Named pipe on Windows, abstract unix socket on Linux, pathname socket elsewhere.
+ * The name stays busy until the listening fd closes or the holder process exits.
+ * Linux abstract names are not directory entries, so release does not unlink a path
+ * (a pathname unlink can drop a successor, and Linux reuses inodes immediately).
+ */
 function criticalSectionEndpoint(lock: string): string {
   const hash = createHash("sha256").update(sectionKey(lock)).digest("hex").slice(0, 40);
   if (process.platform === "win32") return `\\\\.\\pipe\\prgenie-flock-${hash}`;
+  if (process.platform === "linux") return `\0prgenie-flock-${hash}`;
   return path.join(os.tmpdir(), `prgenie-flock-${hash}.sock`);
 }
 
-export type SocketIdentity = { dev: bigint; ino: bigint };
-
-const listeningSockets = new WeakMap<Server, SocketIdentity>();
-
-function serverFd(server: Server): number | null {
-  const fd = (server as unknown as { _handle?: { fd?: number } })._handle?.fd;
-  return typeof fd === "number" && fd >= 0 ? fd : null;
-}
-
-async function socketIdentity(name: string): Promise<SocketIdentity | null> {
-  try {
-    const st = await stat(name, { bigint: true });
-    return { dev: st.dev, ino: st.ino };
-  } catch {
-    return null;
-  }
-}
-
-function sameSocket(a: SocketIdentity, b: SocketIdentity): boolean {
-  return a.dev === b.dev && a.ino === b.ino;
-}
-
-/**
- * Drop `name` only when that directory entry is still this listening socket.
- * A path-only unlink can remove a successor that bound after we closed.
- */
-export async function unlinkSocketIfSameInode(
-  name: string,
-  identity: SocketIdentity,
-): Promise<boolean> {
-  const current = await socketIdentity(name);
-  if (!current || !sameSocket(current, identity)) return false;
-  try {
-    await unlink(name);
-  } catch {
-    return false;
-  }
-  return true;
-}
-
-/** True when the path still names the socket this server is listening on. */
-async function boundSocketIdentity(server: Server, name: string): Promise<SocketIdentity | null> {
-  const fd = serverFd(server);
-  if (fd === null) return null;
-  let held: SocketIdentity;
-  try {
-    const st = fstatSync(fd, { bigint: true });
-    held = { dev: st.dev, ino: st.ino };
-  } catch {
-    return null;
-  }
-  const entry = await socketIdentity(name);
-  if (!entry || !sameSocket(held, entry)) return null;
-  return held;
+/** Pathname sockets leave a file behind. Abstract names and Windows pipes do not. */
+function criticalSectionLeavesPath(name: string): boolean {
+  return process.platform !== "win32" && !name.startsWith("\0");
 }
 
 /**
  * Admission gate for one lock path. On Windows, renaming or unlinking a lock that is
  * still open succeeds, so the lock file cannot prove the incumbent left fn.
- * On POSIX the gate is a unix socket. Keep it only when the directory entry is still
- * that socket, and unlink only that inode on release.
  */
 function listenCriticalSection(name: string): Promise<Server | null> {
   return new Promise((resolve, reject) => {
@@ -308,25 +260,7 @@ function listenCriticalSection(name: string): Promise<Server | null> {
       }
       finish(null, err);
     });
-    server.listen(name, () => {
-      if (process.platform === "win32") {
-        finish(server);
-        return;
-      }
-      void boundSocketIdentity(server, name).then(
-        (identity) => {
-          if (!identity) {
-            server.close(() => finish(null));
-            return;
-          }
-          listeningSockets.set(server, identity);
-          finish(server);
-        },
-        (err: unknown) => {
-          server.close(() => finish(null, err));
-        },
-      );
-    });
+    server.listen(name, () => finish(server));
   });
 }
 
@@ -350,24 +284,17 @@ function endpointHeld(name: string): Promise<boolean> {
 async function tryAcquireCriticalSection(lock: string): Promise<Server | null> {
   const name = criticalSectionEndpoint(lock);
   const first = await listenCriticalSection(name);
-  if (first || process.platform === "win32") return first;
-  const stale = await socketIdentity(name);
-  if (!stale) return listenCriticalSection(name);
+  if (first || !criticalSectionLeavesPath(name)) return first;
+  // Stale pathname socket: the file outlived the listener. A live listener answers connect.
   if (await endpointHeld(name)) return null;
-  const still = await socketIdentity(name);
-  if (!still || !sameSocket(still, stale)) return null;
-  await unlinkSocketIfSameInode(name, stale);
-  if (await socketIdentity(name)) return null;
+  await unlink(name).catch(() => undefined);
   return listenCriticalSection(name);
 }
 
-async function releaseCriticalSection(server: Server, lock: string): Promise<void> {
-  const identity = listeningSockets.get(server) ?? null;
-  listeningSockets.delete(server);
+async function releaseCriticalSection(server: Server): Promise<void> {
   await new Promise<void>((resolve) => {
     server.close(() => resolve());
   });
-  if (identity) await unlinkSocketIfSameInode(criticalSectionEndpoint(lock), identity);
 }
 
 async function lockPresence(lock: string): Promise<{ present: boolean; stale: boolean }> {
@@ -427,7 +354,7 @@ async function runFileLockAttempt<T>(file: string, fn: () => Promise<T>): Promis
       await releaseFileLockIfOurs(lock, myRecord);
     }
   } finally {
-    await releaseCriticalSection(section, lock);
+    await releaseCriticalSection(section);
   }
 }
 
