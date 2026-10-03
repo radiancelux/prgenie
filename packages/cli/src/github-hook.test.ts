@@ -179,7 +179,8 @@ test("RAD-164 R4: before-mcp log keeps only keys and server identifiers", () => 
   assert.equal(payload.normalizedToolName, "get_local_pr");
   assert.equal(payload.mcp_server_name, "PR Genie");
   assert.equal(payload.providerIdentifier, "prgenie");
-  assert.deepEqual(payload.topLevelKeys.sort(), [
+  const topLevelKeys = payload.topLevelKeys as string[];
+  assert.deepEqual([...topLevelKeys].sort(), [
     "command",
     "conversation_id",
     "cwd",
