@@ -152,21 +152,94 @@ export function mcpToolName(input: HookInput): string {
   return normalizeBareMcpToolName(input);
 }
 
-/** Read-only PR Genie MCP tools agents may call without confirmation (RAD-164 R2). */
-export const PRGENIE_MCP_READ_ONLY_TOOLS = new Set([
+/** PR Genie MCP tools agents may call without confirmation (RAD-164 R2 allowlist). */
+export const PRGENIE_MCP_AGENT_TOOLS = new Set([
   "list_sessions",
   "learning_digest",
   "list_worktrees",
+  "ensure_worktree",
   "list_local_prs",
+  "create_local_pr",
+  "attach_local_pr",
+  "update_local_pr",
   "get_local_pr",
+  "address_comment",
+  "resolve_comment",
+  "edit_comment",
+  "delete_comment",
+  "complete_review",
   "get_diff",
+  "reopen_local_pr",
+  "watch_status",
+  "watch_stop",
+  "watch_start",
+  "claim_review",
   "gh_list",
   "gh_status",
   "list_learnings",
   "get_learning",
+  "disable_learning",
+  "enable_learning",
+  "run_preflight",
+  "mark_review_interrupted",
+  "resume_review",
+  "reconcile_session",
+  "run_ci",
+  "abort_ci",
   "shepherd_status",
-  "watch_status",
+  "bind_steward",
+  "steward_next",
 ]);
+
+/** Destructive MCP tools that always require confirmation (RAD-164 R2). */
+export const PRGENIE_MCP_ALWAYS_ASK_TOOLS = new Set(["delete_local_pr", "delete_learning"]);
+
+/** Gated names; without server/command/url these still run through the PR Genie gate (RAD-164 R4). */
+export const PRGENIE_MCP_GATED_TOOL_NAMES = new Set([
+  "export_local_pr",
+  "record_export_gate_override",
+  "gh_use",
+  "set_status",
+  "add_comment",
+]);
+
+const MCP_IDENTITY_FIELD_KEYS = [
+  "mcp_server_name",
+  "server_name",
+  "serverIdentifier",
+  "server_identifier",
+  "mcp_server_identifier",
+  "providerIdentifier",
+  "provider_identifier",
+  "command",
+  "url",
+  "mcp_url",
+] as const;
+
+const MCP_LOG_SERVER_PROVIDER_KEYS = [
+  "mcp_server_name",
+  "server_name",
+  "serverIdentifier",
+  "server_identifier",
+  "mcp_server_identifier",
+  "providerIdentifier",
+  "provider_identifier",
+] as const;
+
+export function hasMcpIdentityFields(input: HookInput): boolean {
+  for (const key of MCP_IDENTITY_FIELD_KEYS) {
+    const v = input[key];
+    if (typeof v === "string" && v.trim()) return true;
+  }
+  return false;
+}
+
+/** True when beforeMCPExecution should apply PR Genie MCP gating (RAD-164). */
+export function shouldApplyPrgenieMcpGate(input: HookInput, toolName: string): boolean {
+  if (isPrgenieMcpContext(input)) return true;
+  if (!hasMcpIdentityFields(input) && PRGENIE_MCP_GATED_TOOL_NAMES.has(toolName)) return true;
+  return false;
+}
 
 export type McpGateDecision = "allow" | "ask" | "invalid";
 
@@ -206,8 +279,11 @@ export function mcpHumanConfirmationGate(
       }
       return "ask";
     }
+    case "delete_local_pr":
+    case "delete_learning":
+      return "ask";
     default:
-      if (PRGENIE_MCP_READ_ONLY_TOOLS.has(toolName)) return "allow";
+      if (PRGENIE_MCP_AGENT_TOOLS.has(toolName)) return "allow";
       return "ask";
   }
 }
@@ -225,16 +301,15 @@ export function mcpAskPayload(toolName: string): {
 }
 
 export function sanitizeBeforeMcpLogPayload(input: HookInput): Record<string, unknown> {
-  const out: Record<string, unknown> = { topLevelKeys: Object.keys(input) };
-  for (const [key, value] of Object.entries(input)) {
-    if (key === "tool_input" || key === "toolInput") {
-      if (value !== undefined) out[key] = "[redacted]";
-      continue;
-    }
-    out[key] = value;
+  const out: Record<string, unknown> = {
+    topLevelKeys: Object.keys(input),
+    rawToolName: rawMcpToolName(input),
+    normalizedToolName: normalizeBareMcpToolName(input),
+  };
+  for (const key of MCP_LOG_SERVER_PROVIDER_KEYS) {
+    const v = input[key];
+    if (typeof v === "string" && v.trim()) out[key] = v.trim();
   }
-  out.normalizedToolName = normalizeBareMcpToolName(input);
-  out.rawToolName = rawMcpToolName(input);
   return out;
 }
 
@@ -243,20 +318,17 @@ export async function appendBeforeMcpExecutionLog(cwd: string, input: HookInput)
   if (!root) return;
   const dir = await consoleDir(root);
   const file = path.join(dir, "before-mcp-execution.jsonl");
-  const line = JSON.stringify({
-    at: new Date().toISOString(),
-    ...sanitizeBeforeMcpLogPayload(input),
-  });
+  const line = JSON.stringify(sanitizeBeforeMcpLogPayload(input));
   await appendFile(file, `${line}\n`, "utf8");
 }
 
 export function decideBeforeMcpExecution(input: HookInput): { permission: HookPermission } | null {
   const rawName = rawMcpToolName(input);
   if (!rawName) return null;
-  if (!isPrgenieMcpContext(input)) {
+  const toolName = normalizeBareMcpToolName(input);
+  if (!shouldApplyPrgenieMcpGate(input, toolName)) {
     return { permission: "allow" };
   }
-  const toolName = normalizeBareMcpToolName(input);
   const parsed = parseToolInput(input.tool_input ?? input.toolInput);
   const gate = mcpHumanConfirmationGate(toolName, parsed);
   if (gate === "invalid") return mcpAskPayload(toolName);
