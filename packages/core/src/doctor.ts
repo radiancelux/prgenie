@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -29,6 +29,9 @@ import {
 } from "./plugin-mcp.js";
 import { dirtyPluginDoctorFix, listDirtyPluginBuildArtifacts } from "./plugin-dirt.js";
 import { inspectPluginBundles } from "./plugin-bundles.js";
+import { fileLockIsStale, parseFileLockRecord } from "./ci-abort.js";
+import { gitCommonDir } from "./git.js";
+import { formatFileLockHolder, listAgentConsoleLockFiles } from "./store.js";
 
 export interface DoctorCheck {
   id: string;
@@ -310,6 +313,38 @@ export async function runDoctor(cwd: string, options?: { home?: string }): Promi
     id: "watch",
     ok: true,
     summary: formatWatchStatus(watch).trim().replace(/\n/g, "; "),
+  });
+
+  const agentConsole = path.join(await gitCommonDir(root), "agent-console");
+  const lockPaths = existsSync(agentConsole) ? await listAgentConsoleLockFiles(agentConsole) : [];
+  const staleLocks: { path: string; holder: string }[] = [];
+  for (const lockPath of lockPaths) {
+    let raw: string;
+    let mtimeMs: number;
+    try {
+      raw = await readFile(lockPath, "utf8");
+      mtimeMs = (await stat(lockPath)).mtimeMs;
+    } catch {
+      continue;
+    }
+    const record = parseFileLockRecord(raw);
+    if (fileLockIsStale(record, mtimeMs)) {
+      staleLocks.push({ path: lockPath, holder: formatFileLockHolder(record, mtimeMs) });
+    }
+  }
+  checks.push({
+    id: "stale-file-locks",
+    ok: staleLocks.length === 0,
+    summary:
+      staleLocks.length === 0
+        ? "No stale agent-console file locks."
+        : `${staleLocks.length} stale file lock(s): ${staleLocks
+            .map((s) => `${path.basename(s.path)} (${s.holder})`)
+            .join("; ")}`,
+    fix:
+      staleLocks.length === 0
+        ? undefined
+        : `Delete stale locks if no PR Genie process holds them: ${staleLocks.map((s) => s.path).join("; ")}`,
   });
 
   const corrupt = await listCorruptLocalPrFiles(root);
