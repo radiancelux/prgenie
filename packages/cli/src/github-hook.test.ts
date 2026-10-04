@@ -9,8 +9,31 @@ import {
   isPrgenieMcpContext,
   isPublish,
   mcpHumanConfirmationGate,
+  normalizeBareMcpToolName,
+  PRGENIE_MCP_AGENT_TOOLS,
+  PRGENIE_MCP_ALWAYS_ASK_TOOLS,
+  PRGENIE_MCP_GATED_TOOL_NAMES,
+  sanitizeBeforeMcpLogPayload,
   switchUser,
 } from "./github-hook.js";
+import { tools as mcpRegisteredTools } from "./mcp.js";
+
+/** Alternate transcript shape (prefixed tool_name); kept for regression. */
+const TRANSCRIPT_SHAPED_FIXTURE = {
+  tool_name: "plugin-prgenie-prgenie-export_local_pr",
+  serverIdentifier: "plugin-prgenie-prgenie",
+  providerIdentifier: "prgenie",
+  toolName: "export_local_pr",
+  tool_input: { id: "lp-deadbeef" },
+} as const;
+
+/** cursor-agent-exec Je.execute beforeMCPExecution stdin (display server name, bare tool). */
+const CURSOR_JE_EXECUTE_FIXTURE = {
+  mcp_server_name: "PR Genie",
+  tool_name: "export_local_pr",
+  tool_input: JSON.stringify({ id: "lp-deadbeef" }),
+  command: "node C:\\Users\\foo\\.cursor\\plugins\\local\\prgenie\\mcp\\server.cjs",
+} as const;
 
 const gateCjs = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -114,13 +137,129 @@ test("RAD-164: mcpHumanConfirmationGate asks for human-only MCP tools", () => {
   assert.equal(mcpHumanConfirmationGate("add_comment", { role: "reviewer" }), "allow");
   assert.equal(mcpHumanConfirmationGate("get_local_pr", { id: "lp-deadbeef" }), "allow");
   assert.equal(mcpHumanConfirmationGate("set_status", null), "invalid");
+  assert.equal(mcpHumanConfirmationGate("steward_next", { id: "lp-deadbeef" }), "allow");
+  assert.equal(mcpHumanConfirmationGate("delete_local_pr", { id: "lp-deadbeef" }), "ask");
+  assert.equal(mcpHumanConfirmationGate("delete_learning", { id: "learn-1" }), "ask");
+  assert.equal(mcpHumanConfirmationGate("create_local_pr", { title: "t" }), "allow");
+  assert.equal(mcpHumanConfirmationGate("unknown_prgenie_tool", {}), "ask");
+});
+
+test("RAD-164 R2: every MCP tool is allowlisted, gated, or always-ask", () => {
+  const known = new Set<string>([
+    ...PRGENIE_MCP_AGENT_TOOLS,
+    ...PRGENIE_MCP_ALWAYS_ASK_TOOLS,
+    ...PRGENIE_MCP_GATED_TOOL_NAMES,
+  ]);
+  for (const { name } of mcpRegisteredTools) {
+    assert.ok(known.has(name), `mcp tool ${name} must be classified in github-hook`);
+  }
+  assert.equal(known.size, mcpRegisteredTools.length);
+});
+
+test("RAD-164 R4: before-mcp log keeps only keys and server identifiers", () => {
+  const payload = sanitizeBeforeMcpLogPayload({
+    tool_name: "get_local_pr",
+    mcp_server_name: "PR Genie",
+    providerIdentifier: "prgenie",
+    tool_input: { id: "lp-x", secret: true },
+    command: "node server.cjs",
+    cwd: "C:\\repo",
+    workspace_roots: ["C:\\repo"],
+    user_email: "agent@example.com",
+    conversation_id: "conv-1",
+  });
+  assert.deepEqual(Object.keys(payload).sort(), [
+    "mcp_server_name",
+    "normalizedToolName",
+    "providerIdentifier",
+    "rawToolName",
+    "topLevelKeys",
+  ]);
+  assert.equal(payload.rawToolName, "get_local_pr");
+  assert.equal(payload.normalizedToolName, "get_local_pr");
+  assert.equal(payload.mcp_server_name, "PR Genie");
+  assert.equal(payload.providerIdentifier, "prgenie");
+  const topLevelKeys = payload.topLevelKeys as string[];
+  assert.deepEqual([...topLevelKeys].sort(), [
+    "command",
+    "conversation_id",
+    "cwd",
+    "mcp_server_name",
+    "providerIdentifier",
+    "tool_input",
+    "tool_name",
+    "user_email",
+    "workspace_roots",
+  ]);
+});
+
+test("RAD-164: normalizeBareMcpToolName strips plugin server prefixes", () => {
+  assert.equal(
+    normalizeBareMcpToolName({
+      tool_name: "plugin-prgenie-prgenie-export_local_pr",
+      serverIdentifier: "plugin-prgenie-prgenie",
+      toolName: "export_local_pr",
+    }),
+    "export_local_pr",
+  );
 });
 
 test("RAD-164: isPrgenieMcpContext matches prgenie server names only", () => {
   assert.equal(isPrgenieMcpContext({ mcp_server_name: "plugin-prgenie-prgenie" }), true);
   assert.equal(isPrgenieMcpContext({ mcp_server_name: "user-figma" }), false);
   assert.equal(isPrgenieMcpContext({ command: "node packages/plugin/mcp/server.cjs" }), true);
-  assert.equal(isPrgenieMcpContext({ tool_name: "export_local_pr" }), true);
+  assert.equal(isPrgenieMcpContext({ tool_name: "export_local_pr" }), false);
+  assert.equal(isPrgenieMcpContext({ tool_name: "plugin-prgenie-prgenie-export_local_pr" }), true);
+  assert.equal(isPrgenieMcpContext({ providerIdentifier: "prgenie" }), true);
+  assert.equal(
+    isPrgenieMcpContext({
+      mcp_server_name: "PR Genie",
+      tool_name: "export_local_pr",
+      command: "node C:/Users/foo/.cursor/plugins/local/prgenie/mcp/server.cjs",
+    }),
+    true,
+  );
+});
+
+test("RAD-164 follow-up: Cursor Je.execute stdin export_local_pr asks", () => {
+  const parsed = runGate({ ...CURSOR_JE_EXECUTE_FIXTURE });
+  assert.equal(parsed.permission, "ask");
+  assert.match(String(parsed.agent_message ?? ""), /Human-only MCP/i);
+});
+
+test("RAD-164 follow-up: transcript-shaped prefixed export_local_pr asks", () => {
+  const parsed = runGate({ ...TRANSCRIPT_SHAPED_FIXTURE });
+  assert.equal(parsed.permission, "ask");
+  assert.match(String(parsed.agent_message ?? ""), /Human-only MCP/i);
+});
+
+test("RAD-164 R4: gated tool with no server/command/url asks (not allow)", () => {
+  const parsed = runGate({
+    tool_name: "export_local_pr",
+    tool_input: { id: "lp-deadbeef" },
+  });
+  assert.equal(parsed.permission, "ask");
+  assert.match(String(parsed.agent_message ?? ""), /Human-only MCP/i);
+});
+
+test("RAD-164 follow-up: colliding add_comment on another server stays allow", () => {
+  assert.equal(
+    runGate({
+      mcp_server_name: "user-linear-linear",
+      tool_name: "add_comment",
+      tool_input: { id: "issue-1", body: "hi" },
+    }).permission,
+    "allow",
+  );
+});
+
+test("RAD-164 follow-up: unrecognized PR Genie MCP tool asks", () => {
+  const parsed = runGate({
+    mcp_server_name: "plugin-prgenie-prgenie",
+    tool_name: "plugin-prgenie-prgenie-totally_unknown_tool",
+    tool_input: {},
+  });
+  assert.equal(parsed.permission, "ask");
 });
 
 test("RAD-164: built github-gate.cjs asks for gated MCP tools on PR Genie", () => {

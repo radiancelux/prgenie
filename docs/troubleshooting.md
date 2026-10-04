@@ -39,9 +39,10 @@ FAIL  plugin-stale — Installed MCP server (…) differs from repo build (…).
 
 1. From the monorepo: `pnpm build` then `pnpm link-plugin`.
 2. In **Customize → Plugins**, turn PR Genie **off and on** (Developer: Reload Window is not enough for the MCP tool list).
-3. **Canonical MCP is the plugin** (`prgenie` after `pnpm link-plugin`). This repo does **not** ship `.cursor/mcp.json`. Enable **only that one** entry.
-4. `link-plugin` pins MCP `server.cjs` + `node.exe` in the copied plugin folder (UTF-8, no BOM; `cmd /c` when the node path has spaces).
-5. **Windows folder lock:** If `Remove-Item` fails because another process still holds `~\.cursor\plugins\local\prgenie` (often MCP `node … server.cjs`), `link-plugin` stops matching node/cmd processes (not all `node.exe`), retries, then renames the folder to `prgenie.old-<timestamp>` and installs into a fresh `prgenie`. Delete old folders later after a full Cursor quit. Optional (aggressive): `powershell -ExecutionPolicy Bypass -File scripts/link-plugin.ps1 -ForceQuitCursor`.
+3. **Fully quit and restart Cursor** after relink so shell/MCP hooks (`github-gate.cjs`) reload; reload window alone can leave an old hook answering `beforeMCPExecution`.
+4. **Canonical MCP is the plugin** (`prgenie` after `pnpm link-plugin`). This repo does **not** ship `.cursor/mcp.json`. Enable **only that one** entry.
+5. `link-plugin` pins MCP `server.cjs` + `node.exe` in the copied plugin folder (UTF-8, no BOM; `cmd /c` when the node path has spaces).
+6. **Windows folder lock:** If `Remove-Item` fails because another process still holds `~\.cursor\plugins\local\prgenie` (often MCP `node … server.cjs`), `link-plugin` stops matching node/cmd processes (not all `node.exe`), retries, then renames the folder to `prgenie.old-<timestamp>` and installs into a fresh `prgenie`. Delete old folders later after a full Cursor quit. Optional (aggressive): `powershell -ExecutionPolicy Bypass -File scripts/link-plugin.ps1 -ForceQuitCursor`.
 
 ## MCP "not inside a git repository" (Windows / plugin cwd)
 

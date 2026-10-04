@@ -121,7 +121,7 @@ MCP server name: `prgenie` (tools such as `list_local_prs`, `create_local_pr`, `
 
 Hooks registered in `hooks.json`:
 
-- `github-gate.cjs` — push / `gh pr create` gate + bound-account switch
+- `github-gate.cjs` — push / `gh pr create` gate + bound-account switch; `beforeMCPExecution` applies an explicit PR Genie MCP allowlist (unknown tool names ask; `delete_local_pr` / `delete_learning` always ask; export/bind/status/comment gates unchanged). Logs to `.git/agent-console/before-mcp-execution.jsonl` record only payload key names, normalized/raw tool name, and server/provider identifiers.
 - `review-inbox.cjs` — inject pending comments into implementor sessions (no listen ticks; no stop-hook reviewer spawn)
 - `capture-subagent.cjs` — subagentStop capture into local PRs (**off by default**; set `PRGENIE_CAPTURE_SUBAGENT=1` to enable)
 - `session-log.mjs` — session log helper used by hooks
