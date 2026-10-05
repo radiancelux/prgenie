@@ -16,6 +16,8 @@ import {
   completeLocalPrReview,
   deleteLocalPr,
   deleteLocalPrComment,
+  findMatchingLocalPrs,
+  resolveLocalPrFromList,
   archiveLocalPr,
   clearArchivedLocalPrs,
   clearArchivedDiskFailure,
@@ -1486,5 +1488,97 @@ test("readyCi record lists per-check results (162-R4)", async () => {
   assert.deepEqual(
     loaded.readyCi?.checkResults?.map((row) => row.name),
     ["lint", "typecheck"],
+  );
+});
+
+async function writeStubLocalPr(
+  root: string,
+  partial: Partial<LocalPr> & Pick<LocalPr, "id">,
+): Promise<LocalPr> {
+  const now = new Date().toISOString();
+  const baseSha = git(["rev-parse", "main"], root);
+  const headSha = git(["rev-parse", "HEAD"], root);
+  const pr: LocalPr = {
+    id: partial.id,
+    title: partial.title ?? "stub",
+    body: "",
+    status: partial.status ?? "draft",
+    headRef: partial.headRef ?? "feat/stub",
+    baseRef: "main",
+    headSha: partial.headSha ?? headSha,
+    baseSha: partial.baseSha ?? baseSha,
+    worktreePath: null,
+    comments: [],
+    source: { kind: "cli" },
+    createdAt: now,
+    updatedAt: now,
+    reviewRequestedSha: null,
+    reviewerNotifiedSha: null,
+    readyCi: null,
+    ...partial,
+  };
+  const dir = await prsDir(root);
+  await writeJsonFile(prFile(dir, pr.id), pr);
+  return pr;
+}
+
+test("RAD-168: ambiguous loop id prefix lists matches", async () => {
+  await writeStubLocalPr(repo, { id: "lp-aaa11111", title: "A" });
+  await writeStubLocalPr(repo, { id: "lp-aaa22222", title: "B" });
+  await assert.rejects(
+    () => getLocalPr(repo, "lp-aaa"),
+    /Ambiguous loop id lp-aaa: matches lp-aaa11111, lp-aaa22222/,
+  );
+  const matches = findMatchingLocalPrs(await listLocalPrs(repo), "lp-aaa");
+  assert.equal(matches.length, 2);
+});
+
+test("RAD-168: short prefix refused for delete", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, { title: "Short prefix delete", base: "main" });
+  await setLocalPrStatus(repo, pr.id, "approved");
+  const short = pr.id.slice(0, 6);
+  assert.notEqual(short, pr.id);
+  await assert.rejects(
+    () => deleteLocalPr(repo, short),
+    /too short for delete, archive, or export/,
+  );
+  await assert.rejects(
+    () => archiveLocalPr(repo, short),
+    /too short for delete, archive, or export/,
+  );
+  const deleted = await deleteLocalPr(repo, pr.id);
+  assert.equal(deleted.id, pr.id);
+});
+
+test("RAD-168: resolveLocalPrFromList exact id and unique long prefix", () => {
+  const prs: LocalPr[] = [
+    {
+      id: "lp-deadbeef",
+      title: "x",
+      body: "",
+      status: "draft",
+      headRef: "feat/x",
+      baseRef: "main",
+      headSha: "a".repeat(40),
+      baseSha: "b".repeat(40),
+      worktreePath: null,
+      comments: [],
+      source: { kind: "cli" },
+      createdAt: "t",
+      updatedAt: "t",
+      reviewRequestedSha: null,
+      reviewerNotifiedSha: null,
+      readyCi: null,
+    },
+  ];
+  assert.equal(resolveLocalPrFromList(prs, "lp-deadbeef").id, "lp-deadbeef");
+  assert.equal(resolveLocalPrFromList(prs, "lp-deadb").id, "lp-deadbeef");
+  assert.throws(() => resolveLocalPrFromList(prs, "lp-dead", { destructive: true }), /too short/);
+  assert.equal(resolveLocalPrFromList(prs, "lp-deadbeef", { destructive: true }).id, "lp-deadbeef");
+  const withLonger = [...prs, { ...prs[0], id: "lp-deadbeef01" }];
+  assert.equal(
+    resolveLocalPrFromList(withLonger, "lp-deadbeef", { destructive: true }).id,
+    "lp-deadbeef",
   );
 });

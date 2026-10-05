@@ -201,7 +201,7 @@ export async function exportLocalPr(
   }
 
   const validation = await validateExport(cwd, id, options);
-  const prForGate = await getLocalPr(cwd, id);
+  const prForGate = await getLocalPr(cwd, id, { destructive: true });
   const gateSnap = exportGateForHead(prForGate);
   const exportGateStatus = gateSnap?.status ?? "unknown";
   onProgress?.({
@@ -219,7 +219,7 @@ export async function exportLocalPr(
   }
 
   throwIfAborted(signal);
-  const pr = await getLocalPr(cwd, id);
+  const pr = await getLocalPr(cwd, id, { destructive: true });
   const ghState = await ensureRepoGithub(cwd);
   if (!ghState.bound && !ghState.login) {
     throw new Error("No GitHub account. Run: gh auth login, then prgenie gh use <login>");
