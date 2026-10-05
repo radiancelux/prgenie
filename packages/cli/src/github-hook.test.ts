@@ -16,6 +16,11 @@ import {
   sanitizeBeforeMcpLogPayload,
   switchUser,
 } from "./github-hook.js";
+import {
+  forcePushTargetsDefaultBranch,
+  ghApiRepoLifecycleMutation,
+  loopAgentShellDenialReason,
+} from "./loop-github-gate.js";
 import { tools as mcpRegisteredTools } from "./mcp.js";
 
 /** Alternate transcript shape (prefixed tool_name); kept for regression. */
@@ -337,4 +342,54 @@ test("RAD-164: built github-gate.cjs asks when MCP tool_input JSON is invalid", 
     tool_input: "{not-json",
   });
   assert.equal(parsed.permission, "ask");
+});
+
+test("RAD-163: loop agent gh repo create / delete / api POST /user/repos are denied", () => {
+  const loopCwd = process.cwd();
+  for (const command of [
+    "gh repo create scratch --private",
+    "gh repo delete foo/bar --yes",
+    "gh api -X POST user/repos -f name=scratch",
+    "gh auth login",
+    "gh secret set FOO",
+  ]) {
+    assert.ok(loopAgentShellDenialReason(command), command);
+    const parsed = runGate({ command, cwd: loopCwd, subagent_type: "prgenie-implementor" });
+    assert.equal(parsed.permission, "deny", command);
+    assert.match(String(parsed.agent_message ?? ""), /loop agents|blocked/i);
+  }
+  assert.equal(ghApiRepoLifecycleMutation("gh api -X POST user/repos -f name=x"), true);
+  assert.equal(ghApiRepoLifecycleMutation("gh api repos/o/r/pulls"), false);
+});
+
+test("RAD-163: gh pr create and gh pr view still allowed from a loop", () => {
+  const loopCwd = process.cwd();
+  for (const command of ["gh pr view 1", "gh auth status", "git status"]) {
+    const parsed = runGate({ command, cwd: loopCwd, subagent_type: "prgenie-reviewer" });
+    assert.equal(parsed.permission, "allow", command);
+  }
+  const prCreate = runGate({
+    command: "gh pr create --title t",
+    cwd: loopCwd,
+    subagent_type: "prgenie-implementor",
+  });
+  assert.equal(prCreate.permission, "ask");
+});
+
+test("RAD-163: force-push to default branch is denied from a loop", () => {
+  const loopCwd = process.cwd();
+  assert.equal(forcePushTargetsDefaultBranch("git push --force origin main", "main"), true);
+  const parsed = runGate({
+    command: "git push --force origin main",
+    cwd: loopCwd,
+    subagent_type: "prgenie-implementor",
+  });
+  assert.equal(parsed.permission, "deny");
+  assert.match(String(parsed.agent_message ?? ""), /force-push|default branch/i);
+  const featureForce = runGate({
+    command: "git push --force origin feat/widget",
+    cwd: loopCwd,
+    subagent_type: "prgenie-implementor",
+  });
+  assert.equal(featureForce.permission, "allow");
 });

@@ -10,7 +10,8 @@ import {
   requireGitRoot,
   resolveGitBinary,
 } from "./git.js";
-import { getRepoGithubBind, listGhAccounts } from "./github-ops.js";
+import { ghTokenScopesTooBroadForLoops, parseActiveGhTokenScopes } from "./github.js";
+import { getRepoGithubBind, ghAuthStatusText, listGhAccounts } from "./github-ops.js";
 import { isArchivedPr, listCorruptLocalPrFiles, listLocalPrs } from "./prs.js";
 import { formatWatchStatus, getRepoWatch } from "./watch.js";
 import {
@@ -57,7 +58,32 @@ async function hashFile(file: string): Promise<string | null> {
   }
 }
 
-export async function runDoctor(cwd: string, options?: { home?: string }): Promise<DoctorReport> {
+export function assessGhLoopTokenScopes(statusText: string): DoctorCheck {
+  const scopes = parseActiveGhTokenScopes(statusText);
+  if (scopes.length === 0) {
+    return {
+      id: "gh-token-scopes",
+      ok: true,
+      summary: "Active gh token scopes not listed (fine-grained token or no gh session).",
+    };
+  }
+  const broad = ghTokenScopesTooBroadForLoops(scopes);
+  return {
+    id: "gh-token-scopes",
+    ok: !broad,
+    summary: broad
+      ? `Active gh token has broad scopes for loops (${scopes.join(", ")}). Use a fine-grained GH_TOKEN for loop sessions.`
+      : `Active gh token scopes look loop-safe (${scopes.join(", ")}).`,
+    fix: broad
+      ? "See docs/github-access.md — export a repo-scoped fine-grained token as GH_TOKEN for loop agents."
+      : undefined,
+  };
+}
+
+export async function runDoctor(
+  cwd: string,
+  options?: { home?: string; ghAuthStatusText?: string },
+): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
 
   const gitBinary = resolveGitBinary();
@@ -432,6 +458,18 @@ export async function runDoctor(cwd: string, options?: { home?: string }): Promi
       id: "gh-bind",
       ok: true,
       summary: `Bound to ${bind.login} on ${bind.host}.`,
+    });
+  }
+
+  if (options?.ghAuthStatusText !== undefined) {
+    checks.push(assessGhLoopTokenScopes(options.ghAuthStatusText));
+  } else if (accounts.length > 0) {
+    checks.push(assessGhLoopTokenScopes(await ghAuthStatusText()));
+  } else {
+    checks.push({
+      id: "gh-token-scopes",
+      ok: true,
+      summary: "Skipped gh token scope check (no gh accounts).",
     });
   }
 

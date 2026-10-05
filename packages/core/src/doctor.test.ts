@@ -5,7 +5,7 @@ import os from "node:os";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
-import { formatDoctorReport, runDoctor } from "./doctor.js";
+import { assessGhLoopTokenScopes, formatDoctorReport, runDoctor } from "./doctor.js";
 import { PRGENIE_GIT_ENV, clearGitBinaryCache } from "./git.js";
 
 let dir = "";
@@ -169,6 +169,29 @@ test("doctor reports stale file lock with holder and fix (172-R3)", async () => 
   assert.match(row.summary, /pid=987654321/);
   assert.ok(row.fix?.includes("lp-deadbeef.json.lock"));
   assert.match(formatDoctorReport(report), /stale-file-locks/);
+});
+
+test("RAD-163: warns on broad gh token scopes", async () => {
+  const stub = `
+github.com
+  ✓ Logged in to github.com account radiancelux (keyring)
+  - Active account: true
+  - Token scopes: 'repo', 'workflow'
+`;
+  const check = assessGhLoopTokenScopes(stub);
+  assert.equal(check.id, "gh-token-scopes");
+  assert.equal(check.ok, false);
+  assert.match(check.summary, /broad scopes/i);
+  assert.match(check.fix ?? "", /github-access\.md/);
+
+  const repo = await initRepo("gh-scopes-warn");
+  const report = await runDoctor(repo, {
+    home: path.join(dir, "home-gh-scopes"),
+    ghAuthStatusText: stub,
+  });
+  const row = report.checks.find((c) => c.id === "gh-token-scopes");
+  assert.ok(row);
+  assert.equal(row.ok, false);
 });
 
 test("doctor fails git-path when PRGENIE_GIT points at a missing binary", async () => {

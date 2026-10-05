@@ -1,8 +1,22 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseGhAuthStatus } from "./github.js";
+import { parseActiveGhTokenScopes, parseGhAuthStatus } from "./github.js";
 import { githubPrViewArgs } from "./export.js";
 import { quoteGhArgsForSpawn, quoteWindowsShellArg } from "./github-ops.js";
+
+test("parseActiveGhTokenScopes reads scopes for the active account only", () => {
+  const text = `
+github.com
+  ✓ Logged in to github.com account quiet (keyring)
+  - Active account: false
+  - Token scopes: 'read:org'
+
+  ✓ Logged in to github.com account radiancelux (keyring)
+  - Active account: true
+  - Token scopes: 'repo', 'delete_repo', 'workflow'
+`;
+  assert.deepEqual(parseActiveGhTokenScopes(text), ["repo", "delete_repo", "workflow"]);
+});
 
 test("parseGhAuthStatus reads multiple accounts and the active flag", () => {
   const text = `

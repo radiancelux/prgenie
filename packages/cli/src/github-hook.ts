@@ -8,10 +8,18 @@ import {
   getRepoGithubBind,
   parseCiSkipReason,
 } from "@prgenie/core";
+import {
+  forcePushTargetsDefaultBranch,
+  isForceGitPush,
+  isLoopAgentShellContext,
+  loopAgentShellDenial,
+  resolveDefaultBranchForCwd,
+  type HookPermission,
+} from "./loop-github-gate.js";
 
 type HookInput = Record<string, unknown>;
 
-export type HookPermission = "allow" | "ask";
+export type { HookPermission };
 
 export function isPublish(command: string): boolean {
   return (
@@ -356,8 +364,22 @@ export async function main(): Promise<void> {
   }
 
   const command = String(input.command ?? "");
-  const cwd = String(input.cwd ?? process.cwd());
-  const root = await findGitRoot(cwd);
+  const cwd = inferCwd(input);
+  let root: string | null = null;
+  try {
+    root = await findGitRoot(cwd);
+  } catch {
+    root = null;
+  }
+
+  if (command && isLoopAgentShellContext(input, cwd)) {
+    const defaultBranch = root ? await resolveDefaultBranchForCwd(cwd, root) : "main";
+    const denial = loopAgentShellDenial(command, defaultBranch);
+    if (denial) {
+      process.stdout.write(JSON.stringify(denial));
+      return;
+    }
+  }
 
   if (root && isGithubCli(command)) {
     const bind = await getRepoGithubBind(root);
@@ -388,6 +410,18 @@ export async function main(): Promise<void> {
   }
 
   if (isPublish(command)) {
+    if (
+      command &&
+      isLoopAgentShellContext(input, cwd) &&
+      isForceGitPush(command) &&
+      !forcePushTargetsDefaultBranch(
+        command,
+        root ? await resolveDefaultBranchForCwd(cwd, root) : "main",
+      )
+    ) {
+      process.stdout.write(JSON.stringify({ permission: "allow" }));
+      return;
+    }
     const bind = root ? await getRepoGithubBind(root) : null;
     const asWho = bind ? ` as ${bind.login}` : "";
     process.stdout.write(
