@@ -603,10 +603,11 @@ function cancelledStewardDecision(
 
 export async function stewardNext(
   cwd: string,
-  id: string,
+  idOrPrefix: string,
   options: StewardNextOptions & BindStewardInput = {},
 ): Promise<StewardNextResult> {
   const root = await requireGitRoot(cwd);
+  const id = (await getLocalPr(root, idOrPrefix)).id;
   if (options.restart) {
     clearLoopCancel(root, id);
   } else {

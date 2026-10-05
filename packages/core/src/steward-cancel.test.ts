@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import { describe, it } from "node:test";
-import { clearLoopCancel, writeLoopCancel } from "./loop-cancel.js";
+import { clearLoopCancel, readLoopCancel, writeLoopCancel } from "./loop-cancel.js";
 import { createLocalPr, setLocalPrStatus } from "./prs.js";
 import { bindSteward, stewardNext } from "./steward.js";
 import { createTempGitRepo } from "./test-git-fixture.js";
@@ -53,6 +53,28 @@ describe("steward_next cancel marker", () => {
       assert.notEqual(next.decision.kind, "cancelled");
       const again = await stewardNext(repo, pr.id, { evaluateGate: false });
       assert.notEqual(again.decision.kind, "cancelled");
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("RAD-139: steward_next resolves a loop id prefix for the cancel marker", async () => {
+    const repo = await createTempGitRepo({ prefix: "prgenie-steward-prefix-" });
+    try {
+      const pr = await createLocalPr(repo, { title: "prefix cancel", base: "main" });
+      const prefix = pr.id.slice(0, -2);
+      await writeLoopCancel(repo, pr.id, {
+        cancelledBy: "human",
+        source: "panel",
+        implementorTaskId: null,
+      });
+      const cancelled = await stewardNext(repo, prefix, { evaluateGate: false });
+      assert.equal(cancelled.decision.kind, "cancelled");
+      assert.equal(cancelled.decision.loopId, pr.id);
+
+      const restarted = await stewardNext(repo, prefix, { restart: true, evaluateGate: false });
+      assert.notEqual(restarted.decision.kind, "cancelled");
+      assert.equal(readLoopCancel(repo, pr.id), null);
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
