@@ -55,7 +55,7 @@ import {
   getRepoWatch,
   resumeWatch,
 } from "./index.js";
-import { prsDir, prFile, parseJsonObject, writeJsonFile } from "./store.js";
+import { prsDir, prFile, parseJsonObject, withFileLock, writeJsonFile } from "./store.js";
 import type { LocalPr } from "./types.js";
 import { createTempGitRepo } from "./test-git-fixture.js";
 
@@ -1073,19 +1073,27 @@ test("listCorruptLocalPrFiles names unparsable packets", async () => {
   await rm(bad, { force: true });
 });
 
-test("RAD-173 R4: getLocalPr rejects truncated packet with file path", async () => {
+test("RAD-173 R4: locked packet read rejects truncated JSON with file path", async () => {
   git(["checkout", "main"]);
-  const pr = await createLocalPr(repo, { title: "Trunc read path", base: "main" });
+  const pr = await createLocalPr(repo, { title: "Trunc locked read", base: "main" });
   const file = prFile(await prsDir(repo), pr.id);
-  await writeFile(file, '{"id":"lp-trunc-read"', "utf8");
-  await assert.rejects(
-    () => getLocalPr(repo, pr.id),
-    (err: unknown) => {
-      assert.ok(err instanceof Error);
-      assert.match(err.message, new RegExp(`${pr.id}\\.json`));
-      return true;
-    },
-  );
+  let releaseLock!: () => void;
+  const lockHeld = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+  const holdLock = withFileLock(file, async () => {
+    await lockHeld;
+  });
+  const commentPromise = addLocalPrComment(repo, pr.id, "note after tear", { role: "human" });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await writeFile(file, '{"id":"trunc-only"', "utf8");
+  releaseLock();
+  await assert.rejects(commentPromise, (err: unknown) => {
+    assert.ok(err instanceof Error);
+    assert.match(err.message, new RegExp(`${pr.id}\\.json`));
+    return true;
+  });
+  await holdLock.catch(() => undefined);
   await rm(file, { force: true });
 });
 
