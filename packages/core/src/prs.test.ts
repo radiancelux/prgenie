@@ -1073,6 +1073,36 @@ test("listCorruptLocalPrFiles names unparsable packets", async () => {
   await rm(bad, { force: true });
 });
 
+test("RAD-173 R4: getLocalPr rejects truncated packet with file path", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, { title: "Trunc read path", base: "main" });
+  const file = prFile(await prsDir(repo), pr.id);
+  await writeFile(file, '{"id":"lp-trunc-read"', "utf8");
+  await assert.rejects(
+    () => getLocalPr(repo, pr.id),
+    (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, new RegExp(`${pr.id}\\.json`));
+      return true;
+    },
+  );
+  await rm(file, { force: true });
+});
+
+test("RAD-173 R4: listCorruptLocalPrFiles flags torn and truncated packets", async () => {
+  const dir = await prsDir(repo);
+  const tornPath = path.join(dir, "lp-r173-torn.json");
+  const truncPath = path.join(dir, "lp-r173-trunc.json");
+  const body = { id: "lp-r173-torn", status: "approved" };
+  await writeFile(tornPath, `${JSON.stringify(body, null, 2)}\n7.247Z"\n}`, "utf8");
+  await writeFile(truncPath, '{"id":"lp-r173-trunc"', "utf8");
+  const corrupt = await listCorruptLocalPrFiles(repo);
+  assert.ok(corrupt.some((f) => f.endsWith("lp-r173-torn.json")));
+  assert.ok(corrupt.some((f) => f.endsWith("lp-r173-trunc.json")));
+  await rm(tornPath, { force: true });
+  await rm(truncPath, { force: true });
+});
+
 test("reopen and delete local PR", async () => {
   git(["checkout", "main"]);
   const pr = await createLocalPr(repo, { title: "Reopen me", base: "main" });
