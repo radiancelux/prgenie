@@ -8,6 +8,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { abortError, throwIfAborted } from "./progress.js";
 
@@ -25,7 +26,55 @@ export interface CiLockRecord {
 }
 
 const POLL_MS = 150;
-const STALE_LOCK_MS = 30 * 60 * 1000;
+
+/** Max hold time for file locks and CI locks (172-R2). */
+export const STALE_LOCK_MS = 30 * 60 * 1000;
+
+export interface FileLockRecord {
+  pid: number;
+  hostname: string;
+  acquiredAt: string;
+}
+
+export function parseFileLockRecord(raw: string): FileLockRecord | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as Partial<FileLockRecord>;
+    if (
+      typeof parsed.pid === "number" &&
+      typeof parsed.hostname === "string" &&
+      typeof parsed.acquiredAt === "string"
+    ) {
+      return parsed as FileLockRecord;
+    }
+  } catch {
+    // legacy or corrupt
+  }
+  return null;
+}
+
+/**
+ * True when a lock may be stolen: dead pid on this host, past max hold age, or legacy mtime (172-R2).
+ * Remote-host locks ignore pid-alive on this machine.
+ */
+export function fileLockIsStale(
+  record: FileLockRecord | null,
+  mtimeMs: number,
+  now = Date.now(),
+  localHostname = os.hostname(),
+): boolean {
+  if (!record) {
+    return now - mtimeMs > STALE_LOCK_MS;
+  }
+  const acquired = Date.parse(record.acquiredAt);
+  const ageStale = Number.isFinite(acquired) && now - acquired > STALE_LOCK_MS;
+  if (record.hostname !== localHostname) {
+    return ageStale;
+  }
+  if (!pidAlive(record.pid)) return true;
+  return ageStale;
+}
 
 function safeId(id: string): string {
   return id.replace(/[^A-Za-z0-9._-]+/g, "_");
@@ -108,9 +157,10 @@ export function pidAlive(pid: number): boolean {
 }
 
 function lockStale(lock: CiLockRecord): boolean {
-  if (!pidAlive(lock.pid)) return true;
-  const started = Date.parse(lock.startedAt);
-  return Number.isFinite(started) && Date.now() - started > STALE_LOCK_MS;
+  return fileLockIsStale(
+    { pid: lock.pid, hostname: os.hostname(), acquiredAt: lock.startedAt },
+    Date.parse(lock.startedAt) || 0,
+  );
 }
 
 export type CiLockHandle = {
