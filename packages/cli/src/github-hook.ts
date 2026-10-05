@@ -191,8 +191,12 @@ export const PRGENIE_MCP_AGENT_TOOLS = new Set([
   "steward_next",
 ]);
 
-/** Destructive MCP tools that always require confirmation (RAD-164 R2). */
-export const PRGENIE_MCP_ALWAYS_ASK_TOOLS = new Set(["delete_local_pr", "delete_learning"]);
+/** Destructive or human-override MCP tools that always require confirmation (RAD-164 R2, RAD-139). */
+export const PRGENIE_MCP_ALWAYS_ASK_TOOLS = new Set([
+  "delete_local_pr",
+  "delete_learning",
+  "clear_loop_cancel",
+]);
 
 /** Gated names; without server/command/url these still run through the PR Genie gate (RAD-164 R4). */
 export const PRGENIE_MCP_GATED_TOOL_NAMES = new Set([
