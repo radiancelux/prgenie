@@ -6,16 +6,38 @@ import {
   ensureRepoGithub,
   findGitRoot,
   getRepoGithubBind,
+  isArchivedPr,
+  isStewardOwned,
+  listLocalPrs,
+  listStewardBindings,
   parseCiSkipReason,
 } from "@prgenie/core";
 import {
-  forcePushTargetsDefaultBranch,
-  isForceGitPush,
   isLoopAgentShellContext,
   loopAgentShellDenial,
   resolveDefaultBranchForCwd,
   type HookPermission,
 } from "./loop-github-gate.js";
+
+async function isLoopAgentShellContextForGate(
+  input: HookInput,
+  cwd: string,
+  root: string | null,
+): Promise<boolean> {
+  if (isLoopAgentShellContext(input, cwd)) return true;
+  if (!root) return false;
+  const resolvedCwd = path.resolve(cwd);
+  const resolvedRoot = path.resolve(root);
+  if (resolvedCwd !== resolvedRoot && !resolvedCwd.startsWith(`${resolvedRoot}${path.sep}`)) {
+    return false;
+  }
+  const bindings = await listStewardBindings(root);
+  if (bindings.length === 0) return false;
+  const liveIds = new Set(
+    (await listLocalPrs(root)).filter((p) => !isArchivedPr(p)).map((p) => p.id),
+  );
+  return bindings.some((b) => isStewardOwned(b) && liveIds.has(b.loopId));
+}
 
 type HookInput = Record<string, unknown>;
 
@@ -372,7 +394,7 @@ export async function main(): Promise<void> {
     /* invalid cwd — treat as outside a git repo */
   }
 
-  if (command && isLoopAgentShellContext(input, cwd)) {
+  if (command && (await isLoopAgentShellContextForGate(input, cwd, root))) {
     const defaultBranch = root ? await resolveDefaultBranchForCwd(cwd, root) : "main";
     const denial = loopAgentShellDenial(command, defaultBranch);
     if (denial) {
@@ -410,18 +432,6 @@ export async function main(): Promise<void> {
   }
 
   if (isPublish(command)) {
-    if (
-      command &&
-      isLoopAgentShellContext(input, cwd) &&
-      isForceGitPush(command) &&
-      !forcePushTargetsDefaultBranch(
-        command,
-        root ? await resolveDefaultBranchForCwd(cwd, root) : "main",
-      )
-    ) {
-      process.stdout.write(JSON.stringify({ permission: "allow" }));
-      return;
-    }
     const bind = root ? await getRepoGithubBind(root) : null;
     const asWho = bind ? ` as ${bind.login}` : "";
     process.stdout.write(

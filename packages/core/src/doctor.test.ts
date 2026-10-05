@@ -171,7 +171,7 @@ test("doctor reports stale file lock with holder and fix (172-R3)", async () => 
   assert.match(formatDoctorReport(report), /stale-file-locks/);
 });
 
-test("RAD-163: warns on broad gh token scopes", async () => {
+test("RAD-163: warns on broad gh token scopes", () => {
   const stub = `
 github.com
   ✓ Logged in to github.com account radiancelux (keyring)
@@ -180,18 +180,11 @@ github.com
 `;
   const check = assessGhLoopTokenScopes(stub);
   assert.equal(check.id, "gh-token-scopes");
-  assert.equal(check.ok, false);
+  assert.equal(check.ok, true);
+  assert.equal(check.severity, "warn");
   assert.match(check.summary, /broad scopes/i);
   assert.match(check.fix ?? "", /github-access\.md/);
-
-  const repo = await initRepo("gh-scopes-warn");
-  const report = await runDoctor(repo, {
-    home: path.join(dir, "home-gh-scopes"),
-    ghAuthStatusText: stub,
-  });
-  const row = report.checks.find((c) => c.id === "gh-token-scopes");
-  assert.ok(row);
-  assert.equal(row.ok, false);
+  assert.match(formatDoctorReport({ checks: [check], ok: true }), /WARN\s+gh-token-scopes/);
 });
 
 test("doctor fails git-path when PRGENIE_GIT points at a missing binary", async () => {

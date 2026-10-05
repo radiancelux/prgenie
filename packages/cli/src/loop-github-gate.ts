@@ -52,6 +52,46 @@ function tokenizeCommand(command: string): string[] {
   return tokens;
 }
 
+/** Split compound shell commands; segments are trimmed but may be empty. */
+export function splitShellCommandSegments(command: string): string[] {
+  const segments: string[] = [];
+  let cur = "";
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      else cur += ch;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    if (ch === "\n" || ch === "\r") {
+      if (cur.trim()) segments.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    if (
+      (ch === "&" && command[i + 1] === "&") ||
+      (ch === "|" && command[i + 1] === "|") ||
+      ch === ";" ||
+      ch === "|" ||
+      ch === "&"
+    ) {
+      if (ch === "&" && command[i + 1] === "&") i++;
+      if (ch === "|" && command[i + 1] === "|") i++;
+      if (cur.trim()) segments.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur.trim()) segments.push(cur.trim());
+  return segments.length > 0 ? segments : [command.trim()];
+}
+
 function ghSubcommandTokens(tokens: string[]): string[] {
   const ghIdx = tokens.findIndex(
     (t) => t.toLowerCase() === "gh" || t.toLowerCase().endsWith("gh.exe"),
@@ -60,45 +100,109 @@ function ghSubcommandTokens(tokens: string[]): string[] {
   return tokens.slice(ghIdx + 1);
 }
 
-function ghApiMethod(tokens: string[]): string | null {
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i];
+const GH_API_VALUE_FLAGS = new Set([
+  "-H",
+  "--header",
+  "-f",
+  "-F",
+  "--field",
+  "--raw-field",
+  "--input",
+  "-q",
+  "--jq",
+  "-t",
+  "--template",
+  "--hostname",
+  "--cache",
+  "-p",
+  "--preview",
+  "-X",
+  "--method",
+]);
+
+function ghApiInferredMethod(sub: string[]): string {
+  let explicit: string | null = null;
+  let hasBodyFlags = false;
+  for (let i = 0; i < sub.length; i++) {
+    const t = sub[i];
     if (t === "-X" || t === "--method") {
-      const next = tokens[i + 1];
-      if (next) return next.toUpperCase();
+      explicit = sub[i + 1]?.toUpperCase() ?? null;
+      i++;
+      continue;
     }
-    if (/^--method=/.test(t)) return t.slice("--method=".length).toUpperCase();
+    const attached = t.match(/^-X(GET|POST|PATCH|PUT|DELETE)$/i);
+    if (attached) {
+      explicit = attached[1].toUpperCase();
+      continue;
+    }
+    if (/^--method=/i.test(t)) {
+      explicit = t.slice("--method=".length).toUpperCase();
+      continue;
+    }
+    if (/^-(f|F)=/.test(t) || /^--field=/.test(t) || /^--raw-field=/.test(t)) {
+      hasBodyFlags = true;
+      continue;
+    }
+    if (t === "-f" || t === "-F" || t === "--field" || t === "--raw-field" || t === "--input") {
+      hasBodyFlags = true;
+      continue;
+    }
   }
-  const methodIdx = tokens.findIndex((t) => /^(POST|PATCH|PUT|DELETE)$/i.test(t));
-  if (methodIdx > 0 && tokens[methodIdx - 1]?.toLowerCase() === "api") {
-    return tokens[methodIdx].toUpperCase();
-  }
-  return null;
+  if (explicit) return explicit;
+  if (hasBodyFlags) return "POST";
+  return "GET";
 }
 
-function ghApiEndpointPath(tokens: string[]): string | null {
-  const apiIdx = tokens.findIndex((t) => t.toLowerCase() === "api");
-  if (apiIdx < 0) return null;
-  for (let i = apiIdx + 1; i < tokens.length; i++) {
-    const t = tokens[i];
+function ghApiEndpointPath(sub: string[]): string | null {
+  if (sub[0]?.toLowerCase() !== "api") return null;
+  for (let i = 1; i < sub.length; i++) {
+    const t = sub[i];
+    if (GH_API_VALUE_FLAGS.has(t)) {
+      i++;
+      continue;
+    }
     if (t.startsWith("-")) continue;
     if (/^(POST|PATCH|PUT|DELETE|GET)$/i.test(t)) continue;
-    let path = t;
-    if (/^https?:\/\//i.test(path)) {
-      path = path.replace(/^https:\/\/api\.github\.com\/?/i, "");
+    let pathPart = t;
+    if (/^https?:\/\//i.test(pathPart)) {
+      pathPart = pathPart.replace(/^https:\/\/api\.github\.com\/?/i, "");
     }
-    return path.replace(/^\//, "").split("?")[0] ?? null;
+    const normalized = pathPart.replace(/^\//, "").split("?")[0] ?? "";
+    if (!normalized || /^Accept:/i.test(normalized) || /\s/.test(normalized)) {
+      continue;
+    }
+    if (normalized.includes(".") && !normalized.startsWith("repos/")) {
+      continue;
+    }
+    return normalized;
   }
   return null;
 }
 
-/** True when gh api would mutate repo lifecycle endpoints (RAD-163 R1). */
-export function ghApiRepoLifecycleMutation(command: string): boolean {
+const GRAPHQL_REPO_LIFECYCLE = [
+  "createRepository",
+  "deleteRepository",
+  "updateRepository",
+  "archiveRepository",
+  "cloneTemplateRepository",
+] as const;
+
+function ghGraphqlRepoLifecycleMutation(sub: string[]): boolean {
+  if (sub[0]?.toLowerCase() !== "graphql") return false;
+  const blob = sub.slice(1).join(" ");
+  return GRAPHQL_REPO_LIFECYCLE.some((name) => blob.includes(name));
+}
+
+function ghApiRepoLifecycleMutationSingle(command: string): boolean {
   if (!/\bgh(\.exe)?\s+api\b/i.test(command)) return false;
   const tokens = tokenizeCommand(command);
   const sub = ghSubcommandTokens(tokens);
   if (sub[0]?.toLowerCase() !== "api") return false;
-  const method = ghApiMethod(sub) ?? "GET";
+  if (sub[1]?.toLowerCase() === "graphql") {
+    return ghGraphqlRepoLifecycleMutation(sub.slice(1));
+  }
+  const apiArgs = sub.slice(1);
+  const method = ghApiInferredMethod(apiArgs);
   if (!["POST", "PATCH", "PUT", "DELETE"].includes(method)) return false;
   const endpoint = ghApiEndpointPath(sub);
   if (!endpoint) return false;
@@ -108,10 +212,17 @@ export function ghApiRepoLifecycleMutation(command: string): boolean {
   return false;
 }
 
+/** True when gh api would mutate repo lifecycle endpoints (RAD-163 R1). */
+export function ghApiRepoLifecycleMutation(command: string): boolean {
+  for (const segment of splitShellCommandSegments(command)) {
+    if (ghApiRepoLifecycleMutationSingle(segment)) return true;
+  }
+  return false;
+}
+
 const GH_REPO_ADMIN_SUBCOMMANDS = new Set(["create", "delete", "edit", "rename", "archive"]);
 
-/** Short reason string when a loop agent must not run this shell command; null if allowed. */
-export function loopAgentShellDenialReason(command: string): string | null {
+function loopAgentShellDenialReasonSingleSegment(command: string): string | null {
   const tokens = tokenizeCommand(command);
   const ghParts = ghSubcommandTokens(tokens);
   if (
@@ -131,16 +242,27 @@ export function loopAgentShellDenialReason(command: string): string | null {
       return `gh ${blocked} is not allowed from loop agents`;
     }
   }
-  if (ghApiRepoLifecycleMutation(command)) {
+  if (ghApiRepoLifecycleMutationSingle(command)) {
     return "gh api repo create/delete/admin mutations are not allowed from loop agents";
+  }
+  return null;
+}
+
+/** Short reason string when a loop agent must not run this shell command; null if allowed. */
+export function loopAgentShellDenialReason(command: string): string | null {
+  for (const segment of splitShellCommandSegments(command)) {
+    const reason = loopAgentShellDenialReasonSingleSegment(segment);
+    if (reason) return reason;
   }
   return null;
 }
 
 export function isForceGitPush(command: string): boolean {
   if (!/\bgit(\.exe)?\s+push\b/i.test(command)) return false;
-  if (/\b--force-with-lease\b/i.test(command)) return true;
-  if (/(?:^|\s)(?:-f\b|--force\b)(?:\s|$)/i.test(command)) return true;
+  if (/(?:^|\s)--force-with-lease(?:=\S*)?(?=\s|$)/i.test(command)) return true;
+  if (/(?:^|\s)--force-if-includes(?:=\S*)?(?=\s|$)/i.test(command)) return true;
+  if (/(?:^|\s)(?:-f\b|--force(?:\s|$|=))/i.test(command)) return true;
+  if (/\bgit(\.exe)?\s+push\s+(?:[^\s]+\s+)*-[a-zA-Z]*f[a-zA-Z]*/i.test(command)) return true;
   if (/\s\+[^\s]+/.test(command)) return true;
   return false;
 }
@@ -153,18 +275,33 @@ function escapeRegExp(s: string): string {
 export function forcePushTargetsDefaultBranch(command: string, defaultBranch: string): boolean {
   if (!isForceGitPush(command)) return false;
   const local = localBaseRef(defaultBranch);
-  const refRe = new RegExp(`\\b(?:refs/heads/)?${escapeRegExp(local)}\\b`, "i");
-  if (refRe.test(command)) return true;
-  if (/\bHEAD:refs\/heads\//i.test(command) && refRe.test(command)) return true;
+  const esc = escapeRegExp(local);
+  if (new RegExp(`\\+[^\\s]*${esc}(?:\\s|$)`, "i").test(command)) return true;
+  if (new RegExp(`HEAD:refs/heads/${esc}\\b`, "i").test(command)) return true;
+  if (new RegExp(`HEAD:${esc}\\b`, "i").test(command)) return true;
+  if (new RegExp(`refs/heads/${esc}\\b`, "i").test(command)) return true;
+  if (new RegExp(`(?:^|\\s)${esc}(?:\\s|$)`, "i").test(command)) return true;
+  if (new RegExp(`--force-with-lease=${esc}(?:\\s|$)`, "i").test(command)) return true;
   return false;
+}
+
+function loopAgentForcePushDenialReasonSingle(
+  command: string,
+  defaultBranch: string,
+): string | null {
+  if (!forcePushTargetsDefaultBranch(command, defaultBranch)) return null;
+  return `force-push to default branch (${localBaseRef(defaultBranch)}) is not allowed from loop agents`;
 }
 
 export function loopAgentForcePushDenialReason(
   command: string,
   defaultBranch: string,
 ): string | null {
-  if (!forcePushTargetsDefaultBranch(command, defaultBranch)) return null;
-  return `force-push to default branch (${localBaseRef(defaultBranch)}) is not allowed from loop agents`;
+  for (const segment of splitShellCommandSegments(command)) {
+    const reason = loopAgentForcePushDenialReasonSingle(segment, defaultBranch);
+    if (reason) return reason;
+  }
+  return null;
 }
 
 export function loopAgentShellDenial(

@@ -39,6 +39,8 @@ export interface DoctorCheck {
   ok: boolean;
   summary: string;
   fix?: string;
+  /** Advisory only — does not fail `report.ok` or exit code. */
+  severity?: "warn";
 }
 
 export interface DoctorReport {
@@ -70,7 +72,8 @@ export function assessGhLoopTokenScopes(statusText: string): DoctorCheck {
   const broad = ghTokenScopesTooBroadForLoops(scopes);
   return {
     id: "gh-token-scopes",
-    ok: !broad,
+    ok: true,
+    severity: broad ? "warn" : undefined,
     summary: broad
       ? `Active gh token has broad scopes for loops (${scopes.join(", ")}). Use a fine-grained GH_TOKEN for loop sessions.`
       : `Active gh token scopes look loop-safe (${scopes.join(", ")}).`,
@@ -540,8 +543,8 @@ export async function runDoctor(
 
 export function formatDoctorReport(report: DoctorReport): string {
   const lines = report.checks.map((c) => {
-    const mark = c.ok ? "ok  " : "FAIL";
-    const fix = c.fix && !c.ok ? `\n      fix: ${c.fix}` : "";
+    const mark = c.severity === "warn" ? "WARN" : c.ok ? "ok  " : "FAIL";
+    const fix = c.fix && (c.severity === "warn" || !c.ok) ? `\n      fix: ${c.fix}` : "";
     return `  ${mark}  ${c.id} — ${c.summary}${fix}`;
   });
   return `prgenie doctor ${report.ok ? "passed" : "found issues"}\n${lines.join("\n")}\n`;
