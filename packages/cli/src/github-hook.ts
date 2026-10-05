@@ -1,42 +1,62 @@
-import { appendFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { appendFile, readFile } from "node:fs/promises";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import {
   consoleDir,
+  currentBranch,
   ensureRepoGithub,
   findGitRoot,
   getRepoGithubBind,
   isArchivedPr,
-  isStewardOwned,
   listLocalPrs,
-  listStewardBindings,
   parseCiSkipReason,
 } from "@prgenie/core";
 import {
   isLoopAgentShellContext,
+  isPathInsideOrEqual,
   loopAgentShellDenial,
   resolveDefaultBranchForCwd,
+  shellCommandPublishes,
   type HookPermission,
 } from "./loop-github-gate.js";
 
-async function isLoopAgentShellContextForGate(
+/** On-disk spelling of a path (expands Windows 8.3 short names and fixes case) when it exists. */
+function canonicalFsPath(p: string): string {
+  try {
+    return realpathSync.native(path.resolve(p));
+  } catch {
+    return p;
+  }
+}
+
+/** Loop ids in `stewards.json`, read without the file lock so the hook never writes state. */
+async function stewardBoundLoopIds(root: string): Promise<string[]> {
+  try {
+    const raw = await readFile(path.join(await consoleDir(root), "stewards.json"), "utf8");
+    const parsed: unknown = JSON.parse(raw);
+    const bindings = (parsed as { bindings?: unknown } | null)?.bindings;
+    if (!bindings || typeof bindings !== "object" || Array.isArray(bindings)) return [];
+    return Object.values(bindings as Record<string, unknown>)
+      .map((b) => (b && typeof b === "object" ? (b as { loopId?: unknown }).loopId : null))
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+export async function isLoopAgentShellContextForGate(
   input: HookInput,
   cwd: string,
   root: string | null,
 ): Promise<boolean> {
   if (isLoopAgentShellContext(input, cwd)) return true;
-  if (!root) return false;
-  const resolvedCwd = path.resolve(cwd);
-  const resolvedRoot = path.resolve(root);
-  if (resolvedCwd !== resolvedRoot && !resolvedCwd.startsWith(`${resolvedRoot}${path.sep}`)) {
-    return false;
-  }
-  const bindings = await listStewardBindings(root);
-  if (bindings.length === 0) return false;
+  if (!root || !isPathInsideOrEqual(canonicalFsPath(cwd), canonicalFsPath(root))) return false;
+  const boundIds = await stewardBoundLoopIds(root);
+  if (boundIds.length === 0) return false;
   const liveIds = new Set(
     (await listLocalPrs(root)).filter((p) => !isArchivedPr(p)).map((p) => p.id),
   );
-  return bindings.some((b) => isStewardOwned(b) && liveIds.has(b.loopId));
+  return boundIds.some((id) => liveIds.has(id));
 }
 
 type HookInput = Record<string, unknown>;
@@ -48,7 +68,8 @@ export function isPublish(command: string): boolean {
     /\bgit(\.exe)?\s+push\b/i.test(command) ||
     /\bgh(\.exe)?\s+pr\s+create\b/i.test(command) ||
     /\bgh(\.exe)?\s+pr\s+merge\b/i.test(command) ||
-    /\bgh(\.exe)?\s+repo\s+create\b/i.test(command)
+    /\bgh(\.exe)?\s+repo\s+create\b/i.test(command) ||
+    shellCommandPublishes(command)
   );
 }
 
@@ -396,7 +417,8 @@ export async function main(): Promise<void> {
 
   if (command && (await isLoopAgentShellContextForGate(input, cwd, root))) {
     const defaultBranch = root ? await resolveDefaultBranchForCwd(cwd, root) : "main";
-    const denial = loopAgentShellDenial(command, defaultBranch);
+    const branch = await currentBranch(cwd).catch(() => null);
+    const denial = loopAgentShellDenial(command, defaultBranch, branch);
     if (denial) {
       process.stdout.write(JSON.stringify(denial));
       return;

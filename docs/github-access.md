@@ -33,7 +33,17 @@ Changing your GitHub password does **not** revoke OAuth apps or classic tokens a
 
 ## What the hook blocks
 
-From loop worktrees and PR Genie subagents, the github-gate hook denies repo administration (`gh repo create/delete/...`), mutating `gh api` calls against repo lifecycle endpoints, `gh auth` (except `gh auth status`), secrets/variables/keys, and force-push to the default branch. See **RAD-163** and `packages/cli/src/loop-github-gate.ts`.
+The github-gate hook treats a shell command as a loop agent's when it comes from a PR Genie subagent, from a `.loops/<id>` worktree, or from the primary checkout while a live loop has a steward binding. For those it denies:
+
+- repo administration: `gh repo create/delete/edit/rename/archive/unarchive/fork`;
+- mutating `gh api` calls (explicit `-X`/`--method`, or implied POST from `-f`/`-F`/`--field`/`--raw-field`/`--input`, attached or not) against `user/repos`, `orgs/*/repos`, `repos/{owner}/{repo}` and its `transfer`/`forks`/`generate` endpoints, plus GraphQL repo lifecycle mutations;
+- `gh auth` (except `gh auth status` without `--show-token`), `gh secret`, `gh variable`, `gh ssh-key`, `gh gpg-key`;
+- `gh alias set/import/delete` and `gh extension install/upgrade/exec`, which could rename or wrap a denied command;
+- force-push (`--force`, `-f`, `--force-with-lease[=…]`, `--force-if-includes`, `--mirror`, or a `+` refspec) whose destination is the default branch or `main`, and deleting the default branch. Other force-pushes still ask, like every `git push`.
+
+The command is tokenized (POSIX and PowerShell quoting), so chains, pipes, `(…)`/`{…}` groups, `$(…)` and backtick substitutions, and `bash -c` / `pwsh -Command` / `eval` / `iex` arguments are each checked. A command word that is only known at run time (`$GH`, `$(…)`) is treated as `gh`/`git`.
+
+The hook is a guard rail, not a sandbox: a determined agent can still reach GitHub through a script file, another program, or a pre-existing alias. The fine-grained `GH_TOKEN` above is the real boundary. See **RAD-163** and `packages/cli/src/loop-github-gate.ts`.
 
 ## Doctor
 

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
@@ -19,8 +21,9 @@ import {
 import {
   forcePushTargetsDefaultBranch,
   ghApiRepoLifecycleMutation,
+  isPathInsideOrEqual,
   loopAgentShellDenialReason,
-  splitShellCommandSegments,
+  shellSimpleCommands,
 } from "./loop-github-gate.js";
 import { tools as mcpRegisteredTools } from "./mcp.js";
 
@@ -381,9 +384,9 @@ test("RAD-163 R1 follow-up: gh api implicit POST and bypass forms are denied", (
 
 test("RAD-163 R1 follow-up: chained gh commands are denied", () => {
   const loopCwd = process.cwd();
-  assert.deepEqual(splitShellCommandSegments("gh pr view 1 && gh repo create scratch"), [
-    "gh pr view 1",
-    "gh repo create scratch",
+  assert.deepEqual(shellSimpleCommands("gh pr view 1 && gh repo create scratch").slice(0, 2), [
+    ["gh", "pr", "view", "1"],
+    ["gh", "repo", "create", "scratch"],
   ]);
   const bypass = runGate({
     command: "echo gh && gh repo delete o/r --yes",
@@ -447,4 +450,182 @@ test("RAD-163: force-push to default branch is denied from a loop", () => {
     subagent_type: "prgenie-implementor",
   });
   assert.equal(featureForce.permission, "ask");
+});
+
+function loopGate(command: string): string {
+  return runGate({ command, cwd: process.cwd(), subagent_type: "prgenie-implementor" }).permission;
+}
+
+test("RAD-163 R1 round 3: attached gh api body/method flags imply a mutating call", () => {
+  for (const command of [
+    "gh api user/repos -fname=x",
+    "gh api user/repos -Fname=x",
+    "gh api user/repos --input=body.json",
+    "gh api user/repos --field=name=x",
+    "gh api user/repos --raw-field=name=x",
+    "gh api user/repos -X=POST",
+    "gh api --method=DELETE repos/o/r",
+    "gh api -iXPOST user/repos",
+    "gh api https://api.github.com/orgs/acme/repos -f name=x",
+    "gh api repos/{owner}/{repo} -X DELETE",
+  ]) {
+    assert.equal(ghApiRepoLifecycleMutation(command), true, command);
+    assert.equal(loopGate(command), "deny", command);
+  }
+  for (const command of [
+    "gh api repos/o/r",
+    "gh api repos/o/r/pulls",
+    "gh api repos/o/r/pulls -f title=x",
+    "gh api -X GET user/repos -f per_page=5",
+  ]) {
+    assert.equal(ghApiRepoLifecycleMutation(command), false, command);
+  }
+});
+
+test("RAD-163 R1 round 3: substitutions, subshells, groups and nested shells are denied", () => {
+  for (const command of [
+    "echo $(gh repo delete o/r --yes)",
+    "(gh repo create scratch)",
+    "echo `gh repo delete o/r --yes`",
+    "{ gh repo delete o/r --yes; }",
+    'echo "$(gh secret list)"',
+    "bash -c 'gh repo delete o/r --yes'",
+    'pwsh -Command "gh repo delete o/r --yes"',
+    "gh repo de`lete o/r --yes",
+    "C:\\tools\\gh.exe repo delete o/r --yes",
+    "$GH repo delete o/r --yes",
+    "gh pr view 1 2>&1 | gh repo archive o/r",
+  ]) {
+    assert.ok(loopAgentShellDenialReason(command), command);
+    assert.equal(loopGate(command), "deny", command);
+  }
+});
+
+test("RAD-163 R1 round 3: gh alias/extension writes and token reveals are denied", () => {
+  for (const command of [
+    "gh alias set mk 'repo create'",
+    "gh alias import aliases.yml",
+    "gh alias delete mk",
+    "gh extension install owner/gh-x",
+    "gh ext upgrade --all",
+    "gh extension exec x",
+    "gh auth token",
+    "gh auth status --show-token",
+  ]) {
+    assert.ok(loopAgentShellDenialReason(command), command);
+    assert.equal(loopGate(command), "deny", command);
+  }
+});
+
+test("RAD-163 R1 round 3: read-only gh and plain commands keep their old permission", () => {
+  for (const command of [
+    "gh pr view 1",
+    "gh auth status",
+    "gh alias list",
+    "gh extension list",
+    "gh api repos/o/r/pulls",
+    "git status",
+  ]) {
+    assert.equal(loopAgentShellDenialReason(command), null, command);
+    assert.equal(loopGate(command), "allow", command);
+  }
+  const quoted = 'git commit -m "deny gh repo create from loops"';
+  assert.equal(loopAgentShellDenialReason(quoted), null);
+  assert.notEqual(loopGate(quoted), "deny");
+  assert.equal(loopGate("gh pr create --title t"), "ask");
+  assert.equal(loopGate("echo hi && gh pr create --title t"), "ask");
+});
+
+test("RAD-163 R2 round 3: force-push whose destination is the default branch is denied", () => {
+  for (const command of [
+    "git push -f origin feat:main",
+    "git push -f origin HEAD~0:main",
+    "git push --force-with-lease origin rad-163:main",
+    "git push origin +feat:refs/heads/main",
+    "git push --force-with-lease=main:abc123 origin feat",
+    "git -C . push -f origin x:main",
+    "git push --mirror origin",
+    "git push -f origin --all",
+    "git push origin :main",
+    "git push origin --delete main",
+  ]) {
+    assert.equal(loopGate(command), "deny", command);
+  }
+  assert.equal(forcePushTargetsDefaultBranch("git push -f origin HEAD", "main", "main"), true);
+  assert.equal(forcePushTargetsDefaultBranch("git push -f", "main", "main"), true);
+  assert.equal(forcePushTargetsDefaultBranch("git push -f origin HEAD", "main", "feat"), false);
+  assert.equal(forcePushTargetsDefaultBranch("git push -f origin trunk", "trunk"), true);
+  assert.equal(
+    forcePushTargetsDefaultBranch("git push -f origin x:refs/heads/trunk", "trunk"),
+    true,
+  );
+});
+
+test("RAD-163 R2 round 3: non-default force-push and plain pushes still ask", () => {
+  for (const command of [
+    "git push -f origin feat/main-fix",
+    "git push -f origin main:feat/x",
+    "git push origin feat:main",
+    "git push -f origin HEAD",
+    "git push -f",
+    "git push origin --delete feat/old",
+  ]) {
+    assert.equal(loopGate(command), "ask", command);
+  }
+});
+
+test("RAD-163: path containment ignores drive-letter case on win32 only", () => {
+  assert.equal(isPathInsideOrEqual("c:\\Users\\X\\repo", "C:/Users/X/repo/", "win32"), true);
+  assert.equal(isPathInsideOrEqual("c:\\users\\x\\repo\\sub", "C:\\Users\\X\\repo", "win32"), true);
+  assert.equal(isPathInsideOrEqual("c:\\users\\x\\repo2", "C:\\Users\\X\\repo", "win32"), false);
+  assert.equal(isPathInsideOrEqual("/a/Repo", "/a/repo", "linux"), false);
+  assert.equal(isPathInsideOrEqual("/a/repo/sub/", "/a/repo", "linux"), true);
+});
+
+test("RAD-163: steward-bound primary gates a lowercase-drive cwd", async () => {
+  const repo = await mkdtemp(path.join(tmpdir(), "prgenie-gate-steward-"));
+  try {
+    execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+    const consoleRoot = path.join(repo, ".git", "agent-console");
+    await mkdir(path.join(consoleRoot, "prs"), { recursive: true });
+    const now = new Date().toISOString();
+    const id = "lp-0000beef";
+    await writeFile(
+      path.join(consoleRoot, "prs", `${id}.json`),
+      JSON.stringify({
+        id,
+        title: id,
+        body: "",
+        status: "draft",
+        headRef: "feat/x",
+        baseRef: "main",
+        headSha: "0".repeat(40),
+        baseSha: "0".repeat(40),
+        worktreePath: null,
+        comments: [],
+        source: { kind: "cli" },
+        createdAt: now,
+        updatedAt: now,
+        reviewRequestedSha: null,
+        reviewerNotifiedSha: null,
+      }),
+    );
+    const cwdVariant =
+      process.platform === "win32"
+        ? repo.replace(/^[A-Za-z]:/, (d) =>
+            d === d.toLowerCase() ? d.toUpperCase() : d.toLowerCase(),
+          )
+        : repo;
+    const command = "gh repo delete o/r --yes";
+    assert.equal(runGate({ command, cwd: cwdVariant }).permission, "allow");
+    await writeFile(
+      path.join(consoleRoot, "stewards.json"),
+      JSON.stringify({ updatedAt: now, bindings: { [id]: { loopId: id } } }),
+    );
+    const parsed = runGate({ command, cwd: cwdVariant });
+    assert.equal(parsed.permission, "deny");
+    assert.match(String(parsed.agent_message ?? ""), /gh repo delete/);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
 });
