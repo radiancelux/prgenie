@@ -1081,11 +1081,16 @@ test("RAD-173 R4: locked packet read rejects truncated JSON with file path", asy
   const lockHeld = new Promise<void>((resolve) => {
     releaseLock = resolve;
   });
+  let lockAcquired!: () => void;
+  const locked = new Promise<void>((resolve) => {
+    lockAcquired = resolve;
+  });
   const holdLock = withFileLock(file, async () => {
+    lockAcquired();
     await lockHeld;
   });
+  await locked;
   const commentPromise = addLocalPrComment(repo, pr.id, "note after tear", { role: "human" });
-  await new Promise((resolve) => setTimeout(resolve, 100));
   await writeFile(file, '{"id":"trunc-only"', "utf8");
   releaseLock();
   await assert.rejects(commentPromise, (err: unknown) => {
