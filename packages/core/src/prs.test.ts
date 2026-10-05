@@ -1499,14 +1499,13 @@ async function writeStubLocalPr(
   const baseSha = git(["rev-parse", "main"], root);
   const headSha = git(["rev-parse", "HEAD"], root);
   const pr: LocalPr = {
-    id: partial.id,
-    title: partial.title ?? "stub",
+    title: "stub",
     body: "",
-    status: partial.status ?? "draft",
-    headRef: partial.headRef ?? "feat/stub",
+    status: "draft",
+    headRef: "feat/stub",
     baseRef: "main",
-    headSha: partial.headSha ?? headSha,
-    baseSha: partial.baseSha ?? baseSha,
+    headSha,
+    baseSha,
     worktreePath: null,
     comments: [],
     source: { kind: "cli" },
