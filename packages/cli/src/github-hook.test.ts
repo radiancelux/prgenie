@@ -574,6 +574,104 @@ test("RAD-163 R2 round 3: non-default force-push and plain pushes still ask", ()
   }
 });
 
+test("RAD-163 R1 round 4: flags before the gh subcommand do not hide it", () => {
+  for (const command of [
+    "gh auth --hostname github.com token",
+    "gh auth --hostname=github.com token",
+    "gh auth -h github.com token",
+    "gh auth --hostname github.com logout",
+    "gh auth --hostname github.com status --show-token",
+    "gh repo --hostname github.com delete o/r --yes",
+    "gh repo --unknown delete o/r --yes",
+    "gh repo -R o/r archive",
+    "gh secret -R o/r list",
+    "gh variable --repo=o/r set X",
+    "gh ssh-key -h github.com add k.pub",
+    "gh gpg-key --hostname github.com delete 1",
+    "gh alias --hostname github.com set mk 'repo create'",
+    "gh extension --foo bar install o/gh-x",
+  ]) {
+    assert.ok(loopAgentShellDenialReason(command), command);
+    assert.equal(loopGate(command), "deny", command);
+  }
+  for (const command of [
+    "gh auth status",
+    "gh auth status --hostname github.com",
+    "gh auth -h github.com status",
+    "gh pr checks 12",
+    "gh pr view 1 --repo o/r",
+    "gh repo view o/r",
+  ]) {
+    assert.equal(loopAgentShellDenialReason(command), null, command);
+    assert.equal(loopGate(command), "allow", command);
+  }
+  assert.equal(isPublish("gh pr --repo o/r create --title t"), true);
+  assert.equal(loopGate("gh pr --repo o/r create --title t"), "ask");
+});
+
+test("RAD-163 round 4: heredoc and here-string bodies are data, not commands", () => {
+  const commitHeredoc = [
+    "git commit -m \"$(cat <<'EOF'",
+    "fix: note that gh repo create is denied",
+    "EOF",
+    ')"',
+  ].join("\n");
+  assert.equal(loopAgentShellDenialReason(commitHeredoc), null);
+  assert.notEqual(loopGate(commitHeredoc), "deny");
+  for (const command of [
+    ["cat <<EOF > notes.txt", "gh repo delete o/r --yes", "EOF"].join("\n"),
+    ["cat <<-EOF", "\tgh auth token", "\tEOF"].join("\n"),
+    ["cat <<'EOF'", "don't run gh secret set X", "EOF"].join("\n"),
+    ["git commit -m @'", "fix: gh repo create is denied", "it's fine", "'@"].join("\n"),
+  ]) {
+    assert.equal(loopAgentShellDenialReason(command), null, command);
+  }
+  for (const command of [
+    ["cat <<'EOF'", "gh repo create x", "EOF", "gh repo delete o/r --yes"].join("\n"),
+    ["cat <<EOF", "$(gh repo delete o/r --yes)", "EOF"].join("\n"),
+    ['git commit -m @"', "$(gh repo delete o/r --yes)", '"@'].join("\n"),
+  ]) {
+    assert.ok(loopAgentShellDenialReason(command), command);
+    assert.equal(loopGate(command), "deny", command);
+  }
+});
+
+test("RAD-163 R1 round 4: run-time gh groups, subcommands and launchers fail closed", () => {
+  for (const command of [
+    "gh $(echo repo) delete o/r --yes",
+    "gh re${x}po delete o/r --yes",
+    "gh $SUB create x",
+    "gh pr $CMD 1",
+    "echo repo delete o/r --yes | xargs gh",
+    "xargs -I{} gh {} delete o/r",
+    "Start-Process gh -ArgumentList 'repo delete o/r --yes'",
+    "& gh @('repo','delete','o/r','--yes')",
+    "gh api graphql -F query=@m.graphql",
+    "gh api graphql --input q.json",
+    'gh api graphql -f query="$(cat q.graphql)"',
+    "gh api repos/$OWNER/$REPO",
+    "gh api -X $METHOD repos/o/r/pulls",
+  ]) {
+    const reason = loopAgentShellDenialReason(command);
+    assert.ok(reason, command);
+    assert.equal(loopGate(command), "deny", command);
+  }
+  assert.match(
+    loopAgentShellDenialReason("gh $SUB create x") ?? "",
+    /spell the gh command literally/,
+  );
+  for (const command of [
+    "gh pr view $PR",
+    "gh pr checks 12 --watch",
+    "gh api repos/o/r/pulls",
+    "gh api graphql -f query='query($o:String!){repository(owner:$o,name:\"r\"){id}}' -F o=me",
+    "$out = $(git status)",
+    "ls | xargs rg gh",
+  ]) {
+    assert.equal(loopAgentShellDenialReason(command), null, command);
+  }
+});
+
 test("RAD-163: path containment ignores drive-letter case on win32 only", () => {
   assert.equal(isPathInsideOrEqual("c:\\Users\\X\\repo", "C:/Users/X/repo/", "win32"), true);
   assert.equal(isPathInsideOrEqual("c:\\users\\x\\repo\\sub", "C:\\Users\\X\\repo", "win32"), true);
@@ -625,6 +723,13 @@ test("RAD-163: steward-bound primary gates a lowercase-drive cwd", async () => {
     const parsed = runGate({ command, cwd: cwdVariant });
     assert.equal(parsed.permission, "deny");
     assert.match(String(parsed.agent_message ?? ""), /gh repo delete/);
+    await writeFile(
+      path.join(consoleRoot, "stewards.json"),
+      `${JSON.stringify({ updatedAt: now, bindings: { [id]: { loopId: id } } })}\n}leftover"bytes`,
+    );
+    assert.equal(runGate({ command, cwd: cwdVariant }).permission, "deny");
+    await writeFile(path.join(consoleRoot, "stewards.json"), "not json at all");
+    assert.equal(runGate({ command, cwd: cwdVariant }).permission, "deny");
   } finally {
     await rm(repo, { recursive: true, force: true });
   }

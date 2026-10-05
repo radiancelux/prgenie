@@ -10,6 +10,7 @@ import {
   isArchivedPr,
   listLocalPrs,
   parseCiSkipReason,
+  parseJsonObject,
 } from "@prgenie/core";
 import {
   isLoopAgentShellContext,
@@ -29,18 +30,27 @@ function canonicalFsPath(p: string): string {
   }
 }
 
-/** Loop ids in `stewards.json`, read without the file lock so the hook never writes state. */
-async function stewardBoundLoopIds(root: string): Promise<string[]> {
+/**
+ * Loop ids in `stewards.json`, read without the file lock so the hook never writes state.
+ * `"unreadable"` when the file exists but cannot be read or parsed.
+ */
+export async function stewardBoundLoopIds(root: string): Promise<string[] | "unreadable"> {
+  let raw: string;
   try {
-    const raw = await readFile(path.join(await consoleDir(root), "stewards.json"), "utf8");
-    const parsed: unknown = JSON.parse(raw);
-    const bindings = (parsed as { bindings?: unknown } | null)?.bindings;
-    if (!bindings || typeof bindings !== "object" || Array.isArray(bindings)) return [];
+    raw = await readFile(path.join(await consoleDir(root), "stewards.json"), "utf8");
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code === "ENOENT" ? [] : "unreadable";
+  }
+  try {
+    const parsed = parseJsonObject<{ bindings?: unknown } | null>(raw);
+    const bindings = parsed?.bindings;
+    if (bindings === undefined) return [];
+    if (!bindings || typeof bindings !== "object" || Array.isArray(bindings)) return "unreadable";
     return Object.values(bindings as Record<string, unknown>)
       .map((b) => (b && typeof b === "object" ? (b as { loopId?: unknown }).loopId : null))
       .filter((id): id is string => typeof id === "string" && id.length > 0);
   } catch {
-    return [];
+    return "unreadable";
   }
 }
 
@@ -52,6 +62,7 @@ export async function isLoopAgentShellContextForGate(
   if (isLoopAgentShellContext(input, cwd)) return true;
   if (!root || !isPathInsideOrEqual(canonicalFsPath(cwd), canonicalFsPath(root))) return false;
   const boundIds = await stewardBoundLoopIds(root);
+  if (boundIds === "unreadable") return true;
   if (boundIds.length === 0) return false;
   const liveIds = new Set(
     (await listLocalPrs(root)).filter((p) => !isArchivedPr(p)).map((p) => p.id),

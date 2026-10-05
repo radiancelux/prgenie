@@ -41,7 +41,11 @@ The github-gate hook treats a shell command as a loop agent's when it comes from
 - `gh alias set/import/delete` and `gh extension install/upgrade/exec`, which could rename or wrap a denied command;
 - force-push (`--force`, `-f`, `--force-with-lease[=…]`, `--force-if-includes`, `--mirror`, or a `+` refspec) whose destination is the default branch or `main`, and deleting the default branch. Other force-pushes still ask, like every `git push`.
 
-The command is tokenized (POSIX and PowerShell quoting), so chains, pipes, `(…)`/`{…}` groups, `$(…)` and backtick substitutions, and `bash -c` / `pwsh -Command` / `eval` / `iex` arguments are each checked. A command word that is only known at run time (`$GH`, `$(…)`) is treated as `gh`/`git`.
+The command is tokenized (POSIX and PowerShell quoting), so chains, pipes, `(…)`/`{…}` groups, `$(…)` and backtick substitutions, and `bash -c` / `pwsh -Command` / `eval` / `iex` arguments are each checked. Heredoc and here-string bodies are data (only `$(…)` inside an unquoted body is checked), so a commit message that mentions `gh repo create` is not denied. Flags before a subcommand (`gh auth -h github.com token`) are skipped the way gh's own lookup skips them.
+
+Loop agents must spell `gh` commands literally. A command word that is only known at run time (`$GH`, `$(…)`) is treated as `gh`/`git`. A `gh` command group or subcommand built at run time (`gh $SUB create`, `gh $(echo repo) delete`, `& gh @(…)`), `gh` launched through `xargs` or `Start-Process`, a `gh api` method or endpoint from a variable, and a GraphQL query read from a file (`query=@file`, `--input`) are all denied.
+
+The primary folder counts as a steward context when `stewards.json` names a live loop. If that file exists but can't be read, the hook fails closed and gates the primary folder.
 
 The hook is a guard rail, not a sandbox: a determined agent can still reach GitHub through a script file, another program, or a pre-existing alias. The fine-grained `GH_TOKEN` above is the real boundary. See **RAD-163** and `packages/cli/src/loop-github-gate.ts`.
 

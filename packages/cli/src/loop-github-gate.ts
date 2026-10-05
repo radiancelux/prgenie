@@ -51,8 +51,37 @@ type ShellDialect = "posix" | "powershell";
 /** Stands in for a `$(…)` / backtick substitution whose output is unknown at parse time. */
 const SUBSTITUTION = "\u0000";
 
+/** Prefixed to a `$name` / `${…}` expansion outside single quotes; the value is unknown. */
+const EXPANSION = "\u0001";
+
 interface ScanState {
   i: number;
+}
+
+interface PendingHeredoc {
+  delimiter: string;
+  stripTabs: boolean;
+  literal: boolean;
+}
+
+/** Commands run by `$(…)` / backtick substitutions inside otherwise-literal text (heredoc bodies). */
+function scanSubstitutionsInText(text: string, dialect: ShellDialect, commands: string[][]): void {
+  let i = 0;
+  while (i < text.length) {
+    if (dialect === "posix" && text[i] === "\\") {
+      i += 2;
+    } else if (text[i] === "$" && text[i + 1] === "(") {
+      const st = { i: i + 2 };
+      scanShell(text, dialect, st, ")", commands);
+      i = st.i;
+    } else if (dialect === "posix" && text[i] === "`") {
+      const st = { i: i + 1 };
+      scanShell(text, dialect, st, "`", commands);
+      i = st.i;
+    } else {
+      i++;
+    }
+  }
 }
 
 function scanShell(
@@ -68,6 +97,51 @@ function scanShell(
   let inWord = false;
   let parenDepth = 0;
   let skipNextWord = false;
+  let heredocs: PendingHeredoc[] = [];
+  const consumeHeredocBodies = (): void => {
+    for (const doc of heredocs) {
+      const body: string[] = [];
+      while (st.i < src.length) {
+        const nl = src.indexOf("\n", st.i);
+        const lineEnd = nl < 0 ? src.length : nl;
+        const line = src.slice(st.i, lineEnd).replace(/\r$/, "");
+        st.i = nl < 0 ? src.length : nl + 1;
+        if ((doc.stripTabs ? line.replace(/^\t+/, "") : line) === doc.delimiter) break;
+        body.push(line);
+      }
+      if (!doc.literal) scanSubstitutionsInText(body.join("\n"), dialect, commands);
+    }
+    heredocs = [];
+  };
+  const readHeredocDelimiter = (): PendingHeredoc => {
+    const stripTabs = src[st.i] === "-";
+    if (stripTabs) st.i++;
+    while (src[st.i] === " " || src[st.i] === "\t") st.i++;
+    let raw = "";
+    while (st.i < src.length && !/[\s;&|<>()]/.test(src[st.i])) {
+      const c = src[st.i];
+      if (c === "'" || c === '"') {
+        const end = src.indexOf(c, st.i + 1);
+        const stop = end < 0 ? src.length : end;
+        raw += src.slice(st.i, stop + 1);
+        st.i = stop + 1;
+        continue;
+      }
+      raw += c;
+      st.i++;
+    }
+    return {
+      delimiter: raw.replace(/['"\\]/g, ""),
+      stripTabs,
+      literal: /['"\\]/.test(raw),
+    };
+  };
+  const appendDollar = (): void => {
+    if (/[A-Za-z0-9_{@*#?!]/.test(src[st.i + 1] ?? "")) cur += EXPANSION;
+    cur += "$";
+    inWord = true;
+    st.i++;
+  };
   const endWord = (): void => {
     if (inWord) {
       if (skipNextWord) skipNextWord = false;
@@ -134,6 +208,8 @@ function scanShell(
         } else if (c === "$" && src[st.i + 1] === "(") {
           st.i += 2;
           substitution(")");
+        } else if (c === "$") {
+          appendDollar();
         } else if (dialect === "posix" && c === "`") {
           st.i++;
           substitution("`");
@@ -148,6 +224,28 @@ function scanShell(
     if (ch === "$" && src[st.i + 1] === "(") {
       st.i += 2;
       substitution(")");
+      continue;
+    }
+    if (ch === "$") {
+      appendDollar();
+      continue;
+    }
+    if (
+      dialect === "powershell" &&
+      ch === "@" &&
+      !inWord &&
+      (src[st.i + 1] === '"' || src[st.i + 1] === "'") &&
+      /^[ \t]*\r?\n/.test(src.slice(st.i + 2))
+    ) {
+      const quote = src[st.i + 1];
+      const bodyStart = src.indexOf("\n", st.i) + 1;
+      const term = new RegExp(`\\r?\\n${quote}@`).exec(src.slice(bodyStart));
+      const bodyEnd = term ? bodyStart + term.index : src.length;
+      const body = src.slice(bodyStart, bodyEnd);
+      if (quote === '"') scanSubstitutionsInText(body, dialect, commands);
+      cur += body;
+      inWord = true;
+      st.i = term ? bodyEnd + term[0].length : src.length;
       continue;
     }
     if (dialect === "posix" && ch === "`") {
@@ -172,9 +270,21 @@ function scanShell(
       st.i++;
       continue;
     }
-    if (ch === "\n" || ch === "\r" || ch === ";" || ch === "&" || ch === "|") {
+    if (ch === "\n") {
       endCommand();
       st.i++;
+      consumeHeredocBodies();
+      continue;
+    }
+    if (ch === "\r" || ch === ";" || ch === "&" || ch === "|") {
+      endCommand();
+      st.i++;
+      continue;
+    }
+    if (ch === "<" && src[st.i + 1] === "<" && src[st.i + 2] !== "<") {
+      endWord();
+      st.i += 2;
+      heredocs.push(readHeredocDelimiter());
       continue;
     }
     if (ch === "<" || ch === ">") {
@@ -185,7 +295,7 @@ function scanShell(
         endWord();
       }
       st.i++;
-      while (src[st.i] === ">" || src[st.i] === "&" || src[st.i] === "|") st.i++;
+      while (/[<>&|]/.test(src[st.i] ?? "")) st.i++;
       skipNextWord = true;
       continue;
     }
@@ -255,29 +365,145 @@ export function shellSimpleCommands(command: string): string[][] {
   return out;
 }
 
-/** Command word whose value is only known at run time (`$GH`, `$(…)`, `%GH%`). */
-function isUnresolvedCommandWord(words: string[], i: number): boolean {
-  if (i !== 0) return false;
-  const w = words[0] ?? "";
-  return w.includes(SUBSTITUTION) || w.startsWith("$") || /%[^%]+%/.test(w);
+/** Word whose value is only known at run time: `$X`, `${…}`, `$(…)`, backticks, `%X%`, `@splat`, `{}`. */
+function isUnresolvedToken(word: string): boolean {
+  return (
+    word.includes(SUBSTITUTION) ||
+    word.includes(EXPANSION) ||
+    word.startsWith("$") ||
+    /%[^%]+%/.test(word) ||
+    word.startsWith("@") ||
+    word.includes("{}")
+  );
 }
 
 function isGhWord(words: string[], i: number): boolean {
-  return commandBasename(words[i]) === "gh" || isUnresolvedCommandWord(words, i);
+  return commandBasename(words[i]) === "gh" || (i === 0 && isUnresolvedToken(words[0] ?? ""));
 }
 
 function isGitWord(words: string[], i: number): boolean {
-  return commandBasename(words[i]) === "git" || isUnresolvedCommandWord(words, i);
+  return commandBasename(words[i]) === "git" || (i === 0 && isUnresolvedToken(words[0] ?? ""));
 }
 
-/** Argument lists after each `gh` word in a simple command. */
-function ghInvocations(words: string[]): string[][] {
-  const out: string[][] = [];
+/** Launchers that hand gh arguments assembled at run time (stdin, `-ArgumentList`, remote blocks). */
+const GH_INDIRECT_LAUNCHERS = new Set([
+  "xargs",
+  "parallel",
+  "start-process",
+  "saps",
+  "start",
+  "invoke-command",
+  "icm",
+]);
+
+interface GhInvocation {
+  args: string[];
+  /** False when the command word is unresolved (`$GH`) rather than a literal `gh`. */
+  literal: boolean;
+  launcher: string | null;
+}
+
+/** Launcher whose program operand is `words[ghIdx]` (only flags and flag values in between). */
+function launcherFor(words: string[], ghIdx: number): string | null {
+  for (let k = ghIdx - 1; k >= 0; k--) {
+    const base = commandBasename(words[k]);
+    if (GH_INDIRECT_LAUNCHERS.has(base)) return base;
+    const isFlag = words[k].startsWith("-");
+    const isFlagValue = k > 0 && words[k - 1].startsWith("-");
+    if (!isFlag && !isFlagValue) return null;
+  }
+  return null;
+}
+
+/** Arguments after each `gh` word in a simple command, with any indirect launcher before it. */
+function ghInvocations(words: string[]): GhInvocation[] {
+  const out: GhInvocation[] = [];
   words.forEach((_, i) => {
-    if (isGhWord(words, i)) out.push(words.slice(i + 1));
+    if (!isGhWord(words, i)) return;
+    out.push({
+      args: words.slice(i + 1),
+      literal: commandBasename(words[i]) === "gh",
+      launcher: launcherFor(words, i),
+    });
   });
   return out;
 }
+
+/** Flags known to take a value somewhere in the gh command tree. */
+const GH_KNOWN_VALUE_FLAGS = new Set([
+  "-h",
+  "--hostname",
+  "-R",
+  "--repo",
+  "-u",
+  "--user",
+  "-p",
+  "--git-protocol",
+  "-s",
+  "--scopes",
+  "-e",
+  "--env",
+  "-o",
+  "--org",
+  "-a",
+  "--app",
+  "-b",
+  "--body",
+  "-r",
+  "--repos",
+  "-v",
+  "--visibility",
+  "-q",
+  "--jq",
+  "--template",
+  "--json",
+]);
+
+type FlagReading = "boolean" | "cobra" | "known";
+
+/**
+ * First positional after `args[0..]`, reading flags one way: all boolean; cobra's subcommand lookup
+ * (an unknown `--flag` or `-x` without `=` consumes the next word); or only known value flags.
+ */
+function firstPositional(
+  args: string[],
+  reading: FlagReading,
+): { word: string; rest: string[] } | null {
+  for (let i = 0; i < args.length; i++) {
+    const t = args[i];
+    if (t === "--") {
+      return i + 1 < args.length ? { word: args[i + 1], rest: args.slice(i + 2) } : null;
+    }
+    if (t.startsWith("-") && t.length > 1) {
+      if (t.includes("=")) continue;
+      const consumes =
+        reading === "cobra"
+          ? t.startsWith("--") || t.length === 2
+          : reading === "known" && GH_KNOWN_VALUE_FLAGS.has(t);
+      if (consumes) i++;
+      continue;
+    }
+    return { word: t, rest: args.slice(i + 1) };
+  }
+  return null;
+}
+
+function positionalCandidates(
+  args: string[],
+  readings: FlagReading[] = ["boolean", "cobra", "known"],
+): { word: string; rest: string[] }[] {
+  const out: { word: string; rest: string[] }[] = [];
+  for (const reading of readings) {
+    const hit = firstPositional(args, reading);
+    if (hit && !out.some((o) => o.word === hit.word && o.rest.length === hit.rest.length)) {
+      out.push(hit);
+    }
+  }
+  return out;
+}
+
+const SPELL_LITERALLY =
+  "spell the gh command literally (no variables, substitutions, splats, xargs or Start-Process)";
 
 const GH_API_LONG_VALUE_FLAGS = new Set([
   "--header",
@@ -326,12 +552,16 @@ function isRepoLifecycleEndpoint(endpoint: string): boolean {
 interface GhApiCall {
   method: string;
   positionals: string[];
+  fields: string[];
+  hasInput: boolean;
 }
 
 /** Parse `gh api` arguments the way pflag does (attached `-fVAL`, `-X=POST`, `--input=FILE`). */
 function parseGhApiArgs(args: string[]): GhApiCall {
   let explicit: string | null = null;
   let hasBody = false;
+  let hasInput = false;
+  const fields: string[] = [];
   const positionals: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const t = args[i];
@@ -349,6 +579,8 @@ function parseGhApiArgs(args: string[]): GhApiCall {
       }
       if (name === "--method") explicit = (value ?? "").toUpperCase();
       if (GH_API_LONG_BODY_FLAGS.has(name)) hasBody = true;
+      if (name === "--input") hasInput = true;
+      else if (GH_API_LONG_BODY_FLAGS.has(name)) fields.push(value ?? "");
       continue;
     }
     if (t.startsWith("-") && t.length > 1) {
@@ -363,21 +595,36 @@ function parseGhApiArgs(args: string[]): GhApiCall {
         i++;
       }
       if (flag === "X") explicit = value.toUpperCase();
-      if (flag === "f" || flag === "F") hasBody = true;
+      if (flag === "f" || flag === "F") {
+        hasBody = true;
+        fields.push(value);
+      }
       continue;
     }
     positionals.push(t);
   }
-  return { method: explicit ?? (hasBody ? "POST" : "GET"), positionals };
+  return { method: explicit ?? (hasBody ? "POST" : "GET"), positionals, fields, hasInput };
 }
 
 function ghApiDenialReason(apiArgs: string[]): string | null {
   const call = parseGhApiArgs(apiArgs);
+  if (isUnresolvedToken(call.method) || call.positionals.some(isUnresolvedToken)) {
+    return `gh api with a run-time method or endpoint is not allowed from loop agents; ${SPELL_LITERALLY}`;
+  }
   const endpoints = call.positionals.map(normalizeGhApiEndpoint);
   if (endpoints.some((e) => e.toLowerCase() === "graphql")) {
     const blob = apiArgs.join(" ");
     if (GRAPHQL_REPO_LIFECYCLE.some((name) => blob.includes(name))) {
       return "gh api graphql repo create/delete/admin mutations are not allowed from loop agents";
+    }
+    const query = call.fields.find((f) => /^query=/i.test(f))?.slice("query=".length) ?? "";
+    if (
+      call.hasInput ||
+      query.startsWith("@") ||
+      query.includes(SUBSTITUTION) ||
+      query.includes(EXPANSION)
+    ) {
+      return "gh api graphql with a query read from a file, stdin or variable is not allowed from loop agents; pass the query inline";
     }
     return null;
   }
@@ -403,36 +650,63 @@ const GH_ALWAYS_DENIED = new Set(["ssh-key", "gpg-key", "secret", "variable"]);
 
 const GH_EXTENSION_GROUPS = new Set(["extension", "extensions", "ext"]);
 
-function ghDenialReason(args: string[]): string | null {
-  const a0 = args[0]?.toLowerCase() ?? "";
-  const a1 = args[1]?.toLowerCase() ?? "";
-  if (a0 === "repo" && GH_REPO_ADMIN_SUBCOMMANDS.has(a1)) {
-    return `gh repo ${a1} is not allowed from loop agents`;
-  }
-  if (a0 === "auth" && a1 && !a1.startsWith("-")) {
-    if (a1 !== "status") {
+function ghGroupDenialReason(group: string, rest: string[]): string | null {
+  if (GH_ALWAYS_DENIED.has(group)) return `gh ${group} is not allowed from loop agents`;
+  if (group === "api") return ghApiDenialReason(rest);
+  if (group === "auth") {
+    if (rest.some((a) => /^(?:-t|--show-token)(?:=|$)/i.test(a))) {
+      return "gh auth --show-token is not allowed from loop agents";
+    }
+    const subs = positionalCandidates(rest, ["cobra", "known"]);
+    if (subs.some((s) => s.word.toLowerCase() !== "status")) {
       return "gh auth changes are not allowed from loop agents (except gh auth status)";
     }
-    if (args.some((a) => /^(?:-t|--show-token)(?:=|$)/i.test(a))) {
-      return "gh auth status --show-token is not allowed from loop agents";
+    return null;
+  }
+  for (const sub of positionalCandidates(rest)) {
+    const name = sub.word.toLowerCase();
+    if (group === "repo" && GH_REPO_ADMIN_SUBCOMMANDS.has(name)) {
+      return `gh repo ${name} is not allowed from loop agents`;
+    }
+    if (group === "alias" && ["set", "import", "delete"].includes(name)) {
+      return `gh alias ${name} is not allowed from loop agents (aliases can rename denied commands)`;
+    }
+    if (GH_EXTENSION_GROUPS.has(group) && ["install", "upgrade", "exec"].includes(name)) {
+      return `gh extension ${name} is not allowed from loop agents (extensions run arbitrary code)`;
     }
   }
-  if (GH_ALWAYS_DENIED.has(a0)) return `gh ${a0} is not allowed from loop agents`;
-  if (a0 === "alias" && ["set", "import", "delete"].includes(a1)) {
-    return `gh alias ${a1} is not allowed from loop agents (aliases can rename denied commands)`;
+  return null;
+}
+
+function ghDenialReason({ args, literal, launcher }: GhInvocation): string | null {
+  if (launcher) {
+    return `gh launched through ${launcher} is not allowed from loop agents; ${SPELL_LITERALLY}`;
   }
-  if (GH_EXTENSION_GROUPS.has(a0) && ["install", "upgrade", "exec"].includes(a1)) {
-    return `gh extension ${a1} is not allowed from loop agents (extensions run arbitrary code)`;
+  if (!literal) {
+    const a0 = args[0]?.toLowerCase() ?? "";
+    return a0 ? ghGroupDenialReason(a0, args.slice(1)) : null;
   }
-  if (a0 === "api") return ghApiDenialReason(args.slice(1));
+  for (const g of positionalCandidates(args)) {
+    if (isUnresolvedToken(g.word)) {
+      return `gh with a run-time command group is not allowed from loop agents; ${SPELL_LITERALLY}`;
+    }
+    const group = g.word.toLowerCase();
+    if (group !== "api" && positionalCandidates(g.rest).some((s) => isUnresolvedToken(s.word))) {
+      return `gh ${group} with a run-time subcommand is not allowed from loop agents; ${SPELL_LITERALLY}`;
+    }
+    const reason = ghGroupDenialReason(group, g.rest);
+    if (reason) return reason;
+  }
   return null;
 }
 
 /** True when gh api would mutate repo lifecycle endpoints (RAD-163 R1). */
 export function ghApiRepoLifecycleMutation(command: string): boolean {
   for (const words of shellSimpleCommands(command)) {
-    for (const args of ghInvocations(words)) {
-      if (args[0]?.toLowerCase() === "api" && ghApiDenialReason(args.slice(1))) return true;
+    for (const { args } of ghInvocations(words)) {
+      for (const g of positionalCandidates(args)) {
+        if (g.word.toLowerCase() === "api" && ghApiDenialReason(g.rest)) return true;
+      }
     }
   }
   return false;
@@ -441,8 +715,8 @@ export function ghApiRepoLifecycleMutation(command: string): boolean {
 /** Short reason string when a loop agent must not run this shell command; null if allowed. */
 export function loopAgentShellDenialReason(command: string): string | null {
   for (const words of shellSimpleCommands(command)) {
-    for (const args of ghInvocations(words)) {
-      const reason = ghDenialReason(args);
+    for (const inv of ghInvocations(words)) {
+      const reason = ghDenialReason(inv);
       if (reason) return reason;
     }
   }
@@ -617,11 +891,15 @@ export function loopAgentForcePushDenialReason(
 export function shellCommandPublishes(command: string): boolean {
   for (const words of shellSimpleCommands(command)) {
     if (gitPushInvocations(words).length > 0) return true;
-    for (const args of ghInvocations(words)) {
-      const a0 = args[0]?.toLowerCase();
-      const a1 = args[1]?.toLowerCase();
-      if (a0 === "pr" && (a1 === "create" || a1 === "merge")) return true;
-      if (a0 === "repo" && a1 === "create") return true;
+    for (const { args } of ghInvocations(words)) {
+      for (const g of positionalCandidates(args)) {
+        const group = g.word.toLowerCase();
+        for (const s of positionalCandidates(g.rest)) {
+          const sub = s.word.toLowerCase();
+          if (group === "pr" && (sub === "create" || sub === "merge")) return true;
+          if (group === "repo" && sub === "create") return true;
+        }
+      }
     }
   }
   return false;
