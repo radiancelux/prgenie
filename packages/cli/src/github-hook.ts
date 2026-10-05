@@ -369,7 +369,7 @@ export async function main(): Promise<void> {
   try {
     root = await findGitRoot(cwd);
   } catch {
-    root = null;
+    /* invalid cwd — treat as outside a git repo */
   }
 
   if (command && isLoopAgentShellContext(input, cwd)) {
