@@ -638,6 +638,102 @@ test("RAD-163 round 4: heredoc and here-string bodies are data, not commands", (
 
 const RUN_TIME_SCRIPT = /running a script that is not in the command text/;
 
+test("RAD-163 R1 round 7: runners behind prefixes and launchers are checked", () => {
+  const body = "gh repo delete o/r --yes";
+  for (const command of [
+    'timeout 60 bash -c "$CMD"',
+    'timeout -s KILL 60s bash -c "$CMD"',
+    'timeout 60 bash <<< "$CMD"',
+    'nice -n 5 bash -c "$CMD"',
+    'nice -5 sh -c "$CMD"',
+    'sudo -u x bash -c "$CMD"',
+    'sudo -E -u x -- bash -c "$CMD"',
+    'env -i bash -c "$CMD"',
+    'env VAR=x bash -c "$CMD"',
+    'env -u HOME FOO=1 bash -c "$CMD"',
+    'stdbuf -oL bash -c "$CMD"',
+    'stdbuf -o L bash -c "$CMD"',
+    'wsl -e bash -c "$CMD"',
+    'wsl -d Ubuntu -- bash -c "$CMD"',
+    'command bash -c "$CMD"',
+    'exec -a x bash -c "$CMD"',
+    'nohup bash -c "$CMD"',
+    'time bash -c "$CMD"',
+    'ionice -c 2 -n 7 bash -c "$CMD"',
+    'chrt -f 10 bash -c "$CMD"',
+    'taskset -c 0 bash -c "$CMD"',
+    'doas -u x bash -c "$CMD"',
+    'runuser -u x -- bash -c "$CMD"',
+    'timeout 60 nice -n 5 sudo -u x bash -c "$CMD"',
+    "timeout 60 iex $cmd",
+    'echo "$CMD" | timeout 60 bash',
+    `echo '${body}' | xargs -0 bash -c`,
+    `echo '${body}' | xargs bash`,
+    "ls | xargs -I{} bash -c '{}'",
+    "ls | xargs -I % sh -c 'echo %'",
+    "ls | xargs -i sh -c 'run {}'",
+    "ls | xargs -n1 pwsh -Command",
+    "ls | xargs -n 1 eval",
+    "ls | xargs timeout 5 bash -c",
+    'ls | xargs bash -c "$CMD"',
+    "ls | parallel bash -c '{}'",
+    'find . -exec sh -c "$CMD" \\;',
+    "find . -name '*.sh' -exec bash {} \\;",
+    "find . -execdir sh -c 'run {}' \\;",
+    "find . -exec sh \\;",
+    "Start-Process bash -ArgumentList '-c', $cmd",
+    "Start-Process pwsh -ArgumentList @args",
+    'Start-Process -FilePath sh -ArgumentList "-c $CMD"',
+    "saps cmd -ArgumentList '/c', $env:CMD",
+    "Start-Process $exe -ArgumentList '-c','x'",
+  ]) {
+    assert.match(loopAgentShellDenialReason(command) ?? "", RUN_TIME_SCRIPT, command);
+    assert.equal(loopGate(command), "deny", command);
+  }
+  for (const command of [
+    `timeout 60 bash -c '${body}'`,
+    `nice -n 5 sh -c '${body}'`,
+    `sudo -u x bash -c '${body}'`,
+    `env -i bash <<< '${body}'`,
+    `wsl -e bash -c '${body}'`,
+    `ls | xargs bash -c '${body}'`,
+    `find . -exec sh -c '${body}' \\;`,
+    `Start-Process bash -ArgumentList '-c','${body}'`,
+    `Start-Process bash -ArgumentList '-c "${body}"'`,
+  ]) {
+    assert.match(loopAgentShellDenialReason(command) ?? "", /gh repo delete/, command);
+    assert.equal(loopGate(command), "deny", command);
+  }
+  for (const command of [
+    "timeout 60 git status",
+    "timeout 60 bash script.sh",
+    "nice make",
+    "nice -n 5 pnpm test",
+    "sudo apt-get update",
+    "env NODE_ENV=test pnpm test",
+    "stdbuf -oL pnpm test",
+    "time pnpm build",
+    "command -v bash",
+    "ls | xargs rm",
+    "xargs -n1 echo",
+    "git ls-files | xargs -0 prettier --check",
+    "ls | xargs -I{} cp {} out/",
+    "ls | xargs bash -c 'echo \"$@\"' _",
+    "find . -name x -exec grep y {} +",
+    "find . -name '*.tmp' -exec rm {} \\;",
+    "find . -exec sh -c 'echo \"$1\"' _ {} \\;",
+    "Start-Process notepad",
+    "Start-Process notepad -ArgumentList $file",
+    "Start-Process pwsh -ArgumentList '-File','x.ps1'",
+    "Start-Process bash -ArgumentList '-c','git status' -Wait",
+    "gh pr view 1",
+    "gh auth status",
+  ]) {
+    assert.equal(loopAgentShellDenialReason(command), null, command);
+    assert.notEqual(loopGate(command), "deny", command);
+  }
+});
+
 test("RAD-163 R1 round 6: run-time script arguments, process substitution and encodings fail closed", () => {
   const body = "gh repo delete o/r --yes";
   for (const command of [

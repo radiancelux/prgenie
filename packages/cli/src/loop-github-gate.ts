@@ -145,7 +145,27 @@ const PWSH_VALUE_PARAMS = [
   "custompipename",
   "version",
 ];
-const COMMAND_WRAPPERS = new Set(["sudo", "env", "command", "exec", "nohup", "time", "nice", "&"]);
+/** Prefix commands that run the rest of the line: their value-taking options and leading operands. */
+const PREFIX_COMMANDS: Record<string, { values: string[]; operands?: number }> = {
+  sudo: {
+    values: ["-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T", "--user", "--group"],
+  },
+  doas: { values: ["-u", "-C"] },
+  runuser: { values: ["-u", "-g", "-G", "--user", "--group", "--supp-group"] },
+  env: { values: ["-u", "--unset", "-C", "--chdir", "-S", "--split-string"] },
+  nice: { values: ["-n", "--adjustment"] },
+  timeout: { values: ["-s", "--signal", "-k", "--kill-after"], operands: 1 },
+  stdbuf: { values: ["-i", "-o", "-e", "--input", "--output", "--error"] },
+  ionice: { values: ["-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "-u"] },
+  chrt: { values: [], operands: 1 },
+  taskset: { values: [], operands: 1 },
+  command: { values: [] },
+  exec: { values: ["-a"] },
+  nohup: { values: [] },
+  time: { values: ["-f", "--format", "-o", "--output"] },
+  "&": { values: [] },
+  wsl: { values: ["-d", "--distribution", "-u", "--user", "--cd", "--shell-type"] },
+};
 
 function isParamPrefix(name: string, param: string, minLength = 1): boolean {
   return name.length >= minLength && param.startsWith(name);
@@ -191,16 +211,52 @@ function posixShellReadsStdin(args: string[]): boolean {
   return !positional;
 }
 
-/** Index of the program word, past `sudo`/`env`/`&`-style wrappers and `VAR=value` assignments. */
+/**
+ * Index of the program word: past `VAR=value` assignments and prefix commands (`timeout 60`,
+ * `nice -n 5`, `sudo -u x`, `env -i`, `stdbuf -oL`, `wsl -e`, …) with their options and operands.
+ * A prefix with nothing after it is itself the program.
+ */
 function commandHeadIndex(words: string[]): number {
   let k = 0;
-  while (
-    k < words.length &&
-    (COMMAND_WRAPPERS.has(commandBasename(words[k])) || /^[A-Za-z_]\w*=/.test(words[k]))
-  ) {
-    k++;
+  for (;;) {
+    while (k < words.length && /^[A-Za-z_]\w*=/.test(words[k])) k++;
+    const name = k < words.length ? commandBasename(words[k]) : "";
+    const spec = Object.prototype.hasOwnProperty.call(PREFIX_COMMANDS, name)
+      ? PREFIX_COMMANDS[name]
+      : undefined;
+    if (!spec) return k;
+    let i = k + 1;
+    while (i < words.length && words[i].startsWith("-") && words[i].length > 1) {
+      if (words[i] === "--") {
+        i++;
+        break;
+      }
+      i += spec.values.includes(words[i]) ? 2 : 1;
+    }
+    while (i < words.length && /^[A-Za-z_]\w*=/.test(words[i])) i++;
+    i += spec.operands ?? 0;
+    if (i >= words.length) return k;
+    k = i;
   }
-  return k;
+}
+
+const RUNNERS = new Set([
+  ...POSIX_SHELLS,
+  "pwsh",
+  "powershell",
+  "cmd",
+  "eval",
+  "iex",
+  "invoke-expression",
+  "source",
+  ".",
+]);
+
+/** The shell or evaluator this command runs (past prefixes), or null. */
+function runnerOf(words: string[]): string | null {
+  const k = commandHeadIndex(words);
+  const name = k < words.length ? commandBasename(words[k]) : "";
+  return RUNNERS.has(name) ? name : null;
 }
 
 interface ScriptArguments {
@@ -209,6 +265,8 @@ interface ScriptArguments {
   args: string[];
   /** `-EncodedCommand`: the script is never readable from the command text. */
   encoded: boolean;
+  /** `inline`: the args are script text; `file`: the arg names a script file. */
+  mode: "inline" | "file";
 }
 
 /**
@@ -220,21 +278,27 @@ function scriptArguments(words: string[]): ScriptArguments | null {
   if (k >= words.length) return null;
   const runner = commandBasename(words[k]);
   const args = words.slice(k + 1);
-  const result = (script: string[], encoded = false): ScriptArguments => ({
-    runner,
-    args: script,
-    encoded,
-  });
+  const result = (
+    script: string[],
+    mode: ScriptArguments["mode"] = "inline",
+    encoded = false,
+  ): ScriptArguments => ({ runner, args: script, encoded, mode });
   if (POSIX_SHELLS.has(runner) || runner === "source" || runner === ".") {
+    let inline = false;
     for (let i = 0; i < args.length; i++) {
       const t = args[i];
-      if (t === "--") return i + 1 < args.length ? result([args[i + 1]]) : null;
+      const mode = inline ? "inline" : "file";
+      if (t === "--") return i + 1 < args.length ? result([args[i + 1]], mode) : null;
       if (POSIX_SHELL_VALUE_FLAGS.has(t)) {
         i++;
         continue;
       }
-      if (/^[-+][A-Za-z]+$/.test(t) || t.startsWith("--")) continue;
-      return result([t]);
+      if (/^[-+][A-Za-z]+$/.test(t)) {
+        inline ||= t.slice(1).includes("c");
+        continue;
+      }
+      if (t.startsWith("--")) continue;
+      return result([t], mode);
     }
     return null;
   }
@@ -244,12 +308,14 @@ function scriptArguments(words: string[]): ScriptArguments | null {
       if (t === "-") return null;
       if (!t.startsWith("-") && !t.startsWith("/")) return result(args.slice(i));
       const name = t.replace(/^[-/]+/, "").toLowerCase();
-      if (isParamPrefix(name, "encodedcommand") || name === "ec") return result([], true);
+      if (isParamPrefix(name, "encodedcommand") || name === "ec") {
+        return result([], "inline", true);
+      }
       if (isParamPrefix(name, "command")) {
         const rest = args.slice(i + 1);
         return rest[0] === "-" ? null : result(rest);
       }
-      if (isParamPrefix(name, "file")) return result(args.slice(i + 1, i + 2));
+      if (isParamPrefix(name, "file")) return result(args.slice(i + 1, i + 2), "file");
       if (PWSH_VALUE_PARAMS.some((p) => isParamPrefix(name, p, 2))) i++;
     }
     return null;
@@ -316,12 +382,144 @@ function pipedOutput(source: ScannedCommand): StdinFeed {
   return unknown;
 }
 
+const XARGS_VALUE_FLAGS = new Set([
+  "-L",
+  "-n",
+  "-P",
+  "-s",
+  "-d",
+  "-E",
+  "-a",
+  "-R",
+  "-S",
+  "--arg-file",
+  "--delimiter",
+  "--max-args",
+  "--max-lines",
+  "--max-procs",
+  "--max-chars",
+  "--eof",
+]);
+
+/** `xargs [options] command…`: the command it launches and its replace string (`-I R`, `-i`). */
+function xargsTarget(args: string[]): { target: string[]; replace: string | null } {
+  let replace: string | null = null;
+  let i = 0;
+  for (; i < args.length; i++) {
+    const t = args[i];
+    if (t === "--") {
+      i++;
+      break;
+    }
+    if (!t.startsWith("-") || t.length === 1) break;
+    if (t === "-I" || t === "-J") {
+      replace = args[++i] ?? null;
+    } else if (/^-[IJ]./.test(t)) {
+      replace = t.slice(2);
+    } else if (t === "-i" || t === "--replace") {
+      replace = "{}";
+    } else if (/^-i./.test(t)) {
+      replace = t.slice(2);
+    } else if (t.startsWith("--replace=")) {
+      replace = t.slice("--replace=".length) || "{}";
+    } else if (XARGS_VALUE_FLAGS.has(t)) {
+      i++;
+    }
+  }
+  return { target: args.slice(i), replace };
+}
+
+/** Commands run by `find … -exec|-execdir|-ok|-okdir command… ;|+`. */
+function findExecTargets(args: string[]): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (!/^-(?:exec|execdir|ok|okdir)$/.test(args[i])) continue;
+    const start = i + 1;
+    while (i + 1 < args.length && !/^(?:;|\+|\\;?)$/.test(args[i + 1])) i++;
+    out.push(args.slice(start, i + 1));
+  }
+  return out;
+}
+
+const START_PROCESS_COMMANDS = new Set(["start-process", "saps", "start"]);
+const START_PROCESS_VALUE_PARAMS = [
+  "filepath",
+  "argumentlist",
+  "args",
+  "workingdirectory",
+  "verb",
+  "windowstyle",
+  "redirectstandardinput",
+  "redirectstandardoutput",
+  "redirectstandarderror",
+  "credential",
+  "environment",
+];
+const START_PROCESS_SWITCHES = [
+  "wait",
+  "nonewwindow",
+  "passthru",
+  "loaduserprofile",
+  "usenewenvironment",
+];
+
+/** `Start-Process <file> [-ArgumentList] …`: the program and its argument words. */
+function startProcessTarget(args: string[]): { file: string | null; argWords: string[] } {
+  let file: string | null = null;
+  const argWords: string[] = [];
+  let inArgs = false;
+  for (let i = 0; i < args.length; i++) {
+    const t = args[i];
+    const name = /^-[A-Za-z]+$/.test(t) ? t.slice(1).toLowerCase() : "";
+    const params = [...START_PROCESS_VALUE_PARAMS, ...START_PROCESS_SWITCHES];
+    const param = name
+      ? params.find((p) => (inArgs ? p === name : isParamPrefix(name, p, 2)))
+      : undefined;
+    if (param) {
+      inArgs = param === "argumentlist" || param === "args";
+      if (param === "filepath") file = args[++i] ?? null;
+      else if (!inArgs && START_PROCESS_VALUE_PARAMS.includes(param)) i++;
+      continue;
+    }
+    if (inArgs || file !== null) {
+      argWords.push(t);
+      inArgs = true;
+    } else if (!t.startsWith("-")) {
+      file = t;
+    }
+  }
+  return { file, argWords };
+}
+
 function resolveScripts(scanned: ScannedCommand[], procSubs: StdinFeed[], sink: ScanSink): void {
   const take = (runner: string, feed: StdinFeed): void => {
     if (feed.known) sink.scripts.push(feed.text);
     else if (!sink.unknownFeeds.includes(runner)) sink.unknownFeeds.push(runner);
   };
   const unknown: StdinFeed = { text: "", known: false };
+  const checkScript = (script: ScriptArguments): void => {
+    if (script.encoded) take(script.runner, unknown);
+    for (const arg of script.args) {
+      const sub = new RegExp(`^${PROCSUB}(\\d+)${PROCSUB}$`).exec(arg);
+      if (sub) take(script.runner, procSubs[Number(sub[1])] ?? unknown);
+      else if (isRunTimeScript(arg)) take(script.runner, unknown);
+    }
+  };
+  /** A runner started by xargs / find -exec: its script may come from the launcher's input. */
+  const checkLaunched = (target: string[], replace: string | null, appendsInput: boolean): void => {
+    const runner = runnerOf(target);
+    if (!runner) return;
+    const script = scriptArguments(target);
+    if (
+      !script ||
+      (replace !== null && script.args.some((a) => a.includes(replace))) ||
+      (appendsInput && script.mode === "inline" && !POSIX_SHELLS.has(runner))
+    ) {
+      take(runner, unknown);
+      return;
+    }
+    checkScript(script);
+  };
   for (const cmd of scanned) {
     const consumer = shellStdinConsumer(cmd.words);
     if (consumer) {
@@ -329,12 +527,26 @@ function resolveScripts(scanned: ScannedCommand[], procSubs: StdinFeed[], sink: 
       for (const feed of feeds) take(consumer, feed);
     }
     const script = scriptArguments(cmd.words);
-    if (!script) continue;
-    if (script.encoded) take(script.runner, unknown);
-    for (const arg of script.args) {
-      const sub = new RegExp(`^${PROCSUB}(\\d+)${PROCSUB}$`).exec(arg);
-      if (sub) take(script.runner, procSubs[Number(sub[1])] ?? unknown);
-      else if (isRunTimeScript(arg)) take(script.runner, unknown);
+    if (script) checkScript(script);
+    const k = commandHeadIndex(cmd.words);
+    const head = commandBasename(cmd.words[k] ?? "");
+    const rest = cmd.words.slice(k + 1);
+    if (head === "xargs" || head === "parallel") {
+      const { target, replace } = xargsTarget(rest);
+      checkLaunched(target, replace ?? (head === "parallel" ? "{}" : null), true);
+    } else if (head === "find") {
+      for (const target of findExecTargets(rest)) checkLaunched(target, "{}", false);
+    } else if (START_PROCESS_COMMANDS.has(head)) {
+      const { file, argWords } = startProcessTarget(rest);
+      if (!file) continue;
+      if (isRunTimeScript(file)) {
+        take(head, unknown);
+        continue;
+      }
+      const runner = runnerOf([file]);
+      if (!runner) continue;
+      if (argWords.some(isRunTimeScript)) take(runner, unknown);
+      else sink.scripts.push([file, ...argWords].join(" ").replace(/,/g, " "));
     }
   }
 }

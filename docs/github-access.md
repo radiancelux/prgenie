@@ -63,14 +63,25 @@ Loop agents are denied when a runner's script is not in the command text:
 
 Static script files (`bash script.sh`, `pwsh -File x.ps1`, `source ./env.sh`) are allowed; the hook does not read files.
 
+The same rules apply to a runner behind a prefix command, after its options, option values and leading operands are skipped: `sudo`, `doas`, `runuser`, `env` (including `VAR=x`), `nice`, `timeout <duration>`, `stdbuf`, `ionice`, `chrt <priority>`, `taskset <mask>`, `command`, `exec`, `nohup`, `time`, `&` and `wsl` (for example `timeout 60 nice -n 5 sudo -u x bash -c "$CMD"` is denied, and `timeout 60 git status` is not).
+
+A runner started by a launcher is checked too:
+
+- `xargs` / `parallel`: the input is appended to the runner's arguments, so the runner is denied when it has no script of its own (`xargs bash -c`, `xargs sh`, `xargs eval`), when its script contains the replace string (`xargs -I{} sh -c '{}'`), or when the input would land in the script text (`xargs pwsh -Command`, `xargs cmd /c`). A literal `xargs bash -c '…' _` is checked like `bash -c '…'`;
+- `find -exec` / `-execdir` / `-ok` / `-okdir`: denied when the runner's script contains `{}` or is missing (`-exec sh -c 'run {}' \;`, `-exec bash {} \;`); a literal script is checked;
+- `Start-Process` / `saps` / `start`: denied when the program is only known at run time or a runner's `-ArgumentList` contains a variable, subexpression or splat; a literal argument list is checked as one command (`Start-Process bash -ArgumentList '-c','…'`).
+
+Other commands that run under these launchers (`xargs rm`, `find … -exec grep … {} +`, `Start-Process notepad`) are unaffected.
+
 Loop agents must spell `gh` commands literally. A command word that is only known at run time (`$GH`, `$(…)`) is treated as `gh`/`git`. A `gh` command group or subcommand built at run time (`gh $SUB create`, `gh $(echo repo) delete`, `& gh @(…)`), `gh` launched through `xargs` or `Start-Process`, a `gh api` method or endpoint from a variable, and a GraphQL query read from a file (`query=@file`, `--input`) are all denied.
 
 The primary folder counts as a steward context when `stewards.json` names a live loop. If that file exists but can't be read, the hook fails closed and gates the primary folder.
 
-The hook is a guard rail, not a sandbox. The fine-grained `GH_TOKEN` above is the real boundary. Known limits:
+The hook is a guard rail, not a sandbox. The fine-grained `GH_TOKEN` above is the real boundary. Known limits — run-time evaluation the hook cannot see:
 
 - script files are not read: an agent can write `gh repo delete` into a file and run `bash x.sh`, `pwsh -File x.ps1`, `source x`, `node x.js` or `python x.py`;
-- other interpreters and programs are not modelled (`python -c`, `node -e`, `perl -e`, `make`, package scripts, git hooks and aliases, `curl` to the REST API with the token);
+- other interpreters and programs are not modelled (`python -c`, `node -e`, `perl -e`, `ruby -e`, `make`, package scripts, git hooks and aliases, `curl` to the REST API with the token);
+- launchers and prefixes not listed above (for example `su -c`, `runuser -c`, `env -S`, `script -c`, `watch`, `Invoke-Command`, `Start-Job`, `ssh`, `docker exec`, `cmd /c start`) are not unwrapped;
 - a pre-existing gh alias or extension, or a `gh` shim earlier on `PATH`, runs under a harmless-looking name;
 - shell features outside the tokenizer (functions or aliases defined earlier in the session, `IFS` tricks, unusual quoting) can hide a command.
 
