@@ -58,28 +58,180 @@ interface ScanState {
   i: number;
 }
 
+/** Text a command reads on stdin; `known: false` when it is only known at run time. */
+interface StdinFeed {
+  text: string;
+  known: boolean;
+}
+
 interface PendingHeredoc {
   delimiter: string;
   stripTabs: boolean;
   literal: boolean;
+  feed: StdinFeed;
+}
+
+interface ScannedCommand {
+  words: string[];
+  /** First word was a quoted string or here-string (a PowerShell literal expression). */
+  headQuoted: boolean;
+  /** Heredocs, `<<<` here-strings and `<` redirects on this command. */
+  stdin: StdinFeed[];
+  /** Command whose output is piped into this one. */
+  pipedFrom: ScannedCommand | null;
+}
+
+interface ScanSink {
+  commands: string[][];
+  /** Literal scripts a shell or evaluator reads on stdin; parsed as commands. */
+  scripts: string[];
+  /** Shells or evaluators that read a script only known at run time. */
+  unknownFeeds: string[];
+}
+
+function hasRunTimeValue(text: string): boolean {
+  return text.includes(SUBSTITUTION) || text.includes(EXPANSION);
 }
 
 /** Commands run by `$(…)` / backtick substitutions inside otherwise-literal text (heredoc bodies). */
-function scanSubstitutionsInText(text: string, dialect: ShellDialect, commands: string[][]): void {
+function scanSubstitutionsInText(text: string, dialect: ShellDialect, sink: ScanSink): void {
   let i = 0;
   while (i < text.length) {
     if (dialect === "posix" && text[i] === "\\") {
       i += 2;
     } else if (text[i] === "$" && text[i + 1] === "(") {
       const st = { i: i + 2 };
-      scanShell(text, dialect, st, ")", commands);
+      scanShell(text, dialect, st, ")", sink);
       i = st.i;
     } else if (dialect === "posix" && text[i] === "`") {
       const st = { i: i + 1 };
-      scanShell(text, dialect, st, "`", commands);
+      scanShell(text, dialect, st, "`", sink);
       i = st.i;
     } else {
       i++;
+    }
+  }
+}
+
+const POSIX_SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "wsl"]);
+const POSIX_SHELL_VALUE_FLAGS = new Set(["-o", "+o", "-O", "+O", "--rcfile", "--init-file"]);
+const PWSH_VALUE_PARAMS = [
+  "executionpolicy",
+  "workingdirectory",
+  "configurationname",
+  "outputformat",
+  "inputformat",
+  "windowstyle",
+  "settingsfile",
+  "custompipename",
+  "version",
+];
+const COMMAND_WRAPPERS = new Set(["sudo", "env", "command", "exec", "nohup", "time", "nice", "&"]);
+
+function isParamPrefix(name: string, param: string, minLength = 1): boolean {
+  return name.length >= minLength && param.startsWith(name);
+}
+
+/** pwsh reads its script from stdin: `pwsh`, `pwsh -`, `pwsh -Command -`, `pwsh -File -`. */
+function pwshReadsStdin(args: string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const t = args[i];
+    if (t === "-") return true;
+    if (!t.startsWith("-") && !t.startsWith("/")) return false;
+    const name = t.replace(/^[-/]+/, "").toLowerCase();
+    if (isParamPrefix(name, "command") || isParamPrefix(name, "file")) {
+      return args[i + 1] === "-";
+    }
+    if (isParamPrefix(name, "encodedcommand") || name === "ec") return false;
+    if (PWSH_VALUE_PARAMS.some((p) => isParamPrefix(name, p, 2))) i++;
+  }
+  return true;
+}
+
+/** sh/bash/… read their script from stdin unless `-c` or a script file is given (`-s` forces stdin). */
+function posixShellReadsStdin(args: string[]): boolean {
+  let positional = false;
+  for (let i = 0; i < args.length; i++) {
+    const t = args[i];
+    if (t === "--") {
+      positional ||= i + 1 < args.length;
+      break;
+    }
+    if (POSIX_SHELL_VALUE_FLAGS.has(t)) {
+      i++;
+      continue;
+    }
+    if (/^[-+][A-Za-z]+$/.test(t)) {
+      if (t.slice(1).includes("c")) return false;
+      if (t.slice(1).includes("s")) return true;
+      continue;
+    }
+    if (t.startsWith("--")) continue;
+    positional = true;
+  }
+  return !positional;
+}
+
+/** Name of the shell or evaluator when this command runs a script it reads on stdin. */
+function shellStdinConsumer(words: string[]): string | null {
+  let k = 0;
+  while (
+    k < words.length &&
+    (COMMAND_WRAPPERS.has(commandBasename(words[k])) || /^[A-Za-z_]\w*=/.test(words[k]))
+  ) {
+    k++;
+  }
+  if (k >= words.length) return null;
+  const name = commandBasename(words[k]);
+  const args = words.slice(k + 1);
+  if (POSIX_SHELLS.has(name)) return posixShellReadsStdin(args) ? name : null;
+  if (name === "pwsh" || name === "powershell") return pwshReadsStdin(args) ? name : null;
+  if (name === "cmd") return args.some((a) => /^\/[ck]/i.test(a)) ? null : name;
+  if (name === "iex" || name === "invoke-expression") {
+    return args.some((a) => !a.startsWith("-") || /^-c/i.test(a)) ? null : name;
+  }
+  if (name === "eval") return args.length === 0 ? name : null;
+  return null;
+}
+
+const ECHO_COMMANDS = new Set(["echo", "printf", "write-output", "write", "write-host"]);
+const STDIN_PASSTHROUGH_COMMANDS = new Set(["cat", "type", "get-content", "gc"]);
+
+/** What `source` writes to a pipe, when that is known from the command text alone. */
+function pipedOutput(source: ScannedCommand): StdinFeed {
+  const unknown = { text: "", known: false };
+  if (source.headQuoted) {
+    const text = source.words.join(" ");
+    return { text, known: !hasRunTimeValue(text) };
+  }
+  const name = commandBasename(source.words[0] ?? "");
+  const args = source.words.slice(1);
+  if (ECHO_COMMANDS.has(name)) {
+    const operands = name === "echo" ? args.filter((a) => !/^-[neE]+$/.test(a)) : args;
+    const text = operands.join(" ").replace(/\\n/g, "\n");
+    return { text, known: !hasRunTimeValue(text) };
+  }
+  if (
+    STDIN_PASSTHROUGH_COMMANDS.has(name) &&
+    args.every((a) => a.startsWith("-")) &&
+    source.stdin.length > 0
+  ) {
+    return {
+      text: source.stdin.map((f) => f.text).join("\n"),
+      known: source.stdin.every((f) => f.known),
+    };
+  }
+  return unknown;
+}
+
+function resolveStdinScripts(scanned: ScannedCommand[], sink: ScanSink): void {
+  for (const cmd of scanned) {
+    const consumer = shellStdinConsumer(cmd.words);
+    if (!consumer) continue;
+    const feeds = cmd.pipedFrom ? [...cmd.stdin, pipedOutput(cmd.pipedFrom)] : cmd.stdin;
+    for (const feed of feeds) {
+      if (feed.known) sink.scripts.push(feed.text);
+      else if (!sink.unknownFeeds.includes(consumer)) sink.unknownFeeds.push(consumer);
     }
   }
 }
@@ -89,7 +241,7 @@ function scanShell(
   dialect: ShellDialect,
   st: ScanState,
   closer: ")" | "`" | null,
-  commands: string[][],
+  sink: ScanSink,
 ): void {
   const escapeCh = dialect === "posix" ? "\\" : "`";
   let words: string[] = [];
@@ -97,6 +249,12 @@ function scanShell(
   let inWord = false;
   let parenDepth = 0;
   let skipNextWord = false;
+  let hereStringNext = false;
+  let headQuoted = false;
+  let stdin: StdinFeed[] = [];
+  let pipeSource: ScannedCommand | null = null;
+  let lastScanned: ScannedCommand | null = null;
+  const scanned: ScannedCommand[] = [];
   let heredocs: PendingHeredoc[] = [];
   const consumeHeredocBodies = (): void => {
     for (const doc of heredocs) {
@@ -109,7 +267,10 @@ function scanShell(
         if ((doc.stripTabs ? line.replace(/^\t+/, "") : line) === doc.delimiter) break;
         body.push(line);
       }
-      if (!doc.literal) scanSubstitutionsInText(body.join("\n"), dialect, commands);
+      const text = body.join("\n");
+      doc.feed.text = text;
+      doc.feed.known = doc.literal || !/[$`]/.test(text);
+      if (!doc.literal) scanSubstitutionsInText(text, dialect, sink);
     }
     heredocs = [];
   };
@@ -130,10 +291,13 @@ function scanShell(
       raw += c;
       st.i++;
     }
+    const feed: StdinFeed = { text: "", known: false };
+    stdin.push(feed);
     return {
       delimiter: raw.replace(/['"\\]/g, ""),
       stripTabs,
       literal: /['"\\]/.test(raw),
+      feed,
     };
   };
   const appendDollar = (): void => {
@@ -144,8 +308,14 @@ function scanShell(
   };
   const endWord = (): void => {
     if (inWord) {
-      if (skipNextWord) skipNextWord = false;
-      else words.push(cur);
+      if (hereStringNext) {
+        hereStringNext = false;
+        stdin.push({ text: cur, known: !hasRunTimeValue(cur) });
+      } else if (skipNextWord) {
+        skipNextWord = false;
+      } else {
+        words.push(cur);
+      }
     }
     cur = "";
     inWord = false;
@@ -153,11 +323,26 @@ function scanShell(
   const endCommand = (): void => {
     endWord();
     skipNextWord = false;
-    if (words.length > 0) commands.push(words);
+    hereStringNext = false;
+    if (words.length > 0) {
+      sink.commands.push(words);
+      lastScanned = { words, headQuoted, stdin, pipedFrom: pipeSource };
+      scanned.push(lastScanned);
+      pipeSource = null;
+      stdin = [];
+    }
+    headQuoted = false;
     words = [];
   };
+  const markQuotedHead = (): void => {
+    if (!inWord && words.length === 0) headQuoted = true;
+  };
+  const finish = (): void => {
+    endCommand();
+    resolveStdinScripts(scanned, sink);
+  };
   const substitution = (innerCloser: ")" | "`"): void => {
-    scanShell(src, dialect, st, innerCloser, commands);
+    scanShell(src, dialect, st, innerCloser, sink);
     cur += SUBSTITUTION;
     inWord = true;
   };
@@ -166,12 +351,12 @@ function scanShell(
     const ch = src[st.i];
     if (closer === "`" && ch === "`") {
       st.i++;
-      endCommand();
+      finish();
       return;
     }
     if (closer === ")" && ch === ")" && parenDepth === 0) {
       st.i++;
-      endCommand();
+      finish();
       return;
     }
     if (ch === escapeCh) {
@@ -190,6 +375,7 @@ function scanShell(
       continue;
     }
     if (ch === "'") {
+      markQuotedHead();
       const end = src.indexOf("'", st.i + 1);
       const stop = end < 0 ? src.length : end;
       cur += src.slice(st.i + 1, stop);
@@ -198,6 +384,7 @@ function scanShell(
       continue;
     }
     if (ch === '"') {
+      markQuotedHead();
       st.i++;
       inWord = true;
       while (st.i < src.length && src[st.i] !== '"') {
@@ -242,7 +429,8 @@ function scanShell(
       const term = new RegExp(`\\r?\\n${quote}@`).exec(src.slice(bodyStart));
       const bodyEnd = term ? bodyStart + term.index : src.length;
       const body = src.slice(bodyStart, bodyEnd);
-      if (quote === '"') scanSubstitutionsInText(body, dialect, commands);
+      if (quote === '"') scanSubstitutionsInText(body, dialect, sink);
+      markQuotedHead();
       cur += body;
       inWord = true;
       st.i = term ? bodyEnd + term[0].length : src.length;
@@ -276,12 +464,29 @@ function scanShell(
       consumeHeredocBodies();
       continue;
     }
-    if (ch === "\r" || ch === ";" || ch === "&" || ch === "|") {
+    if (ch === "|" && src[st.i + 1] !== "|") {
+      endCommand();
+      pipeSource = lastScanned;
+      st.i += src[st.i + 1] === "&" ? 2 : 1;
+      continue;
+    }
+    if (ch === "|") {
+      endCommand();
+      st.i += 2;
+      continue;
+    }
+    if (ch === "\r" || ch === ";" || ch === "&") {
       endCommand();
       st.i++;
       continue;
     }
-    if (ch === "<" && src[st.i + 1] === "<" && src[st.i + 2] !== "<") {
+    if (ch === "<" && src[st.i + 1] === "<" && src[st.i + 2] === "<") {
+      endWord();
+      st.i += 3;
+      hereStringNext = true;
+      continue;
+    }
+    if (ch === "<" && src[st.i + 1] === "<") {
       endWord();
       st.i += 2;
       heredocs.push(readHeredocDelimiter());
@@ -293,6 +498,9 @@ function scanShell(
         inWord = false;
       } else {
         endWord();
+      }
+      if (ch === "<" && src[st.i + 1] !== "&" && src[st.i + 1] !== "(") {
+        stdin.push({ text: "", known: false });
       }
       st.i++;
       while (/[<>&|]/.test(src[st.i] ?? "")) st.i++;
@@ -308,13 +516,13 @@ function scanShell(
     inWord = true;
     st.i++;
   }
-  endCommand();
+  finish();
 }
 
-function parseShell(command: string, dialect: ShellDialect): string[][] {
-  const commands: string[][] = [];
-  scanShell(command, dialect, { i: 0 }, null, commands);
-  return commands;
+function parseShell(command: string, dialect: ShellDialect): ScanSink {
+  const sink: ScanSink = { commands: [], scripts: [], unknownFeeds: [] };
+  scanShell(command, dialect, { i: 0 }, null, sink);
+  return sink;
 }
 
 const SHELL_EVAL_COMMANDS = new Set([
@@ -342,13 +550,21 @@ function commandBasename(word: string): string {
  * Every simple command (word list) the shell string could run: split on `;`, `&&`, `||`, `|`, `&`,
  * newlines, `(…)` / `{…}` groups, and the bodies of `$(…)` and backtick substitutions. Parsed once
  * with POSIX rules and once with PowerShell rules (backtick escape) so either reading is checked.
- * Arguments to `bash -c`, `pwsh -Command`, `eval`, `iex` and similar are parsed as nested commands.
+ * Arguments to `bash -c`, `pwsh -Command`, `eval`, `iex` and similar are parsed as nested commands,
+ * and so is literal stdin a shell or evaluator reads (heredoc, `<<<`, `echo … | bash`, `'…' | iex`).
  */
-export function shellSimpleCommands(command: string): string[][] {
+function analyzeShell(command: string): { commands: string[][]; unknownFeeds: string[] } {
   const out: string[][] = [];
+  const unknownFeeds = new Set<string>();
   const visit = (src: string, depth: number): void => {
     for (const dialect of ["posix", "powershell"] as const) {
-      for (const words of parseShell(src, dialect)) {
+      const sink = parseShell(src, dialect);
+      for (const name of sink.unknownFeeds) unknownFeeds.add(name);
+      for (const script of sink.scripts) {
+        if (depth >= 4) unknownFeeds.add("nested shell");
+        else visit(script, depth + 1);
+      }
+      for (const words of sink.commands) {
         out.push(words);
         if (depth >= 4) continue;
         const evalIdx = words.findIndex((w) => SHELL_EVAL_COMMANDS.has(commandBasename(w)));
@@ -362,7 +578,11 @@ export function shellSimpleCommands(command: string): string[][] {
     }
   };
   visit(command, 0);
-  return out;
+  return { commands: out, unknownFeeds: [...unknownFeeds] };
+}
+
+export function shellSimpleCommands(command: string): string[][] {
+  return analyzeShell(command).commands;
 }
 
 /** Word whose value is only known at run time: `$X`, `${…}`, `$(…)`, backticks, `%X%`, `@splat`, `{}`. */
@@ -714,11 +934,15 @@ export function ghApiRepoLifecycleMutation(command: string): boolean {
 
 /** Short reason string when a loop agent must not run this shell command; null if allowed. */
 export function loopAgentShellDenialReason(command: string): string | null {
-  for (const words of shellSimpleCommands(command)) {
+  const { commands, unknownFeeds } = analyzeShell(command);
+  for (const words of commands) {
     for (const inv of ghInvocations(words)) {
       const reason = ghDenialReason(inv);
       if (reason) return reason;
     }
+  }
+  if (unknownFeeds.length > 0) {
+    return `${unknownFeeds[0]} reading a script from a file, command output or variable is not allowed from loop agents; pass the script literally (for example bash -c '…') so it can be checked`;
   }
   return null;
 }
