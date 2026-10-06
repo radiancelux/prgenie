@@ -51,8 +51,11 @@ type ShellDialect = "posix" | "powershell";
 /** Stands in for a `$(…)` / backtick substitution whose output is unknown at parse time. */
 const SUBSTITUTION = "\u0000";
 
-/** Prefixed to a `$name` / `${…}` expansion outside single quotes; the value is unknown. */
+/** Prefixed to a `$name` / `${…}` / `$'…'` expansion outside single quotes; the value is unknown. */
 const EXPANSION = "\u0001";
+
+/** Wraps the index of a `<(…)` / `>(…)` process substitution in this scan: `\u0002<n>\u0002`. */
+const PROCSUB = "\u0002";
 
 interface ScanState {
   i: number;
@@ -73,8 +76,10 @@ interface PendingHeredoc {
 
 interface ScannedCommand {
   words: string[];
-  /** First word was a quoted string or here-string (a PowerShell literal expression). */
+  /** The only word is one quoted string or here-string (a PowerShell literal expression). */
   headQuoted: boolean;
+  /** An escape character (`\` in POSIX, backtick in PowerShell) was used in this command. */
+  hasEscapes: boolean;
   /** Heredocs, `<<<` here-strings and `<` redirects on this command. */
   stdin: StdinFeed[];
   /** Command whose output is piped into this one. */
@@ -83,15 +88,29 @@ interface ScannedCommand {
 
 interface ScanSink {
   commands: string[][];
-  /** Literal scripts a shell or evaluator reads on stdin; parsed as commands. */
+  /** Literal scripts a shell or evaluator reads on stdin or from `<(…)`; parsed as commands. */
   scripts: string[];
-  /** Shells or evaluators that read a script only known at run time. */
+  /** Shells or evaluators that run a script only known at run time. */
   unknownFeeds: string[];
 }
 
 function hasRunTimeValue(text: string): boolean {
-  return text.includes(SUBSTITUTION) || text.includes(EXPANSION);
+  return text.includes(SUBSTITUTION) || text.includes(EXPANSION) || text.includes(PROCSUB);
 }
+
+/** A script argument whose text is not in the command: expansions, substitutions, `%VAR%`, `@splat`. */
+function isRunTimeScript(arg: string): boolean {
+  return hasRunTimeValue(arg) || /%[A-Za-z_]\w*%/.test(arg) || /^@[A-Za-z_(]/.test(arg);
+}
+
+/** Pipe source for `( … ) | iex`: the group's output is an expression, not literal text. */
+const PAREN_SOURCE: ScannedCommand = {
+  words: ["("],
+  headQuoted: false,
+  hasEscapes: false,
+  stdin: [],
+  pipedFrom: null,
+};
 
 /** Commands run by `$(…)` / backtick substitutions inside otherwise-literal text (heredoc bodies). */
 function scanSubstitutionsInText(text: string, dialect: ShellDialect, sink: ScanSink): void {
@@ -172,8 +191,8 @@ function posixShellReadsStdin(args: string[]): boolean {
   return !positional;
 }
 
-/** Name of the shell or evaluator when this command runs a script it reads on stdin. */
-function shellStdinConsumer(words: string[]): string | null {
+/** Index of the program word, past `sudo`/`env`/`&`-style wrappers and `VAR=value` assignments. */
+function commandHeadIndex(words: string[]): number {
   let k = 0;
   while (
     k < words.length &&
@@ -181,6 +200,75 @@ function shellStdinConsumer(words: string[]): string | null {
   ) {
     k++;
   }
+  return k;
+}
+
+interface ScriptArguments {
+  runner: string;
+  /** Words that are (or name) the script the runner executes. */
+  args: string[];
+  /** `-EncodedCommand`: the script is never readable from the command text. */
+  encoded: boolean;
+}
+
+/**
+ * The script operand of a shell or evaluator: `bash -c <script>`, `bash <file>`, `pwsh -Command …`,
+ * `pwsh -File <file>`, `cmd /c …`, `eval …`, `iex …`, `source <file>` / `. <file>`.
+ */
+function scriptArguments(words: string[]): ScriptArguments | null {
+  const k = commandHeadIndex(words);
+  if (k >= words.length) return null;
+  const runner = commandBasename(words[k]);
+  const args = words.slice(k + 1);
+  const result = (script: string[], encoded = false): ScriptArguments => ({
+    runner,
+    args: script,
+    encoded,
+  });
+  if (POSIX_SHELLS.has(runner) || runner === "source" || runner === ".") {
+    for (let i = 0; i < args.length; i++) {
+      const t = args[i];
+      if (t === "--") return i + 1 < args.length ? result([args[i + 1]]) : null;
+      if (POSIX_SHELL_VALUE_FLAGS.has(t)) {
+        i++;
+        continue;
+      }
+      if (/^[-+][A-Za-z]+$/.test(t) || t.startsWith("--")) continue;
+      return result([t]);
+    }
+    return null;
+  }
+  if (runner === "pwsh" || runner === "powershell") {
+    for (let i = 0; i < args.length; i++) {
+      const t = args[i];
+      if (t === "-") return null;
+      if (!t.startsWith("-") && !t.startsWith("/")) return result(args.slice(i));
+      const name = t.replace(/^[-/]+/, "").toLowerCase();
+      if (isParamPrefix(name, "encodedcommand") || name === "ec") return result([], true);
+      if (isParamPrefix(name, "command")) {
+        const rest = args.slice(i + 1);
+        return rest[0] === "-" ? null : result(rest);
+      }
+      if (isParamPrefix(name, "file")) return result(args.slice(i + 1, i + 2));
+      if (PWSH_VALUE_PARAMS.some((p) => isParamPrefix(name, p, 2))) i++;
+    }
+    return null;
+  }
+  if (runner === "cmd") {
+    const idx = args.findIndex((a) => /^\/[ck]/i.test(a));
+    if (idx < 0) return null;
+    const attached = args[idx].slice(2);
+    return result([...(attached ? [attached] : []), ...args.slice(idx + 1)]);
+  }
+  if (runner === "eval" || runner === "iex" || runner === "invoke-expression") {
+    return args.length > 0 ? result(args) : null;
+  }
+  return null;
+}
+
+/** Name of the shell or evaluator when this command runs a script it reads on stdin. */
+function shellStdinConsumer(words: string[]): string | null {
+  const k = commandHeadIndex(words);
   if (k >= words.length) return null;
   const name = commandBasename(words[k]);
   const args = words.slice(k + 1);
@@ -197,19 +285,23 @@ function shellStdinConsumer(words: string[]): string | null {
 const ECHO_COMMANDS = new Set(["echo", "printf", "write-output", "write", "write-host"]);
 const STDIN_PASSTHROUGH_COMMANDS = new Set(["cat", "type", "get-content", "gc"]);
 
-/** What `source` writes to a pipe, when that is known from the command text alone. */
+/**
+ * What `source` writes to a pipe, when that is known from the command text alone. Escapes, `printf`
+ * format directives and `echo -e` are not decoded: that output counts as unknown.
+ */
 function pipedOutput(source: ScannedCommand): StdinFeed {
   const unknown = { text: "", known: false };
-  if (source.headQuoted) {
-    const text = source.words.join(" ");
-    return { text, known: !hasRunTimeValue(text) };
-  }
+  if (source.hasEscapes) return unknown;
+  const literal = (text: string): StdinFeed =>
+    hasRunTimeValue(text) || text.includes("\\") ? unknown : { text, known: true };
+  if (source.headQuoted) return literal(source.words[0]);
   const name = commandBasename(source.words[0] ?? "");
   const args = source.words.slice(1);
+  if (name === "printf" && /[%\\]/.test(args[0] ?? "")) return unknown;
   if (ECHO_COMMANDS.has(name)) {
-    const operands = name === "echo" ? args.filter((a) => !/^-[neE]+$/.test(a)) : args;
-    const text = operands.join(" ").replace(/\\n/g, "\n");
-    return { text, known: !hasRunTimeValue(text) };
+    const flags = name === "echo" ? args.filter((a) => /^-[neE]+$/.test(a)) : [];
+    if (flags.some((f) => f.includes("e"))) return unknown;
+    return literal(args.filter((a) => !flags.includes(a)).join(" "));
   }
   if (
     STDIN_PASSTHROUGH_COMMANDS.has(name) &&
@@ -224,14 +316,25 @@ function pipedOutput(source: ScannedCommand): StdinFeed {
   return unknown;
 }
 
-function resolveStdinScripts(scanned: ScannedCommand[], sink: ScanSink): void {
+function resolveScripts(scanned: ScannedCommand[], procSubs: StdinFeed[], sink: ScanSink): void {
+  const take = (runner: string, feed: StdinFeed): void => {
+    if (feed.known) sink.scripts.push(feed.text);
+    else if (!sink.unknownFeeds.includes(runner)) sink.unknownFeeds.push(runner);
+  };
+  const unknown: StdinFeed = { text: "", known: false };
   for (const cmd of scanned) {
     const consumer = shellStdinConsumer(cmd.words);
-    if (!consumer) continue;
-    const feeds = cmd.pipedFrom ? [...cmd.stdin, pipedOutput(cmd.pipedFrom)] : cmd.stdin;
-    for (const feed of feeds) {
-      if (feed.known) sink.scripts.push(feed.text);
-      else if (!sink.unknownFeeds.includes(consumer)) sink.unknownFeeds.push(consumer);
+    if (consumer) {
+      const feeds = cmd.pipedFrom ? [...cmd.stdin, pipedOutput(cmd.pipedFrom)] : cmd.stdin;
+      for (const feed of feeds) take(consumer, feed);
+    }
+    const script = scriptArguments(cmd.words);
+    if (!script) continue;
+    if (script.encoded) take(script.runner, unknown);
+    for (const arg of script.args) {
+      const sub = new RegExp(`^${PROCSUB}(\\d+)${PROCSUB}$`).exec(arg);
+      if (sub) take(script.runner, procSubs[Number(sub[1])] ?? unknown);
+      else if (isRunTimeScript(arg)) take(script.runner, unknown);
     }
   }
 }
@@ -242,7 +345,7 @@ function scanShell(
   st: ScanState,
   closer: ")" | "`" | null,
   sink: ScanSink,
-): void {
+): ScannedCommand[] {
   const escapeCh = dialect === "posix" ? "\\" : "`";
   let words: string[] = [];
   let cur = "";
@@ -251,6 +354,9 @@ function scanShell(
   let skipNextWord = false;
   let hereStringNext = false;
   let headQuoted = false;
+  let headStart = 0;
+  let hasEscapes = false;
+  const procSubs: StdinFeed[] = [];
   let stdin: StdinFeed[] = [];
   let pipeSource: ScannedCommand | null = null;
   let lastScanned: ScannedCommand | null = null;
@@ -301,12 +407,16 @@ function scanShell(
     };
   };
   const appendDollar = (): void => {
-    if (/[A-Za-z0-9_{@*#?!]/.test(src[st.i + 1] ?? "")) cur += EXPANSION;
+    if (/[A-Za-z0-9_{@*#?!'"]/.test(src[st.i + 1] ?? "")) cur += EXPANSION;
     cur += "$";
     inWord = true;
     st.i++;
   };
   const endWord = (): void => {
+    if (inWord && headQuoted && words.length === 0) {
+      const head = src.slice(headStart, st.i);
+      if (!/^(?:'[^']*'|"[^"]*"|@'[\s\S]*'@|@"[\s\S]*"@)$/.test(head)) headQuoted = false;
+    }
     if (inWord) {
       if (hereStringNext) {
         hereStringNext = false;
@@ -326,20 +436,36 @@ function scanShell(
     hereStringNext = false;
     if (words.length > 0) {
       sink.commands.push(words);
-      lastScanned = { words, headQuoted, stdin, pipedFrom: pipeSource };
+      lastScanned = {
+        words,
+        headQuoted: headQuoted && words.length === 1,
+        hasEscapes,
+        stdin,
+        pipedFrom: pipeSource,
+      };
       scanned.push(lastScanned);
       pipeSource = null;
       stdin = [];
     }
     headQuoted = false;
+    hasEscapes = false;
     words = [];
   };
   const markQuotedHead = (): void => {
-    if (!inWord && words.length === 0) headQuoted = true;
+    if (!inWord && words.length === 0) {
+      headQuoted = true;
+      headStart = st.i;
+    }
   };
-  const finish = (): void => {
+  const finish = (): ScannedCommand[] => {
     endCommand();
-    resolveStdinScripts(scanned, sink);
+    resolveScripts(scanned, procSubs, sink);
+    return scanned;
+  };
+  const followsParenGroup = (): boolean => {
+    let j = st.i - 1;
+    while (j >= 0 && (src[j] === " " || src[j] === "\t")) j--;
+    return src[j] === ")";
   };
   const substitution = (innerCloser: ")" | "`"): void => {
     scanShell(src, dialect, st, innerCloser, sink);
@@ -351,13 +477,11 @@ function scanShell(
     const ch = src[st.i];
     if (closer === "`" && ch === "`") {
       st.i++;
-      finish();
-      return;
+      return finish();
     }
     if (closer === ")" && ch === ")" && parenDepth === 0) {
       st.i++;
-      finish();
-      return;
+      return finish();
     }
     if (ch === escapeCh) {
       const next = src[st.i + 1];
@@ -368,6 +492,7 @@ function scanShell(
       } else if (next !== undefined) {
         cur += next;
         inWord = true;
+        hasEscapes = true;
         st.i += 2;
       } else {
         st.i++;
@@ -391,6 +516,7 @@ function scanShell(
         const c = src[st.i];
         if (c === escapeCh && st.i + 1 < src.length) {
           cur += src[st.i + 1];
+          hasEscapes = true;
           st.i += 2;
         } else if (c === "$" && src[st.i + 1] === "(") {
           st.i += 2;
@@ -441,7 +567,21 @@ function scanShell(
       substitution("`");
       continue;
     }
+    if ((ch === "<" || ch === ">") && src[st.i + 1] === "(") {
+      st.i += 2;
+      const inner = scanShell(src, dialect, st, ")", sink);
+      procSubs.push(
+        ch === "<" && inner.length === 1 ? pipedOutput(inner[0]) : { text: "", known: false },
+      );
+      cur += `${PROCSUB}${procSubs.length - 1}${PROCSUB}`;
+      inWord = true;
+      continue;
+    }
     if (ch === "(") {
+      if (inWord || words.length > 0) {
+        endWord();
+        words.push(SUBSTITUTION);
+      }
       endCommand();
       parenDepth++;
       st.i++;
@@ -465,8 +605,9 @@ function scanShell(
       continue;
     }
     if (ch === "|" && src[st.i + 1] !== "|") {
+      const fromGroup = followsParenGroup();
       endCommand();
-      pipeSource = lastScanned;
+      pipeSource = fromGroup ? PAREN_SOURCE : lastScanned;
       st.i += src[st.i + 1] === "&" ? 2 : 1;
       continue;
     }
@@ -516,7 +657,7 @@ function scanShell(
     inWord = true;
     st.i++;
   }
-  finish();
+  return finish();
 }
 
 function parseShell(command: string, dialect: ShellDialect): ScanSink {
@@ -590,6 +731,7 @@ function isUnresolvedToken(word: string): boolean {
   return (
     word.includes(SUBSTITUTION) ||
     word.includes(EXPANSION) ||
+    word.includes(PROCSUB) ||
     word.startsWith("$") ||
     /%[^%]+%/.test(word) ||
     word.startsWith("@") ||
@@ -942,7 +1084,7 @@ export function loopAgentShellDenialReason(command: string): string | null {
     }
   }
   if (unknownFeeds.length > 0) {
-    return `${unknownFeeds[0]} reading a script from a file, command output or variable is not allowed from loop agents; pass the script literally (for example bash -c '…') so it can be checked`;
+    return `${unknownFeeds[0]} running a script that is not in the command text (variable, command output, file, process substitution, escapes or -EncodedCommand) is not allowed from loop agents; pass the script literally (for example bash -c '…') so it can be checked`;
   }
   return null;
 }

@@ -41,13 +41,40 @@ The github-gate hook treats a shell command as a loop agent's when it comes from
 - `gh alias set/import/delete` and `gh extension install/upgrade/exec`, which could rename or wrap a denied command;
 - force-push (`--force`, `-f`, `--force-with-lease[=…]`, `--force-if-includes`, `--mirror`, or a `+` refspec) whose destination is the default branch or `main`, and deleting the default branch. Other force-pushes still ask, like every `git push`.
 
-The command is tokenized (POSIX and PowerShell quoting), so chains, pipes, `(…)`/`{…}` groups, `$(…)` and backtick substitutions, and `bash -c` / `pwsh -Command` / `eval` / `iex` arguments are each checked. Heredoc and here-string bodies are data (only `$(…)` inside an unquoted body is checked), so a commit message that mentions `gh repo create` is not denied. The exception is a body a shell or evaluator reads as its script: heredocs, `<<<` and here-strings fed to `bash`/`sh`/`zsh`/`dash`/`ksh`/`pwsh`/`powershell`/`cmd`/`eval`/`iex` (including `bash -s`, `pwsh -Command -`, `pwsh -`), and literal text piped into them (`echo '…' | bash`, `printf … | sh`, `'…' | iex`), are checked as commands. When that script is not in the command text (`Get-Content x | iex`, `curl … | sh`, `bash < file`, `echo "$CMD" | bash`), loop agents are denied. Flags before a subcommand (`gh auth -h github.com token`) are skipped the way gh's own lookup skips them.
+The command is tokenized (POSIX and PowerShell quoting), so chains, pipes, `(…)`/`{…}` groups, `$(…)` and backtick substitutions, and `<(…)` process substitutions are each checked. Flags before a subcommand (`gh auth -h github.com token`) are skipped the way gh's own lookup skips them.
+
+Heredoc and here-string bodies are data (only `$(…)` inside an unquoted body is checked), so a commit message that mentions `gh repo create` is not denied.
+
+### Scripts run by a shell or evaluator
+
+The runners are `bash`/`sh`/`zsh`/`dash`/`ksh`/`fish`, `pwsh`/`powershell`, `cmd`, `eval`, `iex`/`Invoke-Expression`, and `source`/`.`. A script they run is checked as commands when its text is in the command:
+
+- an argument: `bash -c '…'`, `pwsh -Command '…'`, `cmd /c …`, `eval '…'`, `iex '…'`;
+- stdin: a heredoc, `<<<` or here-string (`bash <<'EOF'`, `bash -s`, `pwsh -Command -`, `pwsh -`), or text piped from `echo`, `Write-Output`, a plain `printf` (no `%` or `\`), a single quoted string (`'…' | iex`), or `cat <<'EOF'`;
+- a process substitution of those emitters: `bash <(echo '…')`, `source <(echo '…')`.
+
+Loop agents are denied when a runner's script is not in the command text:
+
+- a variable or expansion: `bash -c "$CMD"`, `eval "$CMD"`, `iex $cmd`, `iex @args`, `source "$f"`, `. $env:X`, `cmd /c %CMD%`, `bash <<< "$CMD"`, `echo "$CMD" | bash`, `$x | iex`, `$'…'`;
+- command output or a subexpression: `bash -c "$(curl …)"`, `eval $(…)`, `Invoke-Expression (Get-Content x -Raw)`, `pwsh -Command (…)`, `curl … | sh`, `Get-Content x | iex`, `( … ) | iex`, `'a'+'b' | iex`;
+- a file or process substitution: `bash < file`, `cat file | bash`, `bash <(curl …)`, `source <(cat x)`, and a script-file argument that is a variable (`bash "$SCRIPT"`);
+- escapes or formatting that would have to be decoded: `printf` with `%` or `\` in the format, `echo -e`, any `\` in echoed text, PowerShell backtick escapes, and an unquoted heredoc containing `$` or backticks;
+- `pwsh`/`powershell -EncodedCommand` (`-enc`, `-ec`, `-e`), always.
+
+Static script files (`bash script.sh`, `pwsh -File x.ps1`, `source ./env.sh`) are allowed; the hook does not read files.
 
 Loop agents must spell `gh` commands literally. A command word that is only known at run time (`$GH`, `$(…)`) is treated as `gh`/`git`. A `gh` command group or subcommand built at run time (`gh $SUB create`, `gh $(echo repo) delete`, `& gh @(…)`), `gh` launched through `xargs` or `Start-Process`, a `gh api` method or endpoint from a variable, and a GraphQL query read from a file (`query=@file`, `--input`) are all denied.
 
 The primary folder counts as a steward context when `stewards.json` names a live loop. If that file exists but can't be read, the hook fails closed and gates the primary folder.
 
-The hook is a guard rail, not a sandbox: a determined agent can still reach GitHub through a script file, another program, or a pre-existing alias. The fine-grained `GH_TOKEN` above is the real boundary. See **RAD-163** and `packages/cli/src/loop-github-gate.ts`.
+The hook is a guard rail, not a sandbox. The fine-grained `GH_TOKEN` above is the real boundary. Known limits:
+
+- script files are not read: an agent can write `gh repo delete` into a file and run `bash x.sh`, `pwsh -File x.ps1`, `source x`, `node x.js` or `python x.py`;
+- other interpreters and programs are not modelled (`python -c`, `node -e`, `perl -e`, `make`, package scripts, git hooks and aliases, `curl` to the REST API with the token);
+- a pre-existing gh alias or extension, or a `gh` shim earlier on `PATH`, runs under a harmless-looking name;
+- shell features outside the tokenizer (functions or aliases defined earlier in the session, `IFS` tricks, unusual quoting) can hide a command.
+
+See **RAD-163** and `packages/cli/src/loop-github-gate.ts`.
 
 ## Doctor
 
