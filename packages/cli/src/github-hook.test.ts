@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { test } from "node:test";
-import { readFileSync } from "node:fs";
+import { after, test } from "node:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import {
   isGithubCli,
   isPrgenieMcpContext,
@@ -48,6 +48,30 @@ const gateCjs = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../plugin/hooks/github-gate.cjs",
 );
+
+// Loop-worktree-shaped git repo on a feature branch, so loop-gate outcomes do not depend on
+// where the suite runs (a real .loops checkout locally vs a detached PR merge commit in CI).
+const loopFixtureRoot = mkdtempSync(path.join(tmpdir(), "prgenie-gate-loop-"));
+const loopFixtureCwd = path.join(loopFixtureRoot, "repo.loops", "lp-deadbeef");
+mkdirSync(loopFixtureCwd, { recursive: true });
+execFileSync("git", ["init", "-q", "-b", "main"], { cwd: loopFixtureCwd });
+execFileSync(
+  "git",
+  [
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@example.com",
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "init",
+  ],
+  { cwd: loopFixtureCwd },
+);
+execFileSync("git", ["checkout", "-q", "-b", "feat/x"], { cwd: loopFixtureCwd });
+after(() => rmSync(loopFixtureRoot, { recursive: true, force: true }));
 
 function runGate(input: Record<string, unknown>): { permission: string; agent_message?: string } {
   const result = spawnSync(process.execPath, [gateCjs], {
@@ -349,7 +373,7 @@ test("RAD-164: built github-gate.cjs asks when MCP tool_input JSON is invalid", 
 });
 
 test("RAD-163: loop agent gh repo create / delete / api POST /user/repos are denied", () => {
-  const loopCwd = process.cwd();
+  const loopCwd = loopFixtureCwd;
   for (const command of [
     "gh repo create scratch --private",
     "gh repo delete foo/bar --yes",
@@ -367,7 +391,7 @@ test("RAD-163: loop agent gh repo create / delete / api POST /user/repos are den
 });
 
 test("RAD-163 R1 follow-up: gh api implicit POST and bypass forms are denied", () => {
-  const loopCwd = process.cwd();
+  const loopCwd = loopFixtureCwd;
   for (const command of [
     "gh api user/repos -f name=x",
     "gh api user/repos -F name=x",
@@ -383,7 +407,7 @@ test("RAD-163 R1 follow-up: gh api implicit POST and bypass forms are denied", (
 });
 
 test("RAD-163 R1 follow-up: chained gh commands are denied", () => {
-  const loopCwd = process.cwd();
+  const loopCwd = loopFixtureCwd;
   assert.deepEqual(shellSimpleCommands("gh pr view 1 && gh repo create scratch").slice(0, 2), [
     ["gh", "pr", "view", "1"],
     ["gh", "repo", "create", "scratch"],
@@ -403,13 +427,12 @@ test("RAD-163 R1 follow-up: chained gh commands are denied", () => {
 });
 
 test("RAD-163: loop worktree cwd gates without subagent_type in payload", () => {
-  const loopCwd = process.cwd();
-  const parsed = runGate({ command: "gh repo create scratch", cwd: loopCwd });
+  const parsed = runGate({ command: "gh repo create scratch", cwd: loopFixtureCwd });
   assert.equal(parsed.permission, "deny");
 });
 
 test("RAD-163: gh pr create and gh pr view still allowed from a loop", () => {
-  const loopCwd = process.cwd();
+  const loopCwd = loopFixtureCwd;
   for (const command of ["gh pr view 1", "gh auth status", "git status"]) {
     const parsed = runGate({ command, cwd: loopCwd, subagent_type: "prgenie-reviewer" });
     assert.equal(parsed.permission, "allow", command);
@@ -423,7 +446,7 @@ test("RAD-163: gh pr create and gh pr view still allowed from a loop", () => {
 });
 
 test("RAD-163: force-push to default branch is denied from a loop", () => {
-  const loopCwd = process.cwd();
+  const loopCwd = loopFixtureCwd;
   assert.equal(forcePushTargetsDefaultBranch("git push --force origin main", "main"), true);
   assert.equal(
     forcePushTargetsDefaultBranch("git push --force-with-lease origin main", "main"),
@@ -453,7 +476,7 @@ test("RAD-163: force-push to default branch is denied from a loop", () => {
 });
 
 function loopGate(command: string): string {
-  return runGate({ command, cwd: process.cwd(), subagent_type: "prgenie-implementor" }).permission;
+  return runGate({ command, cwd: loopFixtureCwd, subagent_type: "prgenie-implementor" }).permission;
 }
 
 test("RAD-163 R1 round 3: attached gh api body/method flags imply a mutating call", () => {
