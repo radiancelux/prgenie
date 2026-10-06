@@ -212,6 +212,20 @@ function posixShellReadsStdin(args: string[]): boolean {
 }
 
 /**
+ * True when a prefix option consumes the next word: `-u`, `--user`, or a short cluster whose last
+ * flag takes a value (`-iu x`). A value flag earlier in a cluster has its value attached (`-ux`).
+ */
+function prefixOptionTakesNext(option: string, values: string[]): boolean {
+  if (values.includes(option)) return true;
+  if (option.startsWith("--") || !/^-[A-Za-z0-9]+$/.test(option)) return false;
+  const cluster = option.slice(1);
+  for (let j = 0; j < cluster.length; j++) {
+    if (values.includes(`-${cluster[j]}`)) return j === cluster.length - 1;
+  }
+  return false;
+}
+
+/**
  * Index of the program word: past `VAR=value` assignments and prefix commands (`timeout 60`,
  * `nice -n 5`, `sudo -u x`, `env -i`, `stdbuf -oL`, `wsl -e`, …) with their options and operands.
  * A prefix with nothing after it is itself the program.
@@ -231,7 +245,7 @@ function commandHeadIndex(words: string[]): number {
         i++;
         break;
       }
-      i += spec.values.includes(words[i]) ? 2 : 1;
+      i += prefixOptionTakesNext(words[i], spec.values) ? 2 : 1;
     }
     while (i < words.length && /^[A-Za-z_]\w*=/.test(words[i])) i++;
     i += spec.operands ?? 0;
@@ -533,7 +547,12 @@ function resolveScripts(scanned: ScannedCommand[], procSubs: StdinFeed[], sink: 
     const rest = cmd.words.slice(k + 1);
     if (head === "xargs" || head === "parallel") {
       const { target, replace } = xargsTarget(rest);
-      checkLaunched(target, replace ?? (head === "parallel" ? "{}" : null), true);
+      const sources = head === "parallel" ? target.findIndex((w) => /^:{3,4}\+?$/.test(w)) : -1;
+      checkLaunched(
+        sources < 0 ? target : target.slice(0, sources),
+        replace ?? (head === "parallel" ? "{}" : null),
+        true,
+      );
     } else if (head === "find") {
       for (const target of findExecTargets(rest)) checkLaunched(target, "{}", false);
     } else if (START_PROCESS_COMMANDS.has(head)) {

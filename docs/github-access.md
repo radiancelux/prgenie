@@ -63,11 +63,11 @@ Loop agents are denied when a runner's script is not in the command text:
 
 Static script files (`bash script.sh`, `pwsh -File x.ps1`, `source ./env.sh`) are allowed; the hook does not read files.
 
-The same rules apply to a runner behind a prefix command, after its options, option values and leading operands are skipped: `sudo`, `doas`, `runuser`, `env` (including `VAR=x`), `nice`, `timeout <duration>`, `stdbuf`, `ionice`, `chrt <priority>`, `taskset <mask>`, `command`, `exec`, `nohup`, `time`, `&` and `wsl` (for example `timeout 60 nice -n 5 sudo -u x bash -c "$CMD"` is denied, and `timeout 60 git status` is not).
+The same rules apply to a runner behind a prefix command, after its options, option values (separate, attached like `-ux`, or after a short cluster like `-iu x`) and leading operands are skipped: `sudo`, `doas`, `runuser`, `env` (including `VAR=x`), `nice`, `timeout <duration>`, `stdbuf`, `ionice`, `chrt <priority>`, `taskset <mask>`, `command`, `exec`, `nohup`, `time`, `&` and `wsl` (for example `timeout 60 nice -n 5 sudo -u x bash -c "$CMD"` is denied, and `timeout 60 git status` is not).
 
 A runner started by a launcher is checked too:
 
-- `xargs` / `parallel`: the input is appended to the runner's arguments, so the runner is denied when it has no script of its own (`xargs bash -c`, `xargs sh`, `xargs eval`), when its script contains the replace string (`xargs -I{} sh -c '{}'`), or when the input would land in the script text (`xargs pwsh -Command`, `xargs cmd /c`). A literal `xargs bash -c '…' _` is checked like `bash -c '…'`;
+- `xargs` / `parallel`: the input (stdin, or `parallel`'s `:::` / `::::` / `:::+` arguments) is appended to the runner's arguments, so the runner is denied when it has no script of its own (`xargs bash -c`, `xargs sh`, `xargs eval`, `parallel bash -c ::: "$CMD"`), when its script contains the replace string (`xargs -I{} sh -c '{}'`), or when the input would land in the script text (`xargs pwsh -Command`, `xargs cmd /c`). A literal `xargs bash -c '…' _` is checked like `bash -c '…'`;
 - `find -exec` / `-execdir` / `-ok` / `-okdir`: denied when the runner's script contains `{}` or is missing (`-exec sh -c 'run {}' \;`, `-exec bash {} \;`); a literal script is checked;
 - `Start-Process` / `saps` / `start`: denied when the program is only known at run time or a runner's `-ArgumentList` contains a variable, subexpression or splat; a literal argument list is checked as one command (`Start-Process bash -ArgumentList '-c','…'`).
 
