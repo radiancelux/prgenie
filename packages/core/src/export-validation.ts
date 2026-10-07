@@ -406,7 +406,8 @@ export async function validateExport(
   // selectCiChecks can intentionally skip local CI while a prior blocked plan
   // still names the failing check — do not greenwash or drop those reasons.
   // RAD-123: never adopt a stale full-suite snapshot (forces re-evaluate).
-  const pr = await refreshLocalPrHead(cwd, id);
+  const resolved = await getLocalPr(cwd, id, { destructive: true });
+  const pr = await refreshLocalPrHead(cwd, resolved.id);
   // RAD-145: legacy SHA baseRef packets fail before gh pr create.
   const { assertDeclaredBaseAligned, assertStoredBaseRefIsBranch } = await import("./base-ref.js");
   try {
@@ -422,7 +423,7 @@ export async function validateExport(
   if (pr.exportGate && snapshotIsAdoptable(pr.exportGate, pr.headSha)) {
     shepherd = shepherdFromSnapshot(pr.exportGate);
   } else {
-    shepherd = await evaluateAndStoreExportGate(cwd, id, {
+    shepherd = await evaluateAndStoreExportGate(cwd, resolved.id, {
       onProgress: options.onProgress,
       signal: options.signal,
     });
