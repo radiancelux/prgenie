@@ -66,6 +66,7 @@ export {
   ensureLoopFeatureBranch,
   findPeelStashRef,
   isBaseBranch,
+  localBaseRef,
   loopWorktreeDir,
   loopWorktreeIdentity,
   peelStashMessage,
@@ -354,7 +355,12 @@ export type { ReadySkipCarryPlan } from "./ready-skip-carry.js";
 export { generateLearningDigest, formatLearningDigest } from "./learning.js";
 export type { LearningSummary } from "./learning.js";
 export { consoleDir, parseJsonObject, writeJsonFile } from "./store.js";
-export { parseGhAuthStatus } from "./github.js";
+export {
+  ghTokenScopesTooBroadForLoops,
+  parseActiveGhTokenScopes,
+  parseGhAuthStatus,
+} from "./github.js";
+export { assessGhLoopTokenScopes } from "./doctor.js";
 export type { GhAccount, RepoGithubBind } from "./github.js";
 export {
   activeGhLogin,

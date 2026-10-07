@@ -128,6 +128,13 @@ test("RAD-134: reviewer backstop full suite runs under ci-slot", () => {
   assert.match(bar, /slot: none/);
 });
 
+test("RAD-163: steward skill forbids remote repo creation in EARS specs", () => {
+  const steward = skillBody("steward");
+  assert.match(steward, /create or delete GitHub repos, orgs/i);
+  assert.match(steward, /RAD-138 R1\/R4/);
+  assert.match(steward, /local temp repos|recorder shim/i);
+});
+
 test("steward skill names PR Genie subagent types (RAD-89)", () => {
   const steward = skillBody("steward");
   assert.match(steward, /Model tiers \(RAD-89\)/);

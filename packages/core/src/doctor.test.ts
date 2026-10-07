@@ -5,7 +5,7 @@ import os from "node:os";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
-import { formatDoctorReport, runDoctor } from "./doctor.js";
+import { assessGhLoopTokenScopes, formatDoctorReport, runDoctor } from "./doctor.js";
 import { PRGENIE_GIT_ENV, clearGitBinaryCache } from "./git.js";
 
 let dir = "";
@@ -188,6 +188,22 @@ test("RAD-173 R4: doctor corrupt-prs flags torn and truncated packets", async ()
   assert.equal(corruptCheck.ok, false);
   assert.match(corruptCheck.summary ?? "", /lp-r173-doc-torn\.json/);
   assert.match(corruptCheck.summary ?? "", /lp-r173-doc-trunc\.json/);
+});
+
+test("RAD-163: warns on broad gh token scopes", () => {
+  const stub = `
+github.com
+  ✓ Logged in to github.com account radiancelux (keyring)
+  - Active account: true
+  - Token scopes: 'repo', 'workflow'
+`;
+  const check = assessGhLoopTokenScopes(stub);
+  assert.equal(check.id, "gh-token-scopes");
+  assert.equal(check.ok, true);
+  assert.equal(check.severity, "warn");
+  assert.match(check.summary, /broad scopes/i);
+  assert.match(check.fix ?? "", /github-access\.md/);
+  assert.match(formatDoctorReport({ checks: [check], ok: true }), /WARN\s+gh-token-scopes/);
 });
 
 test("doctor fails git-path when PRGENIE_GIT points at a missing binary", async () => {

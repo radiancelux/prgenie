@@ -1,24 +1,86 @@
-import { appendFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { appendFile, readFile } from "node:fs/promises";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import {
   consoleDir,
+  currentBranch,
   ensureRepoGithub,
   findGitRoot,
   getRepoGithubBind,
+  isArchivedPr,
+  listLocalPrs,
   parseCiSkipReason,
+  parseJsonObject,
 } from "@prgenie/core";
+import {
+  isLoopAgentShellContext,
+  isPathInsideOrEqual,
+  loopAgentShellDenial,
+  resolveDefaultBranchForCwd,
+  shellCommandPublishes,
+  type HookPermission,
+} from "./loop-github-gate.js";
+
+/** On-disk spelling of a path (expands Windows 8.3 short names and fixes case) when it exists. */
+function canonicalFsPath(p: string): string {
+  try {
+    return realpathSync.native(path.resolve(p));
+  } catch {
+    return p;
+  }
+}
+
+/**
+ * Loop ids in `stewards.json`, read without the file lock so the hook never writes state.
+ * `"unreadable"` when the file exists but cannot be read or parsed.
+ */
+export async function stewardBoundLoopIds(root: string): Promise<string[] | "unreadable"> {
+  let raw: string;
+  try {
+    raw = await readFile(path.join(await consoleDir(root), "stewards.json"), "utf8");
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code === "ENOENT" ? [] : "unreadable";
+  }
+  try {
+    const parsed = parseJsonObject<{ bindings?: unknown } | null>(raw);
+    const bindings = parsed?.bindings;
+    if (bindings === undefined) return [];
+    if (!bindings || typeof bindings !== "object" || Array.isArray(bindings)) return "unreadable";
+    return Object.values(bindings as Record<string, unknown>)
+      .map((b) => (b && typeof b === "object" ? (b as { loopId?: unknown }).loopId : null))
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+  } catch {
+    return "unreadable";
+  }
+}
+
+export async function isLoopAgentShellContextForGate(
+  input: HookInput,
+  cwd: string,
+  root: string | null,
+): Promise<boolean> {
+  if (isLoopAgentShellContext(input, cwd)) return true;
+  if (!root || !isPathInsideOrEqual(canonicalFsPath(cwd), canonicalFsPath(root))) return false;
+  const boundIds = await stewardBoundLoopIds(root);
+  if (boundIds === "unreadable") return true;
+  if (boundIds.length === 0) return false;
+  const liveIds = new Set(
+    (await listLocalPrs(root)).filter((p) => !isArchivedPr(p)).map((p) => p.id),
+  );
+  return boundIds.some((id) => liveIds.has(id));
+}
 
 type HookInput = Record<string, unknown>;
 
-export type HookPermission = "allow" | "ask";
+export type { HookPermission };
 
 export function isPublish(command: string): boolean {
   return (
     /\bgit(\.exe)?\s+push\b/i.test(command) ||
     /\bgh(\.exe)?\s+pr\s+create\b/i.test(command) ||
     /\bgh(\.exe)?\s+pr\s+merge\b/i.test(command) ||
-    /\bgh(\.exe)?\s+repo\s+create\b/i.test(command)
+    /\bgh(\.exe)?\s+repo\s+create\b/i.test(command) ||
+    shellCommandPublishes(command)
   );
 }
 
@@ -356,8 +418,23 @@ export async function main(): Promise<void> {
   }
 
   const command = String(input.command ?? "");
-  const cwd = String(input.cwd ?? process.cwd());
-  const root = await findGitRoot(cwd);
+  const cwd = inferCwd(input);
+  let root: string | null = null;
+  try {
+    root = await findGitRoot(cwd);
+  } catch {
+    /* invalid cwd — treat as outside a git repo */
+  }
+
+  if (command && (await isLoopAgentShellContextForGate(input, cwd, root))) {
+    const defaultBranch = root ? await resolveDefaultBranchForCwd(cwd, root) : "main";
+    const branch = await currentBranch(cwd).catch(() => null);
+    const denial = loopAgentShellDenial(command, defaultBranch, branch);
+    if (denial) {
+      process.stdout.write(JSON.stringify(denial));
+      return;
+    }
+  }
 
   if (root && isGithubCli(command)) {
     const bind = await getRepoGithubBind(root);
