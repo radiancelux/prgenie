@@ -201,6 +201,13 @@ Loop panel **Cancel** and MCP `abort_ci` share one path: `abortCiForSteward` bum
 - **Bound implementor:** `stewardAction` is `stop_implementor_and_abort_ci`. Cancel is the **skip half** — abort CI and surface the Task id. Do **not** assume the panel alone kills the agent; the steward (or human) must still stop/interrupt that Task so it does not keep calling `run_ci`.
 - **No implementor bound:** `stewardAction` is `abort_ci_only` — abort token only.
 
+**Persistent cancel marker (RAD-139):** panel **Cancel** also writes `<git-common-dir>/agent-console/loop-cancel/<id>.json` (`{ id, cancelledAt, cancelledBy, source, implementorTaskId }`). While that file exists:
+
+- MCP **`run_ci`** refuses before starting any check (`assertLoopNotCancelled`).
+- **`steward_next`** returns `{ kind: "cancelled", … }` before refresh, export-gate, spawn, or resume — stop the bound implementor Task if one is running; do not spawn or resume agents.
+
+Clear the marker three ways: panel toast **Resume loop**, MCP **`clear_loop_cancel`** `{ id }`, or **`steward_next`** `{ id, restart: true }`. Chat **`abort_ci`** alone does not write the marker (one-shot abort only). `run_ci`, `steward_next`, and `clear_loop_cancel` accept a loop id prefix and resolve it to the full loop id before reading or clearing the marker; `clear_loop_cancel` returns `cleared: true` for a known loop with no marker and errors with `Local PR not found` when the id matches no loop.
+
 Export-gate evaluations also take a per id+HEAD lock (`.git/agent-console/ci-lock/`) so steward and the panel do not run two full suites; a waiter adopts the persisted snapshot or aborts with the owner.
 
 ### Process tree kill (RAD-135)

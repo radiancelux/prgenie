@@ -50,6 +50,8 @@ import {
   reconcileSessionLoops,
   reconcileOneLoop,
   abortCiForSteward,
+  assertLoopNotCancelled,
+  clearLoopCancel,
   createProgressCardSink,
   evaluateAndStoreExportGate,
   bindSteward,
@@ -392,9 +394,11 @@ export async function handleTool(
           reason: ["MCP args.checks"],
         });
       }
+      const loopId = (await getLocalPr(cwd, String(args.id ?? ""))).id;
+      assertLoopNotCancelled(cwd, loopId);
       mcpProgress?.report("run_ci selecting checks");
       const card = createProgressCardSink((line) => process.stderr.write(`${line}\n`));
-      const result = await runLoopCi(cwd, String(args.id ?? ""), {
+      const result = await runLoopCi(cwd, loopId, {
         failingChecks: failing,
         failFast: args.failFast === false ? false : undefined,
         parallel: args.parallel === false ? false : undefined,
@@ -409,6 +413,11 @@ export async function handleTool(
         assertMcpCiPlanNotFullSuite(result.selection);
       }
       return { ...result, progressCard: card.card() };
+    }
+    case "clear_loop_cancel": {
+      const loopId = (await getLocalPr(cwd, String(args.id ?? ""))).id;
+      clearLoopCancel(cwd, loopId);
+      return { id: loopId, cleared: true };
     }
     case "abort_ci": {
       mcpProgress?.report("aborting CI");
@@ -1043,6 +1052,16 @@ export const tools = [
         },
         skipCache: { type: "boolean" },
       },
+    },
+  },
+  {
+    name: "clear_loop_cancel",
+    description:
+      "Clear the persistent panel cancel marker for a loop so run_ci and steward_next can proceed again. Accepts a loop id prefix; returns { id: <full loop id>, cleared: true } even when no marker existed. Errors with 'Local PR not found' when the id matches no loop.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" }, cwd: { type: "string" } },
     },
   },
   {

@@ -39,6 +39,9 @@ import {
   exportLocalPr,
   formatExportPartialFailure,
   abortCiForSteward,
+  clearLoopCancel,
+  getStewardBinding,
+  writeLoopCancel,
   applyCiProgressEvent,
   emptyCiProgressSnapshot,
   evaluateAndStoreExportGate,
@@ -63,6 +66,12 @@ import {
   type RepoGithubBind,
 } from "@prgenie/core";
 import { openAllChanges, openFileChange } from "./gitDiff.js";
+import {
+  RESUME_LOOP_ACTION,
+  cancelLoop,
+  cancelToastCopy,
+  resumeToastCopy,
+} from "./loopCancelToast.js";
 import {
   CHEAP_SHEPHERD_DEBOUNCE_MS,
   cheapShepherdTargetId,
@@ -697,13 +706,26 @@ export class LaneHub implements vscode.Disposable {
       this.exportGate.cancel();
       const cancelCwd = await this.repoCwd({ warn: false });
       const cancelId = this.selectedId ?? this.liveProgress?.id;
-      // RAD-115: same path as MCP abort_ci — abort token + stewardAction when a Task is bound.
-      // Panel Cancel is the skip half; it does not kill the agent by itself.
       if (cancelCwd && cancelId) {
         try {
-          const result = await abortCiForSteward(cancelCwd, cancelId);
-          if (result.stewardAction === "stop_implementor_and_abort_ci") {
-            void vscode.window.showWarningMessage(result.message);
+          const cancelPrs = await listLocalPrs(cancelCwd);
+          const cancelPr = cancelPrs.find((p) => p.id === cancelId);
+          const title = cancelPr?.title ?? cancelId;
+          const binding = await getStewardBinding(cancelCwd, cancelId);
+          await cancelLoop({
+            abort: () => abortCiForSteward(cancelCwd, cancelId),
+            writeMarker: () =>
+              writeLoopCancel(cancelCwd, cancelId, {
+                cancelledBy: "human",
+                source: "panel",
+                implementorTaskId: binding?.implementorTaskId ?? null,
+              }),
+          });
+          const { message, actionTitle } = cancelToastCopy(title);
+          const pick = await vscode.window.showWarningMessage(message, actionTitle);
+          if (pick === RESUME_LOOP_ACTION) {
+            clearLoopCancel(cancelCwd, cancelId);
+            void vscode.window.showInformationMessage(resumeToastCopy(title));
           }
         } catch (err) {
           void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));

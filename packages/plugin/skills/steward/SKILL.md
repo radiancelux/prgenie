@@ -126,6 +126,10 @@ If the user asks to restart the implementor, `steward_next` `{ restart: true }` 
 
 If the user says stop, stop Tasking and say so. There is no listen halt. `/export` is still the only publish step.
 
+## Panel cancel marker (RAD-139)
+
+When `steward_next` returns **`kind: "cancelled"`**, the human cancelled the loop from the STATUS panel and the cancel marker is still on disk. **Stop** the bound implementor Task (`implementorTaskId`) if it is still running. **Do not** spawn or resume implementor or reviewer Tasks. Report to the human and wait. Only resume steward work after the marker is cleared (**Resume loop** on the panel toast, MCP `clear_loop_cancel`, or `steward_next` with `restart: true`).
+
 ## Human / steward CI skip (RAD-112 / RAD-115)
 
 When the human tells you to skip CI, or hits loop panel **Cancel** (toolchain broken, known stale-plugin false red, etc.):
