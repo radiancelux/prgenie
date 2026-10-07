@@ -274,9 +274,13 @@ export function runGh(
   return gh(args, options);
 }
 
-export async function listGhAccounts(): Promise<GhAccount[]> {
+export async function ghAuthStatusText(): Promise<string> {
   const result = await gh(["auth", "status"]);
-  return parseGhAuthStatus(`${result.stdout}\n${result.stderr}`);
+  return `${result.stdout}\n${result.stderr}`;
+}
+
+export async function listGhAccounts(): Promise<GhAccount[]> {
+  return parseGhAuthStatus(await ghAuthStatusText());
 }
 
 export async function activeGhLogin(host = "github.com"): Promise<string | null> {

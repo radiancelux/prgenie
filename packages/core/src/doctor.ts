@@ -10,7 +10,8 @@ import {
   requireGitRoot,
   resolveGitBinary,
 } from "./git.js";
-import { getRepoGithubBind, listGhAccounts } from "./github-ops.js";
+import { ghTokenScopesTooBroadForLoops, parseActiveGhTokenScopes } from "./github.js";
+import { getRepoGithubBind, ghAuthStatusText, listGhAccounts } from "./github-ops.js";
 import { isArchivedPr, listCorruptLocalPrFiles, listLocalPrs } from "./prs.js";
 import { formatWatchStatus, getRepoWatch } from "./watch.js";
 import {
@@ -38,6 +39,8 @@ export interface DoctorCheck {
   ok: boolean;
   summary: string;
   fix?: string;
+  /** Advisory only — does not fail `report.ok` or exit code. */
+  severity?: "warn";
 }
 
 export interface DoctorReport {
@@ -57,7 +60,33 @@ async function hashFile(file: string): Promise<string | null> {
   }
 }
 
-export async function runDoctor(cwd: string, options?: { home?: string }): Promise<DoctorReport> {
+export function assessGhLoopTokenScopes(statusText: string): DoctorCheck {
+  const scopes = parseActiveGhTokenScopes(statusText);
+  if (scopes.length === 0) {
+    return {
+      id: "gh-token-scopes",
+      ok: true,
+      summary: "Active gh token scopes not listed (fine-grained token or no gh session).",
+    };
+  }
+  const broad = ghTokenScopesTooBroadForLoops(scopes);
+  return {
+    id: "gh-token-scopes",
+    ok: true,
+    severity: broad ? "warn" : undefined,
+    summary: broad
+      ? `Active gh token has broad scopes for loops (${scopes.join(", ")}). Use a fine-grained GH_TOKEN for loop sessions.`
+      : `Active gh token scopes look loop-safe (${scopes.join(", ")}).`,
+    fix: broad
+      ? "See docs/github-access.md — export a repo-scoped fine-grained token as GH_TOKEN for loop agents."
+      : undefined,
+  };
+}
+
+export async function runDoctor(
+  cwd: string,
+  options?: { home?: string; ghAuthStatusText?: string },
+): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
 
   const gitBinary = resolveGitBinary();
@@ -435,6 +464,18 @@ export async function runDoctor(cwd: string, options?: { home?: string }): Promi
     });
   }
 
+  if (options?.ghAuthStatusText !== undefined) {
+    checks.push(assessGhLoopTokenScopes(options.ghAuthStatusText));
+  } else if (accounts.length > 0) {
+    checks.push(assessGhLoopTokenScopes(await ghAuthStatusText()));
+  } else {
+    checks.push({
+      id: "gh-token-scopes",
+      ok: true,
+      summary: "Skipped gh token scope check (no gh accounts).",
+    });
+  }
+
   if (packageRoot) {
     const release = await checkReleaseVersions(packageRoot);
     checks.push({
@@ -502,8 +543,8 @@ export async function runDoctor(cwd: string, options?: { home?: string }): Promi
 
 export function formatDoctorReport(report: DoctorReport): string {
   const lines = report.checks.map((c) => {
-    const mark = c.ok ? "ok  " : "FAIL";
-    const fix = c.fix && !c.ok ? `\n      fix: ${c.fix}` : "";
+    const mark = c.severity === "warn" ? "WARN" : c.ok ? "ok  " : "FAIL";
+    const fix = c.fix && (c.severity === "warn" || !c.ok) ? `\n      fix: ${c.fix}` : "";
     return `  ${mark}  ${c.id} — ${c.summary}${fix}`;
   });
   return `prgenie doctor ${report.ok ? "passed" : "found issues"}\n${lines.join("\n")}\n`;

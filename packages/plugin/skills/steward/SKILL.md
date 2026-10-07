@@ -32,6 +32,14 @@ If there is no live local PR yet, take the brief from this message (ticket URL/i
 
 If a live loop already exists on this branch, use it. One steward per loop.
 
+### EARS packet template (requirements must be loop-safe)
+
+When you write **Requirements (EARS)** for implementors, **never** ask them to create or delete GitHub repos, orgs, or other remote resources outside the working repo. Loop agents cannot run `gh repo create`, account-wide `gh api` admin calls, or similar — the github-gate hook denies them (**RAD-163**). **RAD-138 R1/R4** is the counterexample: it required `gh repo create` and created `radiancelux/rad138-utf8-scratch`.
+
+- Repro or scratch checks → **local temp repos** (`git init` in a temp dir) or a **recorder shim**, not GitHub.
+- Verification rows must not depend on remote repo creation; use unit tests against the hook/doctor/skills instead.
+- Keep **Allowed files**, **Verification**, and **Out of scope** sections in the packet body.
+
 Call `steward_next` / `bind_steward` **before** awaiting any Task so ownership is on disk. The implementor `stop` hook stays silent for steward-owned loops (no twin reviewer).
 
 ## Each turn
