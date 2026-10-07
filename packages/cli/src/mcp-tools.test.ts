@@ -11,8 +11,9 @@ import {
   getLocalPr,
   setLocalPrExportGate,
 } from "@prgenie/core";
-import { handleTool, tools } from "./mcp.js";
 import type { LocalPr } from "@prgenie/core";
+import { run } from "./cli.js";
+import { handleTool, tools } from "./mcp.js";
 
 let repo = "";
 let outside = "";
@@ -294,4 +295,64 @@ test("RAD-164: record_export_gate_override persists OS username, not agent who",
     }),
     true,
   );
+});
+
+async function writeStubPacket(id: string): Promise<void> {
+  const prsRoot = path.join(await consoleDir(repo), "prs");
+  await mkdir(prsRoot, { recursive: true });
+  const now = new Date().toISOString();
+  const baseSha = git(["rev-parse", "main"]);
+  const headSha = git(["rev-parse", "HEAD"]);
+  const pr: LocalPr = {
+    id,
+    title: id,
+    body: "",
+    status: "approved",
+    headRef: "feat/stub",
+    baseRef: "main",
+    headSha,
+    baseSha,
+    worktreePath: null,
+    comments: [],
+    source: { kind: "cli" },
+    createdAt: now,
+    updatedAt: now,
+    reviewRequestedSha: null,
+    reviewerNotifiedSha: null,
+    readyCi: null,
+  };
+  await writeFile(path.join(prsRoot, `${id}.json`), `${JSON.stringify(pr, null, 2)}\n`);
+}
+
+function cli(...args: string[]): Promise<number> {
+  process.chdir(repo);
+  return run(["node", "prgenie", ...args]);
+}
+
+test("RAD-168: MCP and CLI refuse ambiguous loop id prefix", async () => {
+  await writeStubPacket("lp-ccc11111");
+  await writeStubPacket("lp-ccc22222");
+  const ambiguous = /Ambiguous loop id lp-ccc: matches lp-ccc11111, lp-ccc22222/;
+  await assert.rejects(() => handleTool("delete_local_pr", { cwd: repo, id: "lp-ccc" }), ambiguous);
+  await assert.rejects(() => handleTool("export_local_pr", { cwd: repo, id: "lp-ccc" }), ambiguous);
+  await assert.rejects(() => cli("delete", "lp-ccc", "--yes"), ambiguous);
+  await assert.rejects(() => cli("export", "lp-ccc"), ambiguous);
+});
+
+test("RAD-168: MCP and CLI refuse short prefix for delete/export; exact id works", async () => {
+  await writeStubPacket("lp-ddd33333");
+  await writeStubPacket("lp-eee44444");
+  const tooShort = /too short for delete, archive, or export/;
+  await assert.rejects(() => handleTool("delete_local_pr", { cwd: repo, id: "lp-ddd3" }), tooShort);
+  await assert.rejects(() => handleTool("export_local_pr", { cwd: repo, id: "lp-ddd3" }), tooShort);
+  await assert.rejects(() => cli("delete", "lp-ddd3", "--yes"), tooShort);
+  await assert.rejects(() => cli("export", "lp-ddd3"), tooShort);
+  assert.equal((await getLocalPr(repo, "lp-ddd3")).id, "lp-ddd33333");
+
+  const viaMcp = (await handleTool("delete_local_pr", { cwd: repo, id: "lp-ddd33333" })) as {
+    id: string;
+  };
+  assert.equal(viaMcp.id, "lp-ddd33333");
+  assert.equal(await cli("delete", "lp-eee44444", "--yes"), 0);
+  await assert.rejects(() => getLocalPr(repo, "lp-eee44444"), /Local PR not found/);
 });
