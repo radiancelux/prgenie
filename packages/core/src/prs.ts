@@ -83,7 +83,7 @@ async function writePr(cwd: string, pr: LocalPr): Promise<void> {
 }
 
 async function readPrFile(file: string): Promise<LocalPr> {
-  const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+  const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"), file);
   const { normalizeStoredBaseRef } = await import("./base-ref.js");
   pr.baseRef = normalizeStoredBaseRef(pr.baseRef);
   pr.source = pr.source ?? null;
@@ -278,7 +278,7 @@ export async function listCorruptLocalPrFiles(cwd: string): Promise<string[]> {
     if (!name.endsWith(".json")) continue;
     const file = path.join(dir, name);
     try {
-      parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+      parseJsonObject<LocalPr>(await readFile(file, "utf8"), file);
     } catch {
       corrupt.push(file);
     }
@@ -1048,7 +1048,7 @@ export async function addLocalPrComment(
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"), file);
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     pr.readyCi = normalizeReadyCi(pr.readyCi);
     const now = nowIso();
@@ -1182,7 +1182,7 @@ export async function addressLocalPrComment(
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"), file);
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
     if (!target) throw new Error(`Comment not found: ${commentId}`);
@@ -1228,7 +1228,7 @@ export async function resolveLocalPrComment(
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"), file);
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
     if (!target) throw new Error(`Comment not found: ${commentId}`);
@@ -1280,7 +1280,7 @@ export async function completeLocalPrReview(
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"), file);
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const reviewedAgainstSha = pr.reviewRequestedSha ?? null;
     await applyHeadRefresh(cwd, pr);

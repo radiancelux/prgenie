@@ -57,7 +57,7 @@ import {
   getRepoWatch,
   resumeWatch,
 } from "./index.js";
-import { prsDir, prFile, parseJsonObject, writeJsonFile } from "./store.js";
+import { prsDir, prFile, parseJsonObject, withFileLock, writeJsonFile } from "./store.js";
 import type { LocalPr } from "./types.js";
 import { createTempGitRepo } from "./test-git-fixture.js";
 
@@ -1073,6 +1073,51 @@ test("listCorruptLocalPrFiles names unparsable packets", async () => {
   const corrupt = await listCorruptLocalPrFiles(repo);
   assert.ok(corrupt.some((f) => f.endsWith("lp-badbadad.json")));
   await rm(bad, { force: true });
+});
+
+test("RAD-173 R4: locked packet read rejects truncated JSON with file path", async () => {
+  git(["checkout", "main"]);
+  const pr = await createLocalPr(repo, { title: "Trunc locked read", base: "main" });
+  const file = prFile(await prsDir(repo), pr.id);
+  let releaseLock!: () => void;
+  const lockHeld = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+  let lockAcquired!: () => void;
+  const locked = new Promise<void>((resolve) => {
+    lockAcquired = resolve;
+  });
+  const holdLock = withFileLock(file, async () => {
+    lockAcquired();
+    await lockHeld;
+  });
+  await locked;
+  await getLocalPr(repo, pr.id);
+  const updatePromise = updateLocalPr(repo, pr.id, { body: "summary after tear" });
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  await writeFile(file, '{"id":"trunc-only"', "utf8");
+  releaseLock();
+  await assert.rejects(updatePromise, (err: unknown) => {
+    assert.ok(err instanceof Error);
+    assert.match(err.message, new RegExp(`${pr.id}\\.json`));
+    return true;
+  });
+  await holdLock.catch(() => undefined);
+  await rm(file, { force: true });
+});
+
+test("RAD-173 R4: listCorruptLocalPrFiles flags torn and truncated packets", async () => {
+  const dir = await prsDir(repo);
+  const tornPath = path.join(dir, "lp-r173-torn.json");
+  const truncPath = path.join(dir, "lp-r173-trunc.json");
+  const body = { id: "lp-r173-torn", status: "approved" };
+  await writeFile(tornPath, `${JSON.stringify(body, null, 2)}\n7.247Z"\n}`, "utf8");
+  await writeFile(truncPath, '{"id":"lp-r173-trunc"', "utf8");
+  const corrupt = await listCorruptLocalPrFiles(repo);
+  assert.ok(corrupt.some((f) => f.endsWith("lp-r173-torn.json")));
+  assert.ok(corrupt.some((f) => f.endsWith("lp-r173-trunc.json")));
+  await rm(tornPath, { force: true });
+  await rm(truncPath, { force: true });
 });
 
 test("reopen and delete local PR", async () => {
