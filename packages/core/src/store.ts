@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdir, open, readFile, readdir, rename, stat, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server } from "node:net";
 import os from "node:os";
@@ -29,53 +29,51 @@ export async function sessionsFile(cwd: string): Promise<string> {
   return path.join(dir, "sessions.jsonl");
 }
 
-/** First complete `{...}` in a string, so leftover bytes after a short overwrite still parse. */
-export function firstJsonObject(raw: string): string | null {
-  const start = raw.indexOf("{");
-  if (start < 0) return null;
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-  for (let i = start; i < raw.length; i++) {
-    const c = raw[i];
-    if (inString) {
-      if (escape) {
-        escape = false;
-        continue;
-      }
-      if (c === "\\") {
-        escape = true;
-        continue;
-      }
-      if (c === '"') inString = false;
-      continue;
-    }
-    if (c === '"') {
-      inString = true;
-      continue;
-    }
-    if (c === "{") depth += 1;
-    else if (c === "}") {
-      depth -= 1;
-      if (depth === 0) return raw.slice(start, i + 1);
-    }
+export function parseJsonObject<T>(raw: string, filePath?: string): T {
+  const where = filePath ?? "JSON";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`Invalid JSON at ${where}: ${detail}`, { cause: err });
   }
-  return null;
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`Invalid JSON at ${where}: expected a JSON object`);
+  }
+  return parsed as T;
 }
 
-export function parseJsonObject<T>(raw: string): T {
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    const slice = firstJsonObject(raw);
-    if (!slice) throw new SyntaxError("No JSON object in file");
-    return JSON.parse(slice) as T;
-  }
+const RENAME_MAX_ATTEMPTS = 12;
+const RENAME_BACKOFF_MS = 25;
+
+export type WriteJsonFileTestHooks = {
+  rename?: (from: string, to: string) => Promise<void>;
+  randomSuffix?: () => string;
+  delay?: (ms: number) => Promise<void>;
+};
+
+let writeJsonFileTestHooks: WriteJsonFileTestHooks | undefined;
+
+/** Test seam for rename backoff and temp-path isolation (RAD-173). */
+export function setWriteJsonFileTestHooks(hooks: WriteJsonFileTestHooks | undefined): void {
+  writeJsonFileTestHooks = hooks;
+}
+
+function jsonTempPath(file: string): string {
+  const suffix = writeJsonFileTestHooks?.randomSuffix?.() ?? randomBytes(8).toString("hex");
+  return `${file}.${process.pid}.${suffix}.tmp`;
+}
+
+function isTransientRenameError(err: unknown): boolean {
+  if (!(err instanceof Error) || !("code" in err)) return false;
+  const code = (err as NodeJS.ErrnoException).code;
+  return code === "EPERM" || code === "EBUSY" || code === "EACCES";
 }
 
 export async function writeJsonFile(file: string, value: unknown): Promise<void> {
   const body = `${JSON.stringify(value, null, 2)}\n`;
-  const tmp = `${file}.${process.pid}.tmp`;
+  const tmp = jsonTempPath(file);
   const tmpHandle = await open(tmp, "w");
   try {
     await tmpHandle.writeFile(body, "utf8");
@@ -83,22 +81,30 @@ export async function writeJsonFile(file: string, value: unknown): Promise<void>
   } finally {
     await tmpHandle.close();
   }
-  try {
-    await rename(tmp, file);
-    return;
-  } catch {
-    // Windows cannot rename over an existing file.
+  const doRename = writeJsonFileTestHooks?.rename ?? rename;
+  const doDelay = writeJsonFileTestHooks?.delay ?? delay;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < RENAME_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await doRename(tmp, file);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (!isTransientRenameError(err)) {
+        throw new Error(
+          `Failed to rename temp JSON ${tmp} onto ${file}: ${err instanceof Error ? err.message : String(err)} (temp kept for recovery)`,
+          { cause: err },
+        );
+      }
+      if (attempt < RENAME_MAX_ATTEMPTS - 1) {
+        await doDelay(RENAME_BACKOFF_MS * (attempt + 1));
+      }
+    }
   }
-  const dest = await open(file, "w");
-  try {
-    const buf = Buffer.from(body, "utf8");
-    await dest.write(buf, 0, buf.length, 0);
-    await dest.truncate(buf.length);
-    await dest.sync();
-  } finally {
-    await dest.close();
-  }
-  await unlink(tmp).catch(() => undefined);
+  throw new Error(
+    `Failed to rename temp JSON ${tmp} onto ${file} after ${RENAME_MAX_ATTEMPTS} attempts: ${lastErr instanceof Error ? lastErr.message : String(lastErr)} (temp kept for recovery)`,
+    { cause: lastErr },
+  );
 }
 
 function delay(ms: number): Promise<void> {

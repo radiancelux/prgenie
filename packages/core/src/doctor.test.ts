@@ -171,6 +171,25 @@ test("doctor reports stale file lock with holder and fix (172-R3)", async () => 
   assert.match(formatDoctorReport(report), /stale-file-locks/);
 });
 
+test("RAD-173 R4: doctor corrupt-prs flags torn and truncated packets", async () => {
+  const repo = await initRepo("corrupt-packets");
+  const home = path.join(dir, "home-corrupt-packets");
+  const { consoleDir } = await import("./store.js");
+  const prs = path.join(await consoleDir(repo), "prs");
+  await mkdir(prs, { recursive: true });
+  const tornPath = path.join(prs, "lp-r173-doc-torn.json");
+  const truncPath = path.join(prs, "lp-r173-doc-trunc.json");
+  const body = { id: "lp-r173-doc-torn", status: "approved" };
+  await writeFile(tornPath, `${JSON.stringify(body, null, 2)}\n7.247Z"\n}`, "utf8");
+  await writeFile(truncPath, '{"id":"lp-r173-doc-trunc"', "utf8");
+  const report = await runDoctor(repo, { home });
+  const corruptCheck = report.checks.find((c) => c.id === "corrupt-prs");
+  assert.ok(corruptCheck);
+  assert.equal(corruptCheck.ok, false);
+  assert.match(corruptCheck.summary ?? "", /lp-r173-doc-torn\.json/);
+  assert.match(corruptCheck.summary ?? "", /lp-r173-doc-trunc\.json/);
+});
+
 test("RAD-163: warns on broad gh token scopes", () => {
   const stub = `
 github.com

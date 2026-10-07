@@ -83,7 +83,7 @@ async function writePr(cwd: string, pr: LocalPr): Promise<void> {
 }
 
 async function readPrFile(file: string): Promise<LocalPr> {
-  const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+  const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"), file);
   const { normalizeStoredBaseRef } = await import("./base-ref.js");
   pr.baseRef = normalizeStoredBaseRef(pr.baseRef);
   pr.source = pr.source ?? null;
@@ -104,15 +104,65 @@ async function readPrFile(file: string): Promise<LocalPr> {
   return pr;
 }
 
+/** Minimum hex digits after `lp-` for destructive id prefixes (RAD-168). */
+export const DESTRUCTIVE_LOOP_ID_MIN_HEX = 6;
+
+export type ResolveLocalPrOptions = { destructive?: boolean };
+
+export function findMatchingLocalPrs(prs: LocalPr[], id: string): LocalPr[] {
+  const needle = id.trim();
+  if (!needle) return [];
+  return prs.filter((p) => p.id === needle || p.id.startsWith(needle));
+}
+
+export function destructiveLoopIdAllowed(id: string, match: LocalPr): boolean {
+  const needle = id.trim();
+  if (match.id === needle) return true;
+  if (!needle.startsWith("lp-")) return false;
+  const suffix = needle.slice(3);
+  return new RegExp(`^[0-9a-f]{${DESTRUCTIVE_LOOP_ID_MIN_HEX},}$`, "i").test(suffix);
+}
+
+/** Pure id resolution — shared by CLI and MCP (RAD-168). */
+export function resolveLocalPrFromList(
+  prs: LocalPr[],
+  id: string,
+  options: ResolveLocalPrOptions = {},
+): LocalPr {
+  const needle = id.trim();
+  const exact = prs.find((p) => p.id === needle);
+  if (exact) return exact;
+  const matches = findMatchingLocalPrs(prs, needle);
+  if (matches.length === 0) {
+    throw new Error(`Local PR not found: ${needle}`);
+  }
+  if (matches.length > 1) {
+    const ids = matches
+      .map((p) => p.id)
+      .sort()
+      .join(", ");
+    throw new Error(`Ambiguous loop id ${needle}: matches ${ids}`);
+  }
+  const pr = matches[0];
+  if (options.destructive && !destructiveLoopIdAllowed(needle, pr)) {
+    throw new Error(
+      `Loop id ${needle} is too short for delete, archive, or export; use the full id or at least ${DESTRUCTIVE_LOOP_ID_MIN_HEX} hex characters after lp-.`,
+    );
+  }
+  return pr;
+}
+
 /**
  * Disk + worktree overlay lookup without refreshing headSha.
  * Prefer {@link getLocalPr} for agent/MCP reads (RAD-125 refreshes tip).
  */
-async function findLocalPr(cwd: string, id: string): Promise<LocalPr> {
+async function findLocalPr(
+  cwd: string,
+  id: string,
+  options: ResolveLocalPrOptions = {},
+): Promise<LocalPr> {
   const prs = await listLocalPrs(cwd);
-  const pr = prs.find((p) => p.id === id || p.id.startsWith(id));
-  if (!pr) throw new Error(`Local PR not found: ${id}`);
-  return pr;
+  return resolveLocalPrFromList(prs, id, options);
 }
 
 /** Lock, re-read, mutate, write — so parallel chats cannot drop comments. */
@@ -228,7 +278,7 @@ export async function listCorruptLocalPrFiles(cwd: string): Promise<string[]> {
     if (!name.endsWith(".json")) continue;
     const file = path.join(dir, name);
     try {
-      parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+      parseJsonObject<LocalPr>(await readFile(file, "utf8"), file);
     } catch {
       corrupt.push(file);
     }
@@ -359,8 +409,12 @@ export async function listLocalPrs(
  * {@link refreshLocalPrHead} or MCP `get_local_pr` (which refreshes).
  * `list_local_prs` also skips head refresh (read-only listing).
  */
-export async function getLocalPr(cwd: string, id: string): Promise<LocalPr> {
-  return findLocalPr(cwd, id);
+export async function getLocalPr(
+  cwd: string,
+  id: string,
+  options: ResolveLocalPrOptions = {},
+): Promise<LocalPr> {
+  return findLocalPr(cwd, id, options);
 }
 
 /** Export halt lasts until the next loop. Stop halt never auto-resumes, including one-sided stop. */
@@ -994,7 +1048,7 @@ export async function addLocalPrComment(
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"), file);
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     pr.readyCi = normalizeReadyCi(pr.readyCi);
     const now = nowIso();
@@ -1128,7 +1182,7 @@ export async function addressLocalPrComment(
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"), file);
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
     if (!target) throw new Error(`Comment not found: ${commentId}`);
@@ -1174,7 +1228,7 @@ export async function resolveLocalPrComment(
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"), file);
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const target = pr.comments.find((c) => c.id === needle || c.id.startsWith(needle));
     if (!target) throw new Error(`Comment not found: ${commentId}`);
@@ -1226,7 +1280,7 @@ export async function completeLocalPrReview(
   const dir = await prsDir(cwd);
   const file = prFile(dir, resolved.id);
   return withFileLock(file, async () => {
-    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"));
+    const pr = parseJsonObject<LocalPr>(await readFile(file, "utf8"), file);
     pr.comments = (pr.comments ?? []).map(normalizeComment);
     const reviewedAgainstSha = pr.reviewRequestedSha ?? null;
     await applyHeadRefresh(cwd, pr);
@@ -1313,7 +1367,7 @@ export async function deleteLocalPr(
   cwd: string,
   id: string,
 ): Promise<{ id: string; deleted: true; finalize: FinalizeArchivedLoopResult }> {
-  const pr = await getLocalPr(cwd, id);
+  const pr = await getLocalPr(cwd, id, { destructive: true });
   const finalize = await finalizeArchivedLoop(cwd, pr);
   const dir = await prsDir(cwd);
   const file = prFile(dir, pr.id);
@@ -1337,11 +1391,12 @@ export type ArchiveLocalPrResult = {
  * loop branch. Remote origin branch/PR untouched. Packet stays for Show/Reopen.
  */
 export async function archiveLocalPr(cwd: string, id: string): Promise<ArchiveLocalPrResult> {
-  const before = await getLocalPr(cwd, id);
+  const destructive = { destructive: true } as const;
+  const before = await getLocalPr(cwd, id, destructive);
   if (!isArchivedPr(before)) {
-    await setLocalPrStatus(cwd, id, "approved");
+    await setLocalPrStatus(cwd, before.id, "approved");
   }
-  const pr = await getLocalPr(cwd, id);
+  const pr = await getLocalPr(cwd, id, destructive);
   const trees = await listWorktrees(cwd);
   const primary = primaryWorktreePath(trees);
   const dest = primary ? loopWorktreeDir(primary, pr.id) : pr.worktreePath;

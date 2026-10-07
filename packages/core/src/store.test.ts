@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, unlink, utimes, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rename, rm, unlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { STALE_LOCK_MS, fileLockIsStale } from "./ci-abort.js";
-import { firstJsonObject, parseJsonObject, withFileLock, writeJsonFile } from "./store.js";
+import {
+  parseJsonObject,
+  setWriteJsonFileTestHooks,
+  withFileLock,
+  writeJsonFile,
+} from "./store.js";
 
 const DEAD_PID = 987_654_321;
 
@@ -20,13 +25,109 @@ after(async () => {
 });
 
 describe("store", { concurrency: 1 }, () => {
-  test("parseJsonObject recovers leftover bytes after a shorter overwrite", () => {
+  test("RAD-173 R4: torn packet fails loudly with path", () => {
     const body = { id: "lp-test", status: "approved" };
     const raw = `${JSON.stringify(body, null, 2)}\n7.247Z"\n}`;
-    assert.equal(firstJsonObject(raw), JSON.stringify(body, null, 2));
-    const parsed = parseJsonObject<typeof body>(raw);
-    assert.equal(parsed.id, "lp-test");
-    assert.equal(parsed.status, "approved");
+    const packet = path.join(dir, "lp-torn.json");
+    assert.throws(
+      () => parseJsonObject<typeof body>(raw, packet),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /lp-torn\.json/);
+        return true;
+      },
+    );
+  });
+
+  test("RAD-173 R4: truncated packet fails loudly with path", () => {
+    const packet = path.join(dir, "lp-trunc.json");
+    assert.throws(
+      () => parseJsonObject('{"id":"lp-x"', packet),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /lp-trunc\.json/);
+        return true;
+      },
+    );
+  });
+
+  test("RAD-173 R1: rename retries on EBUSY then succeeds", async () => {
+    const file = path.join(dir, "retry-rename.json");
+    await writeFile(file, "{}\n", "utf8");
+    let attempts = 0;
+    setWriteJsonFileTestHooks({
+      delay: async () => undefined,
+      rename: async (from, to) => {
+        attempts += 1;
+        if (attempts < 3) {
+          const err = new Error("EBUSY") as NodeJS.ErrnoException;
+          err.code = "EBUSY";
+          throw err;
+        }
+        await rename(from, to);
+      },
+    });
+    try {
+      await writeJsonFile(file, { ok: true });
+    } finally {
+      setWriteJsonFileTestHooks(undefined);
+    }
+    assert.equal(attempts, 3);
+    const parsed = parseJsonObject<{ ok: boolean }>(await readFile(file, "utf8"));
+    assert.equal(parsed.ok, true);
+  });
+
+  test("RAD-173 R1 R3: persistent rename failure throws and leaves target intact", async () => {
+    const file = path.join(dir, "persist-fail.json");
+    const original = `${JSON.stringify({ status: "changes_requested", pad: "x".repeat(40) }, null, 2)}\n`;
+    await writeFile(file, original, "utf8");
+    let tmpLeft = "";
+    setWriteJsonFileTestHooks({
+      delay: async () => undefined,
+      rename: async (from) => {
+        tmpLeft = from;
+        const err = new Error("EBUSY") as NodeJS.ErrnoException;
+        err.code = "EBUSY";
+        throw err;
+      },
+    });
+    try {
+      await assert.rejects(
+        () => writeJsonFile(file, { status: "approved" }),
+        /temp kept for recovery/,
+      );
+    } finally {
+      setWriteJsonFileTestHooks(undefined);
+    }
+    assert.match(tmpLeft, /\.tmp$/);
+    await access(tmpLeft);
+    assert.equal(await readFile(file, "utf8"), original);
+  });
+
+  test("RAD-173 R2: concurrent writes use distinct temp paths", async () => {
+    const file = path.join(dir, "concurrent-tmp.json");
+    await writeFile(file, "{}\n", "utf8");
+    const temps: string[] = [];
+    let gate = 0;
+    let seq = 0;
+    setWriteJsonFileTestHooks({
+      delay: async () => undefined,
+      randomSuffix: () => String(seq++),
+      rename: async (from, to) => {
+        temps.push(from);
+        gate += 1;
+        while (gate < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+        await rename(from, to);
+      },
+    });
+    try {
+      await Promise.all([writeJsonFile(file, { n: 1 }), writeJsonFile(file, { n: 2 })]);
+    } finally {
+      setWriteJsonFileTestHooks(undefined);
+    }
+    assert.equal(new Set(temps).size, 2, `expected distinct temps, saw ${temps.join(", ")}`);
   });
 
   test("withFileLock rethrows fn errors without retrying the lock loop", async () => {
