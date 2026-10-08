@@ -40,10 +40,16 @@
     ],
     "beforeShellExecution": [
       {
+        "command": "node ./hooks/stdin-diag.mjs shell"
+      },
+      {
         "command": "node ./hooks/github-gate.cjs"
       }
     ],
     "beforeMCPExecution": [
+      {
+        "command": "node ./hooks/stdin-diag.mjs mcp"
+      },
       {
         "command": "node ./hooks/github-gate.cjs",
         "failClosed": true
