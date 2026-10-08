@@ -362,9 +362,7 @@ function primaryBeforeMcpLogPath(): string | null {
       cwd: process.cwd(),
       encoding: "utf8",
     }).trim();
-    const absolute = path.isAbsolute(commonDir)
-      ? commonDir
-      : path.join(process.cwd(), commonDir);
+    const absolute = path.isAbsolute(commonDir) ? commonDir : path.join(process.cwd(), commonDir);
     return path.join(absolute, "agent-console", "before-mcp-execution.jsonl");
   } catch {
     return null;
