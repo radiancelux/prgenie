@@ -75,9 +75,15 @@ execFileSync(
 execFileSync("git", ["checkout", "-q", "-b", "feat/x"], { cwd: loopFixtureCwd });
 after(() => rmSync(loopFixtureRoot, { recursive: true, force: true }));
 
+function gateSpawnEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env = { ...process.env, NO_COLOR: "1" };
+  delete env.PRGENIE_GITHUB_GATE_ASK;
+  return { ...env, ...extra };
+}
+
 function runGate(
   input: Record<string, unknown> | null,
-  opts: { bom?: boolean; raw?: string | Buffer } = {},
+  opts: { bom?: boolean; raw?: string | Buffer; cwd?: string; env?: NodeJS.ProcessEnv } = {},
 ): { permission: string; agent_message?: string; user_message?: string } {
   let payload: string | Buffer;
   if (opts.raw !== undefined) {
@@ -92,11 +98,12 @@ function runGate(
   } else {
     payload = JSON.stringify(input);
   }
+  const cwd = opts.cwd ?? (typeof input?.cwd === "string" ? input.cwd : loopFixtureCwd);
   const result = spawnSync(process.execPath, [gateCjs], {
     input: payload,
     encoding: "utf8",
-    cwd: loopFixtureCwd,
-    env: { ...process.env, NO_COLOR: "1" },
+    cwd,
+    env: gateSpawnEnv(opts.env),
   });
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout) as { permission: string; agent_message?: string };
@@ -1153,13 +1160,19 @@ test("RAD-188 R3: human export paths do not import github-gate", () => {
   assert.match(cliSrc, /exportLocalPr/);
 });
 
-test("RAD-188 R5: PRGENIE_GITHUB_GATE_ASK restores ask for deny-listed actions", () => {
-  const env = { ...process.env, PRGENIE_GITHUB_GATE_ASK: "1" };
+test("RAD-188 R5: flag off gives deny; flag on gives ask", () => {
+  assert.equal(
+    runGate(
+      { command: "git push origin HEAD", cwd: loopFixtureCwd },
+      { env: { PRGENIE_GITHUB_GATE_ASK: "0" } },
+    ).permission,
+    "deny",
+  );
   const push = spawnSync(process.execPath, [gateCjs], {
     input: JSON.stringify({ command: "git push origin HEAD", cwd: loopFixtureCwd }),
     encoding: "utf8",
     cwd: loopFixtureCwd,
-    env: { ...env, NO_COLOR: "1" },
+    env: gateSpawnEnv({ PRGENIE_GITHUB_GATE_ASK: "1" }),
   });
   assert.equal(push.status, 0, push.stderr);
   assert.equal(JSON.parse(push.stdout).permission, "ask");
@@ -1168,10 +1181,70 @@ test("RAD-188 R5: PRGENIE_GITHUB_GATE_ASK restores ask for deny-listed actions",
     input: JSON.stringify({ ...CURSOR_JE_EXECUTE_FIXTURE }),
     encoding: "utf8",
     cwd: loopFixtureCwd,
-    env: { ...env, NO_COLOR: "1" },
+    env: gateSpawnEnv({ PRGENIE_GITHUB_GATE_ASK: "1" }),
   });
   assert.equal(exportMcp.status, 0, exportMcp.stderr);
   assert.equal(JSON.parse(exportMcp.stdout).permission, "ask");
+});
+
+test("RAD-188 R5: agents cannot set PRGENIE_GITHUB_GATE_ASK via shell", () => {
+  for (const command of [
+    "setx PRGENIE_GITHUB_GATE_ASK 1",
+    "[Environment]::SetEnvironmentVariable('PRGENIE_GITHUB_GATE_ASK','1','User')",
+    "export PRGENIE_GITHUB_GATE_ASK=1",
+    "$env:PRGENIE_GITHUB_GATE_ASK=1",
+  ]) {
+    const parsed = runGate({ command, cwd: loopFixtureCwd });
+    assert.equal(parsed.permission, "deny", command);
+    assert.match(String(parsed.agent_message ?? ""), /PRGENIE_GITHUB_GATE_ASK|work around/i);
+  }
+});
+
+test("RAD-188 R5: MCP server does not reference PRGENIE_GITHUB_GATE_ASK", () => {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+  const mcpSrc = readFileSync(path.join(repoRoot, "packages/cli/src/mcp.ts"), "utf8");
+  assert.equal(mcpSrc.includes("PRGENIE_GITHUB_GATE_ASK"), false);
+});
+
+test("RAD-188 R2: publish denies before bound-repo account-switch ask", async () => {
+  const repo = await mkdtemp(path.join(tmpdir(), "prgenie-gate-bind-push-"));
+  try {
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "i",
+      ],
+      { cwd: repo },
+    );
+    await mkdir(path.join(repo, ".git", "agent-console"), { recursive: true });
+    await writeFile(
+      path.join(repo, ".git", "agent-console", "github.json"),
+      JSON.stringify({ host: "github.com", login: "no-such-bound-login-rad188" }),
+    );
+    const push = runGate({ command: "git push --dry-run origin HEAD", cwd: repo }, { cwd: repo });
+    assert.equal(push.permission, "deny");
+    assert.match(String(push.user_message ?? ""), /Open on GitHub|prgenie export/i);
+
+    const chain = runGate(
+      {
+        command: "gh auth switch --user other-xyz; git push --dry-run origin HEAD",
+        cwd: repo,
+      },
+      { cwd: repo },
+    );
+    assert.equal(chain.permission, "deny");
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
 });
 
 test("RAD-163: steward-bound primary gates a lowercase-drive cwd", async () => {

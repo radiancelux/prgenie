@@ -4,7 +4,7 @@ Loop agents (implementor, reviewer, steward) must not run with your full GitHub 
 
 **Best-effort gate.** `github-gate.cjs` (`beforeShellExecution` / `beforeMCPExecution`) is a guard rail only. The fine-grained `GH_TOKEN` (below) is the real boundary. When Cursor delivers a well-formed hook payload, the gate allows read-only PR Genie MCP tools and returns **`permission: deny`** for agent human-only actions (`export_local_pr`, `record_export_gate_override`, `gh_use`, `git push`, `gh pr create`, …). Humans export via **Open on GitHub** or `prgenie export` — those paths do not run through the agent hook. When stdin is empty or not JSON, the gate **fails closed** (`permission: deny` with a clear reason — never silent `allow`).
 
-**Escape hatch (RAD-188):** set `PRGENIE_GITHUB_GATE_ASK=1` in your environment (not via MCP) to restore `permission: ask` for human-only actions on hosts that still show a confirmation dialog. Defaults off.
+**Escape hatch (RAD-188):** set `PRGENIE_GITHUB_GATE_ASK=1` in your environment (not via MCP) to restore `permission: ask` for human-only actions on hosts that still show a confirmation dialog. Defaults off. Agents that run `setx`, PowerShell `SetEnvironmentVariable`, or shell assignments for that variable get **`deny`** — configure it yourself outside agent sessions.
 
 ### Cursor hook delivery (RAD-185)
 

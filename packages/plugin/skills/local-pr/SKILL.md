@@ -130,7 +130,7 @@ Bind is **per repository**, stored in `.git/agent-console/github.json` (not comm
 **Who sets it**
 
 - The user can run `prgenie gh use <login>` once in that repo.
-- Or they name the account in chat ("use radiancelux for this project"). Then the agent calls MCP `gh_use` with that login.
+- Or they name the account in chat ("use radiancelux for this project"). Tell them to run `prgenie gh use <login>` themselves — agents must not call MCP `gh_use` (the hook denies it).
 - If the repo is unbound and GitHub work is needed, the agent lists accounts with `gh_list` / `prgenie gh list` and **asks which login** — it does not guess.
 
 After a bind exists, do not `gh auth switch`. The hook switches to the bound account before `gh` / `git push`.

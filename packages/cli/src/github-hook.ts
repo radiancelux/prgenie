@@ -21,11 +21,13 @@ import {
   type HookPermission,
 } from "./loop-github-gate.js";
 import {
+  gateEscapeHatchSetDenyPayload,
   gateNoInputPayload,
   hookPrefersAskOverDeny,
   normalizeHookWorkspacePath,
   parseHookPayloadBuffer,
   readHookStdin,
+  shellCommandSetsGithubGateAskFlag,
 } from "./hook-stdin.js";
 
 /** On-disk spelling of a path (expands Windows 8.3 short names and fixes case) when it exists. */
@@ -516,6 +518,22 @@ export async function main(): Promise<void> {
     }
   }
 
+  if (command && isPublish(command)) {
+    const bind = root ? await getRepoGithubBind(root) : null;
+    const asWho = bind ? bind.login : "";
+    process.stdout.write(
+      JSON.stringify(
+        hookPrefersAskOverDeny() ? shellPublishAskPayload(asWho) : shellPublishDenyPayload(asWho),
+      ),
+    );
+    return;
+  }
+
+  if (command && shellCommandSetsGithubGateAskFlag(command)) {
+    process.stdout.write(JSON.stringify(gateEscapeHatchSetDenyPayload()));
+    return;
+  }
+
   if (root && isGithubCli(command)) {
     const bind = await getRepoGithubBind(root);
     const switchingTo = switchUser(command);
@@ -542,17 +560,6 @@ export async function main(): Promise<void> {
       );
       return;
     }
-  }
-
-  if (isPublish(command)) {
-    const bind = root ? await getRepoGithubBind(root) : null;
-    const asWho = bind ? bind.login : "";
-    process.stdout.write(
-      JSON.stringify(
-        hookPrefersAskOverDeny() ? shellPublishAskPayload(asWho) : shellPublishDenyPayload(asWho),
-      ),
-    );
-    return;
   }
 
   process.stdout.write(JSON.stringify({ permission: "allow" }));

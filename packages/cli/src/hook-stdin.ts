@@ -94,6 +94,32 @@ export function normalizeHookWorkspacePath(raw: string): string {
   return path.normalize(trimmed);
 }
 
+export const PRGENIE_GITHUB_GATE_ASK_ENV = "PRGENIE_GITHUB_GATE_ASK";
+
+/** Agents must not set the R5 escape hatch via shell (RAD-188 R5). */
+export function shellCommandSetsGithubGateAskFlag(command: string): boolean {
+  if (!command.includes(PRGENIE_GITHUB_GATE_ASK_ENV)) return false;
+  if (/\bsetx\b/i.test(command)) return true;
+  if (/SetEnvironmentVariable/i.test(command)) return true;
+  if (/\bexport\s+PRGENIE_GITHUB_GATE_ASK\s*=/i.test(command)) return true;
+  if (/\$env:PRGENIE_GITHUB_GATE_ASK\s*=/i.test(command)) return true;
+  return false;
+}
+
+export function gateEscapeHatchSetDenyPayload(): {
+  permission: "deny";
+  user_message: string;
+  agent_message: string;
+} {
+  return {
+    permission: "deny",
+    user_message:
+      "PR Genie: agents cannot change the github gate escape hatch (`PRGENIE_GITHUB_GATE_ASK`). Set it yourself outside Cursor if needed.",
+    agent_message:
+      "Do not set PRGENIE_GITHUB_GATE_ASK via shell or work around gate denies. Stop and tell the user to configure the variable themselves if they want ask mode.",
+  };
+}
+
 /** When set by a human in the environment, restore RAD-185 `ask` for hosts that honor it (RAD-188 R5). */
 export function hookPrefersAskOverDeny(): boolean {
   const v = process.env.PRGENIE_GITHUB_GATE_ASK?.trim();
