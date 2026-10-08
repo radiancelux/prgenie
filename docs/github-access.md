@@ -86,7 +86,7 @@ The primary folder counts as a steward context when `stewards.json` names a live
 The hook is a guard rail, not a sandbox. The fine-grained `GH_TOKEN` above is the real boundary. Known limits — host delivery and run-time evaluation the hook cannot see:
 
 - **UTF-8 BOM on hook stdin (Windows):** Cursor may prefix JSON with a BOM; PR Genie strips it. If a future host build omits stdin, the gate fails closed (ask) rather than allow (RAD-185).
-- **MCP export timeout:** MCP `export_local_pr` / `run_ci` honor `notifications/cancelled` and an in-process abort signal so in-flight export/CI can stop when the client cancels. Cursor may still drop the MCP session on idle timeout (`-32001 Request timed out`) before long export finishes; heartbeats and the raised `mcp.json` timeout (RAD-100) mitigate but do not guarantee the host waits forever.
+- **MCP export timeout:** The MCP stdin reader applies `notifications/cancelled` as soon as the frame is complete, without waiting for the active `tools/call`, and aborts that request's in-flight `export_local_pr` / `run_ci` signal. A stdin error aborts in-flight controllers the same way. Cursor may still drop the MCP session on idle timeout (`-32001 Request timed out`) before long export finishes; that idle timeout is a host limit. Heartbeats and the raised `mcp.json` timeout (RAD-100) mitigate but do not guarantee the host waits forever.
 
 - script files are not read: an agent can write `gh repo delete` into a file and run `bash x.sh`, `pwsh -File x.ps1`, `source x`, `node x.js` or `python x.py`;
 - other interpreters and programs are not modelled (`python -c`, `node -e`, `perl -e`, `ruby -e`, `make`, package scripts, git hooks and aliases, `curl` to the REST API with the token);
