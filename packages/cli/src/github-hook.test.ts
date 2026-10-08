@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import {
   isGithubCli,
   isPrgenieMcpContext,
@@ -17,6 +17,8 @@ import {
   PRGENIE_MCP_GATED_TOOL_NAMES,
   sanitizeBeforeMcpLogPayload,
   switchUser,
+  appendBeforeMcpExecutionLog,
+  inferHookCwd,
 } from "./github-hook.js";
 import {
   forcePushTargetsDefaultBranch,
@@ -73,9 +75,25 @@ execFileSync(
 execFileSync("git", ["checkout", "-q", "-b", "feat/x"], { cwd: loopFixtureCwd });
 after(() => rmSync(loopFixtureRoot, { recursive: true, force: true }));
 
-function runGate(input: Record<string, unknown>): { permission: string; agent_message?: string } {
+function runGate(
+  input: Record<string, unknown> | null,
+  opts: { bom?: boolean; raw?: string | Buffer } = {},
+): { permission: string; agent_message?: string } {
+  let payload: string | Buffer;
+  if (opts.raw !== undefined) {
+    payload = opts.raw;
+  } else if (input === null) {
+    payload = "";
+  } else if (opts.bom) {
+    payload = Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from(JSON.stringify(input), "utf8"),
+    ]);
+  } else {
+    payload = JSON.stringify(input);
+  }
   const result = spawnSync(process.execPath, [gateCjs], {
-    input: JSON.stringify(input),
+    input: payload,
     encoding: "utf8",
     env: { ...process.env, NO_COLOR: "1" },
   });
@@ -258,6 +276,106 @@ test("RAD-164 follow-up: Cursor Je.execute stdin export_local_pr asks", () => {
   const parsed = runGate({ ...CURSOR_JE_EXECUTE_FIXTURE });
   assert.equal(parsed.permission, "ask");
   assert.match(String(parsed.agent_message ?? ""), /Human-only MCP/i);
+});
+
+test("RAD-185: UTF-8 BOM stdin export_local_pr asks (not fail-open allow)", () => {
+  const parsed = runGate({ ...CURSOR_JE_EXECUTE_FIXTURE }, { bom: true });
+  assert.equal(parsed.permission, "ask");
+  assert.match(String(parsed.agent_message ?? ""), /Human-only MCP/i);
+});
+
+test("RAD-185: BOM stdin get_local_pr allows", () => {
+  const parsed = runGate(
+    {
+      mcp_server_name: "PR Genie",
+      tool_name: "get_local_pr",
+      tool_input: { id: "lp-deadbeef" },
+    },
+    { bom: true },
+  );
+  assert.equal(parsed.permission, "allow");
+});
+
+test("RAD-185: empty stdin fails closed with ask", () => {
+  const parsed = runGate(null);
+  assert.equal(parsed.permission, "ask");
+  assert.match(String(parsed.agent_message ?? ""), /no input/i);
+});
+
+test("RAD-185: truncated JSON stdin fails closed with ask", () => {
+  const parsed = runGate(null, { raw: '{"tool_name":' });
+  assert.equal(parsed.permission, "ask");
+  assert.match(String(parsed.agent_message ?? ""), /unparseable|no input/i);
+});
+
+test("RAD-185 R3: before-mcp log uses /c:/ workspace root in temp repo", async () => {
+  const repo = await mkdtemp(path.join(tmpdir(), "prgenie-gate-mcp-log-"));
+  try {
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "i",
+      ],
+      { cwd: repo },
+    );
+    const posixRoot =
+      process.platform === "win32"
+        ? `/${repo.replace(/\\/g, "/").replace(/^([A-Za-z]):/, (_, d) => `${d.toLowerCase()}:`)}`
+        : repo;
+    await appendBeforeMcpExecutionLog(
+      inferHookCwd({
+        workspace_roots: [posixRoot],
+        tool_name: "get_local_pr",
+        tool_input: { id: "lp-x" },
+      }),
+      { tool_name: "get_local_pr", mcp_server_name: "PR Genie" },
+      { stdinByteCount: 900, stdinReadError: null },
+    );
+    const logPath = path.join(repo, ".git", "agent-console", "before-mcp-execution.jsonl");
+    const line = readFileSync(logPath, "utf8").trim();
+    const row = JSON.parse(line) as {
+      at?: string;
+      stdinByteCount?: number;
+      normalizedToolName?: string;
+    };
+    assert.ok(row.at);
+    assert.equal(row.stdinByteCount, 900);
+    assert.equal(row.normalizedToolName, "get_local_pr");
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("RAD-185 R3: github-hook tests do not touch primary before-mcp-execution.jsonl", () => {
+  const primaryLog = path.join(
+    process.cwd(),
+    ".git",
+    "agent-console",
+    "before-mcp-execution.jsonl",
+  );
+  if (!existsSync(path.join(process.cwd(), ".git"))) return;
+  let before: number | null = null;
+  try {
+    before = statSync(primaryLog).mtimeMs;
+  } catch {
+    return;
+  }
+  runGate({
+    mcp_server_name: "plugin-prgenie-prgenie",
+    tool_name: "get_local_pr",
+    tool_input: { id: "lp-deadbeef" },
+    cwd: loopFixtureCwd,
+  });
+  assert.equal(statSync(primaryLog).mtimeMs, before);
 });
 
 test("RAD-164 follow-up: transcript-shaped prefixed export_local_pr asks", () => {

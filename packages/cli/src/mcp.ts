@@ -96,7 +96,16 @@ function fail(id: unknown, code: number, message: string): void {
 type HandleToolOptions = {
   /** Live MCP progress/heartbeat session for git+CI-heavy tools (RAD-100). */
   mcpProgress?: McpProgressSession;
+  /** Client cancel / MCP timeout — aborts in-flight export and CI (RAD-185 R4). */
+  signal?: AbortSignal;
 };
+
+const mcpInFlight = new Map<string | number, AbortController>();
+
+function mcpRequestKey(id: unknown): string | number | null {
+  if (typeof id === "string" || typeof id === "number") return id;
+  return null;
+}
 
 function withCommentViews(pr: LocalPr) {
   return {
@@ -330,7 +339,10 @@ export async function handleTool(
     }
     case "export_local_pr":
       mcpProgress?.report("exporting local PR");
-      return exportLocalPr(cwd, String(args.id ?? ""));
+      return exportLocalPr(cwd, String(args.id ?? ""), {
+        signal: options.signal,
+        onProgress: (event) => mcpProgress?.onCiProgress(event),
+      });
     case "record_export_gate_override": {
       const who = os.userInfo().username.trim();
       if (!who) {
@@ -403,6 +415,7 @@ export async function handleTool(
         failFast: args.failFast === false ? false : undefined,
         parallel: args.parallel === false ? false : undefined,
         skipCache: args.skipCache === true,
+        signal: options.signal,
         onProgress: (event) => {
           card.onProgress(event);
           mcpProgress?.onCiProgress(event);
@@ -1172,6 +1185,10 @@ async function onRequest(msg: Json): Promise<void> {
       return;
     }
     if (method === "notifications/cancelled") {
+      const requestId = params.requestId;
+      if (typeof requestId === "string" || typeof requestId === "number") {
+        mcpInFlight.get(requestId)?.abort();
+      }
       return;
     }
     if (method === "tools/list") {
@@ -1182,14 +1199,21 @@ async function onRequest(msg: Json): Promise<void> {
       const name = String(params.name ?? "");
       const args = (params.arguments as Json) ?? {};
       const progressToken = extractProgressToken(params);
-      const result = isMcpHeavyTool(name)
-        ? await withMcpProgress({ notify, toolName: name, progressToken }, (session) =>
-            handleTool(name, args, { mcpProgress: session }),
-          )
-        : await handleTool(name, args);
-      ok(id, {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-      });
+      const requestKey = mcpRequestKey(id);
+      const abortController = new AbortController();
+      if (requestKey !== null) mcpInFlight.set(requestKey, abortController);
+      try {
+        const result = isMcpHeavyTool(name)
+          ? await withMcpProgress({ notify, toolName: name, progressToken }, (session) =>
+              handleTool(name, args, { mcpProgress: session, signal: abortController.signal }),
+            )
+          : await handleTool(name, args, { signal: abortController.signal });
+        ok(id, {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        });
+      } finally {
+        if (requestKey !== null) mcpInFlight.delete(requestKey);
+      }
       return;
     }
     if (method === "ping") {

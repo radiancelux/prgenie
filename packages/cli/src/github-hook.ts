@@ -1,5 +1,5 @@
 import { appendFile, readFile } from "node:fs/promises";
-import { readFileSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import {
   consoleDir,
@@ -20,6 +20,12 @@ import {
   shellCommandPublishes,
   type HookPermission,
 } from "./loop-github-gate.js";
+import {
+  gateNoInputPayload,
+  normalizeHookWorkspacePath,
+  parseHookPayloadBuffer,
+  readHookStdin,
+} from "./hook-stdin.js";
 
 /** On-disk spelling of a path (expands Windows 8.3 short names and fixes case) when it exists. */
 function canonicalFsPath(p: string): string {
@@ -113,10 +119,18 @@ export function parseToolInput(raw: unknown): Record<string, unknown> | null {
   return null;
 }
 
-function inferCwd(input: HookInput): string {
-  if (typeof input.cwd === "string" && input.cwd) return input.cwd;
+export function inferHookCwd(input: HookInput): string {
+  if (typeof input.cwd === "string" && input.cwd) {
+    return normalizeHookWorkspacePath(input.cwd);
+  }
   const roots = input.workspace_roots;
-  if (Array.isArray(roots) && typeof roots[0] === "string" && roots[0]) return roots[0];
+  if (Array.isArray(roots) && typeof roots[0] === "string" && roots[0]) {
+    return normalizeHookWorkspacePath(roots[0]);
+  }
+  const toolInput = parseToolInput(input.tool_input ?? input.toolInput);
+  if (toolInput && typeof toolInput.cwd === "string" && toolInput.cwd) {
+    return normalizeHookWorkspacePath(toolInput.cwd);
+  }
   return process.cwd();
 }
 
@@ -379,12 +393,21 @@ export function sanitizeBeforeMcpLogPayload(input: HookInput): Record<string, un
   return out;
 }
 
-export async function appendBeforeMcpExecutionLog(cwd: string, input: HookInput): Promise<void> {
+export async function appendBeforeMcpExecutionLog(
+  cwd: string,
+  input: HookInput,
+  meta?: { stdinByteCount?: number; stdinReadError?: string | null },
+): Promise<void> {
   const root = await findGitRoot(cwd);
   if (!root) return;
   const dir = await consoleDir(root);
   const file = path.join(dir, "before-mcp-execution.jsonl");
-  const line = JSON.stringify(sanitizeBeforeMcpLogPayload(input));
+  const line = JSON.stringify({
+    at: new Date().toISOString(),
+    stdinByteCount: meta?.stdinByteCount ?? null,
+    stdinReadError: meta?.stdinReadError ?? null,
+    ...sanitizeBeforeMcpLogPayload(input),
+  });
   await appendFile(file, `${line}\n`, "utf8");
 }
 
@@ -403,16 +426,19 @@ export function decideBeforeMcpExecution(input: HookInput): { permission: HookPe
 }
 
 export async function main(): Promise<void> {
-  let input: HookInput;
-  try {
-    const raw = readFileSync(0, "utf8");
-    input = raw ? JSON.parse(raw) : {};
-  } catch {
-    input = {};
+  const { raw, readError } = await readHookStdin();
+  const parsed = parseHookPayloadBuffer(raw);
+  if (!parsed.ok) {
+    process.stdout.write(JSON.stringify(gateNoInputPayload(parsed.reason)));
+    return;
   }
+  const input = parsed.input;
 
   if (rawMcpToolName(input)) {
-    appendBeforeMcpExecutionLog(inferCwd(input), input).catch(() => {});
+    appendBeforeMcpExecutionLog(inferHookCwd(input), input, {
+      stdinByteCount: raw.length,
+      stdinReadError: readError,
+    }).catch(() => {});
   }
 
   const mcpDecision = decideBeforeMcpExecution(input);
@@ -422,7 +448,7 @@ export async function main(): Promise<void> {
   }
 
   const command = String(input.command ?? "");
-  const cwd = inferCwd(input);
+  const cwd = inferHookCwd(input);
   let root: string | null = null;
   try {
     root = await findGitRoot(cwd);

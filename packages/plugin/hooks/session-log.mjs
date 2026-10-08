@@ -1,7 +1,6 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { readFileSync } from "node:fs";
 
 function gitText(cwd, args) {
   return new Promise((resolve) => {
@@ -15,15 +14,63 @@ function gitText(cwd, args) {
   });
 }
 
-const raw = readFileSync(0, "utf8");
-let input = {};
-try {
-  input = raw ? JSON.parse(raw) : {};
-} catch {
-  input = {};
+function stripUtf8Bom(text) {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 }
 
-const cwd = input.cwd || input.workspace_roots?.[0] || process.cwd();
+function readHookStdinBuffer() {
+  return new Promise((resolve) => {
+    const chunks = [];
+    let readError = null;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve({ raw: Buffer.concat(chunks), readError });
+    };
+    process.stdin.on("error", (err) => {
+      readError = err instanceof Error ? err.message : String(err);
+      finish();
+    });
+    process.stdin.on("data", (chunk) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8"));
+    });
+    process.stdin.on("end", finish);
+    process.stdin.on("close", finish);
+    process.stdin.resume();
+  });
+}
+
+function parseHookPayload(raw) {
+  if (raw.length === 0) return {};
+  let body = raw;
+  if (raw.length >= 3 && raw[0] === 0xef && raw[1] === 0xbb && raw[2] === 0xbf) {
+    body = raw.subarray(3);
+  }
+  if (body.length === 0) return {};
+  try {
+    const parsed = JSON.parse(stripUtf8Bom(body.toString("utf8")));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function normalizeHookWorkspacePath(raw) {
+  const trimmed = String(raw).trim();
+  const m = trimmed.match(/^\/([a-zA-Z]):\/?(.*)$/);
+  if (m) {
+    const rest = m[2].replace(/\//g, path.sep);
+    return path.normalize(`${m[1].toUpperCase()}:${path.sep}${rest}`);
+  }
+  return path.normalize(trimmed);
+}
+
+const { raw } = await readHookStdinBuffer();
+const input = parseHookPayload(raw);
+
+const cwdRaw = input.cwd || input.workspace_roots?.[0] || process.cwd();
+const cwd = typeof cwdRaw === "string" ? normalizeHookWorkspacePath(cwdRaw) : process.cwd();
 const toplevel = await gitText(cwd, ["rev-parse", "--show-toplevel"]);
 if (!toplevel) {
   process.stdout.write("{}\n");
