@@ -78,7 +78,7 @@ after(() => rmSync(loopFixtureRoot, { recursive: true, force: true }));
 function runGate(
   input: Record<string, unknown> | null,
   opts: { bom?: boolean; raw?: string | Buffer } = {},
-): { permission: string; agent_message?: string } {
+): { permission: string; agent_message?: string; user_message?: string } {
   let payload: string | Buffer;
   if (opts.raw !== undefined) {
     payload = opts.raw;
@@ -148,8 +148,8 @@ test("built github-gate.cjs runs main and fail-closes push", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.ok(result.stdout.trim().length > 0, "gate must write JSON (not silent fail-open)");
   const parsed = JSON.parse(result.stdout);
-  assert.equal(parsed.permission, "ask");
-  assert.match(String(parsed.agent_message ?? ""), /Do not git push|Ask whether|opt in/i);
+  assert.equal(parsed.permission, "deny");
+  assert.match(String(parsed.agent_message ?? ""), /Do not retry|work around|panel or CLI/i);
 });
 
 test("built github-gate.cjs allows non-publish commands", () => {
@@ -158,9 +158,9 @@ test("built github-gate.cjs allows non-publish commands", () => {
 });
 
 test("RAD-164: mcpHumanConfirmationGate asks for human-only MCP tools", () => {
-  assert.equal(mcpHumanConfirmationGate("export_local_pr", {}), "ask");
-  assert.equal(mcpHumanConfirmationGate("record_export_gate_override", {}), "ask");
-  assert.equal(mcpHumanConfirmationGate("gh_use", {}), "ask");
+  assert.equal(mcpHumanConfirmationGate("export_local_pr", {}), "deny");
+  assert.equal(mcpHumanConfirmationGate("record_export_gate_override", {}), "deny");
+  assert.equal(mcpHumanConfirmationGate("gh_use", {}), "deny");
   assert.equal(mcpHumanConfirmationGate("set_status", { status: "approved" }), "ask");
   assert.equal(mcpHumanConfirmationGate("set_status", { status: "reviewed" }), "ask");
   assert.equal(
@@ -273,16 +273,17 @@ test("RAD-164: isPrgenieMcpContext matches prgenie server names only", () => {
   );
 });
 
-test("RAD-164 follow-up: Cursor Je.execute stdin export_local_pr asks", () => {
+test("RAD-188 R1: Cursor Je.execute stdin export_local_pr denies with panel/CLI guidance", () => {
   const parsed = runGate({ ...CURSOR_JE_EXECUTE_FIXTURE });
-  assert.equal(parsed.permission, "ask");
-  assert.match(String(parsed.agent_message ?? ""), /Human-only MCP/i);
+  assert.equal(parsed.permission, "deny");
+  assert.match(String(parsed.user_message ?? ""), /Open on GitHub|prgenie export/i);
+  assert.match(String(parsed.agent_message ?? ""), /Do not retry|work around/i);
 });
 
-test("RAD-185: UTF-8 BOM stdin export_local_pr asks (not fail-open allow)", () => {
+test("RAD-188 R1: UTF-8 BOM stdin export_local_pr denies (not fail-open allow)", () => {
   const parsed = runGate({ ...CURSOR_JE_EXECUTE_FIXTURE }, { bom: true });
-  assert.equal(parsed.permission, "ask");
-  assert.match(String(parsed.agent_message ?? ""), /Human-only MCP/i);
+  assert.equal(parsed.permission, "deny");
+  assert.match(String(parsed.agent_message ?? ""), /Human-only MCP|Do not retry/i);
 });
 
 test("RAD-185: BOM stdin get_local_pr allows", () => {
@@ -297,16 +298,21 @@ test("RAD-185: BOM stdin get_local_pr allows", () => {
   assert.equal(parsed.permission, "allow");
 });
 
-test("RAD-185: empty stdin fails closed with ask", () => {
+test("RAD-188 R4: empty stdin fails closed with deny", () => {
   const parsed = runGate(null);
-  assert.equal(parsed.permission, "ask");
-  assert.match(String(parsed.agent_message ?? ""), /no input/i);
+  assert.equal(parsed.permission, "deny");
+  assert.match(String(parsed.agent_message ?? ""), /no input|Do not retry/i);
 });
 
-test("RAD-185: truncated JSON stdin fails closed with ask", () => {
+test("RAD-188 R4: truncated JSON stdin fails closed with deny", () => {
   const parsed = runGate(null, { raw: '{"tool_name":' });
-  assert.equal(parsed.permission, "ask");
+  assert.equal(parsed.permission, "deny");
   assert.match(String(parsed.agent_message ?? ""), /unparseable|no input/i);
+});
+
+test("RAD-188 R4: BOM-only stdin fails closed with deny", () => {
+  const parsed = runGate(null, { raw: Buffer.from([0xef, 0xbb, 0xbf]) });
+  assert.equal(parsed.permission, "deny");
 });
 
 test("RAD-185 R3: before-mcp log uses /c:/ workspace root in temp repo", async () => {
@@ -395,19 +401,19 @@ test("RAD-185 R3: github-hook tests do not touch primary before-mcp-execution.js
   }
 });
 
-test("RAD-164 follow-up: transcript-shaped prefixed export_local_pr asks", () => {
+test("RAD-188 R1: transcript-shaped prefixed export_local_pr denies", () => {
   const parsed = runGate({ ...TRANSCRIPT_SHAPED_FIXTURE });
-  assert.equal(parsed.permission, "ask");
-  assert.match(String(parsed.agent_message ?? ""), /Human-only MCP/i);
+  assert.equal(parsed.permission, "deny");
+  assert.match(String(parsed.agent_message ?? ""), /Human-only MCP|Do not retry/i);
 });
 
-test("RAD-164 R4: gated tool with no server/command/url asks (not allow)", () => {
+test("RAD-188 R1: gated tool with no server/command/url denies (not allow)", () => {
   const parsed = runGate({
     tool_name: "export_local_pr",
     tool_input: { id: "lp-deadbeef" },
   });
-  assert.equal(parsed.permission, "ask");
-  assert.match(String(parsed.agent_message ?? ""), /Human-only MCP/i);
+  assert.equal(parsed.permission, "deny");
+  assert.match(String(parsed.user_message ?? ""), /Open on GitHub|prgenie export/i);
 });
 
 test("RAD-164 follow-up: colliding add_comment on another server stays allow", () => {
@@ -430,11 +436,25 @@ test("RAD-164 follow-up: unrecognized PR Genie MCP tool asks", () => {
   assert.equal(parsed.permission, "ask");
 });
 
-test("RAD-164: built github-gate.cjs asks for gated MCP tools on PR Genie", () => {
+test("RAD-188 R1: built github-gate.cjs denies agent-only MCP tools on PR Genie", () => {
   for (const [tool_name, tool_input] of [
     ["export_local_pr", { id: "lp-deadbeef" }],
     ["record_export_gate_override", { id: "lp-deadbeef", who: "agent", why: "x" }],
     ["gh_use", { login: "alice" }],
+  ] as const) {
+    const parsed = runGate({
+      mcp_server_name: "plugin-prgenie-prgenie",
+      tool_name,
+      tool_input,
+    });
+    assert.equal(parsed.permission, "deny", tool_name);
+    assert.match(String(parsed.user_message ?? ""), /Open on GitHub|prgenie export/i);
+    assert.match(String(parsed.agent_message ?? ""), /Do not retry|work around/i);
+  }
+});
+
+test("RAD-164: built github-gate.cjs still asks for other gated MCP tools on PR Genie", () => {
+  for (const [tool_name, tool_input] of [
     ["set_status", { id: "lp-deadbeef", status: "approved" }],
     ["set_status", { id: "lp-deadbeef", status: "reviewed" }],
     ["set_status", { id: "lp-deadbeef", status: "ready", ciSkipReason: "skip" }],
@@ -566,18 +586,21 @@ test("RAD-163: loop worktree cwd gates without subagent_type in payload", () => 
   assert.equal(parsed.permission, "deny");
 });
 
-test("RAD-163: gh pr create and gh pr view still allowed from a loop", () => {
+test("RAD-188 R2: gh pr create and git push deny from a loop; reads allow", () => {
   const loopCwd = loopFixtureCwd;
-  for (const command of ["gh pr view 1", "gh auth status", "git status"]) {
+  for (const command of ["gh pr view 1", "gh auth status", "git status", "git fetch origin"]) {
     const parsed = runGate({ command, cwd: loopCwd, subagent_type: "prgenie-reviewer" });
     assert.equal(parsed.permission, "allow", command);
   }
-  const prCreate = runGate({
-    command: "gh pr create --title t",
-    cwd: loopCwd,
-    subagent_type: "prgenie-implementor",
-  });
-  assert.equal(prCreate.permission, "ask");
+  for (const command of ["gh pr create --title t", "git push origin HEAD"]) {
+    const parsed = runGate({
+      command,
+      cwd: loopCwd,
+      subagent_type: "prgenie-implementor",
+    });
+    assert.equal(parsed.permission, "deny", command);
+    assert.match(String(parsed.user_message ?? ""), /Open on GitHub|prgenie export/i);
+  }
 });
 
 test("RAD-163: force-push to default branch is denied from a loop", () => {
@@ -607,7 +630,7 @@ test("RAD-163: force-push to default branch is denied from a loop", () => {
     cwd: loopCwd,
     subagent_type: "prgenie-implementor",
   });
-  assert.equal(featureForce.permission, "ask");
+  assert.equal(featureForce.permission, "deny");
 });
 
 function loopGate(command: string): string {
@@ -690,8 +713,8 @@ test("RAD-163 R1 round 3: read-only gh and plain commands keep their old permiss
   const quoted = 'git commit -m "deny gh repo create from loops"';
   assert.equal(loopAgentShellDenialReason(quoted), null);
   assert.notEqual(loopGate(quoted), "deny");
-  assert.equal(loopGate("gh pr create --title t"), "ask");
-  assert.equal(loopGate("echo hi && gh pr create --title t"), "ask");
+  assert.equal(loopGate("gh pr create --title t"), "deny");
+  assert.equal(loopGate("echo hi && gh pr create --title t"), "deny");
 });
 
 test("RAD-163 R2 round 3: force-push whose destination is the default branch is denied", () => {
@@ -719,7 +742,7 @@ test("RAD-163 R2 round 3: force-push whose destination is the default branch is 
   );
 });
 
-test("RAD-163 R2 round 3: non-default force-push and plain pushes still ask", () => {
+test("RAD-188 R2: non-default force-push and plain pushes deny for loop agents", () => {
   for (const command of [
     "git push -f origin feat/main-fix",
     "git push -f origin main:feat/x",
@@ -728,7 +751,7 @@ test("RAD-163 R2 round 3: non-default force-push and plain pushes still ask", ()
     "git push -f",
     "git push origin --delete feat/old",
   ]) {
-    assert.equal(loopGate(command), "ask", command);
+    assert.equal(loopGate(command), "deny", command);
   }
 });
 
@@ -764,7 +787,7 @@ test("RAD-163 R1 round 4: flags before the gh subcommand do not hide it", () => 
     assert.equal(loopGate(command), "allow", command);
   }
   assert.equal(isPublish("gh pr --repo o/r create --title t"), true);
-  assert.equal(loopGate("gh pr --repo o/r create --title t"), "ask");
+  assert.equal(loopGate("gh pr --repo o/r create --title t"), "deny");
 });
 
 test("RAD-163 round 4: heredoc and here-string bodies are data, not commands", () => {
@@ -1111,6 +1134,44 @@ test("RAD-163: path containment ignores drive-letter case on win32 only", () => 
   assert.equal(isPathInsideOrEqual("c:\\users\\x\\repo2", "C:\\Users\\X\\repo", "win32"), false);
   assert.equal(isPathInsideOrEqual("/a/Repo", "/a/repo", "linux"), false);
   assert.equal(isPathInsideOrEqual("/a/repo/sub/", "/a/repo", "linux"), true);
+});
+
+test("RAD-188 R3: human export paths do not import github-gate", () => {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+  const exportSrc = readFileSync(path.join(repoRoot, "packages/core/src/export.ts"), "utf8");
+  const laneSrc = readFileSync(path.join(repoRoot, "packages/extension/src/laneView.ts"), "utf8");
+  const cliSrc = readFileSync(path.join(repoRoot, "packages/cli/src/cli.ts"), "utf8");
+  for (const [label, src] of [
+    ["export.ts", exportSrc],
+    ["laneView.ts", laneSrc],
+    ["cli.ts export command", cliSrc],
+  ] as const) {
+    assert.equal(src.includes("github-gate"), false, label);
+    assert.equal(src.includes("github-hook"), false, label);
+  }
+  assert.match(exportSrc, /exportLocalPr/);
+  assert.match(cliSrc, /exportLocalPr/);
+});
+
+test("RAD-188 R5: PRGENIE_GITHUB_GATE_ASK restores ask for deny-listed actions", () => {
+  const env = { ...process.env, PRGENIE_GITHUB_GATE_ASK: "1" };
+  const push = spawnSync(process.execPath, [gateCjs], {
+    input: JSON.stringify({ command: "git push origin HEAD", cwd: loopFixtureCwd }),
+    encoding: "utf8",
+    cwd: loopFixtureCwd,
+    env: { ...env, NO_COLOR: "1" },
+  });
+  assert.equal(push.status, 0, push.stderr);
+  assert.equal(JSON.parse(push.stdout).permission, "ask");
+
+  const exportMcp = spawnSync(process.execPath, [gateCjs], {
+    input: JSON.stringify({ ...CURSOR_JE_EXECUTE_FIXTURE }),
+    encoding: "utf8",
+    cwd: loopFixtureCwd,
+    env: { ...env, NO_COLOR: "1" },
+  });
+  assert.equal(exportMcp.status, 0, exportMcp.stderr);
+  assert.equal(JSON.parse(exportMcp.stdout).permission, "ask");
 });
 
 test("RAD-163: steward-bound primary gates a lowercase-drive cwd", async () => {

@@ -94,14 +94,28 @@ export function normalizeHookWorkspacePath(raw: string): string {
   return path.normalize(trimmed);
 }
 
+/** When set by a human in the environment, restore RAD-185 `ask` for hosts that honor it (RAD-188 R5). */
+export function hookPrefersAskOverDeny(): boolean {
+  const v = process.env.PRGENIE_GITHUB_GATE_ASK?.trim();
+  if (!v) return false;
+  return v === "1" || /^true$/i.test(v) || /^yes$/i.test(v);
+}
+
 export function gateNoInputPayload(reason: string): {
-  permission: "ask";
+  permission: "ask" | "deny";
   user_message: string;
   agent_message: string;
 } {
+  if (hookPrefersAskOverDeny()) {
+    return {
+      permission: "ask",
+      user_message: `${reason}. Confirm only if you trust this action.`,
+      agent_message: `${reason}. Do not git push, gh pr create/merge, or export unless the user explicitly approved.`,
+    };
+  }
   return {
-    permission: "ask",
-    user_message: `${reason}. Confirm only if you trust this action.`,
-    agent_message: `${reason}. Do not git push, gh pr create/merge, or export unless the user explicitly approved.`,
+    permission: "deny",
+    user_message: `${reason}. Use **Open on GitHub** in the Local PRs panel or \`prgenie export <id>\` yourself.`,
+    agent_message: `${reason}. Do not retry or work around this block. Stop and tell the user to export from the panel or CLI if they need to publish.`,
   };
 }

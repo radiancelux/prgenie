@@ -22,6 +22,7 @@ import {
 } from "./loop-github-gate.js";
 import {
   gateNoInputPayload,
+  hookPrefersAskOverDeny,
   normalizeHookWorkspacePath,
   parseHookPayloadBuffer,
   readHookStdin,
@@ -81,13 +82,7 @@ type HookInput = Record<string, unknown>;
 export type { HookPermission };
 
 export function isPublish(command: string): boolean {
-  return (
-    /\bgit(\.exe)?\s+push\b/i.test(command) ||
-    /\bgh(\.exe)?\s+pr\s+create\b/i.test(command) ||
-    /\bgh(\.exe)?\s+pr\s+merge\b/i.test(command) ||
-    /\bgh(\.exe)?\s+repo\s+create\b/i.test(command) ||
-    shellCommandPublishes(command)
-  );
+  return shellCommandPublishes(command);
 }
 
 export function isGithubCli(command: string): boolean {
@@ -283,6 +278,13 @@ export const PRGENIE_MCP_GATED_TOOL_NAMES = new Set([
   "add_comment",
 ]);
 
+/** Human-only MCP tools agents must receive `deny` on Windows (RAD-188 CoS). */
+export const PRGENIE_MCP_AGENT_DENY_TOOLS = new Set([
+  "export_local_pr",
+  "record_export_gate_override",
+  "gh_use",
+]);
+
 const MCP_IDENTITY_FIELD_KEYS = [
   "mcp_server_name",
   "server_name",
@@ -321,7 +323,7 @@ export function shouldApplyPrgenieMcpGate(input: HookInput, toolName: string): b
   return false;
 }
 
-export type McpGateDecision = "allow" | "ask" | "invalid";
+export type McpGateDecision = "allow" | "ask" | "deny" | "invalid";
 
 /** Whether a PR Genie MCP tool requires human confirmation before execution. */
 export function mcpHumanConfirmationGate(
@@ -333,7 +335,7 @@ export function mcpHumanConfirmationGate(
     case "export_local_pr":
     case "record_export_gate_override":
     case "gh_use":
-      return "ask";
+      return "deny";
     case "set_status": {
       if (toolInput === null) return "invalid";
       const status = String(toolInput.status ?? "");
@@ -380,6 +382,46 @@ export function mcpAskPayload(toolName: string): {
   };
 }
 
+export function mcpAgentDenyPayload(toolName: string): {
+  permission: "deny";
+  user_message: string;
+  agent_message: string;
+} {
+  return {
+    permission: "deny",
+    user_message: `PR Genie: agents cannot run "${toolName}". Use **Open on GitHub** in the Local PRs panel or run \`prgenie export <id>\` yourself.`,
+    agent_message: `Human-only MCP action (${toolName}). Do not retry this call or work around the block. Stop and tell the user to export from the panel or CLI.`,
+  };
+}
+
+export function shellPublishDenyPayload(asWho = ""): {
+  permission: "deny";
+  user_message: string;
+  agent_message: string;
+} {
+  const who = asWho ? ` as ${asWho}` : "";
+  return {
+    permission: "deny",
+    user_message: `PR Genie: agents cannot publish to GitHub${who} from the shell. Use **Open on GitHub** in the Local PRs panel or run \`prgenie export <id>\` yourself.`,
+    agent_message:
+      "Publishing is human-only. Do not retry git push or gh pr create/merge, and do not work around this block. Stop and tell the user to export from the panel or CLI.",
+  };
+}
+
+export function shellPublishAskPayload(asWho = ""): {
+  permission: "ask";
+  user_message: string;
+  agent_message: string;
+} {
+  const who = asWho ? ` as ${asWho}` : "";
+  return {
+    permission: "ask",
+    user_message: `PR Genie: this would publish to GitHub${who}. Prefer a local PR Genie loop unless you explicitly want to export.`,
+    agent_message:
+      "Do not git push or gh pr create unless the user explicitly asked to export (/export). Ask whether they want to open a PR Genie local PR (/start, /steward, or /local-pr) — do not create one unless they opt in.",
+  };
+}
+
 export function sanitizeBeforeMcpLogPayload(input: HookInput): Record<string, unknown> {
   const out: Record<string, unknown> = {
     topLevelKeys: Object.keys(input),
@@ -420,7 +462,15 @@ export function decideBeforeMcpExecution(input: HookInput): { permission: HookPe
   }
   const parsed = parseToolInput(input.tool_input ?? input.toolInput);
   const gate = mcpHumanConfirmationGate(toolName, parsed);
-  if (gate === "invalid") return mcpAskPayload(toolName);
+  if (gate === "invalid") {
+    if (PRGENIE_MCP_AGENT_DENY_TOOLS.has(toolName)) {
+      return hookPrefersAskOverDeny() ? mcpAskPayload(toolName) : mcpAgentDenyPayload(toolName);
+    }
+    return mcpAskPayload(toolName);
+  }
+  if (gate === "deny") {
+    return hookPrefersAskOverDeny() ? mcpAskPayload(toolName) : mcpAgentDenyPayload(toolName);
+  }
   if (gate === "ask") return mcpAskPayload(toolName);
   return { permission: "allow" };
 }
@@ -496,14 +546,11 @@ export async function main(): Promise<void> {
 
   if (isPublish(command)) {
     const bind = root ? await getRepoGithubBind(root) : null;
-    const asWho = bind ? ` as ${bind.login}` : "";
+    const asWho = bind ? bind.login : "";
     process.stdout.write(
-      JSON.stringify({
-        permission: "ask",
-        user_message: `PR Genie: this would publish to GitHub${asWho}. Prefer a local PR Genie loop unless you explicitly want to export.`,
-        agent_message:
-          "Do not git push or gh pr create unless the user explicitly asked to export (/export). Ask whether they want to open a PR Genie local PR (/start, /steward, or /local-pr) — do not create one unless they opt in.",
-      }),
+      JSON.stringify(
+        hookPrefersAskOverDeny() ? shellPublishAskPayload(asWho) : shellPublishDenyPayload(asWho),
+      ),
     );
     return;
   }
