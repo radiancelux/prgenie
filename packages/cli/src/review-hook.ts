@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import {
   findGitRoot,
   findLocalPrForCurrentWorktree,
@@ -6,13 +5,16 @@ import {
   formatSessionReconnectDigest,
   pendingReviewComments,
 } from "@prgenie/core";
+import { normalizeHookWorkspacePath, parseHookPayloadBuffer, readHookStdin } from "./hook-stdin.js";
 
 type HookInput = Record<string, unknown>;
 
 export function inferCwd(input: HookInput): string {
-  if (typeof input.cwd === "string" && input.cwd) return input.cwd;
+  if (typeof input.cwd === "string" && input.cwd) return normalizeHookWorkspacePath(input.cwd);
   const roots = input.workspace_roots;
-  if (Array.isArray(roots) && typeof roots[0] === "string" && roots[0]) return roots[0];
+  if (Array.isArray(roots) && typeof roots[0] === "string" && roots[0]) {
+    return normalizeHookWorkspacePath(roots[0]);
+  }
   return process.cwd();
 }
 
@@ -25,13 +27,9 @@ function silent(): void {
 }
 
 export async function main(): Promise<void> {
-  let input: HookInput;
-  try {
-    const raw = readFileSync(0, "utf8");
-    input = raw ? JSON.parse(raw) : {};
-  } catch {
-    input = {};
-  }
+  const { raw } = await readHookStdin();
+  const parsed = parseHookPayloadBuffer(raw);
+  const input: HookInput = parsed.ok ? parsed.input : {};
 
   const event = eventName(input);
   const loopCount = Number(input.loop_count ?? 0);

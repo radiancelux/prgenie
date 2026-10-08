@@ -2,6 +2,12 @@
 
 Loop agents (implementor, reviewer, steward) must not run with your full GitHub account power. A spec that says “create a scratch repo on GitHub” must fail in the client hook, not on GitHub. **RAD-138** is the counterexample: a loop followed its EARS spec and ran `gh repo create`, which created `radiancelux/rad138-utf8-scratch`.
 
+**Best-effort gate.** `github-gate.cjs` (`beforeShellExecution` / `beforeMCPExecution`) is a guard rail only. The fine-grained `GH_TOKEN` (below) is the real boundary. When Cursor delivers a well-formed hook payload, the gate allows read-only PR Genie MCP tools and asks for human-only actions (`export_local_pr`, `git push`, …). When stdin is empty or not JSON, the gate **fails closed** (`permission: ask` with a clear reason — never silent `allow`).
+
+### Cursor hook delivery (RAD-185)
+
+On Windows (verified 2026-10), Cursor passes the hook payload on **stdin** as UTF-8 JSON, often with a leading **UTF-8 BOM** (`EF BB BF`). There is no separate env var or temp file for the payload; argv is only `node`, the hook script, and (for diagnostics) a channel tag. PR Genie strips the BOM before `JSON.parse`, reads stdin asynchronously via `process.stdin` (same pattern as MCP stdio), and logs MCP gate lines under `.git/agent-console/before-mcp-execution.jsonl` (timestamp, raw byte count, read error, normalized tool name — not secrets). Workspace paths may arrive as `/c:/Users/…`; the gate normalizes those before resolving the git root. **Known host limit:** if Cursor stops delivering stdin entirely, every gated call will prompt until the host is fixed — documented here, not a product bug in PR Genie.
+
 ## Recommended setup
 
 1. **Keep your normal `gh auth login`** for interactive work (export, org admin, creating repos). Use that login when _you_ run `/export` or fix account binds.
@@ -77,7 +83,10 @@ Loop agents must spell `gh` commands literally. A command word that is only know
 
 The primary folder counts as a steward context when `stewards.json` names a live loop. If that file exists but can't be read, the hook fails closed and gates the primary folder.
 
-The hook is a guard rail, not a sandbox. The fine-grained `GH_TOKEN` above is the real boundary. Known limits — run-time evaluation the hook cannot see:
+The hook is a guard rail, not a sandbox. The fine-grained `GH_TOKEN` above is the real boundary. Known limits — host delivery and run-time evaluation the hook cannot see:
+
+- **UTF-8 BOM on hook stdin (Windows):** Cursor may prefix JSON with a BOM; PR Genie strips it. If a future host build omits stdin, the gate fails closed (ask) rather than allow (RAD-185).
+- **MCP export timeout:** The MCP stdin reader applies `notifications/cancelled` as soon as the frame is complete, without waiting for the active `tools/call`, and aborts that request's in-flight `export_local_pr` / `run_ci` signal. A stdin error aborts in-flight controllers the same way. Cursor may still drop the MCP session on idle timeout (`-32001 Request timed out`) before long export finishes; that idle timeout is a host limit. Heartbeats and the raised `mcp.json` timeout (RAD-100) mitigate but do not guarantee the host waits forever.
 
 - script files are not read: an agent can write `gh repo delete` into a file and run `bash x.sh`, `pwsh -File x.ps1`, `source x`, `node x.js` or `python x.py`;
 - other interpreters and programs are not modelled (`python -c`, `node -e`, `perl -e`, `ruby -e`, `make`, package scripts, git hooks and aliases, `curl` to the REST API with the token);

@@ -65,6 +65,7 @@ import {
 } from "@prgenie/core";
 
 import { writeSync } from "node:fs";
+import type { Readable } from "node:stream";
 import {
   assertMcpCiPlanNotFullSuite,
   extractProgressToken,
@@ -96,7 +97,48 @@ function fail(id: unknown, code: number, message: string): void {
 type HandleToolOptions = {
   /** Live MCP progress/heartbeat session for git+CI-heavy tools (RAD-100). */
   mcpProgress?: McpProgressSession;
+  /** Client cancel / MCP timeout — aborts in-flight export and CI (RAD-185 R4). */
+  signal?: AbortSignal;
 };
+
+const mcpInFlight = new Map<string | number, AbortController>();
+
+function mcpRequestKey(id: unknown): string | number | null {
+  if (typeof id === "string" || typeof id === "number") return id;
+  return null;
+}
+
+function abortInFlightRequest(requestId: unknown): void {
+  const key = mcpRequestKey(requestId);
+  if (key === null) return;
+  mcpInFlight.get(key)?.abort();
+}
+
+function abortAllInFlight(): void {
+  for (const controller of mcpInFlight.values()) controller.abort();
+}
+
+/** `notifications/cancelled` request id, or null when this message is not a cancel. */
+function cancelRequestId(msg: unknown): string | number | null {
+  if (!msg || typeof msg !== "object") return null;
+  if ((msg as { method?: unknown }).method !== "notifications/cancelled") return null;
+  const params = (msg as { params?: { requestId?: unknown } }).params;
+  return mcpRequestKey(params?.requestId);
+}
+
+/** Abort live controllers for cancel frames already buffered. Does not consume them. */
+function abortCancelsIn(messages: readonly unknown[]): void {
+  for (const raw of messages) {
+    const requestId = cancelRequestId(raw);
+    if (requestId !== null) abortInFlightRequest(requestId);
+  }
+}
+
+export type McpToolHandler = (
+  name: string,
+  args: Json,
+  options?: HandleToolOptions,
+) => Promise<unknown>;
 
 function withCommentViews(pr: LocalPr) {
   return {
@@ -330,7 +372,10 @@ export async function handleTool(
     }
     case "export_local_pr":
       mcpProgress?.report("exporting local PR");
-      return exportLocalPr(cwd, String(args.id ?? ""));
+      return exportLocalPr(cwd, String(args.id ?? ""), {
+        signal: options.signal,
+        onProgress: (event) => mcpProgress?.onCiProgress(event),
+      });
     case "record_export_gate_override": {
       const who = os.userInfo().username.trim();
       if (!who) {
@@ -403,6 +448,7 @@ export async function handleTool(
         failFast: args.failFast === false ? false : undefined,
         parallel: args.parallel === false ? false : undefined,
         skipCache: args.skipCache === true,
+        signal: options.signal,
         onProgress: (event) => {
           card.onProgress(event);
           mcpProgress?.onCiProgress(event);
@@ -1152,7 +1198,7 @@ export const tools = [
   },
 ];
 
-async function onRequest(msg: Json): Promise<void> {
+async function onRequest(msg: Json, callTool: McpToolHandler = handleTool): Promise<void> {
   const id = msg.id;
   const method = msg.method as string;
   const params = (msg.params as Json) ?? {};
@@ -1172,6 +1218,7 @@ async function onRequest(msg: Json): Promise<void> {
       return;
     }
     if (method === "notifications/cancelled") {
+      abortInFlightRequest(params.requestId);
       return;
     }
     if (method === "tools/list") {
@@ -1182,14 +1229,21 @@ async function onRequest(msg: Json): Promise<void> {
       const name = String(params.name ?? "");
       const args = (params.arguments as Json) ?? {};
       const progressToken = extractProgressToken(params);
-      const result = isMcpHeavyTool(name)
-        ? await withMcpProgress({ notify, toolName: name, progressToken }, (session) =>
-            handleTool(name, args, { mcpProgress: session }),
-          )
-        : await handleTool(name, args);
-      ok(id, {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-      });
+      const requestKey = mcpRequestKey(id);
+      const abortController = new AbortController();
+      if (requestKey !== null) mcpInFlight.set(requestKey, abortController);
+      try {
+        const result = isMcpHeavyTool(name)
+          ? await withMcpProgress({ notify, toolName: name, progressToken }, (session) =>
+              callTool(name, args, { mcpProgress: session, signal: abortController.signal }),
+            )
+          : await callTool(name, args, { signal: abortController.signal });
+        ok(id, {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        });
+      } finally {
+        if (requestKey !== null) mcpInFlight.delete(requestKey);
+      }
       return;
     }
     if (method === "ping") {
@@ -1204,25 +1258,33 @@ async function onRequest(msg: Json): Promise<void> {
   }
 }
 
-export async function startMcp(): Promise<void> {
-  try {
-    writeSync(2, `${MCP_STDIO_READY}\n`);
-  } catch {
-    // stderr may be closed
-  }
+/**
+ * Read MCP JSON-RPC from `input`.
+ * `notifications/cancelled` aborts the matching in-flight controller here, in the
+ * stdin reader, without waiting for the active `tools/call` to return (RAD-185 R4).
+ * A stdin `error` aborts every in-flight controller the same way.
+ */
+export function attachMcpInput(input: Readable, options?: { handleTool?: McpToolHandler }): void {
+  const callTool = options?.handleTool ?? handleTool;
   let buffer = Buffer.alloc(0);
   let draining = false;
-  process.stdin.on("error", (err) => {
+
+  input.on("error", (err: Error) => {
+    abortAllInFlight();
     try {
       writeSync(2, `[prgenie] mcp stdin error: ${err.message}\n`);
     } catch {
       // ignore
     }
   });
-  process.stdin.resume();
-  process.stdin.on("data", (chunk: Buffer | string) => {
+  input.resume();
+  input.on("data", (chunk: Buffer | string) => {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8");
     buffer = Buffer.concat([buffer, bytes]);
+    // A cancel that lands while tools/call is awaiting is appended here.
+    // Nested drain() returns immediately (`draining` is already true), so abort
+    // before that return — otherwise the handler's finally drops the controller.
+    abortCancelsIn(takeMcpMessages(buffer).messages);
     void drain();
   });
 
@@ -1234,13 +1296,34 @@ export async function startMcp(): Promise<void> {
         const taken = takeMcpMessages(buffer);
         buffer = Buffer.from(taken.rest);
         if (taken.messages.length === 0) break;
-        for (const raw of taken.messages) {
+        for (let i = 0; i < taken.messages.length; i++) {
+          const raw = taken.messages[i];
           const msg = raw as Json;
-          if (msg && typeof msg === "object" && msg.method) await onRequest(msg);
+          if (!msg || typeof msg !== "object" || !msg.method) continue;
+          if (msg.method === "notifications/cancelled") {
+            abortInFlightRequest((msg.params as Json | undefined)?.requestId);
+            continue;
+          }
+          const pending = onRequest(msg, callTool);
+          // Same chunk: the cancel was already pulled out of `buffer`, so the
+          // data listener cannot see it. Abort after onRequest has registered
+          // the controller (sync, before its first await) and before we wait.
+          abortCancelsIn(taken.messages.slice(i + 1));
+          abortCancelsIn(takeMcpMessages(buffer).messages);
+          await pending;
         }
       }
     } finally {
       draining = false;
     }
   }
+}
+
+export async function startMcp(): Promise<void> {
+  try {
+    writeSync(2, `${MCP_STDIO_READY}\n`);
+  } catch {
+    // stderr may be closed
+  }
+  attachMcpInput(process.stdin);
 }
