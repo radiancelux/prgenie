@@ -76,7 +76,7 @@ execFileSync("git", ["checkout", "-q", "-b", "feat/x"], { cwd: loopFixtureCwd })
 after(() => rmSync(loopFixtureRoot, { recursive: true, force: true }));
 
 function gateSpawnEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const env = { ...process.env, NO_COLOR: "1" };
+  const env: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: "1" };
   delete env.PRGENIE_GITHUB_GATE_ASK;
   return { ...env, ...extra };
 }
