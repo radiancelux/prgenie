@@ -65,6 +65,7 @@ import {
 } from "@prgenie/core";
 
 import { writeSync } from "node:fs";
+import type { Readable } from "node:stream";
 import {
   assertMcpCiPlanNotFullSuite,
   extractProgressToken,
@@ -105,6 +106,45 @@ const mcpInFlight = new Map<string | number, AbortController>();
 function mcpRequestKey(id: unknown): string | number | null {
   if (typeof id === "string" || typeof id === "number") return id;
   return null;
+}
+
+function abortInFlightRequest(requestId: unknown): void {
+  const key = mcpRequestKey(requestId);
+  if (key === null) return;
+  mcpInFlight.get(key)?.abort();
+}
+
+function abortAllInFlight(): void {
+  for (const controller of mcpInFlight.values()) controller.abort();
+}
+
+/** `notifications/cancelled` request id, or null when this message is not a cancel. */
+function cancelRequestId(msg: unknown): string | number | null {
+  if (!msg || typeof msg !== "object") return null;
+  if ((msg as { method?: unknown }).method !== "notifications/cancelled") return null;
+  const params = (msg as { params?: { requestId?: unknown } }).params;
+  return mcpRequestKey(params?.requestId);
+}
+
+/** Abort live controllers for cancel frames already in this batch. Does not consume them. */
+function abortCancelsIn(messages: readonly unknown[]): void {
+  for (const raw of messages) {
+    const requestId = cancelRequestId(raw);
+    if (requestId !== null) abortInFlightRequest(requestId);
+  }
+}
+
+export type McpToolHandler = (
+  name: string,
+  args: Json,
+  options?: HandleToolOptions,
+) => Promise<unknown>;
+
+function applyMcpCancelled(params: Json): void {
+  const requestId = params.requestId;
+  if (typeof requestId === "string" || typeof requestId === "number") {
+    mcpInFlight.get(requestId)?.abort();
+  }
 }
 
 function withCommentViews(pr: LocalPr) {
@@ -1165,7 +1205,7 @@ export const tools = [
   },
 ];
 
-async function onRequest(msg: Json): Promise<void> {
+async function onRequest(msg: Json, callTool: McpToolHandler = handleTool): Promise<void> {
   const id = msg.id;
   const method = msg.method as string;
   const params = (msg.params as Json) ?? {};
@@ -1185,10 +1225,7 @@ async function onRequest(msg: Json): Promise<void> {
       return;
     }
     if (method === "notifications/cancelled") {
-      const requestId = params.requestId;
-      if (typeof requestId === "string" || typeof requestId === "number") {
-        mcpInFlight.get(requestId)?.abort();
-      }
+      applyMcpCancelled(params);
       return;
     }
     if (method === "tools/list") {
@@ -1205,9 +1242,9 @@ async function onRequest(msg: Json): Promise<void> {
       try {
         const result = isMcpHeavyTool(name)
           ? await withMcpProgress({ notify, toolName: name, progressToken }, (session) =>
-              handleTool(name, args, { mcpProgress: session, signal: abortController.signal }),
+              callTool(name, args, { mcpProgress: session, signal: abortController.signal }),
             )
-          : await handleTool(name, args, { signal: abortController.signal });
+          : await callTool(name, args, { signal: abortController.signal });
         ok(id, {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         });
@@ -1260,11 +1297,22 @@ export async function startMcp(): Promise<void> {
         if (taken.messages.length === 0) break;
         for (const raw of taken.messages) {
           const msg = raw as Json;
-          if (msg && typeof msg === "object" && msg.method) await onRequest(msg);
+          if (!msg || typeof msg !== "object" || !msg.method) continue;
+          const method = String(msg.method);
+          if (method === "notifications/cancelled") {
+            applyMcpCancelled((msg.params as Json) ?? {});
+            continue;
+          }
+          if (method === "tools/call") {
+            void onRequest(msg);
+            continue;
+          }
+          await onRequest(msg);
         }
       }
     } finally {
       draining = false;
+      if (buffer.length > 0) void drain();
     }
   }
 }
