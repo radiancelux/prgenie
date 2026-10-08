@@ -95,6 +95,7 @@ function runGate(
   const result = spawnSync(process.execPath, [gateCjs], {
     input: payload,
     encoding: "utf8",
+    cwd: loopFixtureCwd,
     env: { ...process.env, NO_COLOR: "1" },
   });
   assert.equal(result.status, 0, result.stderr);
@@ -355,27 +356,45 @@ test("RAD-185 R3: before-mcp log uses /c:/ workspace root in temp repo", async (
   }
 });
 
-test("RAD-185 R3: github-hook tests do not touch primary before-mcp-execution.jsonl", () => {
-  const primaryLog = path.join(
-    process.cwd(),
-    ".git",
-    "agent-console",
-    "before-mcp-execution.jsonl",
-  );
-  if (!existsSync(path.join(process.cwd(), ".git"))) return;
-  let before: number | null = null;
+function primaryBeforeMcpLogPath(): string | null {
   try {
-    before = statSync(primaryLog).mtimeMs;
+    const commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    }).trim();
+    const absolute = path.isAbsolute(commonDir)
+      ? commonDir
+      : path.join(process.cwd(), commonDir);
+    return path.join(absolute, "agent-console", "before-mcp-execution.jsonl");
   } catch {
-    return;
+    return null;
   }
+}
+
+test("RAD-185 R3: github-hook tests do not touch primary before-mcp-execution.jsonl", () => {
+  const primaryLog = primaryBeforeMcpLogPath();
+  if (!primaryLog) return;
+  const existedBefore = existsSync(primaryLog);
+  const beforeMtime = existedBefore ? statSync(primaryLog).mtimeMs : undefined;
+
+  runGate({ ...CURSOR_JE_EXECUTE_FIXTURE });
+  runGate({ ...CURSOR_JE_EXECUTE_FIXTURE }, { bom: true });
   runGate({
-    mcp_server_name: "plugin-prgenie-prgenie",
+    mcp_server_name: "PR Genie",
     tool_name: "get_local_pr",
     tool_input: { id: "lp-deadbeef" },
-    cwd: loopFixtureCwd,
   });
-  assert.equal(statSync(primaryLog).mtimeMs, before);
+  runGate({
+    mcp_server_name: "plugin-prgenie-prgenie",
+    tool_name: "export_local_pr",
+    tool_input: { id: "lp-deadbeef" },
+  });
+
+  if (existedBefore) {
+    assert.equal(statSync(primaryLog).mtimeMs, beforeMtime);
+  } else {
+    assert.equal(existsSync(primaryLog), false);
+  }
 });
 
 test("RAD-164 follow-up: transcript-shaped prefixed export_local_pr asks", () => {

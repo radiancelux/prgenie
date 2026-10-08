@@ -48,10 +48,6 @@ test("RAD-185: normalizeHookWorkspacePath accepts /c:/ roots", () => {
     const normalized = normalizeHookWorkspacePath("/c:/Users/foo/pr-genie");
     assert.match(normalized, /^C:[\\/]Users[\\/]foo[\\/]pr-genie$/i);
   } else {
-    assert.equal(normalizeHookWorkspacePath("/c:/Users/foo"), pathLike("/c:/Users/foo"));
+    assert.equal(normalizeHookWorkspacePath("/c:/Users/foo"), "C:/Users/foo");
   }
 });
-
-function pathLike(p: string): string {
-  return p;
-}
