@@ -65,7 +65,6 @@ import {
 } from "@prgenie/core";
 
 import { writeSync } from "node:fs";
-import type { Readable } from "node:stream";
 import {
   assertMcpCiPlanNotFullSuite,
   extractProgressToken,
@@ -118,34 +117,11 @@ function abortAllInFlight(): void {
   for (const controller of mcpInFlight.values()) controller.abort();
 }
 
-/** `notifications/cancelled` request id, or null when this message is not a cancel. */
-function cancelRequestId(msg: unknown): string | number | null {
-  if (!msg || typeof msg !== "object") return null;
-  if ((msg as { method?: unknown }).method !== "notifications/cancelled") return null;
-  const params = (msg as { params?: { requestId?: unknown } }).params;
-  return mcpRequestKey(params?.requestId);
-}
-
-/** Abort live controllers for cancel frames already in this batch. Does not consume them. */
-function abortCancelsIn(messages: readonly unknown[]): void {
-  for (const raw of messages) {
-    const requestId = cancelRequestId(raw);
-    if (requestId !== null) abortInFlightRequest(requestId);
-  }
-}
-
 export type McpToolHandler = (
   name: string,
   args: Json,
   options?: HandleToolOptions,
 ) => Promise<unknown>;
-
-function applyMcpCancelled(params: Json): void {
-  const requestId = params.requestId;
-  if (typeof requestId === "string" || typeof requestId === "number") {
-    mcpInFlight.get(requestId)?.abort();
-  }
-}
 
 function withCommentViews(pr: LocalPr) {
   return {
@@ -1225,7 +1201,7 @@ async function onRequest(msg: Json, callTool: McpToolHandler = handleTool): Prom
       return;
     }
     if (method === "notifications/cancelled") {
-      applyMcpCancelled(params);
+      abortInFlightRequest(params.requestId);
       return;
     }
     if (method === "tools/list") {
@@ -1274,6 +1250,7 @@ export async function startMcp(): Promise<void> {
   let buffer = Buffer.alloc(0);
   let draining = false;
   process.stdin.on("error", (err) => {
+    abortAllInFlight();
     try {
       writeSync(2, `[prgenie] mcp stdin error: ${err.message}\n`);
     } catch {
@@ -1300,7 +1277,7 @@ export async function startMcp(): Promise<void> {
           if (!msg || typeof msg !== "object" || !msg.method) continue;
           const method = String(msg.method);
           if (method === "notifications/cancelled") {
-            applyMcpCancelled((msg.params as Json) ?? {});
+            abortInFlightRequest((msg.params as Json)?.requestId);
             continue;
           }
           if (method === "tools/call") {
