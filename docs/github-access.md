@@ -4,7 +4,7 @@ Loop agents (implementor, reviewer, steward) must not run with your full GitHub 
 
 **Best-effort gate.** `github-gate.cjs` (`beforeShellExecution` / `beforeMCPExecution`) is a guard rail only. The fine-grained `GH_TOKEN` (below) is the real boundary. When Cursor delivers a well-formed hook payload, the gate allows read-only PR Genie MCP tools and returns **`permission: deny`** for agent human-only actions (`export_local_pr`, `record_export_gate_override`, `gh_use`, `git push`, `gh pr create`, …). Humans export via **Open on GitHub** or `prgenie export` — those paths do not run through the agent hook. When stdin is empty or not JSON, the gate **fails closed** (`permission: deny` with a clear reason — never silent `allow`).
 
-**Escape hatch (RAD-188):** set `PRGENIE_GITHUB_GATE_ASK=1` in your environment (not via MCP) to restore `permission: ask` for human-only actions on hosts that still show a confirmation dialog. Defaults off. Agents that run `setx`, PowerShell `SetEnvironmentVariable`, or shell assignments for that variable get **`deny`** — configure it yourself outside agent sessions.
+**Escape hatch (RAD-188):** set `PRGENIE_GITHUB_GATE_ASK=1` in your environment (not via MCP) to restore `permission: ask` for human-only actions on hosts that still show a confirmation dialog. Defaults off. Any agent shell command that names the variable (any case) **and** writes environment or registry state gets **`deny`**: `setx`, `reg add` / `reg import`, `New-ItemProperty` / `Set-ItemProperty` / `New-Item` / `Set-Item` on `HKCU:` / `HKLM:` / `Registry::` / `Env:` paths, `[Environment]::SetEnvironmentVariable`, registry `SetValue`, `Win32_Environment` / `wmic environment`, `launchctl setenv`, `export`, `$env:` and `set` assignments. Reads such as `rg`, `echo $env:…`, `reg query` and `Get-ItemProperty` stay allowed. A commit message or file write that merely mentions the name next to one of those verbs is also denied — use your editor. Configure the flag yourself outside agent sessions.
 
 ### Cursor hook delivery (RAD-185)
 
@@ -95,7 +95,8 @@ The hook is a guard rail, not a sandbox. The fine-grained `GH_TOKEN` above is th
 - other interpreters and programs are not modelled (`python -c`, `node -e`, `perl -e`, `ruby -e`, `make`, package scripts, git hooks and aliases, `curl` to the REST API with the token);
 - launchers and prefixes not listed above (for example `su -c`, `runuser -c`, `env -S`, `script -c`, `watch`, `Invoke-Command`, `Start-Job`, `ssh`, `docker exec`, `cmd /c start`) are not unwrapped;
 - a pre-existing gh alias or extension, or a `gh` shim earlier on `PATH`, runs under a harmless-looking name;
-- shell features outside the tokenizer (functions or aliases defined earlier in the session, `IFS` tricks, unusual quoting) can hide a command.
+- shell features outside the tokenizer (functions or aliases defined earlier in the session, `IFS` tricks, unusual quoting) can hide a command;
+- the `PRGENIE_GITHUB_GATE_ASK` setter deny (RAD-188 R5) only sees the name as static text: a name built at run time (string concatenation, variables, base64), a `.reg` file or script that holds it, or a writer reached through an interpreter (`python -c`, `node -e`) without the literal name, is not caught.
 
 See **RAD-163** and `packages/cli/src/loop-github-gate.ts`.
 

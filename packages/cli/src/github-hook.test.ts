@@ -1190,13 +1190,60 @@ test("RAD-188 R5: flag off gives deny; flag on gives ask", () => {
 test("RAD-188 R5: agents cannot set PRGENIE_GITHUB_GATE_ASK via shell", () => {
   for (const command of [
     "setx PRGENIE_GITHUB_GATE_ASK 1",
+    "setx.exe prgenie_github_gate_ask 1",
+    "cmd /c setx PRGENIE_GITHUB_GATE_ASK 1",
     "[Environment]::SetEnvironmentVariable('PRGENIE_GITHUB_GATE_ASK','1','User')",
     "export PRGENIE_GITHUB_GATE_ASK=1",
+    "export -n PRGENIE_GITHUB_GATE_ASK",
+    "declare -x PRGENIE_GITHUB_GATE_ASK=1",
+    "PRGENIE_GITHUB_GATE_ASK=1 node x.js",
+    "env PRGENIE_GITHUB_GATE_ASK=1 node x.js",
     "$env:PRGENIE_GITHUB_GATE_ASK=1",
+    "${env:PRGENIE_GITHUB_GATE_ASK} = '1'",
+    "set PRGENIE_GITHUB_GATE_ASK=1",
+    'set "PRGENIE_GITHUB_GATE_ASK=1"',
+    "set -gx PRGENIE_GITHUB_GATE_ASK 1",
+    "Set-Item env:PRGENIE_GITHUB_GATE_ASK 1",
+    "New-Item -Path Env:\\PRGENIE_GITHUB_GATE_ASK -Value 1",
+    "reg add HKCU\\Environment /v PRGENIE_GITHUB_GATE_ASK /d 1 /f",
+    "reg.exe add HKEY_CURRENT_USER\\Environment /v PRGENIE_GITHUB_GATE_ASK /t REG_SZ /d 1 /f",
+    "reg add HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment /v PRGENIE_GITHUB_GATE_ASK /d 1",
+    "reg import gate.reg & rem PRGENIE_GITHUB_GATE_ASK",
+    "reg query HKCU\\Environment & reg add HKCU\\Environment /v PRGENIE_GITHUB_GATE_ASK /d 1 /f",
+    "New-ItemProperty -Path HKCU:\\Environment -Name PRGENIE_GITHUB_GATE_ASK -Value 1",
+    "Set-ItemProperty -Path HKCU:\\Environment -Name PRGENIE_GITHUB_GATE_ASK -Value 1",
+    "Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment' -Name PRGENIE_GITHUB_GATE_ASK -Value 1",
+    "New-Item -Path HKCU:\\Environment -Force; New-ItemProperty HKCU:\\Environment PRGENIE_GITHUB_GATE_ASK -Value 1",
+    "Set-ItemProperty -Path Registry::HKEY_CURRENT_USER\\Environment -Name PRGENIE_GITHUB_GATE_ASK -Value 1",
+    "sp HKCU:\\Environment PRGENIE_GITHUB_GATE_ASK 1",
+    "[Microsoft.Win32.Registry]::SetValue('HKEY_CURRENT_USER\\Environment','PRGENIE_GITHUB_GATE_ASK','1')",
+    "New-CimInstance -ClassName Win32_Environment -Property @{Name='PRGENIE_GITHUB_GATE_ASK';VariableValue='1';UserName='me'}",
+    'wmic environment create name="PRGENIE_GITHUB_GATE_ASK",variablevalue="1",username="me"',
+    "launchctl setenv PRGENIE_GITHUB_GATE_ASK 1",
+    "Add-Content $PROFILE '$env:PRGENIE_GITHUB_GATE_ASK=1'",
+    "echo 'export PRGENIE_GITHUB_GATE_ASK=1' >> ~/.bashrc",
+    "setx PRGENIE_GITHUB_GATE^_ASK 1",
+    "setx PRGENIE_GITHUB_GATE_AS`K 1",
+    "reg add HKCU\\Environment /v PRGENIE_GITHUB_GATE_ASK /d 1 /f; git push origin HEAD",
   ]) {
     const parsed = runGate({ command, cwd: loopFixtureCwd });
     assert.equal(parsed.permission, "deny", command);
-    assert.match(String(parsed.agent_message ?? ""), /PRGENIE_GITHUB_GATE_ASK|work around/i);
+    assert.match(String(parsed.agent_message ?? ""), /PRGENIE_GITHUB_GATE_ASK/, command);
+  }
+});
+
+test("RAD-188 R5: reading PRGENIE_GITHUB_GATE_ASK stays allowed", () => {
+  for (const command of [
+    "rg PRGENIE_GITHUB_GATE_ASK",
+    "rg -n prgenie_github_gate_ask packages docs",
+    "echo $env:PRGENIE_GITHUB_GATE_ASK",
+    "printenv PRGENIE_GITHUB_GATE_ASK",
+    "reg query HKCU\\Environment /v PRGENIE_GITHUB_GATE_ASK",
+    "Get-ItemProperty -Path HKCU:\\Environment -Name PRGENIE_GITHUB_GATE_ASK",
+    "[Environment]::GetEnvironmentVariable('PRGENIE_GITHUB_GATE_ASK','User')",
+    "if ($env:PRGENIE_GITHUB_GATE_ASK -eq '1') { 'on' }",
+  ]) {
+    assert.equal(runGate({ command, cwd: loopFixtureCwd }).permission, "allow", command);
   }
 });
 

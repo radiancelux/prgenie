@@ -518,6 +518,11 @@ export async function main(): Promise<void> {
     }
   }
 
+  if (command && shellCommandSetsGithubGateAskFlag(command)) {
+    process.stdout.write(JSON.stringify(gateEscapeHatchSetDenyPayload()));
+    return;
+  }
+
   if (command && isPublish(command)) {
     const bind = root ? await getRepoGithubBind(root) : null;
     const asWho = bind ? bind.login : "";
@@ -526,11 +531,6 @@ export async function main(): Promise<void> {
         hookPrefersAskOverDeny() ? shellPublishAskPayload(asWho) : shellPublishDenyPayload(asWho),
       ),
     );
-    return;
-  }
-
-  if (command && shellCommandSetsGithubGateAskFlag(command)) {
-    process.stdout.write(JSON.stringify(gateEscapeHatchSetDenyPayload()));
     return;
   }
 
