@@ -5,7 +5,7 @@ alwaysApply: true
 
 PR Genie owns unpublished review. GitHub is an explicit later step.
 
-Never run `git push`, `gh pr create`, or `gh pr merge` unless the developer clearly asks to export — `/export`, MCP `export_local_pr`, or `prgenie export`.
+Never run `git push`, `gh pr create`, or `gh pr merge` unless the developer clearly asks to export — then direct **them** to `/export`, **Open on GitHub** in the panel, or `prgenie export` (agents must not call MCP `export_local_pr`; the hook denies it).
 
 Do **not** create or update a local PR unless the user opted in (`/start`, `/steward`, `/local-pr`, or an explicit “use PR Genie” / “start a loop”) **or** this branch already has a live local PR. Ready-for-review alone is not permission to create.
 
@@ -43,6 +43,6 @@ If this branch already has a local PR in `changes_requested`, call `get_local_pr
 
 One steward per loop Tasks an implementor, then a reviewer; on `changes_requested` it **resumes the same implementor Task id**; after Reviewer clear it runs the export gate and only then hands off to the human. After a blocked CI gate, resume the implementor then `evaluate_export_gate` again — do not auto-spawn a reviewer.
 
-This repo may be bound to a GitHub login. If unbound and the user needs GitHub, ask which `gh` account to use, then `prgenie gh use <login>` or MCP `gh_use`. Do not guess. Do not `gh auth switch` to a different account than the bind.
+This repo may be bound to a GitHub login. If unbound and the user needs GitHub, ask which `gh` account to use, then tell them to run `prgenie gh use <login>` (agents must not call MCP `gh_use`). Do not guess. Do not `gh auth switch` to a different account than the bind.
 
 Each loop has a git worktree so the developer can Switch this window onto the implementor's files. PR Genie creates that checkout when needed (`../<repo>.loops/<id>` if the branch is free). Do not delete worktrees unless asked. Do not create extra ones.

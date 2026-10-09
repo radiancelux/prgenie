@@ -2,7 +2,9 @@
 
 Loop agents (implementor, reviewer, steward) must not run with your full GitHub account power. A spec that says “create a scratch repo on GitHub” must fail in the client hook, not on GitHub. **RAD-138** is the counterexample: a loop followed its EARS spec and ran `gh repo create`, which created `radiancelux/rad138-utf8-scratch`.
 
-**Best-effort gate.** `github-gate.cjs` (`beforeShellExecution` / `beforeMCPExecution`) is a guard rail only. The fine-grained `GH_TOKEN` (below) is the real boundary. When Cursor delivers a well-formed hook payload, the gate allows read-only PR Genie MCP tools and asks for human-only actions (`export_local_pr`, `git push`, …). When stdin is empty or not JSON, the gate **fails closed** (`permission: ask` with a clear reason — never silent `allow`).
+**Best-effort gate.** `github-gate.cjs` (`beforeShellExecution` / `beforeMCPExecution`) is a guard rail only. The fine-grained `GH_TOKEN` (below) is the real boundary. When Cursor delivers a well-formed hook payload, the gate allows read-only PR Genie MCP tools and returns **`permission: deny`** for agent human-only actions (`export_local_pr`, `record_export_gate_override`, `gh_use`, `git push`, `gh pr create`, …). Humans export via **Open on GitHub** or `prgenie export` — those paths do not run through the agent hook. When stdin is empty or not JSON, the gate **fails closed** (`permission: deny` with a clear reason — never silent `allow`).
+
+**Escape hatch (RAD-188):** set `PRGENIE_GITHUB_GATE_ASK=1` in your environment (not via MCP) to restore `permission: ask` for human-only actions on hosts that still show a confirmation dialog. Defaults off. Any agent shell command that names the variable (any case) **and** writes environment or registry state gets **`deny`**: `setx`, `reg add` / `reg import`, `New-ItemProperty` / `Set-ItemProperty` / `New-Item` / `Set-Item` on `HKCU:` / `HKLM:` / `Registry::` / `Env:` paths, `[Environment]::SetEnvironmentVariable`, registry `SetValue`, `Win32_Environment` / `wmic environment`, `launchctl setenv`, `export`, `$env:` and `set` assignments. Reads such as `rg`, `echo $env:…`, `reg query` and `Get-ItemProperty` stay allowed. A commit message or file write that merely mentions the name next to one of those verbs is also denied — use your editor. Configure the flag yourself outside agent sessions.
 
 ### Cursor hook delivery (RAD-185)
 
@@ -45,7 +47,7 @@ The github-gate hook treats a shell command as a loop agent's when it comes from
 - mutating `gh api` calls (explicit `-X`/`--method`, or implied POST from `-f`/`-F`/`--field`/`--raw-field`/`--input`, attached or not) against `user/repos`, `orgs/*/repos`, `repos/{owner}/{repo}` and its `transfer`/`forks`/`generate` endpoints, plus GraphQL repo lifecycle mutations;
 - `gh auth` (except `gh auth status` without `--show-token`), `gh secret`, `gh variable`, `gh ssh-key`, `gh gpg-key`;
 - `gh alias set/import/delete` and `gh extension install/upgrade/exec`, which could rename or wrap a denied command;
-- force-push (`--force`, `-f`, `--force-with-lease[=…]`, `--force-if-includes`, `--mirror`, or a `+` refspec) whose destination is the default branch or `main`, and deleting the default branch. Other force-pushes still ask, like every `git push`.
+- force-push (`--force`, `-f`, `--force-with-lease[=…]`, `--force-if-includes`, `--mirror`, or a `+` refspec) whose destination is the default branch or `main`, and deleting the default branch. Any other `git push` or `gh pr create` from an agent returns **`deny`** with panel/CLI export guidance (RAD-188).
 
 The command is tokenized (POSIX and PowerShell quoting), so chains, pipes, `(…)`/`{…}` groups, `$(…)` and backtick substitutions, and `<(…)` process substitutions are each checked. Flags before a subcommand (`gh auth -h github.com token`) are skipped the way gh's own lookup skips them.
 
@@ -85,14 +87,16 @@ The primary folder counts as a steward context when `stewards.json` names a live
 
 The hook is a guard rail, not a sandbox. The fine-grained `GH_TOKEN` above is the real boundary. Known limits — host delivery and run-time evaluation the hook cannot see:
 
-- **UTF-8 BOM on hook stdin (Windows):** Cursor may prefix JSON with a BOM; PR Genie strips it. If a future host build omits stdin, the gate fails closed (ask) rather than allow (RAD-185).
+- **UTF-8 BOM on hook stdin (Windows):** Cursor may prefix JSON with a BOM; PR Genie strips it. If a future host build omits stdin, the gate fails closed (`deny`) rather than allow (RAD-185, RAD-188).
+- **Cursor 3.23 on Windows ignores `ask` (RAD-188, verified 2026-10-08, Cursor 3.23.23):** Live hooks logged `permission: ask` for agent `export_local_pr` and `git push --dry-run`, Cursor recorded a valid hook response, and the action still ran with **no confirmation dialog**. The same build **enforces `deny`**. Treat `ask` as non-blocking on this host; human-only actions use `deny` by default.
 - **MCP export timeout:** The MCP stdin reader applies `notifications/cancelled` as soon as the frame is complete, without waiting for the active `tools/call`, and aborts that request's in-flight `export_local_pr` / `run_ci` signal. A stdin error aborts in-flight controllers the same way. Cursor may still drop the MCP session on idle timeout (`-32001 Request timed out`) before long export finishes; that idle timeout is a host limit. Heartbeats and the raised `mcp.json` timeout (RAD-100) mitigate but do not guarantee the host waits forever.
 
 - script files are not read: an agent can write `gh repo delete` into a file and run `bash x.sh`, `pwsh -File x.ps1`, `source x`, `node x.js` or `python x.py`;
 - other interpreters and programs are not modelled (`python -c`, `node -e`, `perl -e`, `ruby -e`, `make`, package scripts, git hooks and aliases, `curl` to the REST API with the token);
 - launchers and prefixes not listed above (for example `su -c`, `runuser -c`, `env -S`, `script -c`, `watch`, `Invoke-Command`, `Start-Job`, `ssh`, `docker exec`, `cmd /c start`) are not unwrapped;
 - a pre-existing gh alias or extension, or a `gh` shim earlier on `PATH`, runs under a harmless-looking name;
-- shell features outside the tokenizer (functions or aliases defined earlier in the session, `IFS` tricks, unusual quoting) can hide a command.
+- shell features outside the tokenizer (functions or aliases defined earlier in the session, `IFS` tricks, unusual quoting) can hide a command;
+- the `PRGENIE_GITHUB_GATE_ASK` setter deny (RAD-188 R5) only sees the name as static text: a name built at run time (string concatenation, variables, base64), a `.reg` file or script that holds it, or a writer reached through an interpreter (`python -c`, `node -e`) without the literal name, is not caught.
 
 See **RAD-163** and `packages/cli/src/loop-github-gate.ts`.
 

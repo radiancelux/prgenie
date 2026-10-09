@@ -31,7 +31,7 @@ test("RAD-185: empty stdin fails closed parse", () => {
   assert.equal(empty.ok, false);
   if (!empty.ok) {
     assert.match(empty.reason, /no input/i);
-    assert.equal(gateNoInputPayload(empty.reason).permission, "ask");
+    assert.equal(gateNoInputPayload(empty.reason).permission, "deny");
   }
 });
 

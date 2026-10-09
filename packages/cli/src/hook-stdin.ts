@@ -94,14 +94,94 @@ export function normalizeHookWorkspacePath(raw: string): string {
   return path.normalize(trimmed);
 }
 
-export function gateNoInputPayload(reason: string): {
-  permission: "ask";
+export const PRGENIE_GITHUB_GATE_ASK_ENV = "PRGENIE_GITHUB_GATE_ASK";
+const GATE_ASK_NAME = PRGENIE_GITHUB_GATE_ASK_ENV;
+
+/** Persistent or process environment writers, matched only when the command also names the flag. */
+const GATE_ASK_ENV_WRITERS: readonly RegExp[] = [
+  /\bsetx(\.exe)?\b/i,
+  /\breg(\.exe)?\s+(add|import|copy|restore|load)\b/i,
+  /\b(New|Set|Copy|Move|Rename)-ItemProperty\b/i,
+  /\b(New|Set|Copy|Move|Rename)-Item\b/i,
+  /\b(Set|Add)-Content\b/i,
+  /\b(New|Set)-(CimInstance|WmiInstance)\b/i,
+  /\bwmic\b[^\n]*\benvironment\b/i,
+  /\bSetEnvironmentVariable\b/i,
+  /\bSetValue(Ex)?\b/i,
+  /\blaunchctl\s+setenv\b/i,
+  /\bputenv\b/i,
+  // PowerShell aliases for the item / item-property writers above.
+  /(^|[\s;&|(])(sp|si|ni|cpp|mp|rnp|sc|ac)\s/i,
+  new RegExp(String.raw`\bexport\s+(-\w+\s+)*${GATE_ASK_NAME}\b`, "i"),
+  new RegExp(String.raw`\b(declare|typeset|readonly|local)\s+(-\w+\s+)*${GATE_ASK_NAME}=`, "i"),
+  new RegExp(String.raw`\$\{?env:${GATE_ASK_NAME}\}?\s*[+]?=(?!=)`, "i"),
+  new RegExp(String.raw`\bset\s+(\/[ap]\s+)?"?${GATE_ASK_NAME}\s*=`, "i"),
+  new RegExp(String.raw`\bset\s+-[a-zA-Z]*x[a-zA-Z]*\s+${GATE_ASK_NAME}\b`, "i"),
+  new RegExp(String.raw`(^\s*|[;&|(\n]\s*|\benv\s+(-\w+\s+)*)${GATE_ASK_NAME}=`, "i"),
+  new RegExp(
+    String.raw`(process\.env\.|process\.env\[['"]|os\.environ\[['"])${GATE_ASK_NAME}['"]?\]?\s*=(?!=)`,
+    "i",
+  ),
+];
+
+/** Any registry path: a write here without a read-only verb is treated as a writer. */
+const REGISTRY_PATH = /\b(HKCU|HKLM|HKEY_[A-Z_]+|Registry::)|\\Environment\b/i;
+const REGISTRY_READ_ONLY =
+  /\b(reg(\.exe)?\s+query|Get-ItemProperty(Value)?|Get-Item|Get-ChildItem|gp|gpv|gi|gci)\b/i;
+
+/** Strip cmd `^` / PowerShell backtick escapes and empty quote pairs that split the name in source text. */
+function normalizeForGateAskScan(command: string): string {
+  return command.replace(/[\^`]/g, "").replace(/""|''/g, "");
+}
+
+/**
+ * Agents must not set the R5 escape hatch (RAD-188 R5): deny any command that names the flag
+ * (case-insensitive — Windows env names are) and writes environment or registry state. Pure reads
+ * (`rg`, `echo $env:...`, `reg query`, `Get-ItemProperty`) stay allowed.
+ */
+export function shellCommandSetsGithubGateAskFlag(command: string): boolean {
+  const text = normalizeForGateAskScan(command);
+  if (!text.toUpperCase().includes(GATE_ASK_NAME)) return false;
+  if (GATE_ASK_ENV_WRITERS.some((re) => re.test(text))) return true;
+  return REGISTRY_PATH.test(text) && !REGISTRY_READ_ONLY.test(text);
+}
+
+export function gateEscapeHatchSetDenyPayload(): {
+  permission: "deny";
   user_message: string;
   agent_message: string;
 } {
   return {
-    permission: "ask",
-    user_message: `${reason}. Confirm only if you trust this action.`,
-    agent_message: `${reason}. Do not git push, gh pr create/merge, or export unless the user explicitly approved.`,
+    permission: "deny",
+    user_message:
+      "PR Genie: agents cannot change the github gate escape hatch (`PRGENIE_GITHUB_GATE_ASK`). Set it yourself outside Cursor if needed.",
+    agent_message:
+      "Do not set PRGENIE_GITHUB_GATE_ASK via shell or work around gate denies. Stop and tell the user to configure the variable themselves if they want ask mode.",
+  };
+}
+
+/** When set by a human in the environment, restore RAD-185 `ask` for hosts that honor it (RAD-188 R5). */
+export function hookPrefersAskOverDeny(): boolean {
+  const v = process.env.PRGENIE_GITHUB_GATE_ASK?.trim();
+  if (!v) return false;
+  return v === "1" || /^true$/i.test(v) || /^yes$/i.test(v);
+}
+
+export function gateNoInputPayload(reason: string): {
+  permission: "ask" | "deny";
+  user_message: string;
+  agent_message: string;
+} {
+  if (hookPrefersAskOverDeny()) {
+    return {
+      permission: "ask",
+      user_message: `${reason}. Confirm only if you trust this action.`,
+      agent_message: `${reason}. Do not git push, gh pr create/merge, or export unless the user explicitly approved.`,
+    };
+  }
+  return {
+    permission: "deny",
+    user_message: `${reason}. Use **Open on GitHub** in the Local PRs panel or \`prgenie export <id>\` yourself.`,
+    agent_message: `${reason}. Do not retry or work around this block. Stop and tell the user to export from the panel or CLI if they need to publish.`,
   };
 }
