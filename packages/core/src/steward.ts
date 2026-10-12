@@ -597,7 +597,7 @@ function cancelledStewardDecision(
     yourTurn: false,
     failingCheck: null,
     gateStatus: null,
-    reason: `Loop cancelled from panel at ${at}.${stopTask} Do not spawn or resume agents until the cancel marker is cleared (panel Resume loop, MCP clear_loop_cancel, or steward_next with restart).`,
+    reason: `Loop cancelled from panel at ${at}.${stopTask} Do not spawn or resume agents until the cancel marker is cleared (the human presses Resume loop in the panel; agents are denied clear_loop_cancel).`,
   };
 }
 

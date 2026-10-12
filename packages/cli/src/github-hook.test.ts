@@ -5,26 +5,44 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import {
+  decideBeforeMcpExecution,
   isGithubCli,
   isPrgenieMcpContext,
   isPublish,
   mcpHumanConfirmationGate,
   normalizeBareMcpToolName,
+  PRGENIE_MCP_AGENT_DENY_TOOLS,
   PRGENIE_MCP_AGENT_TOOLS,
-  PRGENIE_MCP_ALWAYS_ASK_TOOLS,
   PRGENIE_MCP_GATED_TOOL_NAMES,
   sanitizeBeforeMcpLogPayload,
   switchUser,
   appendBeforeMcpExecutionLog,
   inferHookCwd,
+  shellPrgenieCliDenyPayload,
+  shellPrgenieCliAskPayload,
 } from "./github-hook.js";
 import {
   forcePushTargetsDefaultBranch,
   ghApiRepoLifecycleMutation,
   isPathInsideOrEqual,
   loopAgentShellDenialReason,
+  pathInLoopWorktree,
+  shellCommandPathTargets,
+  worktreeForGitAdminDir,
+  prgenieCliHumanOnlyCommand,
+  setPrgenieCliBudgetForTests,
   shellSimpleCommands,
 } from "./loop-github-gate.js";
 import { tools as mcpRegisteredTools } from "./mcp.js";
@@ -145,7 +163,7 @@ test("built github-gate.cjs runs main and fail-closes push", () => {
 
   const input = JSON.stringify({
     command: "git push origin HEAD",
-    cwd: process.cwd(),
+    cwd: loopFixtureCwd,
   });
   const result = spawnSync(process.execPath, [gateCjs], {
     input,
@@ -164,49 +182,52 @@ test("built github-gate.cjs allows non-publish commands", () => {
   assert.equal(parsed.permission, "allow");
 });
 
-test("RAD-164: mcpHumanConfirmationGate asks for human-only MCP tools", () => {
+test("RAD-190 R5/R6: mcpHumanConfirmationGate never asks (former asks are allow or deny)", () => {
   assert.equal(mcpHumanConfirmationGate("export_local_pr", {}), "deny");
   assert.equal(mcpHumanConfirmationGate("record_export_gate_override", {}), "deny");
   assert.equal(mcpHumanConfirmationGate("gh_use", {}), "deny");
-  assert.equal(mcpHumanConfirmationGate("set_status", { status: "approved" }), "ask");
-  assert.equal(mcpHumanConfirmationGate("set_status", { status: "reviewed" }), "ask");
+  assert.equal(mcpHumanConfirmationGate("set_status", { status: "approved" }), "deny");
+  assert.equal(mcpHumanConfirmationGate("set_status", { status: "reviewed" }), "deny");
   assert.equal(
     mcpHumanConfirmationGate("set_status", { status: "ready", skipPreflight: true }),
-    "ask",
+    "allow",
   );
   assert.equal(
     mcpHumanConfirmationGate("set_status", { status: "ready", ciSkipReason: "flaky" }),
-    "ask",
+    "allow",
   );
   assert.equal(
     mcpHumanConfirmationGate("set_status", { status: "ready", ciSkipChecks: ["test:core"] }),
-    "ask",
+    "allow",
   );
   assert.equal(mcpHumanConfirmationGate("set_status", { status: "ready" }), "allow");
-  assert.equal(mcpHumanConfirmationGate("add_comment", { role: "human" }), "ask");
-  assert.equal(mcpHumanConfirmationGate("add_comment", {}), "ask");
+  assert.equal(mcpHumanConfirmationGate("add_comment", { role: "human" }), "deny");
+  assert.equal(mcpHumanConfirmationGate("add_comment", {}), "deny");
+  assert.equal(mcpHumanConfirmationGate("add_comment", { role: "bogus" }), "deny");
   assert.equal(mcpHumanConfirmationGate("add_comment", { role: "agent" }), "allow");
   assert.equal(
     mcpHumanConfirmationGate("add_comment", {
       role: "agent",
       body: "CI skipped: toolchain missing on this machine",
     }),
-    "ask",
+    "allow",
   );
   assert.equal(mcpHumanConfirmationGate("add_comment", { role: "reviewer" }), "allow");
   assert.equal(mcpHumanConfirmationGate("get_local_pr", { id: "lp-deadbeef" }), "allow");
   assert.equal(mcpHumanConfirmationGate("set_status", null), "invalid");
   assert.equal(mcpHumanConfirmationGate("steward_next", { id: "lp-deadbeef" }), "allow");
-  assert.equal(mcpHumanConfirmationGate("delete_local_pr", { id: "lp-deadbeef" }), "ask");
-  assert.equal(mcpHumanConfirmationGate("delete_learning", { id: "learn-1" }), "ask");
+  assert.equal(mcpHumanConfirmationGate("delete_local_pr", { id: "lp-deadbeef" }), "deny");
+  assert.equal(mcpHumanConfirmationGate("delete_learning", { id: "learn-1" }), "deny");
+  assert.equal(mcpHumanConfirmationGate("clear_loop_cancel", { id: "lp-deadbeef" }), "deny");
   assert.equal(mcpHumanConfirmationGate("create_local_pr", { title: "t" }), "allow");
-  assert.equal(mcpHumanConfirmationGate("unknown_prgenie_tool", {}), "ask");
+  assert.equal(mcpHumanConfirmationGate("unknown_prgenie_tool", {}), "deny");
+  assert.equal(mcpHumanConfirmationGate("", {}), "deny");
 });
 
-test("RAD-164 R2: every MCP tool is allowlisted, gated, or always-ask", () => {
+test("RAD-164 R2: every MCP tool is allowlisted, gated, or agent-denied", () => {
   const known = new Set<string>([
     ...PRGENIE_MCP_AGENT_TOOLS,
-    ...PRGENIE_MCP_ALWAYS_ASK_TOOLS,
+    ...PRGENIE_MCP_AGENT_DENY_TOOLS,
     ...PRGENIE_MCP_GATED_TOOL_NAMES,
   ]);
   for (const { name } of mcpRegisteredTools) {
@@ -434,13 +455,14 @@ test("RAD-164 follow-up: colliding add_comment on another server stays allow", (
   );
 });
 
-test("RAD-164 follow-up: unrecognized PR Genie MCP tool asks", () => {
+test("RAD-190 R5: unrecognized PR Genie MCP tool denies (was ask)", () => {
   const parsed = runGate({
     mcp_server_name: "plugin-prgenie-prgenie",
     tool_name: "plugin-prgenie-prgenie-totally_unknown_tool",
     tool_input: {},
   });
-  assert.equal(parsed.permission, "ask");
+  assert.equal(parsed.permission, "deny");
+  assert.match(String(parsed.agent_message ?? ""), /Do not retry/i);
 });
 
 test("RAD-188 R1: built github-gate.cjs denies agent-only MCP tools on PR Genie", () => {
@@ -460,21 +482,50 @@ test("RAD-188 R1: built github-gate.cjs denies agent-only MCP tools on PR Genie"
   }
 });
 
-test("RAD-164: built github-gate.cjs still asks for other gated MCP tools on PR Genie", () => {
+test("RAD-190 R5: built github-gate.cjs denies the former-ask gated MCP calls on PR Genie", () => {
   for (const [tool_name, tool_input] of [
     ["set_status", { id: "lp-deadbeef", status: "approved" }],
     ["set_status", { id: "lp-deadbeef", status: "reviewed" }],
-    ["set_status", { id: "lp-deadbeef", status: "ready", ciSkipReason: "skip" }],
     ["add_comment", { id: "lp-deadbeef", body: "hi" }],
     ["add_comment", { id: "lp-deadbeef", body: "hi", role: "human" }],
+    ["delete_local_pr", { id: "lp-deadbeef" }],
+    ["delete_learning", { id: "learn-1" }],
   ] as const) {
     const parsed = runGate({
       mcp_server_name: "plugin-prgenie-prgenie",
       tool_name,
       tool_input,
     });
-    assert.equal(parsed.permission, "ask", tool_name);
-    assert.match(String(parsed.agent_message ?? ""), /Human-only MCP/i);
+    assert.equal(parsed.permission, "deny", `${tool_name} ${JSON.stringify(tool_input)}`);
+    assert.match(String(parsed.agent_message ?? ""), /Human-only MCP.*Do not retry/i);
+  }
+});
+
+test("RAD-190 R5: CI-skip set_status / add_comment are a deliberate allow", () => {
+  for (const [tool_name, tool_input] of [
+    ["set_status", { id: "lp-deadbeef", status: "ready", ciSkipReason: "skip" }],
+    ["set_status", { id: "lp-deadbeef", status: "ready", skipPreflight: true }],
+    ["set_status", { id: "lp-deadbeef", status: "ready", ciSkipChecks: ["lint"] }],
+    ["add_comment", { id: "lp-deadbeef", role: "agent", body: "CI skipped: no node on PATH" }],
+  ] as const) {
+    const parsed = runGate({ mcp_server_name: "plugin-prgenie-prgenie", tool_name, tool_input });
+    assert.equal(parsed.permission, "allow", `${tool_name} ${JSON.stringify(tool_input)}`);
+  }
+});
+
+test("RAD-190 R6: clear_loop_cancel denies for agents with panel Resume guidance", () => {
+  for (const input of [
+    { mcp_server_name: "plugin-prgenie-prgenie", tool_name: "clear_loop_cancel" },
+    {
+      tool_name: "plugin-prgenie-prgenie-clear_loop_cancel",
+      serverIdentifier: "plugin-prgenie-prgenie",
+    },
+    { mcp_server_name: "PR Genie", tool_name: "clear_loop_cancel" },
+  ]) {
+    const parsed = runGate({ ...input, tool_input: { id: "lp-deadbeef" } }, { bom: true });
+    assert.equal(parsed.permission, "deny", input.tool_name);
+    assert.match(String(parsed.user_message ?? ""), /Resume loop/);
+    assert.match(String(parsed.agent_message ?? ""), /Do not retry/i);
   }
 });
 
@@ -513,7 +564,7 @@ test("RAD-164: built github-gate.cjs allows ungated MCP tools", () => {
         body: "CI skipped: no node on PATH",
       },
     }).permission,
-    "ask",
+    "allow",
   );
   assert.equal(
     runGate({
@@ -525,13 +576,13 @@ test("RAD-164: built github-gate.cjs allows ungated MCP tools", () => {
   );
 });
 
-test("RAD-164: built github-gate.cjs asks when MCP tool_input JSON is invalid", () => {
+test("RAD-190 R5: built github-gate.cjs denies when MCP tool_input JSON is invalid (was ask)", () => {
   const parsed = runGate({
     mcp_server_name: "plugin-prgenie-prgenie",
     tool_name: "set_status",
     tool_input: "{not-json",
   });
-  assert.equal(parsed.permission, "ask");
+  assert.equal(parsed.permission, "deny");
 });
 
 test("RAD-163: loop agent gh repo create / delete / api POST /user/repos are denied", () => {
@@ -1253,7 +1304,7 @@ test("RAD-188 R5: MCP server does not reference PRGENIE_GITHUB_GATE_ASK", () => 
   assert.equal(mcpSrc.includes("PRGENIE_GITHUB_GATE_ASK"), false);
 });
 
-test("RAD-188 R2: publish denies before bound-repo account-switch ask", async () => {
+test("RAD-188 R2 / RAD-190 loop-only scope: a loop agent's publish denies before bound-repo account-switch ask", async () => {
   const repo = await mkdtemp(path.join(tmpdir(), "prgenie-gate-bind-push-"));
   try {
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
@@ -1277,12 +1328,17 @@ test("RAD-188 R2: publish denies before bound-repo account-switch ask", async ()
       path.join(repo, ".git", "agent-console", "github.json"),
       JSON.stringify({ host: "github.com", login: "no-such-bound-login-rad188" }),
     );
-    const push = runGate({ command: "git push --dry-run origin HEAD", cwd: repo }, { cwd: repo });
+    const loopAgent = { subagent_type: "prgenie-implementor" };
+    const push = runGate(
+      { ...loopAgent, command: "git push --dry-run origin HEAD", cwd: repo },
+      { cwd: repo },
+    );
     assert.equal(push.permission, "deny");
     assert.match(String(push.user_message ?? ""), /Open on GitHub|prgenie export/i);
 
     const chain = runGate(
       {
+        ...loopAgent,
         command: "gh auth switch --user other-xyz; git push --dry-run origin HEAD",
         cwd: repo,
       },
@@ -1347,4 +1403,1382 @@ test("RAD-163: steward-bound primary gates a lowercase-drive cwd", async () => {
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
+});
+
+// RAD-190 R1: every wrapper form an agent shell could use to reach the human-only CLI.
+const PRGENIE_CLI_WRAPPERS: readonly ((cli: string) => string)[] = [
+  (c) => `prgenie ${c}`,
+  (c) => `prgenie.cmd ${c}`,
+  (c) => `pnpm cli ${c}`,
+  (c) => `pnpm cli -- ${c}`,
+  (c) => `pnpm run cli ${c}`,
+  (c) => `npm run cli -- ${c}`,
+  (c) => `pnpm prgenie ${c}`,
+  (c) => `pnpm exec prgenie ${c}`,
+  (c) => `pnpm --filter @prgenie/cli exec prgenie ${c}`,
+  (c) => `pnpm dlx prgenie ${c}`,
+  (c) => `npx prgenie ${c}`,
+  (c) => `npx -y @prgenie/cli ${c}`,
+  (c) => `npm exec prgenie -- ${c}`,
+  (c) => `npx -c 'prgenie ${c}'`,
+  (c) => `node packages/cli/dist/prgenie.cjs ${c}`,
+  (c) => `node C:\\Users\\b\\prgenie\\packages\\cli\\dist\\prgenie.cjs ${c}`,
+  (c) => `node --no-warnings ./node_modules/@prgenie/cli/dist/cli.js ${c}`,
+  (c) => `node /opt/prgenie/cli.js ${c}`,
+  (c) => `tsx packages/cli/src/bin.ts ${c}`,
+  (c) => `cmd /c "pnpm prgenie ${c}"`,
+  (c) => `cmd.exe /c prgenie ${c}`,
+  (c) => `cmd /c pnpm exec prgenie ${c}`,
+  (c) => `pwsh -c prgenie ${c}`,
+  (c) => `pwsh -c 'npx prgenie ${c}'`,
+  (c) => `powershell -NoProfile -Command "node packages/cli/dist/prgenie.cjs ${c}"`,
+  (c) => `& 'C:\\Users\\b\\AppData\\Roaming\\npm\\prgenie.cmd' ${c}`,
+  (c) => `timeout 60 prgenie ${c}`,
+  (c) => `git status && pnpm prgenie ${c}`,
+  (c) => `bash -c 'cd packages/cli && pnpm exec prgenie ${c}'`,
+  (c) => `corepack pnpm cli ${c}`,
+  // Round 2 (reviewer repros): runner switches with values, cmd call/start, shell options, prefixes.
+  (c) => `powershell -ExecutionPolicy Bypass -c prgenie ${c}`,
+  (c) => `powershell -NoP -NonI -W Hidden -Exec Bypass -Command prgenie ${c}`,
+  (c) => `pwsh -wd C:\\repo -c prgenie ${c}`,
+  (c) => `pwsh -WorkingDirectory C:\\repo -Command "prgenie ${c}"`,
+  (c) => `cmd /v:on /c prgenie ${c}`,
+  (c) => `cmd /e:on /c prgenie ${c}`,
+  (c) => `cmd /d /s /c "prgenie ${c}"`,
+  (c) => `cmd /c call prgenie ${c}`,
+  (c) => `call prgenie ${c}`,
+  (c) => `start /b prgenie ${c}`,
+  (c) => `start /wait prgenie ${c}`,
+  (c) => `cmd /c start /b prgenie ${c}`,
+  (c) => `bash --norc -c prgenie ${c}`,
+  (c) => `bash -o pipefail -c "prgenie ${c}"`,
+  (c) => `sh -o errexit -c 'prgenie ${c}'`,
+  (c) => `builtin prgenie ${c}`,
+  (c) => `. prgenie ${c}`,
+  (c) => `setsid prgenie ${c}`,
+  (c) => `flock /tmp/l prgenie ${c}`,
+  (c) => `env -S prgenie ${c}`,
+  (c) => `script -c prgenie ${c}`,
+  (c) => `su -c prgenie ${c}`,
+  (c) => `strace prgenie ${c}`,
+  (c) => `busybox prgenie ${c}`,
+  (c) => `arch -x86_64 prgenie ${c}`,
+  (c) => `Start-Process -Wait prgenie ${c}`,
+  (c) => `find . -name x -exec prgenie ${c} \\;`,
+  (c) => `deno run -A npm:prgenie ${c}`,
+  (c) => `pnpm tsx packages/cli/src/bin.ts ${c}`,
+  (c) => `npx tsx packages/cli/src/bin.ts ${c}`,
+  (c) => `node --import tsx packages/cli/src/bin.ts ${c}`,
+  (c) => `"C:\\Program Files\\nodejs\\node.exe" C:\\x\\prgenie.cjs ${c}`,
+  (c) => `pr^genie ${c}`,
+  (c) => `prgenie --verbose ${c}`,
+];
+
+const PRGENIE_HUMAN_ONLY_CLI = [
+  ["export lp-deadbeef", "export"],
+  ["export lp-deadbeef --verbose", "export"],
+  ["gh use alice", "gh use"],
+  ["github use alice", "gh use"],
+  ["export-gate-override lp-deadbeef --who brett --why flaky", "export-gate-override"],
+] as const;
+
+test("RAD-190 R1: prgenieCliHumanOnlyCommand sees every wrapper form", () => {
+  for (const wrap of PRGENIE_CLI_WRAPPERS) {
+    for (const [cli, sub] of PRGENIE_HUMAN_ONLY_CLI) {
+      const command = wrap(cli);
+      assert.equal(prgenieCliHumanOnlyCommand(command), sub, command);
+    }
+  }
+  // A subcommand only known at run time fails closed.
+  assert.equal(prgenieCliHumanOnlyCommand("prgenie $SUB lp-1"), "run-time");
+  assert.equal(prgenieCliHumanOnlyCommand("P=prgenie; $P export lp-1"), "export");
+  assert.equal(prgenieCliHumanOnlyCommand("$P gh use bob"), "gh use");
+  assert.equal(
+    prgenieCliHumanOnlyCommand(
+      `powershell -c "Start-Process prgenie -ArgumentList 'export','lp-1'"`,
+    ),
+    "export",
+  );
+  assert.equal(prgenieCliHumanOnlyCommand("pnpm prgenie gh $(echo use) bob"), "gh use");
+  // Mentions that are data, not a CLI run.
+  for (const command of [
+    "echo prgenie export lp-1",
+    "git commit -m 'prgenie export lp-1'",
+    "rg 'prgenie export' docs",
+    "pnpm test",
+    "node scripts/build.mjs",
+    "npx prettier --check .",
+    "cmd /c echo prgenie export",
+    'pwsh -c "Write-Host prgenie export"',
+    "time echo prgenie export",
+    'git log --grep "prgenie export"',
+    `node -e "console.log('prgenie export')"`,
+    'pnpm test -- --grep "prgenie export"',
+    'git commit -m "$(cat <<EOF\nprgenie export lp-1\nEOF\n)"',
+    "Write-Output 'pnpm cli export lp-1'",
+    "grep -r pnpm cli export .",
+  ]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), null, command);
+  }
+});
+
+test("RAD-190 R1: built gate denies each wrapper form of prgenie export / gh use / export-gate-override", () => {
+  for (const wrap of PRGENIE_CLI_WRAPPERS) {
+    for (const [cli, sub] of PRGENIE_HUMAN_ONLY_CLI.filter((_, k) => k !== 1 && k !== 3)) {
+      const command = wrap(cli);
+      const parsed = runGate({ command, cwd: tmpdir() }, { cwd: tmpdir() });
+      assert.equal(parsed.permission, "deny", command);
+      assert.match(
+        String(parsed.user_message ?? ""),
+        sub === "gh use" ? /prgenie gh use <login>/ : /Open on GitHub.*prgenie export <id>/,
+        command,
+      );
+      assert.match(String(parsed.agent_message ?? ""), /Do not retry/, command);
+      if (sub === "export-gate-override") {
+        assert.match(
+          String(parsed.user_message ?? ""),
+          /prgenie export-gate-override <id> --who … --why …/,
+          command,
+        );
+      }
+    }
+  }
+  // Loop worktree context gives the same deny.
+  for (const command of ["pnpm prgenie export lp-deadbeef", "npx prgenie gh use alice"]) {
+    assert.equal(runGate({ command, cwd: loopFixtureCwd }).permission, "deny", command);
+  }
+});
+
+test("RAD-190 R2: read-only prgenie CLI subcommands stay allow", () => {
+  for (const command of [
+    "prgenie ci lp-x",
+    "prgenie doctor",
+    "prgenie list",
+    "prgenie status lp-x",
+    "prgenie show lp-x",
+    "prgenie gh status",
+    "prgenie gh list",
+    "pnpm cli ci lp-x",
+    "pnpm prgenie doctor",
+    "npx prgenie list --all",
+    "node packages/cli/dist/prgenie.cjs ci lp-x --no-fail-fast",
+    'cmd /c "pnpm exec prgenie doctor"',
+  ]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), null, command);
+    for (const cwd of [tmpdir(), loopFixtureCwd]) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "allow", `${command} @ ${cwd}`);
+    }
+  }
+});
+
+test("RAD-190 R3: git push --help / -h are allow; real pushes still deny", () => {
+  for (const command of ["git push --help", "git push -h", "git.exe push --help"]) {
+    assert.equal(isPublish(command), false, command);
+    for (const cwd of [tmpdir(), loopFixtureCwd]) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "allow", `${command} @ ${cwd}`);
+    }
+  }
+  for (const command of [
+    "git push --dry-run origin HEAD",
+    "git push --help; git push origin HEAD",
+    "git push origin -- --help",
+  ]) {
+    assert.equal(isPublish(command), true, command);
+    assert.equal(runGate({ command, cwd: loopFixtureCwd }).permission, "deny", command);
+  }
+});
+
+/** Repo bound to a GitHub login that no gh install has, so account switching always fails. */
+async function withUnswitchableBind(fn: (repo: string) => void): Promise<void> {
+  const repo = await mkdtemp(path.join(tmpdir(), "prgenie-gate-rad190-"));
+  try {
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    await mkdir(path.join(repo, ".git", "agent-console"), { recursive: true });
+    await writeFile(
+      path.join(repo, ".git", "agent-console", "github.json"),
+      JSON.stringify({ host: "github.com", login: "no-such-bound-login-rad190" }),
+    );
+    fn(repo);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+}
+
+/** One input per shape each PR Genie MCP tool's gate branches on. */
+const MCP_INPUT_VARIANTS: readonly unknown[] = [
+  {},
+  { id: "lp-deadbeef" },
+  { id: "lp-deadbeef", status: "approved" },
+  { id: "lp-deadbeef", status: "reviewed" },
+  { id: "lp-deadbeef", status: "ready" },
+  { id: "lp-deadbeef", status: "ready", skipPreflight: true },
+  { id: "lp-deadbeef", status: "ready", ciSkipReason: "x", ciSkipChecks: ["lint"] },
+  { id: "lp-deadbeef", body: "hi" },
+  { id: "lp-deadbeef", body: "hi", role: "human" },
+  { id: "lp-deadbeef", body: "CI skipped: x", role: "agent" },
+  { id: "lp-deadbeef", body: "hi", role: "reviewer" },
+  { id: "lp-deadbeef", body: "hi", role: "bogus" },
+  "{not-json",
+  "[1]",
+  null,
+];
+
+test("RAD-190 R5: with the flag off, no MCP gate path returns ask", () => {
+  const saved = process.env.PRGENIE_GITHUB_GATE_ASK;
+  delete process.env.PRGENIE_GITHUB_GATE_ASK;
+  try {
+    const names = [...mcpRegisteredTools.map((t) => t.name), "totally_unknown_tool", ""];
+    for (const name of names) {
+      for (const tool_input of MCP_INPUT_VARIANTS) {
+        for (const input of [
+          { mcp_server_name: "PR Genie", tool_name: name || "plugin-prgenie-prgenie-", tool_input },
+          {
+            serverIdentifier: "plugin-prgenie-prgenie",
+            tool_name: `plugin-prgenie-prgenie-${name}`,
+            tool_input,
+          },
+          { tool_name: name || "x", tool_input },
+        ]) {
+          const decision = decideBeforeMcpExecution(input);
+          assert.ok(decision, JSON.stringify(input));
+          assert.notEqual(decision.permission, "ask", JSON.stringify(input));
+          assert.ok(["allow", "deny"].includes(decision.permission), JSON.stringify(input));
+        }
+      }
+    }
+    for (const name of PRGENIE_MCP_AGENT_DENY_TOOLS) {
+      for (const input of [
+        { mcp_server_name: "PR Genie", tool_name: name },
+        { serverIdentifier: "plugin-prgenie-prgenie", tool_name: `plugin-prgenie-prgenie-${name}` },
+        { tool_name: name, tool_input: { id: "lp-1" } },
+      ]) {
+        assert.equal(decideBeforeMcpExecution(input)?.permission, "deny", JSON.stringify(input));
+      }
+    }
+  } finally {
+    if (saved === undefined) delete process.env.PRGENIE_GITHUB_GATE_ASK;
+    else process.env.PRGENIE_GITHUB_GATE_ASK = saved;
+  }
+});
+
+test("RAD-190 R5: with the flag off, no shell / stdin gate path returns ask", async () => {
+  const shellCases: { command: string; cwd: string }[] = [];
+  for (const cwd of [tmpdir(), loopFixtureCwd]) {
+    for (const command of [
+      "git push origin HEAD",
+      "gh pr create --fill",
+      "gh pr merge 1",
+      "gh repo create x",
+      "gh auth switch --user someone-else",
+      "gh pr list",
+      "git status",
+      "pnpm prgenie export lp-deadbeef",
+      "npx prgenie gh use alice",
+      "prgenie export-gate-override lp-1 --who a --why b",
+      "setx PRGENIE_GITHUB_GATE_ASK 1",
+    ]) {
+      shellCases.push({ command, cwd });
+    }
+  }
+  for (const { command, cwd } of shellCases) {
+    const parsed = runGate({ command, cwd }, { cwd });
+    assert.notEqual(parsed.permission, "ask", `${command} @ ${cwd}`);
+  }
+  for (const raw of ["", "{trunc", "\uFEFF", "[]"]) {
+    assert.equal(runGate(null, { raw }).permission, "deny", JSON.stringify(raw));
+  }
+  await withUnswitchableBind((repo) => {
+    // Former ask: gh auth switch to a login other than the bind.
+    const switching = runGate(
+      { command: "gh auth switch --user someone-else", cwd: repo },
+      { cwd: repo },
+    );
+    assert.equal(switching.permission, "deny");
+    assert.match(String(switching.user_message ?? ""), /prgenie gh use <login>/);
+    // Former ask: the bound account cannot be switched to before a gh command.
+    const failed = runGate({ command: "gh pr list", cwd: repo }, { cwd: repo });
+    assert.equal(failed.permission, "deny");
+    assert.match(String(failed.agent_message ?? ""), /prgenie gh use <login>/);
+  });
+});
+
+test("RAD-190 R5: the human-set flag still restores ask for the new denies", async () => {
+  const ask = { PRGENIE_GITHUB_GATE_ASK: "1" };
+  const mcp = (tool_name: string, tool_input: unknown) =>
+    runGate({ mcp_server_name: "PR Genie", tool_name, tool_input }, { env: ask }).permission;
+  assert.equal(mcp("clear_loop_cancel", { id: "lp-deadbeef" }), "ask");
+  assert.equal(mcp("delete_local_pr", { id: "lp-deadbeef" }), "ask");
+  assert.equal(mcp("set_status", { id: "lp-deadbeef", status: "approved" }), "ask");
+  assert.equal(mcp("get_local_pr", { id: "lp-deadbeef" }), "allow");
+  assert.equal(
+    runGate({ command: "pnpm prgenie export lp-1", cwd: tmpdir() }, { cwd: tmpdir(), env: ask })
+      .permission,
+    "ask",
+  );
+  await withUnswitchableBind((repo) => {
+    assert.equal(
+      runGate({ command: "gh pr list", cwd: repo }, { cwd: repo, env: ask }).permission,
+      "ask",
+    );
+  });
+});
+
+test("RAD-190 R1 round 2: a run-time prgenie subcommand denies and says so", () => {
+  for (const command of [
+    "prgenie $SUB lp-1",
+    'pnpm prgenie "$SUB" lp-1',
+    "prgenie $(echo export) x",
+  ]) {
+    const parsed = runGate({ command, cwd: tmpdir() }, { cwd: tmpdir() });
+    assert.equal(parsed.permission, "deny", command);
+    assert.match(String(parsed.user_message ?? ""), /subcommand decided at run time/, command);
+    assert.doesNotMatch(String(parsed.user_message ?? ""), /run `prgenie export`/, command);
+  }
+});
+
+test("RAD-190 R5/R6 round 2: record_export_gate_override deny names the human CLI", () => {
+  const parsed = runGate({
+    mcp_server_name: "PR Genie",
+    tool_name: "record_export_gate_override",
+    tool_input: { id: "lp-deadbeef", who: "a", why: "b" },
+  });
+  assert.equal(parsed.permission, "deny");
+  assert.match(
+    String(parsed.user_message ?? ""),
+    /prgenie export-gate-override <id> --who … --why …/,
+  );
+});
+
+test("RAD-190 R3 round 2: a -h flag value is not help, so those pushes deny", () => {
+  for (const command of [
+    "git push -o -h origin main",
+    "git push --push-option -h origin feat/x",
+    "git push --repo -h origin feat/x",
+    "git push -o -h --force origin main",
+    "git push --exec -h origin feat/x",
+    "git push --receive-pack -h origin feat/x",
+    "git push origin main -h",
+    "git push origin --help",
+  ]) {
+    assert.equal(isPublish(command), true, command);
+    // RAD-190 loop-only scope: the push deny is loop-only, so only the loop worktree denies.
+    const cwd = loopFixtureCwd;
+    assert.equal(runGate({ command, cwd }, { cwd }).permission, "deny", `${command} @ ${cwd}`);
+  }
+});
+
+test("RAD-190 R5 round 2: gate crashes fail closed (deny), ask only with the flag", () => {
+  const throwing = {
+    mcp_server_name: "PR Genie",
+    tool_name: "set_status",
+    tool_input: { id: "lp-1", status: { toString: null } },
+  };
+  assert.equal(runGate(throwing).permission, "deny");
+  assert.equal(runGate({ ...throwing, mcp_server_name: undefined }).permission, "deny");
+  // Deep `$(` nesting overflows the tokenizer's stack; the crash must not fail open.
+  const n = 3000;
+  const deep = `echo ${"$(".repeat(n)}git push origin main${")".repeat(n)}`;
+  const crashed = runGate({ command: deep, cwd: tmpdir() }, { cwd: tmpdir() });
+  assert.equal(crashed.permission, "deny");
+  assert.equal(
+    runGate(
+      { command: deep, cwd: tmpdir() },
+      { cwd: tmpdir(), env: { PRGENIE_GITHUB_GATE_ASK: "1" } },
+    ).permission,
+    "ask",
+  );
+  // Malformed payloads that used to reach String(): non-string command, empty PR Genie tool name.
+  assert.equal(
+    runGate({ command: ["git", "push"], cwd: tmpdir() }, { cwd: tmpdir() }).permission,
+    "deny",
+  );
+  assert.equal(
+    runGate({ mcp_server_name: "PR Genie", tool_name: "", tool_input: {} }).permission,
+    "deny",
+  );
+});
+
+test("RAD-190 R6 round 2: every agent-denied MCP tool is gated with no server name", () => {
+  for (const name of PRGENIE_MCP_AGENT_DENY_TOOLS) {
+    assert.ok(PRGENIE_MCP_GATED_TOOL_NAMES.has(name), name);
+  }
+  for (const tool_name of ["clear_loop_cancel", "delete_local_pr", "delete_learning"]) {
+    const parsed = runGate(
+      { tool_name, tool_input: { id: "lp-1" }, cwd: tmpdir() },
+      { cwd: tmpdir() },
+    );
+    assert.equal(parsed.permission, "deny", tool_name);
+  }
+});
+
+test("RAD-190 R1 round 3: built gate answers 200KB adversarial commands with deny in under 2s", () => {
+  for (const unit of ["prgenie x ", "npx ", "pnpm ", "Start-Process ", "echo prgenie "]) {
+    const command = `true ${unit.repeat(Math.ceil(200_000 / unit.length))}; git push origin main`;
+    const started = Date.now();
+    const parsed = runGate({ command, cwd: loopFixtureCwd }, { cwd: loopFixtureCwd });
+    const elapsed = Date.now() - started;
+    assert.equal(parsed.permission, "deny", unit);
+    assert.ok(elapsed < 2000, `${unit.trim()} x ${command.length} chars took ${elapsed}ms`);
+  }
+});
+
+const START_PROCESS_LAUNCHES = [
+  `Start-Process prgenie -ArgumentList "export lp-1"`,
+  `Start-Process prgenie -ArgumentList 'export lp-1'`,
+  `Start-Process -ArgumentList 'export','lp-1' -FilePath prgenie`,
+  `Start-Process pnpm -ArgumentList 'cli','export','lp-1'`,
+  `Start-Process pnpm -ArgumentList 'cli export lp-1'`,
+  `Start-Process node -ArgumentList 'C:\\x\\prgenie.cjs','export','lp-1'`,
+  `Start-Process -FilePath:prgenie -ArgumentList:'export lp-1'`,
+  `Start-Process prgenie 'export lp-1'`,
+  `Start-Process -FilePath npx -ArgumentList '-y prgenie export lp-1'`,
+  `saps prgenie -Args 'export lp-1'`,
+  `start prgenie -Arg 'export','lp-1'`,
+  `pwsh -c "Start-Process prgenie -ArgumentList 'export lp-1' -Wait"`,
+];
+
+test("RAD-190 R1/R4 round 3: Start-Process -ArgumentList launches are parsed and denied", () => {
+  for (const command of START_PROCESS_LAUNCHES) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), "export", command);
+    assert.equal(
+      runGate({ command, cwd: tmpdir() }, { cwd: tmpdir() }).permission,
+      "deny",
+      command,
+    );
+  }
+  assert.equal(
+    prgenieCliHumanOnlyCommand(`Start-Process prgenie -ArgumentList 'gh','use','bob'`),
+    "gh use",
+  );
+  for (const command of [
+    `Start-Process prgenie -ArgumentList 'doctor'`,
+    `Start-Process notepad -ArgumentList 'export lp-1'`,
+  ]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), null, command);
+  }
+});
+
+test("RAD-190 R1 round 3: a data word that is not the program does not hide a launch", () => {
+  for (const command of [
+    "sudo -u cat prgenie export lp-1",
+    "flock /tmp/cat prgenie export lp-1",
+    "env -C /tmp/echo prgenie export lp-1",
+    "xargs -a cat prgenie export",
+    "find . -name cat -exec prgenie export lp-1 \\;",
+    "npx -p cat prgenie export lp-1",
+    "pwsh -wd C:\\cat -c prgenie export lp-1",
+    "sudo -u git commit prgenie export lp-1",
+    "node --require ./echo packages/cli/dist/prgenie.cjs export lp-1",
+  ]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), "export", command);
+    assert.equal(
+      runGate({ command, cwd: tmpdir() }, { cwd: tmpdir() }).permission,
+      "deny",
+      command,
+    );
+  }
+  // The program itself being data-only still makes the line a mention.
+  for (const command of [
+    "time echo prgenie export lp-1",
+    "sudo -u x echo prgenie export lp-1",
+    "cmd /c call echo prgenie export lp-1",
+    "pwsh -wd C:\\repo -c 'echo prgenie export'",
+    "eval 'echo prgenie export lp-1'",
+  ]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), null, command);
+  }
+  // `prgenie gh --verbose use` is not `gh use` to the CLI (it reads the word after gh).
+  assert.equal(prgenieCliHumanOnlyCommand("prgenie gh --verbose use alice"), null);
+});
+
+test("RAD-190 R5 round 3: add_comment with a non-string body denies", () => {
+  assert.equal(mcpHumanConfirmationGate("add_comment", { role: "agent", body: {} }), "invalid");
+  assert.equal(mcpHumanConfirmationGate("add_comment", { role: "reviewer", body: 5 }), "invalid");
+  assert.equal(mcpHumanConfirmationGate("add_comment", { role: "agent", body: "ok" }), "allow");
+  const parsed = runGate({
+    mcp_server_name: "PR Genie",
+    tool_name: "add_comment",
+    tool_input: { id: "lp-1", role: "agent", body: { toString: null } },
+  });
+  assert.equal(parsed.permission, "deny");
+});
+
+const xs = (n: number): string => Array.from({ length: n }, () => "'x'").join(", ");
+
+const START_PROCESS_UNCAPPED = [
+  // Round 4 blocker 1 repros: no word, argument or occurrence cap falls open.
+  `Start-Process -Wait -ArgumentList 'export', 'lp-1', ${xs(70)} -FilePath prgenie`,
+  `Start-Process env -ArgumentList 'A=1','B=2','C=3','D=4','prgenie','export','lp-1'`,
+  `Start-Process -ArgumentList 'export lp-1' ${"-Wait ".repeat(70)}-FilePath prgenie`,
+  `Start-Process prgenie ${"-Wait ".repeat(70)}-ArgumentList 'export lp-1'`,
+  `Start-Process -FilePath prgenie -ArgumentList 'x', 'y' -ArgumentList 'export lp-1'`,
+  `Start-Process -ErrorAction Stop prgenie -ErrorVariable e 'export lp-1'`,
+  `Start-Process sudo -ArgumentList '-u','root','timeout','5','prgenie','export','lp-1'`,
+  `Start-Process pwsh -ArgumentList '-c','echo x; prgenie export lp-1'`,
+  `${"Start-Process notepad; ".repeat(9)}Start-Process prgenie -ArgumentList 'export lp-1'`,
+  // Round 4 blocker 2 repros: a run-time program with a literal human-only first argument.
+  `$exe='prgenie'; Start-Process -Wait -NoNewWindow -FilePath $exe -ArgumentList 'export lp-1'`,
+  `Start-Process -Wait -NoNewWindow -FilePath (Get-Command prgenie).Source -ArgumentList 'export lp-1'`,
+  `Start-Process -FilePath $(Get-Command prgenie).Source -ArgumentList 'export lp-1'`,
+  `Start-Process $p 'export lp-1'`,
+  `pwsh -c "Start-Process -FilePath (Get-Command prgenie).Source -ArgumentList 'export lp-1'"`,
+  // Round 4 nit: a ; inside @{…} does not end the command.
+  `pwsh -c "Start-Process -Environment @{A='1';B='2'} prgenie -ArgumentList 'export lp-1'"`,
+  `Start-Process -Wait -NoNewWindow -Environment @{A='1';B='2'} prgenie -ArgumentList 'export lp-1'`,
+];
+
+test("RAD-190 R1 round 4: Start-Process is read uncapped and its launch gets the full scan", () => {
+  for (const command of START_PROCESS_UNCAPPED) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), "export", command.slice(0, 120));
+    assert.equal(
+      runGate({ command, cwd: tmpdir() }, { cwd: tmpdir() }).permission,
+      "deny",
+      command.slice(0, 120),
+    );
+  }
+  assert.equal(
+    prgenieCliHumanOnlyCommand(`Start-Process -FilePath $exe -ArgumentList 'gh','use','bob'`),
+    "gh use",
+  );
+  assert.equal(
+    prgenieCliHumanOnlyCommand(
+      `Start-Process -FilePath $exe -ArgumentList 'export-gate-override lp-1'`,
+    ),
+    "export-gate-override",
+  );
+  for (const command of [
+    `$p='prgenie'; Start-Process -Wait -NoNewWindow -FilePath $p -ArgumentList 'status'`,
+    `$p='prgenie'; Start-Process -Wait -NoNewWindow -FilePath $p -ArgumentList 'doctor'`,
+    `Start-Process -FilePath (Get-Command prgenie).Source -ArgumentList 'doctor'`,
+    `Start-Process notepad -ArgumentList ${xs(70)}`,
+    `Start-Process -Environment @{A='1';B='2'} notepad -ArgumentList 'export.txt'`,
+    `Start-Process pwsh -ArgumentList '-c','echo prgenie export lp-1'`,
+  ]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), null, command.slice(0, 120));
+    assert.equal(
+      runGate({ command, cwd: tmpdir() }, { cwd: tmpdir() }).permission,
+      "allow",
+      command.slice(0, 120),
+    );
+  }
+});
+
+test("RAD-190 R1 round 4: built gate answers 200KB Start-Process commands in under 2s", () => {
+  const cases: [string, string][] = [
+    ["deny", `Start-Process -Wait -ArgumentList 'export', 'lp-1', ${xs(33_000)} -FilePath prgenie`],
+    [
+      "deny",
+      `Start-Process prgenie ${"-ArgumentList 'x' ".repeat(11_000)}-ArgumentList 'export lp-1'`,
+    ],
+    ["deny", `Start-Process ${"Start-Process -ArgumentList ".repeat(7_000)}prgenie export`],
+    ["deny", `Start-Process env -ArgumentList ${"'A=1',".repeat(33_000)}'prgenie','export','lp-1'`],
+    ["deny", `Start-Process -FilePath $exe ${"-Wait ".repeat(33_000)}-ArgumentList 'export lp-1'`],
+    ["deny", `Start-Process -FilePath ${"(x).y ".repeat(33_000)}-ArgumentList 'export lp-1'`],
+    [
+      "deny",
+      `Start-Process -Environment @{${"A='1';".repeat(33_000)}} prgenie -ArgumentList 'export'`,
+    ],
+    ["deny", `${"saps start ".repeat(20_000)}; git push origin main`],
+    ["deny", `pwsh -c "${"(x).y prgenie @{a;b} ".repeat(9_000)}"; git push origin main`],
+    ["allow", `Start-Process notepad -ArgumentList ${xs(33_000)}`],
+  ];
+  for (const [expected, command] of cases) {
+    const started = Date.now();
+    const parsed = runGate({ command, cwd: loopFixtureCwd }, { cwd: loopFixtureCwd });
+    const elapsed = Date.now() - started;
+    assert.equal(parsed.permission, expected, command.slice(0, 80));
+    assert.ok(
+      elapsed < 2000,
+      `${command.slice(0, 60)} x ${command.length} chars took ${elapsed}ms`,
+    );
+  }
+});
+
+test("RAD-190 R1 round 4: xargs and plain watch with echo as the program are mentions", () => {
+  for (const command of [
+    "xargs echo prgenie export",
+    "watch echo prgenie export",
+    "xargs -n 1 -I{} echo prgenie export {}",
+    "watch -n 2 echo prgenie export",
+  ]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), null, command);
+  }
+  for (const command of [
+    "xargs prgenie export",
+    "echo lp-1 | xargs prgenie export",
+    "xargs -a cat prgenie export",
+    "watch -n echo prgenie export lp-1",
+    "xargs -I{} echo {} ; prgenie export lp-1",
+  ]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), "export", command);
+  }
+});
+
+const gateDenies = (command: string): void => {
+  assert.equal(
+    runGate({ command, cwd: tmpdir() }, { cwd: tmpdir() }).permission,
+    "deny",
+    command.slice(0, 120),
+  );
+};
+const gateAllows = (command: string): void => {
+  assert.equal(
+    runGate({ command, cwd: tmpdir() }, { cwd: tmpdir() }).permission,
+    "allow",
+    command.slice(0, 120),
+  );
+};
+
+test("RAD-190 R1 round 5: plain watch runs its joined arguments with sh -c; watch -x is a prefix", () => {
+  for (const command of [
+    "watch -n1 echo x ';' prgenie export lp-1",
+    "watch -n 1 echo x '&&' prgenie export lp-1",
+    "watch -d echo x '|' prgenie export lp-1",
+    "watch -n1 'prgenie export lp-1'",
+    "watch 'echo x; prgenie export lp-1'",
+    "watch echo '`prgenie export lp-1`'",
+    "watch echo '$(prgenie export lp-1)'",
+    "watch -n1 -- echo x \\; prgenie export lp-1",
+    "watch -x prgenie export lp-1",
+    "watch -n1 -x prgenie export lp-1",
+    "watch --exec prgenie export lp-1",
+    "sudo watch -n 2 'pnpm cli export lp-1'",
+  ]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), "export", command);
+    gateDenies(command);
+  }
+  for (const command of [
+    "watch echo prgenie export",
+    "watch -n 2 echo prgenie export",
+    "watch -x echo x ';' prgenie export lp-1",
+    "watch -x echo prgenie export",
+    "watch -n 5 prgenie status",
+    "watch git status",
+  ]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), null, command);
+    gateAllows(command);
+  }
+});
+
+test("RAD-190 R1 round 5: Start-Process parameter aliases bind as in PowerShell 7.6", () => {
+  for (const command of [
+    "Start-Process -RSO o.txt $exe 'export lp-1'",
+    "Start-Process -RSE e.txt $exe 'export lp-1'",
+    "Start-Process -RSI i.txt $exe 'export lp-1'",
+    "Start-Process -RunAs $cred $exe 'export lp-1'",
+    "Start-Process -ea Stop $exe 'export lp-1'",
+    "Start-Process -wa SilentlyContinue $exe 'export lp-1'",
+    "Start-Process -ev e $exe 'export lp-1'",
+    "Start-Process -wv w $exe 'export lp-1'",
+    "Start-Process -iv i $exe 'export lp-1'",
+    "Start-Process -ov o $exe 'export lp-1'",
+    "Start-Process -ob 1 $exe 'export lp-1'",
+    "Start-Process -pv o $exe 'export lp-1'",
+    "Start-Process -infa Continue $exe 'export lp-1'",
+    "Start-Process -proga SilentlyContinue $exe 'export lp-1'",
+    "Start-Process -Path $exe -ArgumentList 'export lp-1'",
+    "Start-Process -PSPath $exe -ArgumentList 'export lp-1'",
+    "Start-Process -lup -nnw -vb -db -wi -cf $exe 'export lp-1'",
+    "Start-Process -Verbose:$true -Wait:$true $exe 'export lp-1'",
+    "Start-Process -W $exe 'export lp-1'",
+    "Start-Process -e x $exe 'export lp-1'",
+    "Start-Process -e 'export lp-1' prgenie",
+  ]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), "export", command);
+    gateDenies(command);
+  }
+  for (const command of [
+    "Start-Process -RSO o.txt $exe 'status'",
+    "Start-Process -wa SilentlyContinue $exe 'doctor'",
+    "Start-Process -RSO o.txt notepad 'export.txt'",
+  ]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), null, command);
+    gateAllows(command);
+  }
+});
+
+test("RAD-190 R1 round 5: array argument lists and bracketed programs are read", () => {
+  for (const command of [
+    "Start-Process $exe -ArgumentList @('export','lp-1')",
+    'Start-Process $exe -ArgumentList @("export";"lp-1")',
+    "Start-Process $exe @('export','lp-1')",
+    "Start-Process $exe -ArgumentList ('export','lp-1')",
+    "Start-Process -FilePath ((Get-Command prgenie).Source) -ArgumentList 'export lp-1'",
+    "Start-Process -FilePath (Get-Command prgenie) -ArgumentList 'export lp-1'",
+    "Start-Process -FilePath (Get-Command prgenie)[0].Source -ArgumentList 'export lp-1'",
+    "Start-Process -FilePath ('prg'+'enie') -ArgumentList 'export lp-1'",
+    "& (Get-Command prgenie) export lp-1",
+    "& (Get-Command prgenie).Source 'export','lp-1'",
+    ". $exe export lp-1",
+    ". (Get-Command prgenie) export lp-1",
+  ]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), "export", command);
+    gateDenies(command);
+  }
+  for (const command of [
+    "Start-Process $exe -ArgumentList @('status')",
+    "Start-Process -FilePath (Get-Command prgenie) -ArgumentList 'doctor'",
+    "& (Get-Command prgenie) status",
+    "& (Get-Command git) status",
+    ". $exe doctor",
+    "(Get-Item x).Name; echo export",
+    "$x = (Get-Date).Year; echo $x",
+    "echo (Get-Command prgenie).Source export",
+    "Start-Process notepad -ArgumentList @('export.txt')",
+  ]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), null, command);
+    gateAllows(command);
+  }
+});
+
+test("RAD-190 R1 round 5: xargs prgenie with no literal subcommand is decided at run time", () => {
+  for (const command of [
+    "echo export lp-1 | xargs prgenie",
+    "xargs -a args.txt prgenie",
+    "xargs -n 2 pnpm cli",
+    "xargs prgenie --verbose",
+  ]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), "run-time", command);
+    gateDenies(command);
+  }
+  assert.equal(prgenieCliHumanOnlyCommand("xargs prgenie gh"), "gh use");
+  for (const command of ["xargs prgenie status", "xargs -n1 prgenie show", "xargs echo prgenie"]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), null, command);
+  }
+});
+
+test("RAD-190 R1 round 5: quoted script args in Start-Process stay under 2s at 200KB", () => {
+  const cases: [string, string][] = [
+    ["allow", "Start-Process pwsh -ArgumentList '-c','(a).b; echo x' ".repeat(3_700)],
+    [
+      "deny",
+      `${"Start-Process pwsh -ArgumentList '-c','(a).b; echo x' ".repeat(3_700)}; prgenie export lp-1`,
+    ],
+    ["allow", "Start-Process pwsh -ArgumentList '-c','echo x; echo y' ".repeat(3_600)],
+    ["allow", "iex '(a).b @{x=1} prgenie status' ".repeat(6_000)],
+    ["allow", `watch -n 1 ${"echo x ';' ".repeat(20_000)}`],
+    ["deny", `watch -n 1 ${"echo x ';' ".repeat(20_000)}prgenie export lp-1`],
+    ["allow", `echo ${"(a).b ".repeat(33_000)}`],
+  ];
+  for (const [expected, command] of cases) {
+    const started = Date.now();
+    const parsed = runGate({ command, cwd: tmpdir() }, { cwd: tmpdir() });
+    const elapsed = Date.now() - started;
+    assert.equal(parsed.permission, expected, command.slice(0, 80));
+    assert.ok(
+      elapsed < 2000,
+      `${command.slice(0, 60)} x ${command.length} chars took ${elapsed}ms`,
+    );
+  }
+});
+
+test("RAD-190 R1 round 5: a check that runs out of budget denies as too complex", () => {
+  // The work-unit limit decides, with a generous clock (only a backstop): deterministic.
+  const restore = setPrgenieCliBudgetForTests(60_000, 50);
+  try {
+    assert.equal(prgenieCliHumanOnlyCommand("prgenie status; ".repeat(100)), "too-complex");
+  } finally {
+    restore();
+  }
+  assert.equal(prgenieCliHumanOnlyCommand("prgenie status; ".repeat(100)), null);
+  // The clock backstop still fails closed.
+  const restoreClock = setPrgenieCliBudgetForTests(-1, 8_000_000);
+  try {
+    assert.equal(prgenieCliHumanOnlyCommand("prgenie status"), "too-complex");
+  } finally {
+    restoreClock();
+  }
+  const payload = shellPrgenieCliDenyPayload("too-complex");
+  assert.equal(payload.permission, "deny");
+  for (const text of [payload.agent_message, payload.user_message]) {
+    assert.match(text, /too large or nested/);
+    assert.match(text, /[Hh]uman-only PR Genie actions .* stay blocked/);
+    assert.doesNotMatch(text, /panel|Open on GitHub|You may retry/i);
+  }
+  // R6 nits 1 and 2: the agent gets retry guidance plus the human-only caveat; the human gets
+  // plain text about what the agent can do instead of "You may retry it".
+  assert.match(payload.agent_message, /Retry it in smaller pieces/);
+  assert.match(payload.agent_message, /git commit -F/);
+  assert.match(payload.agent_message, /does not permit human-only PR Genie actions/);
+  assert.match(payload.user_message, /The agent can rerun it as smaller commands/);
+  const ask = shellPrgenieCliAskPayload("too-complex");
+  assert.equal(ask.permission, "ask");
+  assert.match(ask.user_message, /The agent can rerun it as smaller commands/);
+  assert.match(ask.agent_message, /does not permit human-only PR Genie actions/);
+  assert.doesNotMatch(ask.agent_message + ask.user_message, /panel|Open on GitHub/i);
+});
+
+test("RAD-190 R1 round 6: scoped package filters are not splats, so filter builds allow", () => {
+  for (const command of [
+    "pnpm --filter @prgenie/cli --filter @prgenie/core build",
+    "pnpm -F @prgenie/cli -F @prgenie/core test",
+    "pnpm --filter @prgenie/cli --filter @prgenie/plugin typecheck",
+    "pnpm -r --filter @prgenie/cli --filter @prgenie/core --filter ./packages/plugin build",
+    "pnpm --filter=@prgenie/cli --filter=@prgenie/core build",
+    "pnpm --filter @prgenie/cli add -D @types/node",
+    "npx --package @prgenie/cli --yes tsc",
+  ]) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), null, command);
+    gateAllows(command);
+  }
+  // Real launches and PowerShell splats still deny.
+  for (const [command, sub] of [
+    ["& prgenie @a", "run-time"],
+    ["$a='export','lp-1'; & prgenie @a", "run-time"],
+    ["prgenie @args", "run-time"],
+    ["Start-Process prgenie -ArgumentList @('export','lp-1')", "run-time"],
+    ["pnpm --filter @prgenie/cli exec prgenie export lp-1", "export"],
+    ["pnpm --filter @prgenie/cli cli export lp-1", "export"],
+    ["pnpm --filter @prgenie/cli --filter @prgenie/core cli export lp-1", "export"],
+    ["pnpm -F @prgenie/cli dlx @prgenie/cli export lp-1", "export"],
+    ["npx @prgenie/cli export lp-1", "export"],
+    ["npx --package @prgenie/cli prgenie export lp-1", "export"],
+  ] as const) {
+    assert.equal(prgenieCliHumanOnlyCommand(command), sub, command);
+    gateDenies(command);
+  }
+});
+
+// RAD-190 loop-only scope: git push / gh publish denies are loop-only; PR Genie denies stay global.
+const RUN_TIME_TARGET_PUBLISHES = [
+  "cd $LOOP && git push origin main",
+  "git -C $(pwd) push",
+  'cd "$(git rev-parse --show-toplevel)" && git push',
+  'git -C "$PWD" push',
+  "Set-Location $PSScriptRoot; git push",
+];
+const LOOP_ONLY_PUBLISH_COMMANDS = [
+  "git push origin main",
+  "git push --force",
+  "gh pr create --fill",
+  "gh pr merge 1 --squash",
+  "gh repo create o/r --private",
+  "gh release create v1.0.0",
+  "gh api -X POST user/repos -f name=x",
+];
+const GLOBAL_PRGENIE_DENIES = [
+  "prgenie export lp-1",
+  "prgenie export --verbose lp-1",
+  "prgenie export-gate-override lp-1",
+  "prgenie gh use alice",
+  "prgenie github use alice",
+  "prgenie $SUB lp-1",
+  "export PRGENIE_GITHUB_GATE_ASK=1",
+];
+
+function stewardRepoFixture(): string {
+  const repo = mkdtempSync(path.join(tmpdir(), "prgenie-loop-only-steward-"));
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+  const consoleRoot = path.join(repo, ".git", "agent-console");
+  mkdirSync(path.join(consoleRoot, "prs"), { recursive: true });
+  const now = new Date().toISOString();
+  const id = "lp-0000beef";
+  writeFileSync(
+    path.join(consoleRoot, "prs", `${id}.json`),
+    JSON.stringify({
+      id,
+      title: id,
+      body: "",
+      status: "draft",
+      headRef: "feat/x",
+      baseRef: "main",
+      headSha: "0".repeat(40),
+      baseSha: "0".repeat(40),
+      worktreePath: null,
+      comments: [],
+      source: { kind: "cli" },
+      createdAt: now,
+      updatedAt: now,
+      reviewRequestedSha: null,
+      reviewerNotifiedSha: null,
+    }),
+  );
+  writeFileSync(
+    path.join(consoleRoot, "stewards.json"),
+    JSON.stringify({ updatedAt: now, bindings: { [id]: { loopId: id } } }),
+  );
+  return repo;
+}
+
+test("RAD-190 loop-only scope: a normal agent (not a loop or steward) may git push and publish with gh", () => {
+  const normal = mkdtempSync(path.join(tmpdir(), "prgenie-loop-only-normal-"));
+  try {
+    for (const command of LOOP_ONLY_PUBLISH_COMMANDS) {
+      const parsed = runGate({ command, cwd: normal }, { cwd: normal });
+      assert.equal(parsed.permission, "allow", command);
+    }
+  } finally {
+    rmSync(normal, { recursive: true, force: true });
+  }
+});
+
+test("RAD-190 loop-only scope: loop worktree and active steward still deny git push and gh publish", () => {
+  const steward = stewardRepoFixture();
+  try {
+    for (const command of LOOP_ONLY_PUBLISH_COMMANDS) {
+      for (const cwd of [loopFixtureCwd, path.join(loopFixtureCwd, "sub"), steward]) {
+        mkdirSync(cwd, { recursive: true });
+        assert.equal(runGate({ command, cwd }, { cwd }).permission, "deny", `${command} @ ${cwd}`);
+      }
+      // A loop subagent type is a loop agent anywhere.
+      const normal = tmpdir();
+      assert.equal(
+        runGate({ command, cwd: normal, subagent_type: "prgenie-reviewer" }, { cwd: normal })
+          .permission,
+        "deny",
+        command,
+      );
+    }
+  } finally {
+    rmSync(steward, { recursive: true, force: true });
+  }
+});
+
+test("RAD-190 loop-only scope: commands that target a loop from outside it are still loop agents", () => {
+  const steward = stewardRepoFixture();
+  const normal = mkdtempSync(path.join(tmpdir(), "prgenie-loop-only-normal-"));
+  try {
+    for (const target of [loopFixtureCwd, steward]) {
+      const rel = path.relative(normal, target);
+      for (const command of [
+        `cd ${target} && git push origin main`,
+        `cd ${rel} && git push origin main`,
+        `pushd ${target}; gh pr create --fill`,
+        `Set-Location -Path ${target}; git push --force`,
+        `git -C ${target} push origin main`,
+        `git -C ${rel} push --force`,
+        `git --git-dir=${target}/.git push origin main`,
+        `GIT_DIR=${target}/.git git push origin main`,
+        `cd ${target} && gh release create v1`,
+      ]) {
+        assert.equal(
+          runGate({ command, cwd: normal }, { cwd: normal }).permission,
+          "deny",
+          `${command} @ ${normal}`,
+        );
+      }
+    }
+    // A run-time target cannot be checked, so a publish behind it fails closed.
+    for (const command of RUN_TIME_TARGET_PUBLISHES) {
+      const parsed = runGate({ command, cwd: normal }, { cwd: normal });
+      assert.equal(parsed.permission, "deny", command);
+      assert.match(String(parsed.agent_message), /decided at run time/, command);
+      assert.match(String(parsed.agent_message), /Spell the directory out literally/, command);
+      assert.doesNotMatch(String(parsed.agent_message), /Publishing is human-only/, command);
+    }
+    // Moving to an ordinary directory keeps a normal agent normal.
+    for (const command of [`cd ${normal} && git push origin main`, `git -C ${normal} push`]) {
+      assert.equal(runGate({ command, cwd: normal }, { cwd: normal }).permission, "allow", command);
+    }
+    // Non-publishing commands into a loop are untouched.
+    assert.equal(
+      runGate({ command: `cd ${loopFixtureCwd} && git status`, cwd: normal }, { cwd: normal })
+        .permission,
+      "allow",
+    );
+  } finally {
+    rmSync(steward, { recursive: true, force: true });
+    rmSync(normal, { recursive: true, force: true });
+  }
+});
+
+test("RAD-190 loop-only scope: prgenie export and the other PR Genie denies deny in both contexts", () => {
+  const normal = mkdtempSync(path.join(tmpdir(), "prgenie-loop-only-normal-"));
+  try {
+    for (const cwd of [normal, loopFixtureCwd]) {
+      for (const command of GLOBAL_PRGENIE_DENIES) {
+        assert.equal(runGate({ command, cwd }, { cwd }).permission, "deny", `${command} @ ${cwd}`);
+      }
+      for (const tool_name of [
+        "export_local_pr",
+        "record_export_gate_override",
+        "delete_local_pr",
+        "clear_loop_cancel",
+      ]) {
+        assert.equal(
+          runGate({ tool_name, tool_input: { id: "lp-1" }, cwd }, { cwd }).permission,
+          "deny",
+          `${tool_name} @ ${cwd}`,
+        );
+      }
+      // Too-complex and crash denials stay global (fail closed), not loop-only.
+      const n = 3000;
+      const deep = `echo ${"$(".repeat(n)}git push origin main${")".repeat(n)}`;
+      assert.equal(runGate({ command: deep, cwd }, { cwd }).permission, "deny", `crash @ ${cwd}`);
+    }
+  } finally {
+    rmSync(normal, { recursive: true, force: true });
+  }
+});
+
+test("RAD-190 loop-only scope: shellCommandPathTargets finds cd and git -C targets", () => {
+  assert.deepEqual(shellCommandPathTargets("git -C /a push", "/w"), [path.resolve("/a")]);
+  const chained = shellCommandPathTargets("cd b && git -C c push", "/w");
+  assert.ok(Array.isArray(chained));
+  for (const p of ["/w/b", "/w/c", "/w/b/c"]) assert.ok(chained.includes(path.resolve(p)), p);
+  assert.equal(shellCommandPathTargets("cd $X; git push", "/w"), "unresolved");
+  assert.deepEqual(shellCommandPathTargets("git push origin main", "/w"), []);
+  assert.equal(pathInLoopWorktree(path.join(loopFixtureCwd, "packages", "cli")), true);
+  assert.equal(pathInLoopWorktree(tmpdir()), false);
+});
+
+// Loop-target scan fixes: a primary checkout with a real `git worktree` loop beside it.
+const scanBase = mkdtempSync(path.join(tmpdir(), "prgenie-loop-scan-"));
+const scanPrimary = path.join(scanBase, "repo");
+const scanLoop = path.join(scanBase, "repo.loops", "lp-abcdef12");
+const scanOther = path.join(scanBase, "other");
+const scanPlain = path.join(scanBase, "plain");
+mkdirSync(scanPlain);
+execFileSync("git", ["init", "-q", "-b", "main", scanPrimary]);
+execFileSync("git", ["init", "-q", "-b", "main", scanOther]);
+execFileSync(
+  "git",
+  [
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@example.com",
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "i",
+  ],
+  { cwd: scanPrimary },
+);
+execFileSync("git", ["worktree", "add", "-q", scanLoop, "-b", "loop-branch"], { cwd: scanPrimary });
+symlinkSync(scanLoop, path.join(scanBase, "link"));
+symlinkSync(path.dirname(scanLoop), path.join(scanBase, "loopsdir"));
+after(() => rmSync(scanBase, { recursive: true, force: true }));
+
+function scanTargetForms(dir: string, parent: string, id: string): string[] {
+  return [
+    `cd ${dir} && git pu''sh`,
+    `cd ${dir} && git p"u"sh`,
+    `cd ${dir} && git pu\\sh`,
+    `git -C ${dir} pu''sh`,
+    `cd ${dir} && g''h pr cr''eate --fill`,
+    `${Array.from({ length: 16 }, (_, i) => `cd /nonexist${i}; `).join("")}cd ${dir}; git push`,
+    `${"cd /tmp; ".repeat(8)}cd ${parent}; cd ${id}; git push`,
+    `git -C ${parent} -C ${id} push`,
+    `env -C ${dir} git push`,
+    `env --chdir=${dir} git push`,
+    `sudo -D ${dir} git push`,
+    `$env:GIT_DIR='${dir}/.git'; git push`,
+    `$env:GIT_WORK_TREE='${dir}'; git push`,
+    `Push-Location -StackName s ${dir}; git push`,
+    `cmd /c "cd /d ${dir} && git push"`,
+    `Start-Process git -ArgumentList push -WorkingDirectory ${dir}`,
+    `Start-Process git -ArgumentList push -WorkingDir:${dir}`,
+    `Start-Process -FilePath git -ArgumentList 'push','origin' -wo ${dir}`,
+  ];
+}
+
+test("RAD-190 loop-target scan: quoted, escaped, chained and wrapped loop targets deny", () => {
+  const forms = [
+    ...scanTargetForms(scanLoop, path.dirname(scanLoop), "lp-abcdef12"),
+    `git --git-dir=${scanPrimary}/.git/worktrees/lp-abcdef12 push`,
+    `CDPATH=${path.dirname(scanLoop)} cd lp-abcdef12 && git push`,
+    `export CDPATH=${path.dirname(scanLoop)}; cd lp-abcdef12; git push`,
+    `$env:CDPATH='${path.dirname(scanLoop)}'; Set-Location lp-abcdef12; git push`,
+    `find ${scanBase} -execdir git push \\;`,
+    `cd ${scanLoop} && gh release delete-asset v1 a.zip`,
+  ];
+  for (const cwd of [scanPlain, scanPrimary]) {
+    for (const command of forms) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "deny", `${command} @ ${cwd}`);
+    }
+  }
+  // Relative forms from the primary checkout.
+  for (const command of [
+    "cd ../repo.loops/lp-abcdef12 && git push",
+    "git -C ../repo.loops -C lp-abcdef12 push",
+    "git --git-dir=.git/worktrees/lp-abcdef12 push",
+  ]) {
+    assert.equal(
+      runGate({ command, cwd: scanPrimary }, { cwd: scanPrimary }).permission,
+      "deny",
+      command,
+    );
+  }
+});
+
+test("RAD-190 loop-target scan: the same forms aimed at a normal repo allow", () => {
+  for (const cwd of [scanPlain, scanPrimary]) {
+    for (const command of [
+      ...scanTargetForms(scanOther, scanBase, "other"),
+      `cd ${scanLoop} && git status`,
+      `git -C ${scanLoop} log -1`,
+    ]) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "allow", `${command} @ ${cwd}`);
+    }
+  }
+});
+
+test("RAD-190 loop-target scan: worktreeForGitAdminDir maps .git/worktrees/<id> to the worktree", () => {
+  // Windows: the temp dir may be an 8.3 short path while git's gitdir file holds the long one.
+  const mapped = worktreeForGitAdminDir(path.join(scanPrimary, ".git", "worktrees", "lp-abcdef12"));
+  assert.ok(mapped);
+  assert.equal(realpathSync.native(mapped), realpathSync.native(scanLoop));
+  assert.equal(worktreeForGitAdminDir(path.join(scanPrimary, ".git")), null);
+  assert.equal(shellCommandPathTargets("CDPATH=/x cd y; git push", "/w"), "unresolved");
+  assert.equal(shellCommandPathTargets("find . -execdir git push \\;", "/w"), "unresolved");
+  const pushd = shellCommandPathTargets("Push-Location -StackName s /t; git push", "/w");
+  assert.ok(
+    Array.isArray(pushd) &&
+      pushd.includes(path.resolve("/t")) &&
+      !pushd.includes(path.resolve("/w/s")),
+  );
+  const cdD = shellCommandPathTargets('cmd /c "cd /d /t && git push"', "/w");
+  assert.ok(
+    Array.isArray(cdD) && cdD.includes(path.resolve("/t")) && !cdD.includes(path.resolve("/d")),
+  );
+});
+
+test("RAD-190 loop-target scan: long cd chains answer the global export deny in under 2s", () => {
+  let chain200k = "";
+  for (let i = 0; chain200k.length < 200_000; i++) chain200k += `cd d${i} && `;
+  const chain8000 = Array.from({ length: 8000 }, (_, i) => `cd d${i} && `).join("");
+  const cases: [string, string][] = [
+    ["deny", `${chain8000}prgenie export lp-1 && git push`],
+    ["deny", `${chain200k}prgenie export lp-1 && git push`],
+    ["allow", `${chain200k}git status`],
+    // Past the scan bounds a publish is treated as a run-time target (fail closed).
+    ["deny", `${chain200k}git push origin main`],
+  ];
+  for (const [expected, command] of cases) {
+    for (const cwd of [scanPlain, scanPrimary]) {
+      const started = Date.now();
+      const parsed = runGate({ command, cwd }, { cwd });
+      const elapsed = Date.now() - started;
+      assert.equal(parsed.permission, expected, `${command.slice(-40)} @ ${cwd}`);
+      assert.ok(elapsed < 2000, `${command.slice(-40)} took ${elapsed}ms`);
+    }
+  }
+  const exportDeny = runGate(
+    { command: `${chain8000}prgenie export lp-1 && git push`, cwd: scanPlain },
+    { cwd: scanPlain },
+  );
+  assert.match(String(exportDeny.user_message), /prgenie export/);
+});
+
+test("RAD-190 loop-target scan: symlinks to a loop or its .loops folder deny", () => {
+  const link = path.join(scanBase, "link");
+  const loopsdir = path.join(scanBase, "loopsdir");
+  for (const cwd of [scanPlain, scanPrimary]) {
+    for (const command of [
+      "cd ../link && git push",
+      `cd ${link} && git push`,
+      "cd ../loopsdir/lp-abcdef12 && git push",
+      `cd ${loopsdir}; cd lp-abcdef12; git push`,
+      "git -C ../link push",
+      `git -C ${loopsdir}/lp-abcdef12 push`,
+      `git --git-dir=${link}/.git push`,
+      `git --work-tree=${link} push`,
+      `env -C ${link} git push`,
+      `Start-Process git -ArgumentList push -WorkingDirectory ${link}`,
+    ]) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "deny", `${command} @ ${cwd}`);
+    }
+    assert.equal(runGate({ command: "git -C ../link status", cwd }, { cwd }).permission, "allow");
+  }
+  // A hook cwd that is a symlink to the loop is a loop cwd.
+  assert.equal(runGate({ command: "git push", cwd: link }, { cwd: link }).permission, "deny");
+});
+
+test("RAD-190 loop-target scan: a cd in a subshell, loop body or scriptblock does not carry", () => {
+  const allows = [
+    "for d in packages/*; do (cd $d && pnpm build); done; git push",
+    "for d in packages/*; do cd $d && pnpm build; done; git push",
+    "(cd $D && pnpm build); git push",
+    'echo "$(cd $X && pwd)"; git push',
+    'while read d; do (cd "$d" && make); done < list; git push origin main',
+    "foreach ($d in Get-ChildItem packages) { Set-Location $d; pnpm build }; git push",
+    "cd a; cd b; cd c; cd d; cd e; cd f; cd g; cd h; cd i; cd j; cd k; cd l; cd m; git push",
+  ];
+  const denies = [
+    `{ cd ${scanLoop}; }; git push`,
+    `cd ${scanLoop}; git push`,
+    `(cd ${scanLoop} && git push)`,
+    `for d in x; do cd ${scanLoop}; done; git push`,
+    "(cd $D && git push)",
+    "{ cd $D; }; git push",
+    "cd $D; git push",
+  ];
+  for (const cwd of [scanPlain, scanPrimary]) {
+    for (const command of allows) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "allow", `${command} @ ${cwd}`);
+    }
+    for (const command of denies) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "deny", `${command} @ ${cwd}`);
+    }
+  }
+});
+
+test("RAD-190 loop-target scan: builtin / command cd, HOME and OLDPWD, core.worktree", () => {
+  for (const cwd of [scanPlain, scanPrimary]) {
+    for (const command of [
+      `builtin cd ${scanLoop} && git push`,
+      `command cd ${scanLoop} && git push`,
+      `HOME=${scanLoop}; cd; git push`,
+      `HOME=${scanLoop} cd ~ && git push`,
+      `export HOME=${scanLoop}\ncd\ngit push`,
+      `OLDPWD=${scanLoop} cd - && git push`,
+      `export GIT_DIR=${scanLoop}/.git\ngit push`,
+      `git -c core.worktree=${scanLoop} push`,
+    ]) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "deny", `${command} @ ${cwd}`);
+    }
+    for (const command of [`command -v cd && git -C ${scanOther} push`, "cd; git push"]) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "allow", `${command} @ ${cwd}`);
+    }
+  }
+});
+
+test("RAD-190 loop-target scan: for / foreach list items are cd targets", () => {
+  mkdirSync(path.join(scanPlain, "packages", "a"), { recursive: true });
+  mkdirSync(path.join(scanPlain, "packages", "b"), { recursive: true });
+  mkdirSync(path.join(scanPrimary, "packages", "a"), { recursive: true });
+  const denies = [
+    "for d in ../repo.loops/lp-abcdef12; do cd $d; done; git push",
+    `for d in ${scanLoop}; do cd $d; done; git push`,
+    'for d in ../repo.loops/lp-*; do cd "$d"; done; git push',
+    "for d in ../loopsdir/lp-abcdef12; do cd $d; done; git push",
+    "for d in /tmp ../repo.loops/lp-abcdef12; do pushd $d; done; git push",
+    `foreach ($d in @('${scanLoop}')) { Set-Location $d }; git push`,
+    `foreach ($d in '${scanLoop}', '/tmp') { Set-Location $d }; git push`,
+    `foreach ($d in @('${scanLoop}', '/tmp')) { Push-Location $d }; git push`,
+    "foreach ($d in @('../repo.loops/lp-abcdef12')) { Set-Location $d }; git push",
+  ];
+  const allows = [
+    "for d in packages/*; do (cd $d && pnpm build); done; git push",
+    "for d in packages/*; do cd $d && pnpm build; done; git push",
+    "for d in /tmp /var; do cd $d; done; git push",
+    "foreach ($d in @('/tmp')) { Set-Location $d }; git push",
+    "foreach ($d in Get-ChildItem packages) { Set-Location $d; pnpm build }; git push",
+  ];
+  for (const cwd of [scanPlain, scanPrimary]) {
+    for (const command of denies) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "deny", `${command} @ ${cwd}`);
+    }
+    for (const command of allows) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "allow", `${command} @ ${cwd}`);
+    }
+  }
+});
+
+test("RAD-190 loop-target scan: the relative cd chain bound is about 180", () => {
+  const chain = (n: number): string =>
+    `${Array.from({ length: n }, (_, i) => `cd d${i}`).join(" && ")} && git push`;
+  assert.equal(
+    runGate({ command: chain(180), cwd: scanPlain }, { cwd: scanPlain }).permission,
+    "allow",
+  );
+  assert.equal(
+    runGate({ command: chain(190), cwd: scanPlain }, { cwd: scanPlain }).permission,
+    "deny",
+  );
+});
+
+test("RAD-190 loop-target scan: nested loops keep list candidates past the outer done", () => {
+  const denies = [
+    "for a in x; do for d in ../repo.loops/lp-abcdef12; do cd $d; done; done; git push",
+    "for a in x; do for b in y; do for d in ../repo.loops/lp-abcdef12; do cd $d; done; done; done; git push",
+    `foreach ($a in @('x')) { foreach ($d in @('${scanLoop}')) { Set-Location $d } }; git push`,
+  ];
+  const allows = [
+    "for a in x; do for d in packages/*; do (cd $d && pnpm build); done; done; git push",
+  ];
+  for (const cwd of [scanPlain, scanPrimary]) {
+    mkdirSync(path.join(cwd, "packages", "a"), { recursive: true });
+    for (const command of denies) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "deny", `${command} @ ${cwd}`);
+    }
+    for (const command of allows) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "allow", `${command} @ ${cwd}`);
+    }
+  }
+});
+
+test("RAD-190 loop-target scan: brace expansion in loop list words", () => {
+  const denies = [
+    "for d in ../repo.loops/{x,lp-abcdef12}; do cd $d; done; git push",
+    "for d in ../repo.loops/{x,{y,lp-abcdef12}}; do cd $d; done; git push",
+    "for d in ../repo.loops/lp-abcdef1{0..3}; do cd $d; done; git push",
+    "for d in ../repo.loops/lp-abcdef1{0..9..2}; do cd $d; done; git push",
+    "for d in ../repo.{a..m}oops/lp-abcdef12; do cd $d; done; git push",
+    // Past the expansion bound the directory after the loop is unknown (fail closed).
+    "for d in x{1..100000}; do cd $d; done; git push",
+  ];
+  const allows = [
+    "for d in packages/{cli,core}; do (cd $d && pnpm build); done; git push",
+    "for d in packages/{a,b}; do cd $d; pnpm build; cd -; done; git push",
+  ];
+  for (const cwd of [scanPlain, scanPrimary]) {
+    for (const command of denies) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "deny", `${command} @ ${cwd}`);
+    }
+    for (const command of allows) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "allow", `${command} @ ${cwd}`);
+    }
+  }
+});
+
+test("RAD-190 loop-target scan: a list word starting with { is brace-expanded, not a group", () => {
+  const denies = [
+    "for d in {x,../repo.loops/lp-abcdef12}; do cd $d; done; git push",
+    "for d in x {x,../repo.loops/lp-abcdef12}; do cd $d; done; git push",
+    "for d in {1..2} ../repo.loops/lp-abcdef12; do cd $d; done; git push",
+    "for d in {1..5000} ../repo.loops/lp-abcdef12; do cd $d; done; git push",
+    // Past the expansion or work bound: fail closed.
+    "for d in {1..999999}; do cd $d; done; git push",
+    "for d in {a..z}{a..z}{a..z}; do cd $d; done; git push",
+    `for d in a${"{".repeat(10000)}x,y${"}".repeat(10000)}; do cd $d; done; git push`,
+    // Real brace groups still carry their cd.
+    "{ cd ../repo.loops/lp-abcdef12; }; git push",
+    "{ cd ../repo.loops/lp-abcdef12\n}; git push",
+    "f() { cd ../repo.loops/lp-abcdef12; }; f; git push",
+    "if true; then { cd ../repo.loops/lp-abcdef12; }; fi; git push",
+  ];
+  const allows = ["{ echo a; } && git push", "echo {a,b} && git push"];
+  for (const cwd of [scanPlain, scanPrimary]) {
+    for (const command of denies) {
+      assert.equal(
+        runGate({ command, cwd }, { cwd }).permission,
+        "deny",
+        `${command.slice(0, 80)} @ ${cwd}`,
+      );
+    }
+    for (const command of allows) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "allow", `${command} @ ${cwd}`);
+    }
+  }
+});
+
+test("RAD-190 loop-target scan: backtick list words are run-time; cd - / popd restores", () => {
+  const denies = [
+    "for d in `ls -d ../repo.loops/*`; do cd $d; done; git push",
+    "for d in $(ls -d ../repo.loops/*); do cd $d; done; git push",
+    // A bare `cd ..` does not restore.
+    "for d in $(ls packages); do cd $d; pnpm build; cd ..; done; git push",
+  ];
+  const allows = [
+    "for d in $(ls packages); do cd $d; pnpm build; cd -; done; git push",
+    "for d in `ls packages`; do pushd $d; pnpm build; popd; done; git push",
+  ];
+  for (const cwd of [scanPlain, scanPrimary]) {
+    for (const command of denies) {
+      const parsed = runGate({ command, cwd }, { cwd });
+      assert.equal(parsed.permission, "deny", `${command} @ ${cwd}`);
+    }
+    for (const command of allows) {
+      assert.equal(runGate({ command, cwd }, { cwd }).permission, "allow", `${command} @ ${cwd}`);
+    }
+  }
+  const parsed = runGate(
+    { command: "for d in $(ls packages); do cd $d; done; git push", cwd: scanPlain },
+    { cwd: scanPlain },
+  );
+  assert.match(String(parsed.agent_message), /subshell/);
+  assert.match(String(parsed.agent_message), /glob/);
 });

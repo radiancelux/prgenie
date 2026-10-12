@@ -84,6 +84,6 @@ export function assertLoopNotCancelled(root: string, id: string): void {
   if (!marker) return;
   const at = marker.cancelledAt ?? "unknown time";
   throw new Error(
-    `Loop cancelled from panel at ${at}; clear to resume (panel "Resume loop" or MCP clear_loop_cancel).`,
+    `Loop cancelled from panel at ${at}; the human clears it with panel "Resume loop" (agents are denied clear_loop_cancel).`,
   );
 }
