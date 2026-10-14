@@ -16,7 +16,7 @@ Hard rules — read these before any tool call:
 5. Do **not** `create_local_pr` yourself unless you are creating the **steward packet** (title + body only). After create, bind and Task — never implement.
 6. If PR Genie MCP is missing, or `steward_next` / `bind_steward` are not listed: **STOP**. Tell the user MCP is still loading — wait, toggle the plugin off/on, retry `/steward`. On Windows, Configure → Local stuck on **Connecting…** (0 tools) is a host/config issue (stdio handshake, duplicate `prgenie` name, PATH/`node`) — point them at `docs/troubleshooting.md` (sticky Connecting). Never fall through to a CLI DIY flywheel (`prgenie create` + code + ready + listen).
 
-`prgenie steward` / MCP `steward_next` is the source of truth for the next action. Packet status (`prgenie show` / `get_local_pr`) is the source of truth for the loop. Do not `git push` unless `/export`.
+`prgenie steward` / MCP `steward_next` is the source of truth for the next action. Packet status (`prgenie show` / `get_local_pr`) is the source of truth for the loop. Do not `git push` unless `/export` (the hook denies `git push` / `gh` publish in a loop worktree or while a steward loop is active).
 
 `/start` is a different skill (implementor-only). Do not follow it. `/review` is the leaf reviewer you Task — you do not become that reviewer.
 
@@ -128,7 +128,7 @@ If the user says stop, stop Tasking and say so. There is no listen halt. `/expor
 
 ## Panel cancel marker (RAD-139)
 
-When `steward_next` returns **`kind: "cancelled"`**, the human cancelled the loop from the STATUS panel and the cancel marker is still on disk. **Stop** the bound implementor Task (`implementorTaskId`) if it is still running. **Do not** spawn or resume implementor or reviewer Tasks. Report to the human and wait. Only resume steward work after the marker is cleared (**Resume loop** on the panel toast, MCP `clear_loop_cancel`, or `steward_next` with `restart: true`).
+When `steward_next` returns **`kind: "cancelled"`**, the human cancelled the loop from the STATUS panel and the cancel marker is still on disk. **Stop** the bound implementor Task (`implementorTaskId`) if it is still running. **Do not** spawn or resume implementor or reviewer Tasks. Report to the human and wait. Only resume steward work after the human clears the marker with **Resume loop** in the panel. Agents get `deny` on MCP `clear_loop_cancel` (RAD-190); do not retry it or use `steward_next` `restart: true` to clear a human cancel.
 
 ## Human / steward CI skip (RAD-112 / RAD-115)
 

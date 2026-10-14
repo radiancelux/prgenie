@@ -185,3 +185,27 @@ export function gateNoInputPayload(reason: string): {
     agent_message: `${reason}. Do not retry or work around this block. Stop and tell the user to export from the panel or CLI if they need to publish.`,
   };
 }
+
+/** Payload when the gate itself throws: deny, or ask only when the human set the flag (RAD-190 R5). */
+export function gateCrashPayload(): {
+  permission: "ask" | "deny";
+  user_message: string;
+  agent_message: string;
+} {
+  if (hookPrefersAskOverDeny()) {
+    return {
+      permission: "ask",
+      user_message:
+        "PR Genie github gate failed unexpectedly. Allow only if you trust this command.",
+      agent_message:
+        "github-gate crashed. Do not git push or gh pr create/merge. Ask the user, or run prgenie doctor.",
+    };
+  }
+  return {
+    permission: "deny",
+    user_message:
+      "PR Genie github gate failed unexpectedly, so this call was blocked. Run `prgenie doctor`, or run the command yourself if you trust it.",
+    agent_message:
+      "github-gate crashed and failed closed. Do not retry or work around this block. Stop and tell the user (prgenie doctor).",
+  };
+}

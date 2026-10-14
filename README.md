@@ -4,7 +4,7 @@ Local pull requests for agent work. GitHub when you say so.
 
 PR Genie is a **pre-GitHub review lane** for Cursor (and any git checkout, including Conductor workspaces and GitLens worktrees). Each loop gets a feature branch (never the repo base) and a git worktree so you can switch this window onto the implementor's files.
 
-A local PR is a git-native review loop: branch, base, diff, comments, and status. It never leaves the machine until you export it. Agents are steered — and hooked — away from `git push` / `gh pr create`.
+A local PR is a git-native review loop: branch, base, diff, comments, and status. It never leaves the machine until you export it. PR Genie loop agents are steered — and hooked — away from `git push` / `gh pr create`; other agents keep normal `git` / `gh` (their token is the boundary), and nobody but the human runs `prgenie export`.
 
 When a **subagent** finishes with commits, PR Genie drafts a loop and puts it on the developer's watch list. Cursor still manages the subagents. The sidebar is the spectator GUI. Hand **one steward** a ticket with `/steward`: it Tasks an implementor, then a reviewer, resumes the same implementor on `changes_requested`, and only hands off to you for Push to origin after the export gate (shepherd CI) is green. `/start` remains the implementor-only entry. There is no inbox/queue listen flywheel.
 
