@@ -39,10 +39,9 @@ export function decideDraftReadyPromotion(state: DraftReadyState): DraftReadyDec
     return { action: "none" };
   }
   const ci = state.ciStatus?.status;
-  const checksOk =
-    ci === "success" ||
-    ci === "neutral" ||
-    (state.docsJob && ci === "unknown" && state.ciStatus?.source === "doc-checks");
+  const checksOk = state.docsJob
+    ? ci === "success" || ci === "neutral"
+    : ci === "success";
   if (!checksOk) {
     return { action: "none" };
   }

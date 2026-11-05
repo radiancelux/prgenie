@@ -104,4 +104,37 @@ describe("decideDraftReadyPromotion", () => {
       { action: "none" },
     );
   });
+
+  it("code jobs require CI success (neutral rollup does not promote)", () => {
+    assert.deepEqual(
+      decideDraftReadyPromotion(
+        base({ ciStatus: { status: "neutral", checkedAt: "", source: "github" } }),
+      ),
+      { action: "none" },
+    );
+  });
+
+  it("docs jobs allow neutral doc-checks (soft lint)", () => {
+    assert.deepEqual(
+      decideDraftReadyPromotion(
+        base({
+          docsJob: true,
+          ciStatus: { status: "neutral", summary: "soft", checkedAt: "", source: "doc-checks" },
+        }),
+      ),
+      { action: "promote" },
+    );
+  });
+
+  it("docs jobs block ready on unknown doc-checks", () => {
+    assert.deepEqual(
+      decideDraftReadyPromotion(
+        base({
+          docsJob: true,
+          ciStatus: { status: "unknown", checkedAt: "", source: "doc-checks" },
+        }),
+      ),
+      { action: "none" },
+    );
+  });
 });
