@@ -1,0 +1,127 @@
+import http from "node:http";
+import { URL } from "node:url";
+import type { RunnerConfig } from "./config.js";
+import type { RunnerEngine } from "./engine.js";
+import { handleMcpJsonRpc } from "./mcp-handlers.js";
+import { readLogTail } from "./store.js";
+import { runnerUiHtml } from "./ui-html.js";
+
+function unauthorized(res: http.ServerResponse): void {
+  res.writeHead(401, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: "unauthorized" }));
+}
+
+function checkAuth(req: http.IncomingMessage, config: RunnerConfig, url: URL): boolean {
+  const header = req.headers.authorization;
+  if (header === `Bearer ${config.token}`) return true;
+  const q = url.searchParams.get("token");
+  return q === config.token;
+}
+
+function readBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): http.Server {
+  const sseClients = new Map<string, Set<http.ServerResponse>>();
+
+  engine.on("event", async (jobId: string) => {
+    const clients = sseClients.get(jobId);
+    if (!clients?.size) return;
+    const job = await engine.get(jobId);
+    if (!job) return;
+    const payload = JSON.stringify({
+      stage: job.stage,
+      reviewRound: job.reviewRound,
+      logTail: job.logTail,
+    });
+    for (const res of clients) {
+      res.write(`data: ${payload}\n\n`);
+    }
+  });
+
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", `http://127.0.0.1:${config.port}`);
+    const path = url.pathname;
+
+    if (path === "/" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(runnerUiHtml(config.port));
+      return;
+    }
+
+    const needsAuth = path.startsWith("/api/") || path === "/mcp";
+    if (needsAuth && !checkAuth(req, config, url)) {
+      unauthorized(res);
+      return;
+    }
+
+    if (path === "/mcp" && req.method === "POST") {
+      const body = await readBody(req);
+      let msg: { id?: unknown; method?: string; params?: Record<string, unknown> };
+      try {
+        msg = JSON.parse(body);
+      } catch {
+        res.writeHead(400);
+        res.end("{}");
+        return;
+      }
+      const reply = await handleMcpJsonRpc(engine, msg);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(reply ? JSON.stringify(reply) : "{}");
+      return;
+    }
+
+    if (path === "/api/jobs" && req.method === "GET") {
+      const jobs = await engine.list();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(jobs));
+      return;
+    }
+
+    const jobMatch = path.match(/^\/api\/jobs\/([^/]+)$/);
+    if (jobMatch && req.method === "GET") {
+      const job = await engine.get(jobMatch[1]);
+      if (!job) {
+        res.writeHead(404);
+        res.end("{}");
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(job));
+      return;
+    }
+
+    const streamMatch = path.match(/^\/api\/jobs\/([^/]+)\/stream$/);
+    if (streamMatch && req.method === "GET") {
+      const jobId = streamMatch[1];
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      });
+      if (!sseClients.has(jobId)) sseClients.set(jobId, new Set());
+      sseClients.get(jobId)!.add(res);
+      req.on("close", () => {
+        sseClients.get(jobId)?.delete(res);
+      });
+      const job = await engine.get(jobId);
+      const tail = job?.logTail ?? (job ? await readLogTail(job.logPath) : "");
+      res.write(
+        `data: ${JSON.stringify({ logTail: tail, stage: job?.stage })}\n\n`,
+      );
+      return;
+    }
+
+    res.writeHead(404);
+    res.end("not found");
+  });
+
+  server.listen(config.port, "127.0.0.1");
+  return server;
+}
