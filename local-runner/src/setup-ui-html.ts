@@ -72,6 +72,26 @@ export function setupUiHtml(
     <h2 style="margin-top:0;">Drivers</h2>
     <div id="drivers"></div>
   </div>
+  <div class="panel">
+    <h2 style="margin-top:0;">Docs mode</h2>
+    <p class="meta">Target repos for Markdown PRs (marketing, policy, research). Example preset label: <code>cc-consulting-nv/img-business</code> — add your own path or GitHub slug; nothing is baked into the runner binary.</p>
+    <p class="meta">Private org repos may need <code>gh auth</code> on this host (and optional Cursor GitHub App access). Prefer an existing local clone path for v1.</p>
+    <p class="meta">Research jobs: enable web search in <code>~/.cursor/cli-config.json</code> (<code>autoAcceptWebSearch</code>, <code>permissions.allow</code> for WebFetch). Headless runs use <code>--force --trust</code> — see <a href="https://cursor.com/docs/cli/using" target="_blank" rel="noopener">Cursor CLI docs</a>.</p>
+    <div id="repoPresets"></div>
+    <button type="button" id="addPreset" style="width:auto; margin-top:0.5rem;">Add repo preset</button>
+    <label>Default repo for code jobs
+      <select id="defaultCodePreset"></select>
+    </label>
+    <label>Default repo for docs jobs
+      <select id="defaultDocsPreset"></select>
+    </label>
+    <label class="toggle-row"><input type="checkbox" id="docChecksEnabled" checked /> Run doc checks (markdown lint on changed .md)</label>
+    <label class="toggle-row"><input type="checkbox" id="docChecksFailHard" /> Fail hard on doc check errors (blocks ready-to-publish)</label>
+  </div>
+  <div class="panel">
+    <h2 style="margin-top:0;">MCP / shared runner</h2>
+    <p class="meta">Bearer token is per runner install. MCP <code>start_job</code> on Brett's runner uses his workstation, Cursor CLI login, and <code>gh</code> identity. Do not paste tokens into tickets or job logs.</p>
+  </div>
   <button type="button" id="save">Save settings</button>
   <div id="status"></div>
   <script>
@@ -98,6 +118,49 @@ export function setupUiHtml(
           <label>Endpoint<input class="drv-endpoint" value="\${d.endpoint || ""}" /></label>
           <label>API key (optional)<input class="drv-key" type="password" placeholder="\${d.hasApiKey ? d.apiKeyMasked || "••••" : "paste to set"}" autocomplete="off" /></label>
         </div>\`).join("");
+    }
+
+    function renderRepoPresets(presets) {
+      const el = document.getElementById("repoPresets");
+      el.innerHTML = (presets || []).map((p) => \`
+        <div class="driver-card" data-preset-id="\${p.id}">
+          <label>Name<input class="preset-name" value="\${p.name || ""}" /></label>
+          <label>GitHub slug (owner/repo)<input class="preset-slug" placeholder="org/repo" value="\${p.slug || ""}" /></label>
+          <label>Local path on runner<input class="preset-path" placeholder="/path/to/clone" value="\${p.repoPath || ""}" /></label>
+          <button type="button" class="remove-preset" style="width:auto; margin-top:0.35rem; background:#5a3030;">Remove</button>
+        </div>\`).join("");
+      el.querySelectorAll(".remove-preset").forEach((btn) => {
+        btn.onclick = () => btn.closest(".driver-card")?.remove();
+      });
+    }
+
+    function fillPresetSelects(presets, selectedCode, selectedDocs) {
+      const opts = ['<option value="">— none —</option>'].concat(
+        (presets || []).map((p) => \`<option value="\${p.id}">\${p.name}</option>\`),
+      );
+      const codeSel = document.getElementById("defaultCodePreset");
+      const docsSel = document.getElementById("defaultDocsPreset");
+      codeSel.innerHTML = opts.join("");
+      docsSel.innerHTML = opts.join("");
+      codeSel.value = selectedCode || "";
+      docsSel.value = selectedDocs || "";
+    }
+
+    document.getElementById("addPreset").onclick = () => {
+      const id = "preset-" + Math.random().toString(36).slice(2, 9);
+      const presets = collectPresetsFromDom();
+      presets.push({ id, name: "New repo", slug: "", repoPath: "" });
+      renderRepoPresets(presets);
+      fillPresetSelects(presets, document.getElementById("defaultCodePreset").value, document.getElementById("defaultDocsPreset").value);
+    };
+
+    function collectPresetsFromDom() {
+      return [...document.querySelectorAll("#repoPresets .driver-card")].map((card) => ({
+        id: card.dataset.presetId,
+        name: card.querySelector(".preset-name").value.trim() || "Repo",
+        slug: card.querySelector(".preset-slug").value.trim() || null,
+        repoPath: card.querySelector(".preset-path").value.trim() || null,
+      }));
     }
 
     async function load() {
@@ -127,6 +190,14 @@ export function setupUiHtml(
         \`<option value="\${d.id}">\${d.id}</option>\`).join("");
       sel.value = loaded.defaultDriver || "cursor-agent";
       renderDrivers(loaded.drivers);
+      const ds = loaded.docsSettings || {};
+      renderRepoPresets(ds.repoPresets || []);
+      fillPresetSelects(ds.repoPresets || [], ds.defaultPresetId?.code, ds.defaultPresetId?.docs);
+      document.getElementById("docChecksEnabled").checked = ds.docChecks?.enabled !== false;
+      document.getElementById("docChecksFailHard").checked = Boolean(ds.docChecks?.failHard);
+      if (loaded.envDefaultCodeRepoPath) {
+        document.getElementById("dataDirNote").textContent += " · Env code repo: " + loaded.envDefaultCodeRepoPath;
+      }
     }
 
     document.getElementById("save").onclick = async () => {
@@ -145,6 +216,7 @@ export function setupUiHtml(
         if (keyVal) entry.apiKey = keyVal;
         return entry;
       });
+      const repoPresets = collectPresetsFromDom();
       const body = {
         configured: true,
         defaultModel: document.getElementById("defaultModel").value.trim() || null,
@@ -155,6 +227,17 @@ export function setupUiHtml(
           recipient: document.getElementById("notifyRecipient").value.trim() || null,
         },
         drivers,
+        presets: { repos: repoPresets },
+        jobTypes: {
+          defaultPresetId: {
+            code: document.getElementById("defaultCodePreset").value || null,
+            docs: document.getElementById("defaultDocsPreset").value || null,
+          },
+          docChecks: {
+            enabled: document.getElementById("docChecksEnabled").checked,
+            failHard: document.getElementById("docChecksFailHard").checked,
+          },
+        },
       };
       try {
         const res = await fetch("/api/settings", { method: "PATCH", headers: authHeaders(true), body: JSON.stringify(body) });
@@ -166,6 +249,12 @@ export function setupUiHtml(
         status.textContent = "Saved.";
         document.getElementById("firstRun").style.display = "none";
         renderDrivers(loaded.drivers);
+        renderRepoPresets(loaded.docsSettings?.repoPresets || []);
+        fillPresetSelects(
+          loaded.docsSettings?.repoPresets || [],
+          loaded.docsSettings?.defaultPresetId?.code,
+          loaded.docsSettings?.defaultPresetId?.docs,
+        );
       } catch {
         status.textContent = "Save failed (network).";
       }

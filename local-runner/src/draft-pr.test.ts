@@ -83,4 +83,25 @@ describe("decideDraftReadyPromotion", () => {
       { action: "none" },
     );
   });
+
+  it("docs jobs promote on doc-checks success (not GHA CI)", () => {
+    assert.deepEqual(
+      decideDraftReadyPromotion(
+        base({
+          docsJob: true,
+          ciStatus: { status: "success", summary: "N/A", checkedAt: "", source: "doc-checks" },
+        }),
+      ),
+      { action: "promote" },
+    );
+    assert.deepEqual(
+      decideDraftReadyPromotion(
+        base({
+          docsJob: true,
+          ciStatus: { status: "failure", summary: "lint", checkedAt: "", source: "doc-checks" },
+        }),
+      ),
+      { action: "none" },
+    );
+  });
 });

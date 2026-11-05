@@ -199,12 +199,45 @@ export function runnerUiHtml(
     </div>
     <div id="notifyStatus"></div>
   </div>
+  <div class="settings-panel">
+    <h2>New job</h2>
+    <p class="meta">Start a code or docs writing job on this runner. Docs jobs use Setup defaults unless you override the repo path.</p>
+    <div class="settings-row">
+      <label style="flex:1 1 8rem;">Type
+        <select id="newJobType" style="display:block; width:100%; margin-top:0.25rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem;">
+          <option value="code">Code (default)</option>
+          <option value="docs">Docs / policy / marketing</option>
+        </select>
+      </label>
+      <label style="flex:2 1 12rem;">Branch
+        <input id="newJobBranch" placeholder="docs/policy-xyz" style="display:block; width:100%; margin-top:0.25rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem;" />
+      </label>
+    </div>
+    <div class="settings-row" id="newJobDocsRow" style="display:none;">
+      <label style="flex:1 1 12rem;">Doc template
+        <select id="newJobTemplate" style="display:block; width:100%; margin-top:0.25rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem;">
+          <option value="marketing">Marketing copy</option>
+          <option value="policy">Policy doc</option>
+          <option value="research">Research brief</option>
+        </select>
+      </label>
+    </div>
+    <label>Repo path override (optional)
+      <input id="newJobRepo" placeholder="Local clone path on this machine" style="display:block; width:100%; margin-top:0.25rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem;" />
+    </label>
+    <label id="newJobPromptLabel">Prompt file (code jobs)
+      <input id="newJobPrompt" placeholder="/path/to/prompt.md" style="display:block; width:100%; margin-top:0.25rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem;" />
+    </label>
+    <textarea id="newJobInline" rows="3" placeholder="Optional extra task text (appended via prompt file content if you paste a one-off prompt path)" style="display:none; width:100%; margin-top:0.5rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem; font-family:inherit;"></textarea>
+    <button type="button" class="primary" id="startJobBtn" style="margin-top:0.75rem;">Start job</button>
+    <div id="newJobStatus" class="meta" style="min-height:1.2rem; margin-top:0.35rem;"></div>
+  </div>
   <div class="jobs-toolbar">
     <label class="toggle-row"><input type="checkbox" id="showAllJobs" /> Show all</label>
     <span class="meta" id="jobsHiddenHint"></span>
   </div>
   <table>
-    <thead><tr><th>Job</th><th>Stage</th><th>Round</th><th>Ticket</th><th>PR</th><th>Ready</th><th>Status</th><th>Model</th><th>Tokens</th><th>Updated</th></tr></thead>
+    <thead><tr><th>Job</th><th>Stage</th><th>Round</th><th>Ticket</th><th>PR</th><th>Ready</th><th>Checks</th><th>Model</th><th>Tokens</th><th>Updated</th></tr></thead>
     <tbody id="jobs"></tbody>
   </table>
   <h2 id="detailTitle">Job log</h2>
@@ -318,11 +351,31 @@ export function runnerUiHtml(
       return '<span title="' + r.title.replace(/"/g, "&quot;") + '">' + r.label + "</span>";
     }
 
-    function statusLabel(ci) {
+    function statusLabel(job, ci) {
+      return dashFmt.dashboardChecksStatusLabel(job, ci);
+    }
+
+    function fmtJobCell(j) {
+      let line = j.id.slice(0, 8);
+      if (dashFmt.isDocsJobRecord(j)) {
+        const bits = [j.repoSlug || ""];
+        if (j.input.docsTemplate) bits.push(j.input.docsTemplate);
+        const extra = bits.filter(Boolean).join(" · ");
+        if (extra) line += '<br><span class="meta">' + extra + "</span>";
+      }
+      return line;
+    }
+
+    function fmtChecks(job, ci) {
       if (!ci) return "—";
-      if (ci.status === "unknown") return "CI unknown";
-      if (ci.status === "success") return ci.summary || "green";
-      return ci.summary || ci.status || "—";
+      const label = statusLabel(job, ci);
+      const cls = "badge " + (ci.status === "success" ? "success" : ci.status || "neutral");
+      const tip = ci.reason ? ' title="' + String(ci.reason).replace(/"/g, "&quot;") + '"' : "";
+      const colLabel = dashFmt.isDocsJobRecord(job) ? "Doc checks" : "Status";
+      if (ci.checksUrl && !dashFmt.isDocsJobRecord(job)) {
+        return '<a class="' + cls + '" href="' + ci.checksUrl + '" target="_blank" rel="noopener"' + tip + ">" + label + "</a>";
+      }
+      return "<span class=\"" + cls + "\"" + tip + ' data-label="' + colLabel + '">' + label + "</span>";
     }
 
     function fmtPrDraft(j) {
@@ -332,15 +385,8 @@ export function runnerUiHtml(
       return "—";
     }
 
-    function fmtStatus(ci) {
-      if (!ci) return "—";
-      const label = statusLabel(ci);
-      const cls = "badge " + (ci.status === "success" ? "success" : ci.status || "neutral");
-      const tip = ci.reason ? ' title="' + String(ci.reason).replace(/"/g, "&quot;") + '"' : "";
-      if (ci.checksUrl) {
-        return '<a class="' + cls + '" href="' + ci.checksUrl + '" target="_blank" rel="noopener"' + tip + ">" + label + "</a>";
-      }
-      return "<span class=\"" + cls + "\"" + tip + ">" + label + "</span>";
+    function fmtStatus(job, ci) {
+      return fmtChecks(job, ci);
     }
 
     function updateSteerUi() {
@@ -410,21 +456,22 @@ export function runnerUiHtml(
       if (!visible.length) {
         const msg = jobs.length
           ? "No jobs match the current filter. Turn on Show all to see hidden rows."
-          : "<strong>No jobs yet.</strong> Start a job from the CLI or MCP to see it here.";
+          : "<strong>No jobs yet.</strong> Start a job below or from MCP.";
         tbody.innerHTML = '<tr><td colspan="10" class="empty-state">' + msg + "</td></tr>";
         return;
       }
       tbody.innerHTML = visible.map(j => {
-        const stageLabel = j.stage + (j.stage==="reviewing" ? " (r"+j.reviewRound+")" : "");
+        const stageLabel = dashFmt.dashboardStageLabel(j);
         const sel = j.id === selected ? " selected" : "";
+        const checksLabel = dashFmt.isDocsJobRecord(j) ? "Doc checks" : "Status";
         return \`<tr class="job-row\${sel}" data-id="\${j.id}">
-        <td data-label="Job">\${j.id.slice(0,8)}</td>
+        <td data-label="Job">\${fmtJobCell(j)}</td>
         <td data-label="Stage">\${stageLabel}</td>
         <td data-label="Round">\${j.reviewRound}/\${j.maxRounds}</td>
         <td data-label="Ticket">\${fmtTicket(j)}</td>
         <td data-label="PR">\${j.prUrl ? '<a href="'+j.prUrl+'" target="_blank" rel="noopener">PR</a>' : "—"}</td>
         <td data-label="Ready">\${fmtPrDraft(j)}</td>
-        <td data-label="Status">\${fmtStatus(j.ciStatus)}</td>
+        <td data-label="\${checksLabel}">\${fmtStatus(j, j.ciStatus)}</td>
         <td data-label="Model">\${j.model || "—"}</td>
         <td data-label="Tokens">\${fmtTokens(j.tokenUsage)}</td>
         <td data-label="Updated">\${fmtUpdated(j.updatedAt)}</td>
@@ -531,6 +578,61 @@ export function runnerUiHtml(
         void steerJob();
       }
     });
+
+    const newJobTypeEl = document.getElementById("newJobType");
+    const newJobDocsRow = document.getElementById("newJobDocsRow");
+    const newJobPromptLabel = document.getElementById("newJobPromptLabel");
+    const newJobPromptEl = document.getElementById("newJobPrompt");
+    const newJobStatus = document.getElementById("newJobStatus");
+
+    function syncNewJobForm() {
+      const docs = newJobTypeEl.value === "docs";
+      newJobDocsRow.style.display = docs ? "flex" : "none";
+      newJobPromptLabel.textContent = docs ? "Prompt file (optional — uses template if empty)" : "Prompt file (code jobs)";
+      newJobPromptEl.required = !docs;
+    }
+    newJobTypeEl.onchange = syncNewJobForm;
+    syncNewJobForm();
+
+    document.getElementById("startJobBtn").onclick = async () => {
+      newJobStatus.textContent = "Starting…";
+      const jobType = newJobTypeEl.value;
+      const body = {
+        branch: document.getElementById("newJobBranch").value.trim(),
+        jobType,
+        repoPath: document.getElementById("newJobRepo").value.trim() || undefined,
+      };
+      if (jobType === "docs") {
+        body.docsTemplate = document.getElementById("newJobTemplate").value;
+        if (newJobPromptEl.value.trim()) body.promptFile = newJobPromptEl.value.trim();
+      } else {
+        body.promptFile = newJobPromptEl.value.trim();
+      }
+      if (!body.branch) {
+        newJobStatus.textContent = "Branch is required.";
+        return;
+      }
+      if (jobType === "code" && !body.promptFile) {
+        newJobStatus.textContent = "Prompt file is required for code jobs.";
+        return;
+      }
+      try {
+        const res = await fetch("/api/jobs", {
+          method: "POST",
+          headers: authHeaders(true),
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          newJobStatus.textContent = data.error || "Start failed (" + res.status + ").";
+          return;
+        }
+        newJobStatus.textContent = "Job started: " + (data.id || "").slice(0, 8);
+        void refresh();
+      } catch {
+        newJobStatus.textContent = "Start failed (network).";
+      }
+    };
 
     updateSteerUi();
     updateDetailVisibility();

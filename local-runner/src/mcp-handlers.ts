@@ -31,8 +31,23 @@ export const RUNNER_MCP_TOOLS = [
           type: "string",
           description: "Linear issue id e.g. RAD-321 (optional; builds ticketUrl when set alone)",
         },
+        jobType: {
+          type: "string",
+          enum: ["code", "docs"],
+          description: "code (default) or docs for business/policy Markdown PRs",
+        },
+        profile: {
+          type: "string",
+          enum: ["code", "docs"],
+          description: "Alias for jobType",
+        },
+        docsTemplate: {
+          type: "string",
+          enum: ["marketing", "policy", "research"],
+          description: "Built-in docs implementor template (docs jobs)",
+        },
       },
-      required: ["branch", "promptFile"],
+      required: ["branch"],
     },
   },
   {
@@ -81,7 +96,7 @@ export async function handleRunnerTool(
         repoPath: typeof args.repoPath === "string" ? args.repoPath : undefined,
         remote: typeof args.remote === "string" ? args.remote : undefined,
         branch: String(args.branch ?? ""),
-        promptFile: String(args.promptFile ?? ""),
+        promptFile: typeof args.promptFile === "string" ? args.promptFile : undefined,
         reviewPromptFile:
           typeof args.reviewPromptFile === "string" ? args.reviewPromptFile : undefined,
         fixPromptFile: typeof args.fixPromptFile === "string" ? args.fixPromptFile : undefined,
@@ -91,9 +106,28 @@ export async function handleRunnerTool(
         dryRun: typeof args.dryRun === "boolean" ? args.dryRun : undefined,
         ticketUrl: typeof args.ticketUrl === "string" ? args.ticketUrl : undefined,
         linearIssue: typeof args.linearIssue === "string" ? args.linearIssue : undefined,
+        docsTemplate: typeof args.docsTemplate === "string" ? args.docsTemplate : undefined,
+        jobType:
+          args.jobType === "docs" || args.jobType === "code"
+            ? args.jobType
+            : args.profile === "docs" || args.profile === "code"
+              ? args.profile
+              : undefined,
+        profile: args.profile === "docs" || args.profile === "code" ? args.profile : undefined,
       };
-      if (!input.branch || !input.promptFile) {
-        throw new Error("branch and promptFile are required");
+      if (!input.branch) {
+        throw new Error("branch is required");
+      }
+      const isDocs =
+        input.jobType === "docs" ||
+        input.profile === "docs" ||
+        args.profile === "docs" ||
+        args.jobType === "docs";
+      if (!isDocs && !input.promptFile?.trim()) {
+        throw new Error("promptFile is required for code jobs");
+      }
+      if (isDocs && !input.promptFile?.trim() && !input.docsTemplate) {
+        throw new Error("docs jobs need docsTemplate or promptFile");
       }
       return engine.startJob(input);
     }

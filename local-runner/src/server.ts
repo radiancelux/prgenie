@@ -106,6 +106,52 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
       return;
     }
 
+    if (path === "/api/jobs" && req.method === "POST") {
+      const body = await readBody(req);
+      let payload: Record<string, unknown>;
+      try {
+        payload = JSON.parse(body) as Record<string, unknown>;
+      } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid json" }));
+        return;
+      }
+      try {
+        const job = await engine.startJob({
+          repoPath: typeof payload.repoPath === "string" ? payload.repoPath : undefined,
+          remote: typeof payload.remote === "string" ? payload.remote : undefined,
+          branch: String(payload.branch ?? ""),
+          promptFile: typeof payload.promptFile === "string" ? payload.promptFile : undefined,
+          reviewPromptFile:
+            typeof payload.reviewPromptFile === "string" ? payload.reviewPromptFile : undefined,
+          fixPromptFile:
+            typeof payload.fixPromptFile === "string" ? payload.fixPromptFile : undefined,
+          maxRounds: typeof payload.maxRounds === "number" ? payload.maxRounds : undefined,
+          model: typeof payload.model === "string" ? payload.model : undefined,
+          driver: typeof payload.driver === "string" ? payload.driver : undefined,
+          dryRun: typeof payload.dryRun === "boolean" ? payload.dryRun : undefined,
+          ticketUrl: typeof payload.ticketUrl === "string" ? payload.ticketUrl : undefined,
+          linearIssue: typeof payload.linearIssue === "string" ? payload.linearIssue : undefined,
+          jobType:
+            payload.jobType === "docs" || payload.jobType === "code" ? payload.jobType : undefined,
+          profile:
+            payload.profile === "docs" || payload.profile === "code" ? payload.profile : undefined,
+          docsTemplate:
+            payload.docsTemplate === "marketing" ||
+            payload.docsTemplate === "policy" ||
+            payload.docsTemplate === "research"
+              ? payload.docsTemplate
+              : undefined,
+        });
+        res.writeHead(201, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(job));
+      } catch (err) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+      }
+      return;
+    }
+
     if (path === "/api/notify-settings" && req.method === "GET") {
       const settings = await loadNotifySettings(config.dataDir);
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -197,6 +243,12 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
                 ? null
                 : undefined,
         }));
+      }
+      if (payload.jobTypes !== undefined && typeof payload.jobTypes === "object") {
+        patch.jobTypes = payload.jobTypes as Record<string, unknown>;
+      }
+      if (payload.presets !== undefined && typeof payload.presets === "object") {
+        patch.presets = payload.presets as Record<string, unknown>;
       }
       const saved = await saveSettings(config.dataDir, patch);
       res.writeHead(200, { "Content-Type": "application/json" });

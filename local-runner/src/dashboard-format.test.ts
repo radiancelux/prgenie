@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   STALE_JOB_HIDE_AFTER_MS,
+  dashboardStageLabel,
   formatRelativeTime,
   shouldHideStaleJob,
 } from "./dashboard-format.js";
@@ -81,5 +82,22 @@ describe("formatRelativeTime", () => {
     const now = Date.parse("2026-01-01T12:00:00.000Z");
     assert.equal(formatRelativeTime("2026-01-01T11:50:00.000Z", now, "en-US").label, "10m ago");
     assert.equal(formatRelativeTime("2026-01-01T09:00:00.000Z", now, "en-US").label, "3h ago");
+  });
+});
+
+describe("docs dashboard labels", () => {
+  it("maps stages to plain language", () => {
+    const job = baseJob({
+      input: { repoPath: "/r", branch: "b", promptFile: "", jobType: "docs" },
+      stage: "building",
+    });
+    assert.equal(dashboardStageLabel(job), "Writing");
+    job.stage = "approved";
+    assert.equal(dashboardStageLabel(job), "Ready to publish");
+  });
+
+  it("keeps technical labels for code jobs", () => {
+    const job = baseJob({ stage: "building" });
+    assert.equal(dashboardStageLabel(job), "building");
   });
 });

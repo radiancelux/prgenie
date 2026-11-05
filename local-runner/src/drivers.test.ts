@@ -23,14 +23,14 @@ describe("agent drivers", () => {
     const job = await createJob(
       dataDir,
       { repoPath: "/r", branch: "b", promptFile: "/p", driver: "local-model", dryRun: true },
-      { model: "m", dryRun: true },
+      { model: "m", dryRun: true, config: { defaultCodeRepoPath: null } },
     );
     assert.equal(job.driverId, "local-model");
 
     const job2 = await createJob(
       dataDir,
       { repoPath: "/r", branch: "b2", promptFile: "/p", dryRun: true },
-      { model: "m", dryRun: true },
+      { model: "m", dryRun: true, config: { defaultCodeRepoPath: null } },
     );
     assert.equal(job2.driverId, "claude-code");
   });

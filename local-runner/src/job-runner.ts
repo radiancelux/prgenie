@@ -11,6 +11,13 @@ import {
 } from "./github.js";
 import { JobControl } from "./job-control.js";
 import { DEFAULT_FIX_PROMPT, DEFAULT_IMPLEMENT_PROMPT, DEFAULT_REVIEW_PROMPT } from "./prompts.js";
+import {
+  isDocsTemplateId,
+  DOCS_REVIEW_PROMPT,
+  resolveDocsFixPrompt,
+  resolveDocsImplementPrompt,
+} from "./docs-prompts.js";
+import { isDocsJob } from "./doc-checks.js";
 import { formatJobEmailHtml, sendResendEmail, type FetchFn } from "./resend.js";
 import {
   findDriverEntry,
@@ -166,7 +173,14 @@ export async function runJobLoop(
 
     // --- building / implementor ---
     if (job.stage === "building" && !job.prUrl) {
-      const prompt = await readPromptFile(job.input.promptFile, DEFAULT_IMPLEMENT_PROMPT);
+      let prompt: string;
+      if (isDocsJob(job)) {
+        const template = isDocsTemplateId(job.input.docsTemplate) ? job.input.docsTemplate : null;
+        const fallback = resolveDocsImplementPrompt(template);
+        prompt = await readPromptFile(job.input.promptFile, fallback);
+      } else {
+        prompt = await readPromptFile(job.input.promptFile, DEFAULT_IMPLEMENT_PROMPT);
+      }
       const steer = control.drainSteer();
       const fullPrompt = steer ? `${prompt}\n\n--- steer ---\n${steer}` : prompt;
       const result = await runner.run({
@@ -221,10 +235,8 @@ export async function runJobLoop(
           : undefined;
       const reviewRoundStartedAt = new Date().toISOString();
 
-      const reviewPrompt = await readPromptFile(
-        job.input.reviewPromptFile ?? "",
-        DEFAULT_REVIEW_PROMPT,
-      );
+      const reviewFallback = isDocsJob(job) ? DOCS_REVIEW_PROMPT : DEFAULT_REVIEW_PROMPT;
+      const reviewPrompt = await readPromptFile(job.input.reviewPromptFile ?? "", reviewFallback);
       const reviewSteer = control.drainSteer();
       const reviewFull = reviewSteer
         ? `${reviewPrompt}\n\nPR: ${job.prUrl}\n\n--- steer ---\n${reviewSteer}`
@@ -301,7 +313,8 @@ export async function runJobLoop(
       if (!job.dryRun) {
         await rebaseOntoBase(wt);
       }
-      const fixPrompt = await readPromptFile(job.input.fixPromptFile ?? "", DEFAULT_FIX_PROMPT);
+      const fixDefault = isDocsJob(job) ? resolveDocsFixPrompt() : DEFAULT_FIX_PROMPT;
+      const fixPrompt = await readPromptFile(job.input.fixPromptFile ?? "", fixDefault);
       const fixSteer = control.drainSteer();
       const fixFull = fixSteer
         ? `${fixPrompt}\n\nPR: ${job.prUrl}\n\n--- steer ---\n${fixSteer}`

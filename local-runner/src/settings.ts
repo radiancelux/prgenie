@@ -1,4 +1,5 @@
 import { readFile, mkdir, rename, writeFile, access } from "node:fs/promises";
+import { parseDocsSettings, type ParsedDocsSettings } from "./docs-settings.js";
 import path from "node:path";
 import type { RunnerConfig } from "./config.js";
 import { notifySettingsFile, runnerSettingsFile } from "./paths.js";
@@ -47,6 +48,8 @@ export type RunnerSettingsPublic = Omit<RunnerSettings, "drivers"> & {
   resendConfigured: boolean;
   envFallbackRecipient: string | null;
   drivers: DriverEntryPublic[];
+  docsSettings: ParsedDocsSettings;
+  envDefaultCodeRepoPath: string | null;
 };
 
 const DEFAULT_DRIVERS: DriverEntry[] = [
@@ -274,6 +277,8 @@ export function toPublicSettings(
       hasApiKey: Boolean(d.apiKey),
       apiKeyMasked: maskSecret(d.apiKey),
     })),
+    docsSettings: parseDocsSettings(settings),
+    envDefaultCodeRepoPath: config.defaultCodeRepoPath,
   };
 }
 
