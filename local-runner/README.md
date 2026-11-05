@@ -35,6 +35,7 @@ Binary: `pnpm local-runner --help` (or `node local-runner/dist/runner.cjs`).
 | Variable                                             | Purpose                                                                                                    |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `PRGENIE_RUNNER_TOKEN`                               | **Required.** Bearer token for MCP + `/api/*`                                                              |
+| `PRGENIE_RUNNER_HOST`                                | Bind address (default `127.0.0.1`; use `0.0.0.0` for same-LAN phones/tablets)                              |
 | `PRGENIE_RUNNER_PORT`                                | HTTP port (default `9473`)                                                                                 |
 | `PRGENIE_RUNNER_DATA_DIR`                            | Job JSON + logs (default `~/.prgenie/local-runner`)                                                        |
 | `PRGENIE_RUNNER_MODEL`                               | Default model (default `composer-2.5`)                                                                     |
@@ -58,6 +59,16 @@ export PRGENIE_RUNNER_TOKEN='your-local-secret'
 pnpm local-runner serve
 ```
 
+Default bind is **localhost only** (`127.0.0.1`). To open the dashboard from another device on your Wi‑Fi/LAN:
+
+```bash
+export PRGENIE_RUNNER_HOST=0.0.0.0
+export PRGENIE_RUNNER_TOKEN='your-local-secret'   # keep this secret — same bearer protects UI, SSE, and MCP
+pnpm local-runner serve
+```
+
+On startup the runner prints reachable URLs (loopback plus a best-effort LAN IP when bound to `0.0.0.0`). Allow the chosen TCP port through your host firewall if needed. Do **not** expose the runner to the public internet without TLS and a proper reverse proxy (out of scope here).
+
 - **UI:** http://127.0.0.1:9473/ (paste token once; stored in `localStorage`)
 - **MCP HTTP:** `POST http://127.0.0.1:9473/mcp` with `Authorization: Bearer $PRGENIE_RUNNER_TOKEN`
 - **MCP stdio:** `pnpm local-runner mcp` (for Cursor `mcp.json`)
@@ -78,7 +89,9 @@ Default **`maxRounds`** = 2 (review/fix cycles). Reviewer must post **one** GitH
 
 ### Dashboard (localhost UI)
 
-The jobs table shows **Ticket** (Linear), **PR**, **Model**, **Tokens** (summed from cursor-agent `stream-json` usage in the job log), and **CI** status. While a job has a PR, the runner polls CI on a modest interval during active stages and until checks settle on terminal jobs. It prefers **`origin pr checks`** when the Origin CLI is authenticated; otherwise it falls back to GitHub **`gh pr view --json statusCheckRollup`**. The CI badge includes the source (`origin` or `github`).
+The jobs table shows **Ticket** (Linear), **PR**, **Status** (CI), **Model**, **Tokens** (summed from cursor-agent `stream-json` usage in the job log), and **Updated**. On narrow screens (~390px) rows become cards. The job detail view shows a **Cursor-style agent transcript** (stream-json), optional raw log toggle, and a **Steer** box that queues follow-up text via the same bearer-protected API as MCP `steer_job`. **Email notifications** can be toggled on/off and a recipient set in the dashboard; settings persist under the runner data dir (`notify-settings.json`). The Resend API key is never shown in the UI — only `RESEND_API_KEY` / `PRGENIE_RUNNER_RESEND_KEY_FILE` on the server. When the dashboard recipient is empty, notify email falls back to `PRGENIE_RUNNER_NOTIFY_EMAIL`. While a job has a PR, the runner polls CI on a modest interval during active stages and until checks settle on terminal jobs. It prefers **`origin pr checks`** when the Origin CLI is authenticated; otherwise it falls back to GitHub **`gh pr view --json statusCheckRollup`**. The CI badge includes the source (`origin` or `github`).
+
+Authenticated API: `GET` / `PUT /api/notify-settings` with bearer token (same as other `/api/*` routes).
 
 ## Example job
 
@@ -115,8 +128,8 @@ Real dogfood: use a ticket prompt file, local `repoPath`, valid `gh auth`, and R
 
 ## Resend
 
-Emails send when (1) a PR is detected after implementor and (2) the loop ends (`approved` or `changes_remaining`). Integration tests mock HTTP; unit tests live in `src/resend.test.ts`.
+Emails send when notify is **enabled** in the dashboard (or persisted settings), a recipient is set (dashboard or `PRGENIE_RUNNER_NOTIFY_EMAIL`), Resend is configured, and (1) a PR is detected after implementor and (2) the loop ends (`approved` or `changes_remaining`). Integration tests mock HTTP; unit tests live in `src/resend.test.ts`.
 
 ## Persistence
 
-Jobs are JSON under `$PRGENIE_RUNNER_DATA_DIR/jobs/`. Restarting `serve` reloads active jobs (`building`, `reviewing`, `fixing`) and continues the loop.
+Jobs are JSON under `$PRGENIE_RUNNER_DATA_DIR/jobs/`. Email notify preferences live in `$PRGENIE_RUNNER_DATA_DIR/notify-settings.json`. Restarting `serve` reloads active jobs (`building`, `reviewing`, `fixing`) and continues the loop.

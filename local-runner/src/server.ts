@@ -3,8 +3,22 @@ import { URL } from "node:url";
 import type { RunnerConfig } from "./config.js";
 import type { RunnerEngine } from "./engine.js";
 import { handleMcpJsonRpc } from "./mcp-handlers.js";
+import { urlHostForRequest } from "./listen-urls.js";
+import {
+  loadNotifySettings,
+  saveNotifySettings,
+  toPublicNotifySettings,
+} from "./notify-settings.js";
 import { readLogTail } from "./store.js";
 import { runnerUiHtml } from "./ui-html.js";
+
+const TERMINAL_JOB_STAGES = new Set([
+  "approved",
+  "failed",
+  "stopped",
+  "changes_remaining",
+  "stuck",
+]);
 
 function unauthorized(res: http.ServerResponse): void {
   res.writeHead(401, { "Content-Type": "application/json" });
@@ -46,7 +60,7 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
   });
 
   const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url ?? "/", `http://127.0.0.1:${config.port}`);
+    const url = new URL(req.url ?? "/", `http://${urlHostForRequest(config.host)}:${config.port}`);
     const path = url.pathname;
 
     if (path === "/" && req.method === "GET") {
@@ -84,6 +98,37 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
       return;
     }
 
+    if (path === "/api/notify-settings" && req.method === "GET") {
+      const settings = await loadNotifySettings(config.dataDir);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(toPublicNotifySettings(config, settings)));
+      return;
+    }
+
+    if (path === "/api/notify-settings" && req.method === "PUT") {
+      const body = await readBody(req);
+      let payload: { enabled?: unknown; recipient?: unknown };
+      try {
+        payload = JSON.parse(body) as { enabled?: unknown; recipient?: unknown };
+      } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid json" }));
+        return;
+      }
+      const patch: { enabled?: boolean; recipient?: string | null } = {};
+      if (payload.enabled !== undefined) patch.enabled = Boolean(payload.enabled);
+      if (payload.recipient !== undefined) {
+        patch.recipient =
+          payload.recipient === null || payload.recipient === ""
+            ? null
+            : String(payload.recipient).trim();
+      }
+      const saved = await saveNotifySettings(config.dataDir, patch);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(toPublicNotifySettings(config, saved)));
+      return;
+    }
+
     const jobMatch = path.match(/^\/api\/jobs\/([^/]+)$/);
     if (jobMatch && req.method === "GET") {
       const job = await engine.get(jobMatch[1]);
@@ -116,10 +161,59 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
       return;
     }
 
+    const steerMatch = path.match(/^\/api\/jobs\/([^/]+)\/steer$/);
+    if (steerMatch && req.method === "POST") {
+      const body = await readBody(req);
+      let payload: { prompt?: unknown };
+      try {
+        payload = JSON.parse(body) as { prompt?: unknown };
+      } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid json" }));
+        return;
+      }
+      const prompt = String(payload.prompt ?? "");
+      const existing = await engine.get(steerMatch[1]);
+      if (!existing) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "not found" }));
+        return;
+      }
+      if (TERMINAL_JOB_STAGES.has(existing.stage)) {
+        res.writeHead(409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "job is terminal", stage: existing.stage }));
+        return;
+      }
+      const job = await engine.steer(steerMatch[1], prompt);
+      if (!job) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "not found" }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({ ok: true, stage: job.stage, steerQueueLength: job.steerQueue.length }),
+      );
+      return;
+    }
+
+    const stopMatch = path.match(/^\/api\/jobs\/([^/]+)\/stop$/);
+    if (stopMatch && req.method === "POST") {
+      const job = await engine.stop(stopMatch[1]);
+      if (!job) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "not found" }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, stage: job.stage }));
+      return;
+    }
+
     res.writeHead(404);
     res.end("not found");
   });
 
-  server.listen(config.port, "127.0.0.1");
+  server.listen(config.port, config.host);
   return server;
 }

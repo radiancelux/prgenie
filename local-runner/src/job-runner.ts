@@ -12,6 +12,7 @@ import {
 import { JobControl } from "./job-control.js";
 import { DEFAULT_FIX_PROMPT, DEFAULT_REVIEW_PROMPT } from "./prompts.js";
 import { formatJobEmailHtml, sendResendEmail, type FetchFn } from "./resend.js";
+import { loadNotifySettings, resolveNotifyRecipient } from "./notify-settings.js";
 import { readLogTail, saveJob } from "./store.js";
 import type { JobEvent, JobRecord, JobStage } from "./types.js";
 import { sumTokenUsageFromLog } from "./usage.js";
@@ -39,7 +40,9 @@ async function notify(
   headline: string,
   fetchImpl?: FetchFn,
 ): Promise<void> {
-  if (!config.notifyEmail || !config.resendApiKey) return;
+  const settings = await loadNotifySettings(config.dataDir);
+  const to = resolveNotifyRecipient(config, settings);
+  if (!to || !config.resendApiKey) return;
   const html = formatJobEmailHtml({
     headline,
     prUrl: job.prUrl,
@@ -49,7 +52,7 @@ async function notify(
   });
   const result = await sendResendEmail(
     config.resendApiKey,
-    { to: config.notifyEmail, subject: headline, html },
+    { to, subject: headline, html },
     fetchImpl,
   );
   if (!result.ok) {
