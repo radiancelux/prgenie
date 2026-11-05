@@ -1,7 +1,13 @@
+import { dashboardFormatBrowserScript } from "./dashboard-format.js";
 import { streamJsonLogBrowserScript } from "./stream-json-log.js";
 
-export function runnerUiHtml(port: number): string {
+export function runnerUiHtml(
+  port: number,
+  listenUrls: string[] = [`http://127.0.0.1:${port}/`],
+): string {
   const logParserInit = streamJsonLogBrowserScript();
+  const dashFmtInit = dashboardFormatBrowserScript();
+  const reachability = listenUrls.length ? listenUrls.join(" · ") : `http://127.0.0.1:${port}/`;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -18,13 +24,19 @@ export function runnerUiHtml(port: number): string {
     tr.job-row { cursor: pointer; }
     tr.job-row.selected { background: #1e2430; }
     tr.job-row:hover { background: #181c24; }
-    .badge { font-size: 0.75rem; padding: 0.15rem 0.4rem; border-radius: 0.25rem; background: #2a2f3a; display: inline-block; }
-    .badge.success { color: #6fdc8c; }
-    .badge.failure { color: #ff8a8a; }
-    .badge.pending { color: #c9b458; }
-    .badge.neutral { color: #9aa3b2; }
-    .badge.merged { color: #9ad0ff; }
-    .badge.merge_conflict { color: #ffb86c; }
+    .badge { font-size: 0.75rem; padding: 0.2rem 0.45rem; border-radius: 999px; display: inline-block; font-weight: 500; border: 1px solid transparent; }
+    .badge.success { color: #6fdc8c; background: rgba(46, 125, 70, 0.22); border-color: rgba(111, 220, 140, 0.35); }
+    .badge.failure { color: #ff8a8a; background: rgba(140, 50, 50, 0.25); border-color: rgba(255, 138, 138, 0.35); }
+    .badge.pending { color: #e8d878; background: rgba(120, 100, 30, 0.28); border-color: rgba(201, 180, 88, 0.4); }
+    .badge.neutral, .badge.unknown { color: #b0b8c4; background: rgba(80, 88, 100, 0.35); border-color: rgba(154, 163, 178, 0.35); }
+    .badge.merged { color: #c4e4ff; background: rgba(60, 100, 140, 0.35); border-color: rgba(154, 208, 255, 0.4); }
+    .badge.merge_conflict { color: #ffb86c; background: rgba(120, 70, 30, 0.3); border-color: rgba(255, 184, 108, 0.4); }
+    .badge.closed { color: #c8b8e8; background: rgba(80, 60, 110, 0.35); border-color: rgba(180, 160, 220, 0.35); }
+    .jobs-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-top: 0.75rem; font-size: 0.85rem; }
+    .jobs-toolbar .toggle-row { min-height: auto; }
+    .empty-state { color: #9aa3b2; font-size: 0.9rem; padding: 1rem 0.5rem; line-height: 1.5; }
+    .empty-state strong { color: #e6e8ec; font-weight: 600; }
+    .log-placeholder { color: #9aa3b2; font-size: 0.9rem; margin: 0.5rem 0 1rem; line-height: 1.5; }
     a { color: #7eb8ff; }
     pre { background: #1a1d24; padding: 0.75rem; overflow: auto; max-height: 24rem; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; margin: 0; border-radius: 0.35rem; }
     .log-panel { margin-top: 0.35rem; }
@@ -166,7 +178,7 @@ export function runnerUiHtml(port: number): string {
 </head>
 <body>
   <h1>PR Genie Local Runner</h1>
-  <p class="meta">Port ${port} — agent transcript from stream-json (SSE). Batch G: <code>cursor-agent --force --trust</code>.</p>
+  <p class="meta">Runner dashboard · ${reachability}</p>
   <div class="token-row">
     <label style="flex:1 1 100%; font-size:0.85rem; color:#9aa3b2;">Bearer token
       <input type="password" id="token" placeholder="PRGENIE_RUNNER_TOKEN" autocomplete="off" />
@@ -185,11 +197,16 @@ export function runnerUiHtml(port: number): string {
     </div>
     <div id="notifyStatus"></div>
   </div>
+  <div class="jobs-toolbar">
+    <label class="toggle-row"><input type="checkbox" id="showAllJobs" /> Show all</label>
+    <span class="meta" id="jobsHiddenHint"></span>
+  </div>
   <table>
     <thead><tr><th>Job</th><th>Stage</th><th>Round</th><th>Ticket</th><th>PR</th><th>Status</th><th>Model</th><th>Tokens</th><th>Updated</th></tr></thead>
     <tbody id="jobs"></tbody>
   </table>
-  <h2 id="detailTitle">Log tail</h2>
+  <h2 id="detailTitle">Job log</h2>
+  <p class="log-placeholder" id="logPlaceholder">Select a job from the table to view its agent transcript.</p>
   <div class="steer-panel">
     <label for="steerPrompt">Steer selected job (queued for next agent step)</label>
     <div class="steer-row">
@@ -200,7 +217,7 @@ export function runnerUiHtml(port: number): string {
     <div id="steerStatus"></div>
   </div>
   <div class="log-toolbar">
-    <label><input type="checkbox" id="showRaw" /> Show raw log (debug)</label>
+    <label><input type="checkbox" id="showRaw" /> Raw</label>
   </div>
   <div class="log-panel">
     <div id="logSteps"></div>
@@ -208,7 +225,9 @@ export function runnerUiHtml(port: number): string {
   </div>
   <script>
     const logParser = ${logParserInit};
+    const dashFmt = ${dashFmtInit};
     const tokenKey = "prgenie_runner_token";
+    const showAllJobsKey = "prgenie_runner_show_all_jobs";
     const tokenEl = document.getElementById("token");
     tokenEl.value = localStorage.getItem(tokenKey) || "";
     document.getElementById("saveToken").onclick = () => {
@@ -267,6 +286,14 @@ export function runnerUiHtml(port: number): string {
     };
     document.body.classList.toggle("show-raw", showRawEl.checked);
 
+    const showAllJobsEl = document.getElementById("showAllJobs");
+    const jobsHiddenHint = document.getElementById("jobsHiddenHint");
+    showAllJobsEl.checked = localStorage.getItem(showAllJobsKey) === "1";
+    showAllJobsEl.onchange = () => {
+      localStorage.setItem(showAllJobsKey, showAllJobsEl.checked ? "1" : "0");
+      renderJobTable(lastJobs);
+    };
+
     const TERMINAL_STAGES = new Set(["approved", "failed", "stopped", "changes_remaining"]);
     const steerEl = document.getElementById("steerPrompt");
     const steerBtn = document.getElementById("steerBtn");
@@ -282,12 +309,48 @@ export function runnerUiHtml(port: number): string {
     let selected = null;
     let selectedJobStage = null;
     let es = null;
+    let lastJobs = [];
+
+    function fmtUpdated(iso) {
+      const r = dashFmt.formatRelativeTime(iso, Date.now());
+      return '<span title="' + r.title.replace(/"/g, "&quot;") + '">' + r.label + "</span>";
+    }
+
+    function statusLabel(ci) {
+      if (!ci) return "—";
+      if (ci.status === "unknown") return "CI unknown";
+      if (ci.status === "success") return ci.summary || "green";
+      return ci.summary || ci.status || "—";
+    }
+
+    function fmtStatus(ci) {
+      if (!ci) return "—";
+      const label = statusLabel(ci);
+      const cls = "badge " + (ci.status === "success" ? "success" : ci.status || "neutral");
+      const tip = ci.reason ? ' title="' + String(ci.reason).replace(/"/g, "&quot;") + '"' : "";
+      if (ci.checksUrl) {
+        return '<a class="' + cls + '" href="' + ci.checksUrl + '" target="_blank" rel="noopener"' + tip + ">" + label + "</a>";
+      }
+      return "<span class=\"" + cls + "\"" + tip + ">" + label + "</span>";
+    }
 
     function updateSteerUi() {
       const disabled = !selected || TERMINAL_STAGES.has(selectedJobStage || "");
       steerEl.disabled = disabled;
       steerBtn.disabled = disabled;
       stopBtn.disabled = !selected || TERMINAL_STAGES.has(selectedJobStage || "");
+    }
+
+    function updateDetailVisibility() {
+      const hasJob = Boolean(selected);
+      document.getElementById("logPlaceholder").style.display = hasJob ? "none" : "block";
+      document.querySelector(".steer-panel").style.display = hasJob ? "block" : "none";
+      document.querySelector(".log-toolbar").style.display = hasJob ? "flex" : "none";
+      document.querySelector(".log-panel").style.display = hasJob ? "block" : "none";
+      if (!hasJob) {
+        document.getElementById("detailTitle").textContent = "Job log";
+        renderLogTail("");
+      }
     }
 
     function fmtTokens(u) {
@@ -298,18 +361,13 @@ export function runnerUiHtml(port: number): string {
       const detail = "in " + (u.input||0) + ", out " + (u.output||0);
       return '<span title="' + detail + '">' + compact + "</span>";
     }
-    function fmtStatus(ci) {
-      if (!ci) return "—";
-      const label = ci.summary || ci.status;
-      const cls = "badge " + (ci.status || "neutral");
-      if (ci.checksUrl) return '<a class="' + cls + '" href="' + ci.checksUrl + '" target="_blank" rel="noopener">' + label + "</a>";
-      return '<span class="' + cls + '">' + label + "</span>";
-    }
+
     function fmtTicket(j) {
       if (j.ticketUrl && j.linearIssue) return '<a href="' + j.ticketUrl + '" target="_blank" rel="noopener">' + j.linearIssue + "</a>";
       if (j.ticketUrl) return '<a href="' + j.ticketUrl + '" target="_blank" rel="noopener">ticket</a>';
       return "—";
     }
+
     let rawLogTail = "";
 
     function stickScrollIfNearBottom(el) {
@@ -324,16 +382,30 @@ export function runnerUiHtml(port: number): string {
       rawLogTail = raw || "";
       document.getElementById("logRaw").textContent = rawLogTail;
       const html = logParser.formatAgentLogTailHtml(rawLogTail);
-      stepsEl.innerHTML = html || (rawLogTail ? logParser.formatAgentLogTail(rawLogTail).replace(/</g, "&lt;") : "");
+      if (html) {
+        stepsEl.innerHTML = html;
+      } else if (rawLogTail && !logParser.looksLikeStreamJsonLog(rawLogTail)) {
+        stepsEl.innerHTML = "<div class=\"agent-plain\">" + rawLogTail.replace(/</g, "&lt;") + "</div>";
+      } else {
+        stepsEl.innerHTML = "";
+      }
       if (stick) stepsEl.scrollTop = stepsEl.scrollHeight;
     }
 
-    async function refresh() {
-      const res = await fetch("/api/jobs", { headers: authHeaders() });
-      if (!res.ok) { document.getElementById("jobs").innerHTML = "<tr><td colspan=9>Unauthorized or error</td></tr>"; return; }
-      const jobs = await res.json();
+    function renderJobTable(jobs) {
+      const showAll = showAllJobsEl.checked;
+      const hidden = showAll ? 0 : jobs.filter((j) => dashFmt.shouldHideStaleJob(j)).length;
+      const visible = showAll ? jobs : jobs.filter((j) => !dashFmt.shouldHideStaleJob(j));
+      jobsHiddenHint.textContent = hidden ? "(" + hidden + " hidden)" : "";
       const tbody = document.getElementById("jobs");
-      tbody.innerHTML = jobs.map(j => {
+      if (!visible.length) {
+        const msg = jobs.length
+          ? "No jobs match the current filter. Turn on Show all to see hidden rows."
+          : "<strong>No jobs yet.</strong> Start a job from the CLI or MCP to see it here.";
+        tbody.innerHTML = '<tr><td colspan="9" class="empty-state">' + msg + "</td></tr>";
+        return;
+      }
+      tbody.innerHTML = visible.map(j => {
         const stageLabel = j.stage + (j.stage==="reviewing" ? " (r"+j.reviewRound+")" : "");
         const sel = j.id === selected ? " selected" : "";
         return \`<tr class="job-row\${sel}" data-id="\${j.id}">
@@ -345,7 +417,7 @@ export function runnerUiHtml(port: number): string {
         <td data-label="Status">\${fmtStatus(j.ciStatus)}</td>
         <td data-label="Model">\${j.model || "—"}</td>
         <td data-label="Tokens">\${fmtTokens(j.tokenUsage)}</td>
-        <td data-label="Updated">\${j.updatedAt}</td>
+        <td data-label="Updated">\${fmtUpdated(j.updatedAt)}</td>
       </tr>\`;
       }).join("");
       tbody.querySelectorAll("tr.job-row").forEach(tr => tr.onclick = () => selectJob(tr.dataset.id));
@@ -354,16 +426,38 @@ export function runnerUiHtml(port: number): string {
         if (row) {
           selectedJobStage = jobs.find(j => j.id === selected)?.stage ?? selectedJobStage;
           row.classList.add("selected");
+        } else if (!visible.some(j => j.id === selected)) {
+          selected = null;
+          selectedJobStage = null;
+          if (es) { es.close(); es = null; }
+          updateDetailVisibility();
         }
       }
       updateSteerUi();
-      if (!selected && jobs[0]) selectJob(jobs[0].id);
+    }
+
+    async function refresh() {
+      const res = await fetch("/api/jobs", { headers: authHeaders() });
+      const tbody = document.getElementById("jobs");
+      if (res.status === 401) {
+        tbody.innerHTML = '<tr><td colspan="9" class="empty-state"><strong>Unauthorized.</strong> Paste your runner bearer token above and click Save token.</td></tr>';
+        lastJobs = [];
+        return;
+      }
+      if (!res.ok) {
+        tbody.innerHTML = '<tr><td colspan="9" class="empty-state">Could not reach the runner (' + res.status + "). Check that serve is running.</td></tr>";
+        lastJobs = [];
+        return;
+      }
+      lastJobs = await res.json();
+      renderJobTable(lastJobs);
     }
 
     function selectJob(id) {
       selected = id;
       steerStatus.textContent = "";
-      document.getElementById("detailTitle").textContent = "Job " + id;
+      document.getElementById("detailTitle").textContent = "Job " + id.slice(0, 8);
+      updateDetailVisibility();
       document.querySelectorAll("tr.job-row").forEach(tr => {
         tr.classList.toggle("selected", tr.dataset.id === id);
       });
@@ -429,9 +523,11 @@ export function runnerUiHtml(port: number): string {
     });
 
     updateSteerUi();
+    updateDetailVisibility();
     refresh();
     void loadNotifySettingsUi();
     setInterval(refresh, 8000);
+    setInterval(() => { if (lastJobs.length) renderJobTable(lastJobs); }, 30000);
   </script>
 </body>
 </html>`;

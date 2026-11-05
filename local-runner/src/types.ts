@@ -31,7 +31,14 @@ export interface TokenUsage {
 }
 
 export type CiRollupStatus =
-  "pending" | "success" | "failure" | "neutral" | "unknown" | "merged" | "merge_conflict";
+  | "pending"
+  | "success"
+  | "failure"
+  | "neutral"
+  | "unknown"
+  | "merged"
+  | "merge_conflict"
+  | "closed";
 
 export interface CiStatusInfo {
   status: CiRollupStatus;
@@ -40,6 +47,8 @@ export interface CiStatusInfo {
   checksUrl?: string;
   /** Set when GitHub reports the PR merged (ISO 8601). */
   mergedAt?: string | null;
+  /** First-line gh/origin stderr when lookup fails (no secrets). */
+  reason?: string;
   /** Origin `origin pr checks` when reachable; otherwise GitHub Actions rollup via `gh`. */
   source: "origin" | "github";
 }

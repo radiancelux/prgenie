@@ -35,10 +35,11 @@ export class CiWatcher {
   private async refreshJob(job: JobRecord): Promise<void> {
     try {
       const cwd = resolveJobSpawnCwd(job);
-      if (!cwd) return;
       const next = await fetchPrCiStatus(cwd, {
         prNumber: job.prNumber,
         branch: job.input.branch,
+        repoSlug: job.repoSlug,
+        prUrl: job.prUrl,
       });
       const prev = JSON.stringify(job.ciStatus);
       job.ciStatus = { ...next, checkedAt: new Date().toISOString() };
