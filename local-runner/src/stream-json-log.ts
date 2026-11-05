@@ -327,14 +327,13 @@ export function formatAgentLogTailHtml(raw: string): string {
         const summary = b.summary
           ? `<span class="agent-tool-summary">${escapeHtml(b.summary)}</span>`
           : "";
-        const detail = b.detail ? `<pre class="agent-tool-body">${escapeHtml(b.detail)}</pre>` : "";
         if (b.phase === "failed") {
           parts.push(
-            `<div class="agent-tool agent-tool-failed"><div class="agent-tool-head"><span class="agent-tool-chip">${chip}</span>${summary}</div>${detail}<div class="agent-tool-error">${escapeHtml(b.error ?? "failed")}</div></div>`,
+            `<div class="agent-tool agent-tool-failed"><div class="agent-tool-head"><span class="agent-tool-chip">${chip}</span>${summary}</div><div class="agent-tool-error">${escapeHtml(b.error ?? "failed")}</div></div>`,
           );
         } else {
           parts.push(
-            `<div class="agent-tool"><div class="agent-tool-head"><span class="agent-tool-chip">${chip}</span>${summary}</div>${detail}</div>`,
+            `<div class="agent-tool"><div class="agent-tool-head"><span class="agent-tool-chip">${chip}</span>${summary}</div></div>`,
           );
         }
         break;

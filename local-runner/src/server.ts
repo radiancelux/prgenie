@@ -3,7 +3,7 @@ import { URL } from "node:url";
 import type { RunnerConfig } from "./config.js";
 import type { RunnerEngine } from "./engine.js";
 import { handleMcpJsonRpc } from "./mcp-handlers.js";
-import { urlHostForRequest } from "./listen-urls.js";
+import { runnerListenUrls, urlHostForRequest } from "./listen-urls.js";
 import {
   loadNotifySettings,
   saveNotifySettings,
@@ -65,7 +65,7 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
 
     if (path === "/" && req.method === "GET") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(runnerUiHtml(config.port));
+      res.end(runnerUiHtml(config.port, runnerListenUrls(config.host, config.port)));
       return;
     }
 

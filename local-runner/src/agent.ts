@@ -8,7 +8,7 @@ export interface AgentRunOptions {
   model: string;
   logPath: string;
   dryRun?: boolean;
-  /** stream-json for live UI; text is end-only (Batch G). */
+  /** stream-json for live UI; text is end-only fallback. */
   outputFormat?: "stream-json" | "text";
   signal?: AbortSignal;
 }
