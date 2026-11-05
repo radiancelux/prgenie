@@ -104,17 +104,41 @@ export function looksLikeStreamJsonLog(raw: string): boolean {
   return false;
 }
 
-export function formatAgentLogTail(raw: string): string {
-  if (!raw.trim()) return "";
-  if (!looksLikeStreamJsonLog(raw)) return raw;
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
-  const steps: string[] = [];
+export type AgentLogBlock =
+  | { kind: "banner"; text: string }
+  | { kind: "meta"; text: string }
+  | { kind: "thinking"; text: string }
+  | { kind: "prose"; text: string }
+  | {
+      kind: "tool";
+      name: string;
+      summary: string;
+      detail: string;
+      phase: "started" | "failed";
+      error?: string;
+    }
+  | { kind: "plain"; text: string }
+  | { kind: "error"; text: string };
+
+export function parseAgentLogBlocks(raw: string): AgentLogBlock[] | null {
+  if (!raw.trim()) return [];
+  if (!looksLikeStreamJsonLog(raw)) return null;
+
+  const blocks: AgentLogBlock[] = [];
   let thinkingBuf = "";
 
   const flushThinking = () => {
     const text = thinkingBuf.trim();
     thinkingBuf = "";
-    if (text) steps.push(`💭 ${truncate(text, 300)}`);
+    if (text) blocks.push({ kind: "thinking", text });
   };
 
   for (const line of raw.split("\n")) {
@@ -123,13 +147,13 @@ export function formatAgentLogTail(raw: string): string {
 
     if (trimmed.startsWith("--- agent")) {
       flushThinking();
-      steps.push(trimmed);
+      blocks.push({ kind: "banner", text: trimmed });
       continue;
     }
 
     if (!trimmed.startsWith("{")) {
       flushThinking();
-      steps.push(trimmed);
+      blocks.push({ kind: "plain", text: trimmed });
       continue;
     }
 
@@ -138,7 +162,7 @@ export function formatAgentLogTail(raw: string): string {
       ev = JSON.parse(trimmed) as Record<string, unknown>;
     } catch {
       flushThinking();
-      steps.push(trimmed);
+      blocks.push({ kind: "plain", text: trimmed });
       continue;
     }
 
@@ -148,7 +172,7 @@ export function formatAgentLogTail(raw: string): string {
     if (type === "system" && subtype === "init") {
       flushThinking();
       const model = ev.model ? String(ev.model) : "agent";
-      steps.push(`▸ Started ${model}`);
+      blocks.push({ kind: "meta", text: `Started ${model}` });
       continue;
     }
 
@@ -163,7 +187,7 @@ export function formatAgentLogTail(raw: string): string {
     if (type === "assistant") {
       flushThinking();
       const text = assistantText(ev.message).trim();
-      if (text) steps.push(text);
+      if (text) blocks.push({ kind: "prose", text });
       continue;
     }
 
@@ -172,15 +196,31 @@ export function formatAgentLogTail(raw: string): string {
       if (!tc) continue;
       const { kind, args, result } = toolPayload(tc);
       const name = kind ?? "tool";
+      const argSummary = summarizeToolArgs(kind, args);
+      const detail = toolDetailLine(kind, args);
       if (subtype === "started") {
         flushThinking();
-        const argSummary = summarizeToolArgs(kind, args);
-        steps.push(argSummary ? `⚙ ${name} — ${argSummary}` : `⚙ ${name}`);
+        blocks.push({
+          kind: "tool",
+          name,
+          summary: argSummary,
+          detail,
+          phase: "started",
+        });
         continue;
       }
       if (subtype === "completed") {
         const err = formatToolError(result);
-        if (err) steps.push(`✗ ${name} failed: ${err}`);
+        if (err) {
+          blocks.push({
+            kind: "tool",
+            name,
+            summary: argSummary,
+            detail,
+            phase: "failed",
+            error: err,
+          });
+        }
       }
       continue;
     }
@@ -188,12 +228,138 @@ export function formatAgentLogTail(raw: string): string {
     if (type === "error" || subtype === "error") {
       flushThinking();
       const msg = ev.message ?? ev.error ?? ev.text;
-      steps.push(`✗ ${truncate(String(msg ?? "Agent error"), 300)}`);
+      blocks.push({ kind: "error", text: truncate(String(msg ?? "Agent error"), 300) });
     }
   }
 
   flushThinking();
-  return steps.join("\n\n");
+  return blocks;
+}
+
+function toolDetailLine(kind: string | null, args: Record<string, unknown>): string {
+  if (kind === "shell" && args.command) return String(args.command);
+  if (
+    (kind === "read" || kind === "edit" || kind === "write" || kind === "strReplace") &&
+    args.path
+  ) {
+    return String(args.path);
+  }
+  if (kind === "grep") {
+    const pattern = args.pattern != null ? String(args.pattern) : "";
+    const inPath = args.path ? ` in ${String(args.path)}` : "";
+    return pattern + inPath;
+  }
+  if (!args || !Object.keys(args).length) return "";
+  return truncate(JSON.stringify(args, null, 0), 400);
+}
+
+export function formatAgentLogTail(raw: string): string {
+  const blocks = parseAgentLogBlocks(raw);
+  if (blocks === null) return raw;
+  if (!blocks.length) return "";
+
+  const lines: string[] = [];
+  for (const b of blocks) {
+    switch (b.kind) {
+      case "banner":
+        lines.push(b.text);
+        break;
+      case "meta":
+        lines.push(`▸ ${b.text}`);
+        break;
+      case "thinking":
+        lines.push(`💭 ${truncate(b.text, 300)}`);
+        break;
+      case "prose":
+        lines.push(b.text);
+        break;
+      case "tool":
+        if (b.phase === "failed") lines.push(`✗ ${b.name} failed: ${b.error ?? "error"}`);
+        else lines.push(b.summary ? `⚙ ${b.name} — ${b.summary}` : `⚙ ${b.name}`);
+        break;
+      case "plain":
+        lines.push(b.text);
+        break;
+      case "error":
+        lines.push(`✗ ${b.text}`);
+        break;
+    }
+  }
+  return lines.join("\n\n");
+}
+
+export function formatAgentLogTailHtml(raw: string): string {
+  const blocks = parseAgentLogBlocks(raw);
+  if (blocks === null) {
+    return `<pre class="agent-pass-through">${escapeHtml(raw)}</pre>`;
+  }
+  if (!blocks.length) return "";
+
+  const parts: string[] = [];
+  let turnOpen = false;
+  const closeTurn = () => {
+    if (turnOpen) {
+      parts.push("</div>");
+      turnOpen = false;
+    }
+  };
+
+  for (const b of blocks) {
+    switch (b.kind) {
+      case "banner":
+        closeTurn();
+        parts.push(`<div class="agent-turn"><div class="agent-banner">${escapeHtml(b.text)}</div>`);
+        turnOpen = true;
+        break;
+      case "meta":
+        parts.push(`<div class="agent-meta">${escapeHtml(b.text)}</div>`);
+        break;
+      case "thinking":
+        parts.push(
+          `<div class="agent-thinking"><span class="agent-thinking-label">Thinking</span> ${escapeHtml(truncate(b.text, 500))}</div>`,
+        );
+        break;
+      case "prose":
+        parts.push(`<div class="agent-prose">${formatProseHtml(b.text)}</div>`);
+        break;
+      case "tool": {
+        const chip = escapeHtml(b.name);
+        const summary = b.summary
+          ? `<span class="agent-tool-summary">${escapeHtml(b.summary)}</span>`
+          : "";
+        const detail = b.detail ? `<pre class="agent-tool-body">${escapeHtml(b.detail)}</pre>` : "";
+        if (b.phase === "failed") {
+          parts.push(
+            `<div class="agent-tool agent-tool-failed"><div class="agent-tool-head"><span class="agent-tool-chip">${chip}</span>${summary}</div>${detail}<div class="agent-tool-error">${escapeHtml(b.error ?? "failed")}</div></div>`,
+          );
+        } else {
+          parts.push(
+            `<div class="agent-tool"><div class="agent-tool-head"><span class="agent-tool-chip">${chip}</span>${summary}</div>${detail}</div>`,
+          );
+        }
+        break;
+      }
+      case "plain":
+        parts.push(`<div class="agent-plain">${escapeHtml(b.text)}</div>`);
+        break;
+      case "error":
+        parts.push(`<div class="agent-error">${escapeHtml(b.text)}</div>`);
+        break;
+    }
+  }
+  closeTurn();
+  return parts.join("\n");
+}
+
+function formatProseHtml(text: string): string {
+  const paras = text.split(/\n{2,}/);
+  return paras
+    .map((p) => {
+      const inner = escapeHtml(p.trim()).replace(/\n/g, "<br />");
+      return inner ? `<p>${inner}</p>` : "";
+    })
+    .filter(Boolean)
+    .join("");
 }
 
 /** Browser-side helpers injected into the runner UI (same logic as this module). */
@@ -207,11 +373,16 @@ export function streamJsonLogBrowserScript(): string {
     formatToolError,
     assistantText,
     looksLikeStreamJsonLog,
+    escapeHtml,
+    toolDetailLine,
+    formatProseHtml,
+    parseAgentLogBlocks,
     formatAgentLogTail,
+    formatAgentLogTailHtml,
   ];
   return `(function() {
 const __name = (fn) => fn;
 ${fns.map((fn) => fn.toString()).join("\n")}
-return { formatAgentLogTail, looksLikeStreamJsonLog };
+return { formatAgentLogTail, formatAgentLogTailHtml, looksLikeStreamJsonLog };
 })()`;
 }

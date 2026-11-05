@@ -2,6 +2,7 @@ import { writeSync } from "node:fs";
 import { loadConfig } from "./config.js";
 import { RunnerEngine } from "./engine.js";
 import { handleMcpJsonRpc } from "./mcp-handlers.js";
+import { runnerListenUrls } from "./listen-urls.js";
 import { startHttpServer } from "./server.js";
 import { listJobs } from "./store.js";
 import { removeWorktree } from "./worktree.js";
@@ -12,8 +13,11 @@ async function cmdServe(): Promise<void> {
   const engine = new RunnerEngine(config);
   await engine.init();
   const server = startHttpServer(config, engine);
+  const urls = runnerListenUrls(config.host, config.port);
   // eslint-disable-next-line no-console
-  console.log(`PR Genie local runner on http://127.0.0.1:${config.port} (MCP POST /mcp, UI /)`);
+  console.log(
+    `PR Genie local runner listening on ${config.host}:${config.port} — UI ${urls.join(", ")} (MCP POST /mcp)`,
+  );
   await new Promise<void>((resolve) => {
     process.on("SIGINT", () => {
       server.close(() => resolve());
@@ -63,7 +67,7 @@ function usage(): never {
   prgenie-local-runner serve       HTTP UI + MCP (localhost)
   prgenie-local-runner mcp         MCP over stdio (Cursor)
   prgenie-local-runner prune-worktrees
-Env: PRGENIE_RUNNER_TOKEN (required), PRGENIE_RUNNER_PORT, PRGENIE_RUNNER_DATA_DIR,
+Env: PRGENIE_RUNNER_TOKEN (required), PRGENIE_RUNNER_HOST, PRGENIE_RUNNER_PORT, PRGENIE_RUNNER_DATA_DIR,
      PRGENIE_RUNNER_NOTIFY_EMAIL, RESEND_API_KEY, PRGENIE_RUNNER_DRY_RUN=1`);
   process.exit(1);
 }

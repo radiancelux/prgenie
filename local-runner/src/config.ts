@@ -1,8 +1,10 @@
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { defaultRunnerHost } from "./listen-urls.js";
 
 export interface RunnerConfig {
+  host: string;
   port: number;
   token: string;
   dataDir: string;
@@ -36,6 +38,7 @@ export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<
   }
 
   return {
+    host: env.PRGENIE_RUNNER_HOST?.trim() || defaultRunnerHost(),
     port: Number(env.PRGENIE_RUNNER_PORT || DEFAULT_PORT) || DEFAULT_PORT,
     token,
     dataDir,

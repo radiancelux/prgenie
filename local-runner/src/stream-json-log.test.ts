@@ -2,8 +2,10 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   formatAgentLogTail,
+  formatAgentLogTailHtml,
   formatToolError,
   looksLikeStreamJsonLog,
+  parseAgentLogBlocks,
   summarizeToolArgs,
   toolPayload,
 } from "./stream-json-log.js";
@@ -32,6 +34,22 @@ describe("stream-json log formatting", () => {
     assert.match(out, /💭 Plan work/);
     assert.match(out, /Done planning\./);
     assert.match(out, /⚙ read — …\/src\/foo\.ts/);
+  });
+
+  it("renders HTML transcript with prose and tool blocks", () => {
+    const raw = [
+      "--- agent (composer-2.5, stream-json) ---",
+      '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I will read the file."}]}}',
+      '{"type":"tool_call","subtype":"started","tool_call":{"readToolCall":{"args":{"path":"/repo/src/foo.ts"}}}}',
+    ].join("\n");
+    const html = formatAgentLogTailHtml(raw);
+    assert.match(html, /agent-prose/);
+    assert.match(html, /I will read the file/);
+    assert.match(html, /agent-tool-chip/);
+    assert.match(html, />read</);
+    const blocks = parseAgentLogBlocks(raw);
+    assert.ok(blocks && blocks.some((b) => b.kind === "prose"));
+    assert.ok(blocks && blocks.some((b) => b.kind === "tool" && b.name === "read"));
   });
 
   it("surfaces tool failures", () => {

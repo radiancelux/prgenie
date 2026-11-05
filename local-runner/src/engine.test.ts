@@ -10,6 +10,7 @@ import { createJob, loadJob, saveJob } from "./store.js";
 
 function testConfig(dataDir: string): RunnerConfig {
   return {
+    host: "127.0.0.1",
     port: 9473,
     token: "test-token",
     dataDir,
