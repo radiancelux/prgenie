@@ -70,6 +70,7 @@ describe("shouldPollCi", () => {
     steerQueue: [],
     stopRequested: false,
     dryRun: true,
+    archivedAt: null,
   };
 
   it("does not poll failed jobs without a PR", () => {
@@ -86,6 +87,17 @@ describe("shouldPollCi", () => {
           checkedAt: "",
           source: "github",
         },
+      }),
+      false,
+    );
+  });
+
+  it("does not poll archived merged jobs", () => {
+    assert.equal(
+      shouldPollCi({
+        ...base,
+        archivedAt: "2026-11-05T12:00:00.000Z",
+        ciStatus: { status: "pending", checkedAt: "", source: "github" },
       }),
       false,
     );

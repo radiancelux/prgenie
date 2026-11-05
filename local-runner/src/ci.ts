@@ -1,6 +1,7 @@
-import { spawn } from "node:child_process";
 import type { CiRollupStatus, CiStatusInfo, JobRecord } from "./types.js";
 import { gh, type GhResult } from "./github.js";
+import { isJobArchived } from "./job-cwd.js";
+import { spawnCommand } from "./spawn-cmd.js";
 
 export type CheckRow = {
   name?: string;
@@ -89,19 +90,7 @@ export function rollupFromGithubStatusCheckRollup(
 }
 
 async function originCmd(cwd: string, args: string[]): Promise<GhResult> {
-  return new Promise((resolve) => {
-    const child = spawn("origin", args, { cwd, env: process.env });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (d) => {
-      stdout += d.toString();
-    });
-    child.stderr.on("data", (d) => {
-      stderr += d.toString();
-    });
-    child.on("error", () => resolve({ code: 127, stdout: "", stderr: "origin not found" }));
-    child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
-  });
+  return spawnCommand("origin", cwd, args);
 }
 
 function parseOriginChecksJson(stdout: string): CheckRow[] {
@@ -189,6 +178,8 @@ export async function fetchPrCiStatus(
 const CI_ACTIVE_STAGES = new Set(["building", "reviewing", "fixing", "approved"]);
 
 export function shouldPollCi(job: JobRecord): boolean {
+  if (isJobArchived(job)) return false;
+
   const hasPr = job.prNumber != null || job.prUrl != null;
   if (!hasPr) return false;
 

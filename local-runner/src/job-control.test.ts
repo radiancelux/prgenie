@@ -27,6 +27,7 @@ function minimalJob(overrides: Partial<JobRecord> = {}): JobRecord {
     steerQueue: [],
     stopRequested: false,
     dryRun: true,
+    archivedAt: null,
     ...overrides,
   };
 }

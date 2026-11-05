@@ -64,6 +64,8 @@ export interface JobRecord {
   steerQueue: string[];
   stopRequested: boolean;
   dryRun: boolean;
+  /** Set when the linked PR is merged — hidden from default list; CI polling stops. */
+  archivedAt: string | null;
 }
 
 export interface StartJobArgs {

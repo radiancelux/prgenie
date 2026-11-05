@@ -30,8 +30,9 @@ export class RunnerEngine extends EventEmitter {
   }
 
   async init(): Promise<void> {
-    const jobs = await listJobs(this.config.dataDir);
+    const jobs = await listJobs(this.config.dataDir, { includeArchived: true });
     for (const job of jobs) {
+      if (job.archivedAt) continue;
       if (ACTIVE_STAGES.has(job.stage) && !job.stopRequested) {
         this.schedule(job.id);
       }
