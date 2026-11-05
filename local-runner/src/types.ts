@@ -22,6 +22,8 @@ export interface JobInput {
   remote?: string;
   ticketUrl?: string;
   linearIssue?: string;
+  /** Human label for dashboard rows (derived at create when omitted). */
+  title?: string;
 }
 
 export interface TokenUsage {
@@ -77,6 +79,8 @@ export interface JobRecord {
   readyPromotedAt: string | null;
   linearIssue: string | null;
   ticketUrl: string | null;
+  /** Base title for agent row (without Linear issue prefix). */
+  title: string;
   tokenUsage: TokenUsage | null;
   ciStatus: CiStatusInfo | null;
   lastVerdict: "APPROVE" | "CHANGES" | null;
@@ -102,6 +106,8 @@ export interface StartJobArgs {
   dryRun?: boolean;
   ticketUrl?: string;
   linearIssue?: string;
+  /** Human label for dashboard rows (derived at create when omitted). */
+  title?: string;
 }
 
 export type JobEvent =

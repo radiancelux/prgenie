@@ -1,4 +1,5 @@
 import type { JobRecord } from "./types.js";
+import { jobAgentDisplayLabel } from "./job-display.js";
 import {
   jobRepoDisplayLabel,
   repoBasenameFromPath,
@@ -63,6 +64,7 @@ ${repoOwnerNameFromRemoteUrl.toString()}
 ${repoOwnerNameFromPrUrl.toString()}
 ${repoBasenameFromPath.toString()}
 ${jobRepoDisplayLabel.toString()}
-return { shouldHideStaleJob, formatRelativeTime, jobRepoDisplayLabel };
+${jobAgentDisplayLabel.toString()}
+return { shouldHideStaleJob, formatRelativeTime, jobRepoDisplayLabel, jobAgentDisplayLabel };
 })()`;
 }

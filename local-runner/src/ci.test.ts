@@ -74,6 +74,7 @@ describe("shouldPollCi", () => {
     readyPromotedAt: null,
     linearIssue: null,
     ticketUrl: null,
+    title: "b",
     tokenUsage: null,
     ciStatus: null,
     lastVerdict: null,
@@ -219,6 +220,7 @@ describe("shouldHideMergedJob", () => {
     readyPromotedAt: null,
     linearIssue: null,
     ticketUrl: null,
+    title: "b",
     tokenUsage: null,
     ciStatus: {
       status: "merged",

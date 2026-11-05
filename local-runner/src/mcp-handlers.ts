@@ -31,6 +31,11 @@ export const RUNNER_MCP_TOOLS = [
           type: "string",
           description: "Linear issue id e.g. RAD-321 (optional; builds ticketUrl when set alone)",
         },
+        title: {
+          type: "string",
+          description:
+            "Dashboard agent row label (optional; derived from Linear slug, prompt # heading, or branch)",
+        },
       },
       required: ["branch", "promptFile"],
     },
@@ -91,6 +96,7 @@ export async function handleRunnerTool(
         dryRun: typeof args.dryRun === "boolean" ? args.dryRun : undefined,
         ticketUrl: typeof args.ticketUrl === "string" ? args.ticketUrl : undefined,
         linearIssue: typeof args.linearIssue === "string" ? args.linearIssue : undefined,
+        title: typeof args.title === "string" ? args.title : undefined,
       };
       if (!input.branch || !input.promptFile) {
         throw new Error("branch and promptFile are required");

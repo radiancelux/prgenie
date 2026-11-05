@@ -147,6 +147,14 @@ export function runnerUiHtml(
     .agent-tool-error { font-size: 0.8rem; color: #ff9a9a; margin-top: 0.35rem; }
     .agent-error { color: #ff9a9a; margin: 0.5rem 0; }
     .agent-plain { font-family: ui-monospace, monospace; font-size: 0.8rem; color: #b0b8c4; margin: 0.35rem 0; }
+    .agent-label {
+      display: inline-block;
+      max-width: min(16rem, 42vw);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      vertical-align: top;
+    }
     .agent-pass-through { margin: 0; background: transparent; padding: 0; max-height: none; }
     @media (max-width: 720px) {
       body { margin: 0.75rem; }
@@ -174,6 +182,7 @@ export function runnerUiHtml(
         flex-shrink: 0;
       }
       #jobs tr.job-row td:first-child { font-weight: 600; }
+      .agent-label { max-width: min(14rem, calc(100vw - 7rem)); }
       .steer-row button { flex: 1 1 calc(50% - 0.25rem); }
     }
   </style>
@@ -405,6 +414,18 @@ export function runnerUiHtml(
       return dashFmt.jobRepoDisplayLabel(j);
     }
 
+    function fmtAgent(j) {
+      const d = dashFmt.jobAgentDisplayLabel(j);
+      const tip = d.tooltip.replace(/"/g, "&quot;");
+      const label = d.label.replace(/</g, "&lt;");
+      return '<span class="agent-label" title="' + tip + '">' + label + "</span>";
+    }
+
+    function detailTitleForJob(j) {
+      if (!j) return "Agent log";
+      return dashFmt.jobAgentDisplayLabel(j).label;
+    }
+
     function renderJobTable(jobs) {
       const showAll = showAllJobsEl.checked;
       const hidden = showAll ? 0 : jobs.filter((j) => dashFmt.shouldHideStaleJob(j)).length;
@@ -422,7 +443,7 @@ export function runnerUiHtml(
         const stageLabel = j.stage + (j.stage==="reviewing" ? " (r"+j.reviewRound+")" : "");
         const sel = j.id === selected ? " selected" : "";
         return \`<tr class="job-row\${sel}" data-id="\${j.id}">
-        <td data-label="Agent">\${j.id.slice(0,8)}</td>
+        <td data-label="Agent">\${fmtAgent(j)}</td>
         <td data-label="Repo" class="meta">\${fmtRepo(j)}</td>
         <td data-label="Stage">\${stageLabel}</td>
         <td data-label="Round">\${j.reviewRound}/\${j.maxRounds}</td>
@@ -471,7 +492,8 @@ export function runnerUiHtml(
     function selectJob(id) {
       selected = id;
       steerStatus.textContent = "";
-      document.getElementById("detailTitle").textContent = "Agent " + id.slice(0, 8);
+      const picked = lastJobs.find((j) => j.id === id);
+      document.getElementById("detailTitle").textContent = detailTitleForJob(picked);
       updateDetailVisibility();
       document.querySelectorAll("tr.job-row").forEach(tr => {
         tr.classList.toggle("selected", tr.dataset.id === id);
@@ -491,6 +513,7 @@ export function runnerUiHtml(
       fetch("/api/jobs/" + id, { headers: authHeaders() }).then(r => r.json()).then(j => {
         selectedJobStage = j.stage;
         updateSteerUi();
+        document.getElementById("detailTitle").textContent = detailTitleForJob(j);
         renderLogTail(j.logTail || "");
       });
     }

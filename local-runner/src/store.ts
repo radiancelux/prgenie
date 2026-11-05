@@ -5,6 +5,7 @@ import type { JobInput, JobRecord, StartJobArgs } from "./types.js";
 import { shouldHideMergedJob } from "./ci.js";
 import { resolveJobTicket } from "./linear-ticket.js";
 import { jobFile, jobLogFile, jobsDir, logsDir, repoSlugFromPath } from "./paths.js";
+import { resolveJobTitle } from "./job-display.js";
 import { repoOwnerNameFromGitOrigin, repoOwnerNameFromRemoteUrl } from "./repo-display.js";
 import { loadSettings, resolveDefaultDriverId } from "./settings.js";
 
@@ -35,6 +36,9 @@ export async function loadJob(dataDir: string, id: string): Promise<JobRecord | 
     if (job.prIsDraft === undefined) job.prIsDraft = null;
     if (job.approveHeadSha === undefined) job.approveHeadSha = null;
     if (job.readyPromotedAt === undefined) job.readyPromotedAt = null;
+    if (job.title === undefined || job.title === null) {
+      job.title = job.input?.branch?.trim() || job.id.slice(0, 8);
+    }
     return job;
   } catch {
     return null;
@@ -93,6 +97,13 @@ export async function createJob(
     ticketUrl: args.ticketUrl,
     linearIssue: args.linearIssue,
   });
+  const title = await resolveJobTitle({
+    title: args.title,
+    ticketUrl: ticket.ticketUrl ?? args.ticketUrl,
+    linearIssue: ticket.linearIssue,
+    branch: args.branch,
+    promptFile: args.promptFile,
+  });
   const input: JobInput = {
     repoPath: repoPath || "",
     branch: args.branch,
@@ -105,6 +116,7 @@ export async function createJob(
     remote: args.remote,
     ticketUrl: args.ticketUrl,
     linearIssue: args.linearIssue,
+    title,
   };
   const logPath = jobLogFile(dataDir, id);
   await writeFile(logPath, "", "utf8");
@@ -127,6 +139,7 @@ export async function createJob(
     readyPromotedAt: null,
     linearIssue: ticket.linearIssue,
     ticketUrl: ticket.ticketUrl,
+    title,
     tokenUsage: null,
     ciStatus: null,
     lastVerdict: null,
