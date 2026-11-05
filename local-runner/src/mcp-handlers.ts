@@ -1,3 +1,4 @@
+import { isDocsTemplateId } from "./docs-prompts.js";
 import type { RunnerEngine } from "./engine.js";
 import type { StartJobArgs } from "./types.js";
 
@@ -106,7 +107,10 @@ export async function handleRunnerTool(
         dryRun: typeof args.dryRun === "boolean" ? args.dryRun : undefined,
         ticketUrl: typeof args.ticketUrl === "string" ? args.ticketUrl : undefined,
         linearIssue: typeof args.linearIssue === "string" ? args.linearIssue : undefined,
-        docsTemplate: typeof args.docsTemplate === "string" ? args.docsTemplate : undefined,
+        docsTemplate:
+          typeof args.docsTemplate === "string" && isDocsTemplateId(args.docsTemplate)
+            ? args.docsTemplate
+            : undefined,
         jobType:
           args.jobType === "docs" || args.jobType === "code"
             ? args.jobType

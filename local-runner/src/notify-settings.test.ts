@@ -21,6 +21,7 @@ function testConfig(dataDir: string, overrides: Partial<RunnerConfig> = {}): Run
     resendApiKey: "re_key",
     defaultModel: "composer-2.5",
     dryRun: true,
+    defaultCodeRepoPath: null,
     ...overrides,
   };
 }
