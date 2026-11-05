@@ -27,8 +27,7 @@ export class AgentRunner extends EventEmitter {
 
     if (opts.dryRun) {
       const fake =
-        `[dry-run] cursor-agent would run in ${opts.cwd}\n` +
-        `${opts.prompt.slice(0, 200)}...\n`;
+        `[dry-run] cursor-agent would run in ${opts.cwd}\n` + `${opts.prompt.slice(0, 200)}...\n`;
       await appendFile(opts.logPath, fake, "utf8");
       this.emit("line", fake);
       return { code: 0, output: fake };

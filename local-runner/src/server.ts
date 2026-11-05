@@ -112,9 +112,7 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
       });
       const job = await engine.get(jobId);
       const tail = job?.logTail ?? (job ? await readLogTail(job.logPath) : "");
-      res.write(
-        `data: ${JSON.stringify({ logTail: tail, stage: job?.stage })}\n\n`,
-      );
+      res.write(`data: ${JSON.stringify({ logTail: tail, stage: job?.stage })}\n\n`);
       return;
     }
 

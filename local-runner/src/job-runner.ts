@@ -1,12 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { RunnerConfig } from "./config.js";
 import { AgentRunner } from "./agent.js";
-import {
-  fetchLatestPrCommentVerdict,
-  findPrForBranch,
-  gh,
-  type Verdict,
-} from "./github.js";
+import { fetchLatestPrCommentVerdict, findPrForBranch, gh, type Verdict } from "./github.js";
 import { DEFAULT_FIX_PROMPT, DEFAULT_REVIEW_PROMPT } from "./prompts.js";
 import { formatJobEmailHtml, sendResendEmail, type FetchFn } from "./resend.js";
 import { readLogTail, saveJob } from "./store.js";
@@ -114,7 +109,10 @@ export async function runJobLoop(
 
     // --- building / implementor ---
     if (job.stage === "building" && !job.prUrl) {
-      const prompt = await readPromptFile(job.input.promptFile, "Implement the ticket and open a PR.");
+      const prompt = await readPromptFile(
+        job.input.promptFile,
+        "Implement the ticket and open a PR.",
+      );
       const steer = job.steerQueue.splice(0).join("\n\n");
       const fullPrompt = steer ? `${prompt}\n\n--- steer ---\n${steer}` : prompt;
       const result = await runner.run({
@@ -197,12 +195,7 @@ export async function runJobLoop(
 
       if (verdict === "APPROVE") {
         await setStage(config, job, "approved", callbacks);
-        await notify(
-          config,
-          job,
-          `Loop approved: ${job.input.branch}`,
-          callbacks?.fetchImpl,
-        );
+        await notify(config, job, `Loop approved: ${job.input.branch}`, callbacks?.fetchImpl);
         if (!job.dryRun) {
           await removeWorktree(repoRoot, wt);
         }

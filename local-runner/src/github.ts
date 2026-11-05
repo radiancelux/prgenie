@@ -38,13 +38,7 @@ export interface PrInfo {
 }
 
 export async function findPrForBranch(cwd: string, branch: string): Promise<PrInfo | null> {
-  const view = await gh(cwd, [
-    "pr",
-    "view",
-    branch,
-    "--json",
-    "url,number",
-  ]);
+  const view = await gh(cwd, ["pr", "view", branch, "--json", "url,number"]);
   if (view.code !== 0) return null;
   try {
     const parsed = JSON.parse(view.stdout) as { url?: string; number?: number };

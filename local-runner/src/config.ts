@@ -32,9 +32,7 @@ export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<
 
   const token = env.PRGENIE_RUNNER_TOKEN?.trim();
   if (!token) {
-    throw new Error(
-      "PRGENIE_RUNNER_TOKEN is required (shared bearer for localhost MCP + UI API).",
-    );
+    throw new Error("PRGENIE_RUNNER_TOKEN is required (shared bearer for localhost MCP + UI API).");
   }
 
   return {

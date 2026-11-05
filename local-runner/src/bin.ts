@@ -13,9 +13,7 @@ async function cmdServe(): Promise<void> {
   await engine.init();
   const server = startHttpServer(config, engine);
   // eslint-disable-next-line no-console
-  console.log(
-    `PR Genie local runner on http://127.0.0.1:${config.port} (MCP POST /mcp, UI /)`,
-  );
+  console.log(`PR Genie local runner on http://127.0.0.1:${config.port} (MCP POST /mcp, UI /)`);
   await new Promise<void>((resolve) => {
     process.on("SIGINT", () => {
       server.close(() => resolve());

@@ -20,8 +20,7 @@ describe("sendResendEmail", () => {
   });
 
   it("surfaces API errors", async () => {
-    const mockFetch = (async () =>
-      new Response("bad", { status: 401 })) as typeof fetch;
+    const mockFetch = (async () => new Response("bad", { status: 401 })) as typeof fetch;
     const result = await sendResendEmail(
       "re_x",
       { to: "a@b.c", subject: "s", html: "h" },

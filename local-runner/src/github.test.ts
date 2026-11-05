@@ -4,10 +4,7 @@ import { parseVerdictFromText } from "./github.js";
 
 describe("parseVerdictFromText", () => {
   it("finds APPROVE on last verdict line", () => {
-    assert.equal(
-      parseVerdictFromText("Looks good.\n\nVERDICT: APPROVE\n"),
-      "APPROVE",
-    );
+    assert.equal(parseVerdictFromText("Looks good.\n\nVERDICT: APPROVE\n"), "APPROVE");
   });
 
   it("finds CHANGES", () => {

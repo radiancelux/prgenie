@@ -6,11 +6,11 @@ Linear: [RAD-315](https://linear.app/radiancelux/issue/RAD-315/local-cli-runner-
 
 ## Batch G lessons (cursor-agent)
 
-| Topic | Behavior |
-| --- | --- |
-| Shell | **`cursor-agent -p --force --trust`** — without `--force`, nested shell is blocked |
-| Text output | **`--output-format text`** — output appears **only at process exit** (not live) |
-| Live logs | This runner uses **`--output-format stream-json`** for agent steps so the UI SSE tail updates during runs |
+| Topic       | Behavior                                                                                                                    |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Shell       | **`cursor-agent -p --force --trust`** — without `--force`, nested shell is blocked                                          |
+| Text output | **`--output-format text`** — output appears **only at process exit** (not live)                                             |
+| Live logs   | This runner uses **`--output-format stream-json`** for agent steps so the UI SSE tail updates during runs                   |
 | No-PR guard | If the implementor finishes without a GitHub PR on the branch, the job becomes **`stuck`** (no review of a local-only diff) |
 
 Every subprocess the runner spawns uses:
@@ -32,15 +32,15 @@ Binary: `pnpm local-runner --help` (or `node local-runner/dist/runner.cjs`).
 
 ## Config
 
-| Variable | Purpose |
-| --- | --- |
-| `PRGENIE_RUNNER_TOKEN` | **Required.** Bearer token for MCP + `/api/*` |
-| `PRGENIE_RUNNER_PORT` | HTTP port (default `9473`) |
-| `PRGENIE_RUNNER_DATA_DIR` | Job JSON + logs (default `~/.prgenie/local-runner`) |
-| `PRGENIE_RUNNER_MODEL` | Default model (default `composer-2.5`) |
-| `PRGENIE_RUNNER_DRY_RUN` | `1` — skip real `cursor-agent` / git worktrees (tests & smoke) |
-| `PRGENIE_RUNNER_NOTIFY_EMAIL` | Resend notification recipient |
-| `RESEND_API_KEY` or `PRGENIE_RUNNER_RESEND_KEY_FILE` | Resend API key (never logged) |
+| Variable                                             | Purpose                                                        |
+| ---------------------------------------------------- | -------------------------------------------------------------- |
+| `PRGENIE_RUNNER_TOKEN`                               | **Required.** Bearer token for MCP + `/api/*`                  |
+| `PRGENIE_RUNNER_PORT`                                | HTTP port (default `9473`)                                     |
+| `PRGENIE_RUNNER_DATA_DIR`                            | Job JSON + logs (default `~/.prgenie/local-runner`)            |
+| `PRGENIE_RUNNER_MODEL`                               | Default model (default `composer-2.5`)                         |
+| `PRGENIE_RUNNER_DRY_RUN`                             | `1` — skip real `cursor-agent` / git worktrees (tests & smoke) |
+| `PRGENIE_RUNNER_NOTIFY_EMAIL`                        | Resend notification recipient                                  |
+| `RESEND_API_KEY` or `PRGENIE_RUNNER_RESEND_KEY_FILE` | Resend API key (never logged)                                  |
 
 Worktrees (non-dry-run): `~/.cursor/worktrees/<repo-slug>/<job-id>`.
 

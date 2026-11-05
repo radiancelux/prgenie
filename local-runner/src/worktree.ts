@@ -29,9 +29,7 @@ export async function ensureWorktree(
   if (add.code !== 0) {
     const addMain = await git(repoPath, ["worktree", "add", "-B", branch, wt, "main"]);
     if (addMain.code !== 0) {
-      throw new Error(
-        `git worktree add failed: ${add.stderr.trim() || addMain.stderr.trim()}`,
-      );
+      throw new Error(`git worktree add failed: ${add.stderr.trim() || addMain.stderr.trim()}`);
     }
   }
   return wt;

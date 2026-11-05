@@ -15,20 +15,16 @@ const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-smoke-"));
 const promptFile = path.join(dataDir, "prompt.md");
 await writeFile(promptFile, "Implement RAD-315 smoke ticket and open a PR.\n", "utf8");
 
-const runner = spawn(
-  "node",
-  [path.join(root, "local-runner/dist/runner.cjs"), "serve"],
-  {
-    env: {
-      ...process.env,
-      PRGENIE_RUNNER_TOKEN: token,
-      PRGENIE_RUNNER_DATA_DIR: dataDir,
-      PRGENIE_RUNNER_DRY_RUN: "1",
-      PRGENIE_RUNNER_PORT: "19473",
-    },
-    stdio: ["ignore", "pipe", "inherit"],
+const runner = spawn("node", [path.join(root, "local-runner/dist/runner.cjs"), "serve"], {
+  env: {
+    ...process.env,
+    PRGENIE_RUNNER_TOKEN: token,
+    PRGENIE_RUNNER_DATA_DIR: dataDir,
+    PRGENIE_RUNNER_DRY_RUN: "1",
+    PRGENIE_RUNNER_PORT: "19473",
   },
-);
+  stdio: ["ignore", "pipe", "inherit"],
+});
 
 await new Promise((r) => setTimeout(r, 800));
 
@@ -63,7 +59,11 @@ const job = JSON.parse(startJson.result.content[0].text);
 const jobId = job.id;
 
 let stage = job.stage;
-for (let i = 0; i < 120 && !["approved", "failed", "stuck", "changes_remaining", "stopped"].includes(stage); i++) {
+for (
+  let i = 0;
+  i < 120 && !["approved", "failed", "stuck", "changes_remaining", "stopped"].includes(stage);
+  i++
+) {
   await new Promise((r) => setTimeout(r, 500));
   const g = await fetch(`${base}/api/jobs/${jobId}`, { headers });
   const j = await g.json();
