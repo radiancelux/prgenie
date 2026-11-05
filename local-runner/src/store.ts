@@ -5,6 +5,7 @@ import type { JobInput, JobRecord, StartJobArgs } from "./types.js";
 import { shouldHideMergedJob } from "./ci.js";
 import { resolveJobTicket } from "./linear-ticket.js";
 import { jobFile, jobLogFile, jobsDir, logsDir, repoSlugFromPath } from "./paths.js";
+import { repoOwnerNameFromGitOrigin, repoOwnerNameFromRemoteUrl } from "./repo-display.js";
 import { loadSettings, resolveDefaultDriverId } from "./settings.js";
 
 export async function ensureDataDirs(dataDir: string): Promise<void> {
@@ -80,7 +81,13 @@ export async function createJob(
   const settings = await loadSettings(dataDir);
   const id = randomUUID();
   const repoPath = args.repoPath?.trim() || "";
-  const slug = repoPath ? repoSlugFromPath(repoPath) : "remote";
+  let slug = "remote";
+  if (args.remote?.trim()) {
+    slug = repoOwnerNameFromRemoteUrl(args.remote) ?? repoSlugFromPath(args.remote);
+  } else if (repoPath) {
+    const fromOrigin = await repoOwnerNameFromGitOrigin(repoPath);
+    slug = fromOrigin ?? repoSlugFromPath(repoPath);
+  }
   const ticket = resolveJobTicket({
     branch: args.branch,
     ticketUrl: args.ticketUrl,

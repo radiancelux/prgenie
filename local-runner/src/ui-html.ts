@@ -189,7 +189,7 @@ export function runnerUiHtml(
   </div>
   <div class="settings-panel">
     <h2>Email notifications</h2>
-    <p class="meta">Resend API key is server-side only (env). Choose whether to send job notify emails and the recipient.</p>
+    <p class="meta">Resend API key is server-side only (env). Choose whether to send agent notify emails and the recipient.</p>
     <div class="settings-row">
       <label class="toggle-row"><input type="checkbox" id="notifyEnabled" /> Send notify emails</label>
       <label style="flex:1 1 14rem;">Recipient
@@ -204,13 +204,13 @@ export function runnerUiHtml(
     <span class="meta" id="jobsHiddenHint"></span>
   </div>
   <table>
-    <thead><tr><th>Job</th><th>Stage</th><th>Round</th><th>Ticket</th><th>PR</th><th>Ready</th><th>Status</th><th>Model</th><th>Tokens</th><th>Updated</th></tr></thead>
+    <thead><tr><th>Agent</th><th>Repo</th><th>Stage</th><th>Round</th><th>Ticket</th><th>PR</th><th>Ready</th><th>Status</th><th>Model</th><th>Tokens</th><th>Updated</th></tr></thead>
     <tbody id="jobs"></tbody>
   </table>
-  <h2 id="detailTitle">Job log</h2>
-  <p class="log-placeholder" id="logPlaceholder">Select a job from the table to view its agent transcript.</p>
+  <h2 id="detailTitle">Agent log</h2>
+  <p class="log-placeholder" id="logPlaceholder">Select an agent from the table to view its transcript.</p>
   <div class="steer-panel">
-    <label for="steerPrompt">Steer selected job (queued for next agent step)</label>
+    <label for="steerPrompt">Steer selected agent (queued for next agent step)</label>
     <div class="steer-row">
       <textarea id="steerPrompt" rows="2" placeholder="Add guidance… Enter to send, Shift+Enter for newline"></textarea>
       <button type="button" class="primary" id="steerBtn">Steer</button>
@@ -340,7 +340,7 @@ export function runnerUiHtml(
       if (ci.checksUrl) {
         return '<a class="' + cls + '" href="' + ci.checksUrl + '" target="_blank" rel="noopener"' + tip + ">" + label + "</a>";
       }
-      return "<span class=\"" + cls + "\"" + tip + ">" + label + "</span>";
+      return '<span class="' + cls + '"' + tip + '>' + label + '</span>';
     }
 
     function updateSteerUi() {
@@ -357,7 +357,7 @@ export function runnerUiHtml(
       document.querySelector(".log-toolbar").style.display = hasJob ? "flex" : "none";
       document.querySelector(".log-panel").style.display = hasJob ? "block" : "none";
       if (!hasJob) {
-        document.getElementById("detailTitle").textContent = "Job log";
+        document.getElementById("detailTitle").textContent = "Agent log";
         renderLogTail("");
       }
     }
@@ -394,11 +394,15 @@ export function runnerUiHtml(
       if (html) {
         stepsEl.innerHTML = html;
       } else if (rawLogTail && !logParser.looksLikeStreamJsonLog(rawLogTail)) {
-        stepsEl.innerHTML = "<div class=\"agent-plain\">" + rawLogTail.replace(/</g, "&lt;") + "</div>";
+        stepsEl.innerHTML = '<div class="agent-plain">' + rawLogTail.replace(/</g, "&lt;") + "</div>";
       } else {
         stepsEl.innerHTML = "";
       }
       if (stick) stepsEl.scrollTop = stepsEl.scrollHeight;
+    }
+
+    function fmtRepo(j) {
+      return dashFmt.jobRepoDisplayLabel(j);
     }
 
     function renderJobTable(jobs) {
@@ -409,16 +413,17 @@ export function runnerUiHtml(
       const tbody = document.getElementById("jobs");
       if (!visible.length) {
         const msg = jobs.length
-          ? "No jobs match the current filter. Turn on Show all to see hidden rows."
-          : "<strong>No jobs yet.</strong> Start a job from the CLI or MCP to see it here.";
-        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">' + msg + "</td></tr>";
+          ? "No agents match the current filter. Turn on Show all to see hidden rows."
+          : "<strong>No agents yet.</strong> Start an agent from the CLI or MCP to see it here.";
+        tbody.innerHTML = '<tr><td colspan="11" class="empty-state">' + msg + "</td></tr>";
         return;
       }
       tbody.innerHTML = visible.map(j => {
         const stageLabel = j.stage + (j.stage==="reviewing" ? " (r"+j.reviewRound+")" : "");
         const sel = j.id === selected ? " selected" : "";
         return \`<tr class="job-row\${sel}" data-id="\${j.id}">
-        <td data-label="Job">\${j.id.slice(0,8)}</td>
+        <td data-label="Agent">\${j.id.slice(0,8)}</td>
+        <td data-label="Repo" class="meta">\${fmtRepo(j)}</td>
         <td data-label="Stage">\${stageLabel}</td>
         <td data-label="Round">\${j.reviewRound}/\${j.maxRounds}</td>
         <td data-label="Ticket">\${fmtTicket(j)}</td>
@@ -450,12 +455,12 @@ export function runnerUiHtml(
       const res = await fetch("/api/jobs", { headers: authHeaders() });
       const tbody = document.getElementById("jobs");
       if (res.status === 401) {
-        tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><strong>Unauthorized.</strong> Paste your runner bearer token above and click Save token.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="empty-state"><strong>Unauthorized.</strong> Paste your runner bearer token above and click Save token.</td></tr>';
         lastJobs = [];
         return;
       }
       if (!res.ok) {
-        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">Could not reach the runner (' + res.status + "). Check that serve is running.</td></tr>";
+        tbody.innerHTML = '<tr><td colspan="11" class="empty-state">Could not reach the runner (' + res.status + "). Check that serve is running.</td></tr>";
         lastJobs = [];
         return;
       }
@@ -466,7 +471,7 @@ export function runnerUiHtml(
     function selectJob(id) {
       selected = id;
       steerStatus.textContent = "";
-      document.getElementById("detailTitle").textContent = "Job " + id.slice(0, 8);
+      document.getElementById("detailTitle").textContent = "Agent " + id.slice(0, 8);
       updateDetailVisibility();
       document.querySelectorAll("tr.job-row").forEach(tr => {
         tr.classList.toggle("selected", tr.dataset.id === id);

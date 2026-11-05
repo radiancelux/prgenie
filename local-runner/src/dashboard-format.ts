@@ -1,4 +1,10 @@
 import type { JobRecord } from "./types.js";
+import {
+  jobRepoDisplayLabel,
+  repoBasenameFromPath,
+  repoOwnerNameFromPrUrl,
+  repoOwnerNameFromRemoteUrl,
+} from "./repo-display.js";
 
 /** Hide failed/stopped clutter with no PR or ticket after this long. */
 export const STALE_JOB_HIDE_AFTER_MS = 60 * 60 * 1000;
@@ -53,6 +59,10 @@ export function dashboardFormatBrowserScript(): string {
 const STALE_JOB_HIDE_AFTER_MS = ${STALE_JOB_HIDE_AFTER_MS};
 ${shouldHideStaleJob.toString()}
 ${formatRelativeTime.toString()}
-return { shouldHideStaleJob, formatRelativeTime };
+${repoOwnerNameFromRemoteUrl.toString()}
+${repoOwnerNameFromPrUrl.toString()}
+${repoBasenameFromPath.toString()}
+${jobRepoDisplayLabel.toString()}
+return { shouldHideStaleJob, formatRelativeTime, jobRepoDisplayLabel };
 })()`;
 }
