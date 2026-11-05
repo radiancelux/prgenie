@@ -1,35 +1,39 @@
-import { spawn } from "node:child_process";
+import { spawnCommand, type GhResult } from "./spawn-cmd.js";
 
-export type GhResult = { code: number; stdout: string; stderr: string };
+export type { GhResult };
 
 export async function gh(cwd: string, args: string[]): Promise<GhResult> {
-  return new Promise((resolve) => {
-    const child = spawn("gh", args, { cwd, env: process.env });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (d) => {
-      stdout += d.toString();
-    });
-    child.stderr.on("data", (d) => {
-      stderr += d.toString();
-    });
-    child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
-  });
+  return spawnCommand("gh", cwd, args);
 }
 
 export async function git(cwd: string, args: string[]): Promise<GhResult> {
-  return new Promise((resolve) => {
-    const child = spawn("git", args, { cwd, env: process.env });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (d) => {
-      stdout += d.toString();
-    });
-    child.stderr.on("data", (d) => {
-      stderr += d.toString();
-    });
-    child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
-  });
+  return spawnCommand("git", cwd, args);
+}
+
+export type FetchPrMergedResult = { merged: boolean; mergedAt: string | null };
+
+export type FetchPrMergedFn = (
+  cwd: string,
+  target: { prNumber?: number | null; branch?: string },
+) => Promise<FetchPrMergedResult>;
+
+export async function fetchPrMerged(
+  cwd: string,
+  target: { prNumber?: number | null; branch?: string },
+): Promise<FetchPrMergedResult> {
+  const ref =
+    target.prNumber != null ? String(target.prNumber) : target.branch?.trim() || undefined;
+  if (!ref) return { merged: false, mergedAt: null };
+
+  const ghRes = await gh(cwd, ["pr", "view", ref, "--json", "state,mergedAt"]);
+  if (ghRes.code !== 0) return { merged: false, mergedAt: null };
+  try {
+    const parsed = JSON.parse(ghRes.stdout) as { state?: string; mergedAt?: string | null };
+    const merged = parsed.state === "MERGED" || (parsed.mergedAt != null && parsed.mergedAt !== "");
+    return { merged, mergedAt: merged ? (parsed.mergedAt ?? null) : null };
+  } catch {
+    return { merged: false, mergedAt: null };
+  }
 }
 
 export interface PrInfo {

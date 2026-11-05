@@ -43,7 +43,7 @@ async function cmdMcpStdio(): Promise<void> {
 
 async function cmdPrune(): Promise<void> {
   const config = await loadConfig();
-  const jobs = await listJobs(config.dataDir);
+  const jobs = await listJobs(config.dataDir, { includeArchived: true });
   let n = 0;
   for (const job of jobs) {
     if (!job.worktreePath) continue;

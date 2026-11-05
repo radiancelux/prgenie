@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { JobInput, JobRecord, StartJobArgs } from "./types.js";
+import { shouldHideMergedJob } from "./ci.js";
 import { resolveJobTicket } from "./linear-ticket.js";
 import { jobFile, jobLogFile, jobsDir, logsDir, repoSlugFromPath } from "./paths.js";
 
@@ -26,7 +27,9 @@ export async function saveJob(dataDir: string, job: JobRecord): Promise<void> {
 export async function loadJob(dataDir: string, id: string): Promise<JobRecord | null> {
   try {
     const raw = await readFile(jobFile(dataDir, id), "utf8");
-    return JSON.parse(raw) as JobRecord;
+    const job = JSON.parse(raw) as JobRecord;
+    if (job.archivedAt === undefined) job.archivedAt = null;
+    return job;
   } catch {
     return null;
   }
@@ -41,7 +44,9 @@ export async function listJobIds(dataDir: string): Promise<string[]> {
   }
 }
 
-export async function listJobs(dataDir: string): Promise<JobRecord[]> {
+export type ListJobsOptions = { includeArchived?: boolean };
+
+export async function listJobs(dataDir: string, _opts: ListJobsOptions = {}): Promise<JobRecord[]> {
   const ids = await listJobIds(dataDir);
   const jobs: JobRecord[] = [];
   for (const id of ids) {
@@ -50,6 +55,15 @@ export async function listJobs(dataDir: string): Promise<JobRecord[]> {
   }
   jobs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return jobs;
+}
+
+/** Jobs shown on the dashboard and via list_jobs (merged PRs drop off after ~1h). */
+export async function listJobsForDisplay(
+  dataDir: string,
+  nowMs = Date.now(),
+): Promise<JobRecord[]> {
+  const jobs = await listJobs(dataDir);
+  return jobs.filter((j) => !shouldHideMergedJob(j, nowMs));
 }
 
 export async function createJob(
@@ -103,6 +117,7 @@ export async function createJob(
     steerQueue: [],
     stopRequested: false,
     dryRun: args.dryRun ?? defaults.dryRun,
+    archivedAt: null,
   };
   await saveJob(dataDir, job);
   return job;

@@ -2,6 +2,7 @@ import type { RunnerConfig } from "./config.js";
 import type { RunnerEngine } from "./engine.js";
 import type { JobRecord } from "./types.js";
 import { fetchPrCiStatus, shouldPollCi } from "./ci.js";
+import { resolveJobSpawnCwd } from "./job-cwd.js";
 import { listJobs, loadJob, saveJob } from "./store.js";
 
 const CI_POLL_MS = 45_000;
@@ -32,17 +33,21 @@ export class CiWatcher {
   }
 
   private async refreshJob(job: JobRecord): Promise<void> {
-    const cwd = job.worktreePath || job.input.repoPath;
-    if (!cwd) return;
-    const next = await fetchPrCiStatus(cwd, {
-      prNumber: job.prNumber,
-      branch: job.input.branch,
-    });
-    const prev = JSON.stringify(job.ciStatus);
-    job.ciStatus = { ...next, checkedAt: new Date().toISOString() };
-    if (JSON.stringify(job.ciStatus) !== prev) {
-      await saveJob(this.config.dataDir, job);
-      this.engine.emit("event", job.id, { type: "ci" });
+    try {
+      const cwd = resolveJobSpawnCwd(job);
+      if (!cwd) return;
+      const next = await fetchPrCiStatus(cwd, {
+        prNumber: job.prNumber,
+        branch: job.input.branch,
+      });
+      const prev = JSON.stringify(job.ciStatus);
+      job.ciStatus = { ...next, checkedAt: new Date().toISOString() };
+      if (JSON.stringify(job.ciStatus) !== prev) {
+        await saveJob(this.config.dataDir, job);
+        this.engine.emit("event", job.id, { type: "ci" });
+      }
+    } catch {
+      // Never crash serve on CI poll failures.
     }
   }
 
