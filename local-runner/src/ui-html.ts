@@ -60,6 +60,26 @@ export function runnerUiHtml(port: number): string {
     button.primary { background: #3d5a8a; border-color: #5a7ab0; }
     button.danger { background: #5a3030; border-color: #884444; }
     .steer-panel { margin: 1rem 0; padding: 0.75rem; background: #141820; border: 1px solid #2a2f3a; border-radius: 0.5rem; }
+    .settings-panel { margin: 1rem 0; padding: 0.75rem; background: #141820; border: 1px solid #2a2f3a; border-radius: 0.5rem; }
+    .settings-panel h2 { margin: 0 0 0.35rem; font-size: 1rem; }
+    .settings-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; margin-top: 0.5rem; }
+    .settings-row label { font-size: 0.85rem; color: #9aa3b2; }
+    .toggle-row { display: flex; align-items: center; gap: 0.45rem; min-height: 2.75rem; color: #e6e8ec; cursor: pointer; user-select: none; }
+    .toggle-row input { width: 1.1rem; height: 1.1rem; }
+    #notifyRecipient {
+      display: block;
+      width: 100%;
+      min-width: 12rem;
+      max-width: 24rem;
+      margin-top: 0.25rem;
+      padding: 0.55rem 0.65rem;
+      font-size: 1rem;
+      border-radius: 0.35rem;
+      border: 1px solid #333;
+      background: #1a1d24;
+      color: #e6e8ec;
+    }
+    #notifyStatus { margin-top: 0.35rem; min-height: 1.2rem; }
     .steer-panel label { display: block; font-size: 0.85rem; color: #9aa3b2; margin-bottom: 0.35rem; }
     .steer-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; }
     #steerPrompt {
@@ -153,6 +173,18 @@ export function runnerUiHtml(port: number): string {
     </label>
     <button type="button" id="saveToken">Save token</button>
   </div>
+  <div class="settings-panel">
+    <h2>Email notifications</h2>
+    <p class="meta">Resend API key is server-side only (env). Choose whether to send job notify emails and the recipient.</p>
+    <div class="settings-row">
+      <label class="toggle-row"><input type="checkbox" id="notifyEnabled" /> Send notify emails</label>
+      <label style="flex:1 1 14rem;">Recipient
+        <input type="email" id="notifyRecipient" placeholder="you@example.com" autocomplete="email" inputmode="email" />
+      </label>
+      <button type="button" id="saveNotify">Save</button>
+    </div>
+    <div id="notifyStatus"></div>
+  </div>
   <table>
     <thead><tr><th>Job</th><th>Stage</th><th>Round</th><th>Ticket</th><th>PR</th><th>Status</th><th>Model</th><th>Tokens</th><th>Updated</th></tr></thead>
     <tbody id="jobs"></tbody>
@@ -182,6 +214,50 @@ export function runnerUiHtml(port: number): string {
     document.getElementById("saveToken").onclick = () => {
       localStorage.setItem(tokenKey, tokenEl.value);
       refresh();
+      void loadNotifySettingsUi();
+    };
+    const notifyEnabledEl = document.getElementById("notifyEnabled");
+    const notifyRecipientEl = document.getElementById("notifyRecipient");
+    const notifyStatus = document.getElementById("notifyStatus");
+
+    async function loadNotifySettingsUi() {
+      const res = await fetch("/api/notify-settings", { headers: authHeaders() });
+      if (!res.ok) {
+        notifyStatus.textContent = res.status === 401 ? "Save token to edit email settings." : "Could not load email settings.";
+        return;
+      }
+      const s = await res.json();
+      notifyEnabledEl.checked = Boolean(s.enabled);
+      notifyRecipientEl.value = s.recipient || "";
+      const parts = [];
+      if (s.envFallbackRecipient) parts.push("Env fallback: " + s.envFallbackRecipient);
+      if (!s.resendConfigured) parts.push("Resend not configured on server.");
+      notifyStatus.textContent = parts.join(" · ");
+    }
+
+    document.getElementById("saveNotify").onclick = async () => {
+      notifyStatus.textContent = "Saving…";
+      try {
+        const res = await fetch("/api/notify-settings", {
+          method: "PUT",
+          headers: authHeaders(true),
+          body: JSON.stringify({
+            enabled: notifyEnabledEl.checked,
+            recipient: notifyRecipientEl.value.trim() || null,
+          }),
+        });
+        if (!res.ok) {
+          notifyStatus.textContent = "Save failed (" + res.status + ").";
+          return;
+        }
+        const s = await res.json();
+        notifyEnabledEl.checked = Boolean(s.enabled);
+        notifyRecipientEl.value = s.recipient || "";
+        notifyStatus.textContent = "Saved.";
+        void loadNotifySettingsUi();
+      } catch {
+        notifyStatus.textContent = "Save failed (network).";
+      }
     };
     const showRawEl = document.getElementById("showRaw");
     showRawEl.checked = localStorage.getItem("prgenie_runner_show_raw") === "1";
@@ -354,6 +430,7 @@ export function runnerUiHtml(port: number): string {
 
     updateSteerUi();
     refresh();
+    void loadNotifySettingsUi();
     setInterval(refresh, 8000);
   </script>
 </body>

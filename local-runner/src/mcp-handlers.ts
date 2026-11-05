@@ -34,7 +34,7 @@ export const RUNNER_MCP_TOOLS = [
   {
     name: "list_jobs",
     description:
-      "List runner jobs (newest first). Merged PRs are archived and omitted from the default list.",
+      "List runner jobs (newest first). Merged PRs drop off the list after about one hour.",
     inputSchema: { type: "object", properties: {} },
   },
   {

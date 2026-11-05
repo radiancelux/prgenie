@@ -25,3 +25,7 @@ export function jobFile(dataDir: string, jobId: string): string {
 export function jobLogFile(dataDir: string, jobId: string): string {
   return path.join(logsDir(dataDir), `${jobId}.log`);
 }
+
+export function notifySettingsFile(dataDir: string): string {
+  return path.join(dataDir, "notify-settings.json");
+}

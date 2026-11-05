@@ -89,7 +89,9 @@ Default **`maxRounds`** = 2 (review/fix cycles). Reviewer must post **one** GitH
 
 ### Dashboard (localhost UI)
 
-The jobs table shows **Ticket** (Linear), **PR**, **Status** (CI), **Model**, **Tokens** (summed from cursor-agent `stream-json` usage in the job log), and **Updated**. On narrow screens (~390px) rows become cards. The job detail view shows a **Cursor-style agent transcript** (stream-json), optional raw log toggle, and a **Steer** box that queues follow-up text via the same bearer-protected API as MCP `steer_job`. While a job has a PR, the runner polls CI on a modest interval during active stages and until checks settle on terminal jobs. It prefers **`origin pr checks`** when the Origin CLI is authenticated; otherwise it falls back to GitHub **`gh pr view --json statusCheckRollup`**. The CI badge includes the source (`origin` or `github`).
+The jobs table shows **Ticket** (Linear), **PR**, **Status** (CI), **Model**, **Tokens** (summed from cursor-agent `stream-json` usage in the job log), and **Updated**. On narrow screens (~390px) rows become cards. The job detail view shows a **Cursor-style agent transcript** (stream-json), optional raw log toggle, and a **Steer** box that queues follow-up text via the same bearer-protected API as MCP `steer_job`. **Email notifications** can be toggled on/off and a recipient set in the dashboard; settings persist under the runner data dir (`notify-settings.json`). The Resend API key is never shown in the UI — only `RESEND_API_KEY` / `PRGENIE_RUNNER_RESEND_KEY_FILE` on the server. When the dashboard recipient is empty, notify email falls back to `PRGENIE_RUNNER_NOTIFY_EMAIL`. While a job has a PR, the runner polls CI on a modest interval during active stages and until checks settle on terminal jobs. It prefers **`origin pr checks`** when the Origin CLI is authenticated; otherwise it falls back to GitHub **`gh pr view --json statusCheckRollup`**. The CI badge includes the source (`origin` or `github`).
+
+Authenticated API: `GET` / `PUT /api/notify-settings` with bearer token (same as other `/api/*` routes).
 
 ## Example job
 
@@ -126,8 +128,8 @@ Real dogfood: use a ticket prompt file, local `repoPath`, valid `gh auth`, and R
 
 ## Resend
 
-Emails send when (1) a PR is detected after implementor and (2) the loop ends (`approved` or `changes_remaining`). Integration tests mock HTTP; unit tests live in `src/resend.test.ts`.
+Emails send when notify is **enabled** in the dashboard (or persisted settings), a recipient is set (dashboard or `PRGENIE_RUNNER_NOTIFY_EMAIL`), Resend is configured, and (1) a PR is detected after implementor and (2) the loop ends (`approved` or `changes_remaining`). Integration tests mock HTTP; unit tests live in `src/resend.test.ts`.
 
 ## Persistence
 
-Jobs are JSON under `$PRGENIE_RUNNER_DATA_DIR/jobs/`. Restarting `serve` reloads active jobs (`building`, `reviewing`, `fixing`) and continues the loop.
+Jobs are JSON under `$PRGENIE_RUNNER_DATA_DIR/jobs/`. Email notify preferences live in `$PRGENIE_RUNNER_DATA_DIR/notify-settings.json`. Restarting `serve` reloads active jobs (`building`, `reviewing`, `fixing`) and continues the loop.
