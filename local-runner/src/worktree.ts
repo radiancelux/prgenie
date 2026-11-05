@@ -1,4 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, access } from "node:fs/promises";
 import path from "node:path";
 import { cursorWorktreeDir, repoSlugFromPath } from "./paths.js";
 import { git } from "./github.js";
@@ -22,8 +22,20 @@ export async function ensureWorktree(
   const wt = cursorWorktreeDir(slug, jobId);
   await mkdir(path.dirname(wt), { recursive: true });
   const exists = await git(repoPath, ["worktree", "list", "--porcelain"]);
-  if (exists.stdout.includes(`worktree ${wt}`)) {
+  const listed = exists.stdout.includes(`worktree ${wt}`);
+  let onDisk = false;
+  try {
+    await access(wt);
+    onDisk = true;
+  } catch {
+    onDisk = false;
+  }
+  if (listed && onDisk) {
     return wt;
+  }
+  if (listed && !onDisk) {
+    await git(repoPath, ["worktree", "remove", "--force", wt]).catch(() => undefined);
+    await rm(wt, { recursive: true, force: true }).catch(() => undefined);
   }
   const add = await git(repoPath, ["worktree", "add", "-B", branch, wt, "origin/main"]);
   if (add.code !== 0) {

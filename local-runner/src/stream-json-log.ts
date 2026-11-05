@@ -90,7 +90,7 @@ export function assistantText(message: unknown): string {
 }
 
 export function looksLikeStreamJsonLog(raw: string): boolean {
-  if (/--- agent \([^)]+,\s*stream-json\)\s*---/.test(raw)) return true;
+  if (/--- agent \([^)]+\)\s*---/.test(raw)) return true;
   for (const line of raw.split("\n")) {
     const t = line.trim();
     if (!t.startsWith("{")) continue;

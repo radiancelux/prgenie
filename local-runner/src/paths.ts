@@ -29,3 +29,7 @@ export function jobLogFile(dataDir: string, jobId: string): string {
 export function notifySettingsFile(dataDir: string): string {
   return path.join(dataDir, "notify-settings.json");
 }
+
+export function runnerSettingsFile(dataDir: string): string {
+  return path.join(dataDir, "settings.json");
+}

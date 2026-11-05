@@ -4,13 +4,15 @@ import type { RunnerConfig } from "./config.js";
 import type { RunnerEngine } from "./engine.js";
 import { handleMcpJsonRpc } from "./mcp-handlers.js";
 import { runnerListenUrls, urlHostForRequest } from "./listen-urls.js";
+import { readLogTail } from "./store.js";
 import {
   loadNotifySettings,
   saveNotifySettings,
   toPublicNotifySettings,
 } from "./notify-settings.js";
-import { readLogTail } from "./store.js";
+import { loadSettings, saveSettings, toPublicSettings, type SettingsPatch } from "./settings.js";
 import { runnerUiHtml } from "./ui-html.js";
+import { setupUiHtml } from "./setup-ui-html.js";
 
 const TERMINAL_JOB_STAGES = new Set([
   "approved",
@@ -66,6 +68,12 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
     if (path === "/" && req.method === "GET") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(runnerUiHtml(config.port, runnerListenUrls(config.host, config.port)));
+      return;
+    }
+
+    if (path === "/setup" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(setupUiHtml(config.port, runnerListenUrls(config.host, config.port)));
       return;
     }
 
@@ -126,6 +134,73 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
       const saved = await saveNotifySettings(config.dataDir, patch);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(toPublicNotifySettings(config, saved)));
+      return;
+    }
+
+    if (path === "/api/settings" && req.method === "GET") {
+      const settings = await loadSettings(config.dataDir);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(toPublicSettings(config, settings)));
+      return;
+    }
+
+    if (path === "/api/settings" && req.method === "PATCH") {
+      const body = await readBody(req);
+      let payload: SettingsPatch & { notify?: { enabled?: unknown; recipient?: unknown } };
+      try {
+        payload = JSON.parse(body) as SettingsPatch;
+      } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid json" }));
+        return;
+      }
+      const patch: SettingsPatch = {};
+      if (payload.configured !== undefined) patch.configured = Boolean(payload.configured);
+      if (payload.defaultModel !== undefined) {
+        patch.defaultModel =
+          payload.defaultModel === null || payload.defaultModel === ""
+            ? null
+            : String(payload.defaultModel).trim();
+      }
+      if (payload.defaultDriver !== undefined) {
+        patch.defaultDriver = String(payload.defaultDriver ?? "").trim() || "cursor-agent";
+      }
+      if (payload.hostBindHint !== undefined) {
+        patch.hostBindHint =
+          payload.hostBindHint === null || payload.hostBindHint === ""
+            ? null
+            : String(payload.hostBindHint).trim();
+      }
+      if (payload.notify) {
+        patch.notify = {};
+        if (payload.notify.enabled !== undefined) {
+          patch.notify.enabled = Boolean(payload.notify.enabled);
+        }
+        if (payload.notify.recipient !== undefined) {
+          patch.notify.recipient =
+            payload.notify.recipient === null || payload.notify.recipient === ""
+              ? null
+              : String(payload.notify.recipient).trim();
+        }
+      }
+      if (Array.isArray(payload.drivers)) {
+        patch.drivers = payload.drivers.map((d) => ({
+          id: String(d.id ?? ""),
+          kind: d.kind,
+          binary: d.binary ?? null,
+          endpoint: d.endpoint ?? null,
+          notes: d.notes ?? null,
+          apiKey:
+            typeof d.apiKey === "string" && d.apiKey.trim() && !/^•+$/.test(d.apiKey.trim())
+              ? d.apiKey.trim()
+              : d.apiKey === null
+                ? null
+                : undefined,
+        }));
+      }
+      const saved = await saveSettings(config.dataDir, patch);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(toPublicSettings(config, saved)));
       return;
     }
 

@@ -2,8 +2,10 @@ import type { RunnerConfig } from "./config.js";
 import type { RunnerEngine } from "./engine.js";
 import type { JobRecord } from "./types.js";
 import { fetchPrCiStatus, shouldPollCi } from "./ci.js";
+import { syncDraftReadyForJob } from "./draft-pr.js";
 import { resolveJobSpawnCwd } from "./job-cwd.js";
 import { listJobs, loadJob, saveJob } from "./store.js";
+import { maybeCleanupJobWorktree } from "./worktree-cleanup.js";
 
 const CI_POLL_MS = 45_000;
 
@@ -43,10 +45,22 @@ export class CiWatcher {
       });
       const prev = JSON.stringify(job.ciStatus);
       job.ciStatus = { ...next, checkedAt: new Date().toISOString() };
-      if (JSON.stringify(job.ciStatus) !== prev) {
+      let changed = JSON.stringify(job.ciStatus) !== prev;
+
+      const draft = await syncDraftReadyForJob(job, cwd);
+      if (draft.changed) {
+        job = draft.job;
+        changed = true;
+      }
+
+      if (changed) {
         await saveJob(this.config.dataDir, job);
         this.engine.emit("event", job.id, { type: "ci" });
       }
+
+      await maybeCleanupJobWorktree(this.config, job, Date.now(), (msg) =>
+        console.warn(`[ci-watcher] ${msg}`),
+      );
     } catch {
       // Never crash serve on CI poll failures.
     }
@@ -54,9 +68,15 @@ export class CiWatcher {
 
   private async tick(): Promise<void> {
     const jobs = await listJobs(this.config.dataDir);
+    const nowMs = Date.now();
     for (const job of jobs) {
-      if (!shouldPollCi(job)) continue;
-      await this.refreshJob(job);
+      if (shouldPollCi(job)) {
+        await this.refreshJob(job);
+      } else if (job.worktreePath) {
+        await maybeCleanupJobWorktree(this.config, job, nowMs, (msg) =>
+          console.warn(`[ci-watcher] ${msg}`),
+        );
+      }
     }
   }
 }

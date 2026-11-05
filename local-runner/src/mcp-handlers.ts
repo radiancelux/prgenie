@@ -18,6 +18,10 @@ export const RUNNER_MCP_TOOLS = [
         fixPromptFile: { type: "string" },
         maxRounds: { type: "number" },
         model: { type: "string" },
+        driver: {
+          type: "string",
+          description: "Agent driver id (cursor-agent, claude-code, local-model)",
+        },
         dryRun: { type: "boolean" },
         ticketUrl: {
           type: "string",
@@ -83,6 +87,7 @@ export async function handleRunnerTool(
         fixPromptFile: typeof args.fixPromptFile === "string" ? args.fixPromptFile : undefined,
         maxRounds: typeof args.maxRounds === "number" ? args.maxRounds : undefined,
         model: typeof args.model === "string" ? args.model : undefined,
+        driver: typeof args.driver === "string" ? args.driver : undefined,
         dryRun: typeof args.dryRun === "boolean" ? args.dryRun : undefined,
         ticketUrl: typeof args.ticketUrl === "string" ? args.ticketUrl : undefined,
         linearIssue: typeof args.linearIssue === "string" ? args.linearIssue : undefined,
