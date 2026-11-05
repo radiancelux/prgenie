@@ -3,11 +3,12 @@ import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { archiveJobIfPrMerged } from "./job-merge.js";
-import { createJob, listJobs, loadJob } from "./store.js";
+import { MERGED_HIDE_AFTER_MS, shouldHideMergedJob } from "./ci.js";
+import { syncJobMergedStatus } from "./job-merge.js";
+import { createJob, listJobsForDisplay, loadJob } from "./store.js";
 
-describe("archiveJobIfPrMerged", () => {
-  it("sets archivedAt when gh reports merged", async () => {
+describe("syncJobMergedStatus", () => {
+  it("sets ciStatus merged and keeps job on dashboard until hide window", async () => {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-merge-"));
     const job = await createJob(
       dataDir,
@@ -17,16 +18,24 @@ describe("archiveJobIfPrMerged", () => {
     job.prNumber = 99;
     job.prUrl = "https://github.com/o/r/pull/99";
 
-    const { archived, job: updated } = await archiveJobIfPrMerged(dataDir, job, async () => ({
+    const mergedAt = "2026-11-05T12:00:00.000Z";
+    const { updated, job: after } = await syncJobMergedStatus(dataDir, job, async () => ({
       merged: true,
-      mergedAt: "2026-11-05T12:00:00.000Z",
+      mergedAt,
     }));
-    assert.equal(archived, true);
-    assert.equal(updated.archivedAt, "2026-11-05T12:00:00.000Z");
+    assert.equal(updated, true);
+    assert.equal(after.ciStatus?.status, "merged");
+    assert.equal(after.ciStatus?.mergedAt, mergedAt);
 
     const onDisk = await loadJob(dataDir, job.id);
-    assert.equal(onDisk?.archivedAt, "2026-11-05T12:00:00.000Z");
-    assert.equal((await listJobs(dataDir)).length, 0);
-    assert.equal((await listJobs(dataDir, { includeArchived: true })).length, 1);
+    assert.equal(onDisk?.ciStatus?.status, "merged");
+
+    const mergedMs = Date.parse(mergedAt);
+    assert.equal((await listJobsForDisplay(dataDir, mergedMs + 1000)).length, 1);
+    assert.equal(
+      shouldHideMergedJob(onDisk!, mergedMs + MERGED_HIDE_AFTER_MS),
+      true,
+    );
+    assert.equal((await listJobsForDisplay(dataDir, mergedMs + MERGED_HIDE_AFTER_MS)).length, 0);
   });
 });

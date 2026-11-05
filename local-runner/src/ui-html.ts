@@ -17,6 +17,8 @@ export function runnerUiHtml(port: number): string {
     .badge.failure { color: #ff8a8a; }
     .badge.pending { color: #c9b458; }
     .badge.neutral { color: #9aa3b2; }
+    .badge.merged { color: #9ad0ff; }
+    .badge.merge_conflict { color: #ffb86c; }
     a { color: #7eb8ff; }
     pre { background: #1a1d24; padding: 0.75rem; overflow: auto; max-height: 24rem; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; }
     .log-panel { margin-top: 0.5rem; }
@@ -36,7 +38,7 @@ export function runnerUiHtml(port: number): string {
   <p><label>Bearer token <input type="password" id="token" placeholder="PRGENIE_RUNNER_TOKEN" /></label>
   <button id="saveToken">Save</button></p>
   <table>
-    <thead><tr><th>Job</th><th>Stage</th><th>Round</th><th>Ticket</th><th>PR</th><th>Model</th><th>Tokens</th><th>CI</th><th>Updated</th></tr></thead>
+    <thead><tr><th>Job</th><th>Stage</th><th>Round</th><th>Ticket</th><th>PR</th><th>Status</th><th>Model</th><th>Tokens</th><th>Updated</th></tr></thead>
     <tbody id="jobs"></tbody>
   </table>
   <h2 id="detailTitle">Log tail</h2>
@@ -78,9 +80,9 @@ export function runnerUiHtml(port: number): string {
       const detail = "in " + (u.input||0) + ", out " + (u.output||0);
       return '<span title="' + detail + '">' + compact + "</span>";
     }
-    function fmtCi(ci) {
+    function fmtStatus(ci) {
       if (!ci) return "—";
-      const label = ci.status + (ci.source ? " (" + ci.source + ")" : "");
+      const label = ci.summary || ci.status;
       const cls = "badge " + (ci.status || "neutral");
       if (ci.checksUrl) return '<a class="' + cls + '" href="' + ci.checksUrl + '" target="_blank">' + label + "</a>";
       return '<span class="' + cls + '">' + label + "</span>";
@@ -110,9 +112,9 @@ export function runnerUiHtml(port: number): string {
         <td>\${j.reviewRound}/\${j.maxRounds}</td>
         <td>\${fmtTicket(j)}</td>
         <td>\${j.prUrl ? '<a href="'+j.prUrl+'" target="_blank">PR</a>' : "—"}</td>
+        <td>\${fmtStatus(j.ciStatus)}</td>
         <td>\${j.model || "—"}</td>
         <td>\${fmtTokens(j.tokenUsage)}</td>
-        <td>\${fmtCi(j.ciStatus)}</td>
         <td>\${j.updatedAt}</td>
       </tr>\`).join("");
       tbody.querySelectorAll("tr").forEach(tr => tr.onclick = () => selectJob(tr.dataset.id));

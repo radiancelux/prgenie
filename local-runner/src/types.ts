@@ -30,13 +30,16 @@ export interface TokenUsage {
   total: number;
 }
 
-export type CiRollupStatus = "pending" | "success" | "failure" | "neutral" | "unknown";
+export type CiRollupStatus =
+  "pending" | "success" | "failure" | "neutral" | "unknown" | "merged" | "merge_conflict";
 
 export interface CiStatusInfo {
   status: CiRollupStatus;
   summary?: string;
   checkedAt: string;
   checksUrl?: string;
+  /** Set when GitHub reports the PR merged (ISO 8601). */
+  mergedAt?: string | null;
   /** Origin `origin pr checks` when reachable; otherwise GitHub Actions rollup via `gh`. */
   source: "origin" | "github";
 }
@@ -64,7 +67,7 @@ export interface JobRecord {
   steerQueue: string[];
   stopRequested: boolean;
   dryRun: boolean;
-  /** Set when the linked PR is merged — hidden from default list; CI polling stops. */
+  /** Legacy field; merge visibility uses ciStatus.mergedAt + MERGED_HIDE_AFTER_MS. */
   archivedAt: string | null;
 }
 

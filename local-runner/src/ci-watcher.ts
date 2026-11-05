@@ -2,7 +2,6 @@ import type { RunnerConfig } from "./config.js";
 import type { RunnerEngine } from "./engine.js";
 import type { JobRecord } from "./types.js";
 import { fetchPrCiStatus, shouldPollCi } from "./ci.js";
-import { archiveJobIfPrMerged } from "./job-merge.js";
 import { resolveJobSpawnCwd } from "./job-cwd.js";
 import { listJobs, loadJob, saveJob } from "./store.js";
 
@@ -34,29 +33,27 @@ export class CiWatcher {
   }
 
   private async refreshJob(job: JobRecord): Promise<void> {
-    const cwd = resolveJobSpawnCwd(job);
-    if (!cwd) return;
-    const next = await fetchPrCiStatus(cwd, {
-      prNumber: job.prNumber,
-      branch: job.input.branch,
-    });
-    const prev = JSON.stringify(job.ciStatus);
-    job.ciStatus = { ...next, checkedAt: new Date().toISOString() };
-    if (JSON.stringify(job.ciStatus) !== prev) {
-      await saveJob(this.config.dataDir, job);
-      this.engine.emit("event", job.id, { type: "ci" });
+    try {
+      const cwd = resolveJobSpawnCwd(job);
+      if (!cwd) return;
+      const next = await fetchPrCiStatus(cwd, {
+        prNumber: job.prNumber,
+        branch: job.input.branch,
+      });
+      const prev = JSON.stringify(job.ciStatus);
+      job.ciStatus = { ...next, checkedAt: new Date().toISOString() };
+      if (JSON.stringify(job.ciStatus) !== prev) {
+        await saveJob(this.config.dataDir, job);
+        this.engine.emit("event", job.id, { type: "ci" });
+      }
+    } catch {
+      // Never crash serve on CI poll failures.
     }
   }
 
   private async tick(): Promise<void> {
-    const jobs = await listJobs(this.config.dataDir, { includeArchived: true });
-    for (let job of jobs) {
-      const { job: afterMerge, archived } = await archiveJobIfPrMerged(this.config.dataDir, job);
-      job = afterMerge;
-      if (archived) {
-        this.engine.emit("event", job.id, { type: "ci" });
-        continue;
-      }
+    const jobs = await listJobs(this.config.dataDir);
+    for (const job of jobs) {
       if (!shouldPollCi(job)) continue;
       await this.refreshJob(job);
     }

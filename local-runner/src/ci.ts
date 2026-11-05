@@ -1,7 +1,9 @@
 import type { CiRollupStatus, CiStatusInfo, JobRecord } from "./types.js";
 import { gh, type GhResult } from "./github.js";
-import { isJobArchived } from "./job-cwd.js";
 import { spawnCommand } from "./spawn-cmd.js";
+
+/** Default job list hides merged PRs after this long (still kept on disk). */
+export const MERGED_HIDE_AFTER_MS = 60 * 60 * 1000;
 
 export type CheckRow = {
   name?: string;
@@ -12,6 +14,43 @@ export type CheckRow = {
 
 export function isCiFinal(status: CiRollupStatus): boolean {
   return status === "success" || status === "failure" || status === "neutral";
+}
+
+export function isMergedStatus(job: JobRecord): boolean {
+  return job.ciStatus?.status === "merged" || !!job.ciStatus?.mergedAt;
+}
+
+export function shouldHideMergedJob(job: JobRecord, nowMs = Date.now()): boolean {
+  if (!isMergedStatus(job)) return false;
+  const mergedAt = job.ciStatus?.mergedAt;
+  if (!mergedAt) return false;
+  const t = Date.parse(mergedAt);
+  if (Number.isNaN(t)) return false;
+  return nowMs - t >= MERGED_HIDE_AFTER_MS;
+}
+
+export type GhPrViewFields = {
+  state?: string;
+  mergedAt?: string | null;
+  mergeable?: string;
+  mergeableState?: string;
+  url?: string;
+};
+
+export function resolveDisplayStatus(
+  pr: GhPrViewFields,
+  ciRollup: CiRollupStatus,
+): { status: CiRollupStatus; mergedAt?: string | null } {
+  const state = (pr.state ?? "").toUpperCase();
+  if (state === "MERGED" || pr.mergedAt) {
+    return { status: "merged", mergedAt: pr.mergedAt ?? null };
+  }
+  const mergeable = (pr.mergeable ?? "").toUpperCase();
+  const mergeableState = (pr.mergeableState ?? "").toUpperCase();
+  if (mergeable === "CONFLICTING" || mergeableState === "DIRTY" || mergeableState === "BLOCKED") {
+    return { status: "merge_conflict" };
+  }
+  return { status: ciRollup };
 }
 
 /** Roll up individual check rows into one dashboard status. */
@@ -117,6 +156,46 @@ function parseOriginChecksJson(stdout: string): CheckRow[] {
   return rows;
 }
 
+const GH_PR_VIEW_JSON = "state,mergedAt,mergeable,mergeableState,statusCheckRollup,url";
+
+async function fetchGhPrView(
+  cwd: string,
+  target: { prNumber?: number | null; branch?: string },
+): Promise<
+  | {
+      ok: true;
+      pr: GhPrViewFields;
+      ciRollup: CiRollupStatus;
+      ciSummary: string;
+    }
+  | { ok: false }
+> {
+  const ref =
+    target.prNumber != null ? String(target.prNumber) : target.branch?.trim() || undefined;
+  if (!ref) return { ok: false };
+
+  const ghArgs =
+    target.prNumber != null
+      ? ["pr", "view", String(target.prNumber), "--json", GH_PR_VIEW_JSON]
+      : ["pr", "view", ref, "--json", GH_PR_VIEW_JSON];
+  const ghRes = await gh(cwd, ghArgs);
+  if (ghRes.code !== 0) return { ok: false };
+  try {
+    const parsed = JSON.parse(ghRes.stdout) as GhPrViewFields & {
+      statusCheckRollup?: Array<{ name?: string; status?: string; conclusion?: string | null }>;
+    };
+    const rolled = rollupFromGithubStatusCheckRollup(parsed.statusCheckRollup ?? []);
+    return {
+      ok: true,
+      pr: parsed,
+      ciRollup: rolled.status,
+      ciSummary: rolled.summary,
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+
 export async function fetchPrCiStatus(
   cwd: string,
   target: { prNumber?: number | null; branch?: string },
@@ -125,6 +204,28 @@ export async function fetchPrCiStatus(
     target.prNumber != null ? String(target.prNumber) : target.branch?.trim() || undefined;
   if (!ref) {
     return { status: "unknown", summary: "no PR", source: "github" };
+  }
+
+  const ghView = await fetchGhPrView(cwd, target);
+  if (ghView.ok) {
+    const fromPr = resolveDisplayStatus(ghView.pr, ghView.ciRollup);
+    if (fromPr.status === "merged") {
+      return {
+        status: "merged",
+        summary: "merged",
+        checksUrl: ghView.pr.url,
+        mergedAt: fromPr.mergedAt ?? ghView.pr.mergedAt ?? null,
+        source: "github",
+      };
+    }
+    if (fromPr.status === "merge_conflict") {
+      return {
+        status: "merge_conflict",
+        summary: "merge conflict",
+        checksUrl: ghView.pr.url,
+        source: "github",
+      };
+    }
   }
 
   const originRes = await originCmd(cwd, [
@@ -138,64 +239,74 @@ export async function fetchPrCiStatus(
     const checks = parseOriginChecksJson(originRes.stdout);
     const rolled = rollupCheckStatuses(checks);
     const checksUrl = checks.find((c) => c.detailsUrl)?.detailsUrl;
-    return {
+    const base = {
       status: rolled.status,
       summary: rolled.summary,
       checksUrl,
-      source: "origin",
+      source: "origin" as const,
+    };
+    if (ghView.ok) {
+      const fromPr = resolveDisplayStatus(ghView.pr, rolled.status);
+      const summary =
+        fromPr.status === "success"
+          ? "green"
+          : fromPr.status === "merge_conflict"
+            ? "merge conflict"
+            : rolled.summary;
+      return {
+        ...base,
+        status: fromPr.status,
+        summary,
+        checksUrl: ghView.pr.url ?? checksUrl,
+        mergedAt: fromPr.mergedAt,
+      };
+    }
+    return base;
+  }
+
+  if (ghView.ok) {
+    const fromPr = resolveDisplayStatus(ghView.pr, ghView.ciRollup);
+    const summary =
+      fromPr.status === "merged"
+        ? "merged"
+        : fromPr.status === "merge_conflict"
+          ? "merge conflict"
+          : fromPr.status === "success"
+            ? "green"
+            : ghView.ciSummary;
+    return {
+      status: fromPr.status,
+      summary,
+      checksUrl: ghView.pr.url,
+      mergedAt: fromPr.mergedAt,
+      source: "github",
     };
   }
 
-  const ghArgs =
-    target.prNumber != null
-      ? ["pr", "view", String(target.prNumber), "--json", "statusCheckRollup,url"]
-      : ["pr", "view", ref, "--json", "statusCheckRollup,url"];
-  const ghRes = await gh(cwd, ghArgs);
-  if (ghRes.code !== 0) {
-    return {
-      status: "unknown",
-      summary: "CI lookup failed",
-      source: "github",
-    };
-  }
-  try {
-    const parsed = JSON.parse(ghRes.stdout) as {
-      url?: string;
-      statusCheckRollup?: Array<{ name?: string; status?: string; conclusion?: string | null }>;
-    };
-    const rolled = rollupFromGithubStatusCheckRollup(parsed.statusCheckRollup ?? []);
-    return {
-      status: rolled.status,
-      summary: rolled.summary,
-      checksUrl: parsed.url,
-      source: "github",
-    };
-  } catch {
-    return { status: "unknown", summary: "CI parse failed", source: "github" };
-  }
+  return {
+    status: "unknown",
+    summary: "CI lookup failed",
+    source: "github",
+  };
 }
 
 const CI_ACTIVE_STAGES = new Set(["building", "reviewing", "fixing", "approved"]);
 
-export function shouldPollCi(job: JobRecord): boolean {
-  if (isJobArchived(job)) return false;
+const MERGE_WATCH_STAGES = new Set(["approved", "changes_remaining", "stuck", "failed", "stopped"]);
 
+export function shouldPollCi(job: JobRecord): boolean {
   const hasPr = job.prNumber != null || job.prUrl != null;
   if (!hasPr) return false;
 
+  if (isMergedStatus(job)) return false;
+
+  if (MERGE_WATCH_STAGES.has(job.stage)) return true;
+
   if (job.ciStatus && isCiFinal(job.ciStatus.status)) {
-    if (CI_ACTIVE_STAGES.has(job.stage)) return false;
     return false;
   }
 
   if (CI_ACTIVE_STAGES.has(job.stage)) return true;
-
-  if (["changes_remaining", "stuck", "failed", "stopped"].includes(job.stage)) {
-    if ((job.stage === "failed" || job.stage === "stopped") && !job.prUrl && job.prNumber == null) {
-      return false;
-    }
-    return true;
-  }
 
   return false;
 }

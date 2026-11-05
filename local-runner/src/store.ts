@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { JobInput, JobRecord, StartJobArgs } from "./types.js";
-import { isJobArchived } from "./job-cwd.js";
+import { shouldHideMergedJob } from "./ci.js";
 import { resolveJobTicket } from "./linear-ticket.js";
 import { jobFile, jobLogFile, jobsDir, logsDir, repoSlugFromPath } from "./paths.js";
 
@@ -46,17 +46,24 @@ export async function listJobIds(dataDir: string): Promise<string[]> {
 
 export type ListJobsOptions = { includeArchived?: boolean };
 
-export async function listJobs(dataDir: string, opts: ListJobsOptions = {}): Promise<JobRecord[]> {
+export async function listJobs(dataDir: string, _opts: ListJobsOptions = {}): Promise<JobRecord[]> {
   const ids = await listJobIds(dataDir);
   const jobs: JobRecord[] = [];
   for (const id of ids) {
     const j = await loadJob(dataDir, id);
-    if (!j) continue;
-    if (!opts.includeArchived && isJobArchived(j)) continue;
-    jobs.push(j);
+    if (j) jobs.push(j);
   }
   jobs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return jobs;
+}
+
+/** Jobs shown on the dashboard and via list_jobs (merged PRs drop off after ~1h). */
+export async function listJobsForDisplay(
+  dataDir: string,
+  nowMs = Date.now(),
+): Promise<JobRecord[]> {
+  const jobs = await listJobs(dataDir);
+  return jobs.filter((j) => !shouldHideMergedJob(j, nowMs));
 }
 
 export async function createJob(

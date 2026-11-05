@@ -2,7 +2,7 @@ import type { RunnerConfig } from "./config.js";
 import { CiWatcher } from "./ci-watcher.js";
 import { runJobLoop, jobSnapshot } from "./job-runner.js";
 import { JobControl } from "./job-control.js";
-import { createJob, listJobs, loadJob, saveJob } from "./store.js";
+import { createJob, listJobs, listJobsForDisplay, loadJob, saveJob } from "./store.js";
 import type { JobRecord } from "./types.js";
 import type { JobEvent, StartJobArgs } from "./types.js";
 import { EventEmitter } from "node:events";
@@ -30,9 +30,8 @@ export class RunnerEngine extends EventEmitter {
   }
 
   async init(): Promise<void> {
-    const jobs = await listJobs(this.config.dataDir, { includeArchived: true });
+    const jobs = await listJobs(this.config.dataDir);
     for (const job of jobs) {
-      if (job.archivedAt) continue;
       if (ACTIVE_STAGES.has(job.stage) && !job.stopRequested) {
         this.schedule(job.id);
       }
@@ -72,7 +71,7 @@ export class RunnerEngine extends EventEmitter {
   }
 
   async list(): Promise<JobRecord[]> {
-    return listJobs(this.config.dataDir);
+    return listJobsForDisplay(this.config.dataDir);
   }
 
   async get(jobId: string) {
