@@ -3,7 +3,8 @@ import type { RunnerConfig } from "./config.js";
 import { AgentRunner } from "./agent.js";
 import {
   fetchLatestPrCommentId,
-  fetchPrCommentVerdictSince,
+  fetchLatestPrReviewId,
+  fetchPrVerdictSince,
   findPrForBranch,
   isBranchSyncedWithOrigin,
   type Verdict,
@@ -191,6 +192,10 @@ export async function runJobLoop(
         !job.dryRun && job.prNumber != null
           ? await fetchLatestPrCommentId(wt, job.prNumber)
           : undefined;
+      const reviewBaselineReviewId =
+        !job.dryRun && job.prNumber != null
+          ? await fetchLatestPrReviewId(wt, job.prNumber)
+          : undefined;
       const reviewRoundStartedAt = new Date().toISOString();
 
       const reviewPrompt = await readPromptFile(
@@ -222,9 +227,10 @@ export async function runJobLoop(
       if (job.dryRun) {
         verdict = job.reviewRound >= job.maxRounds ? "APPROVE" : "CHANGES";
       } else if (job.prNumber != null) {
-        verdict = await fetchPrCommentVerdictSince(wt, job.prNumber, {
+        verdict = await fetchPrVerdictSince(wt, job.prNumber, {
           sinceIso: reviewRoundStartedAt,
           afterCommentId: reviewBaselineCommentId,
+          afterReviewId: reviewBaselineReviewId,
         });
       }
 

@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   findVerdictInCommentsSince,
+  findVerdictInReviewsSince,
   isBranchSyncedWithOrigin,
   parseVerdictFromText,
   type GitFn,
@@ -65,6 +66,80 @@ describe("findVerdictInCommentsSince", () => {
       "CHANGES",
     );
     assert.equal(findVerdictInCommentsSince(comments, { sinceIso: "2026-01-01T12:30:00Z" }), null);
+  });
+});
+
+describe("findVerdictInReviewsSince", () => {
+  it("ignores reviews from prior rounds by review id", () => {
+    const reviews = [
+      {
+        id: 100,
+        body: "Old\nVERDICT: APPROVE",
+        submitted_at: "2026-01-01T10:00:00Z",
+      },
+      {
+        id: 101,
+        body: "This round via gh pr review --comment\nVERDICT: APPROVE",
+        submitted_at: "2026-01-01T12:00:00Z",
+      },
+    ];
+    assert.equal(
+      findVerdictInReviewsSince(reviews, {
+        sinceIso: "2026-01-01T11:00:00Z",
+        afterReviewId: 100,
+      }),
+      "APPROVE",
+    );
+    assert.equal(
+      findVerdictInReviewsSince(reviews, {
+        sinceIso: "2026-01-01T11:00:00Z",
+        afterReviewId: 101,
+      }),
+      null,
+    );
+  });
+});
+
+describe("verdict source priority", () => {
+  it("issue-comment wins when both comment and review exist in round", () => {
+    const scope = {
+      sinceIso: "2026-01-01T11:00:00Z",
+      afterCommentId: 10,
+      afterReviewId: 100,
+    };
+    const comments = [
+      { id: 11, body: "Issue comment\nVERDICT: CHANGES", created_at: "2026-01-01T12:00:00Z" },
+    ];
+    const reviews = [
+      {
+        id: 101,
+        body: "Review body\nVERDICT: APPROVE",
+        submitted_at: "2026-01-01T12:01:00Z",
+      },
+    ];
+    const fromComments = findVerdictInCommentsSince(comments, scope);
+    assert.equal(fromComments, "CHANGES");
+    assert.equal(fromComments ?? findVerdictInReviewsSince(reviews, scope), "CHANGES");
+  });
+
+  it("uses review-body verdict when comments lack one in round", () => {
+    const scope = {
+      sinceIso: "2026-01-01T11:00:00Z",
+      afterCommentId: 10,
+      afterReviewId: 100,
+    };
+    const comments = [
+      { id: 11, body: "Feedback without verdict line", created_at: "2026-01-01T12:00:00Z" },
+    ];
+    const reviews = [
+      {
+        id: 101,
+        body: "Summary\nVERDICT: APPROVE",
+        submitted_at: "2026-01-01T12:00:00Z",
+      },
+    ];
+    assert.equal(findVerdictInCommentsSince(comments, scope), null);
+    assert.equal(findVerdictInReviewsSince(reviews, scope), "APPROVE");
   });
 });
 

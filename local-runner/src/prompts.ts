@@ -1,8 +1,10 @@
 export const DEFAULT_REVIEW_PROMPT = `You are the reviewer for one GitHub pull request.
 
-Read the PR diff and existing comments. Post exactly ONE new PR review comment (not a review approval event) that summarizes findings.
+Read the PR diff and existing comments. Post exactly ONE GitHub issue comment on the pull request (same timeline as \`gh pr comment <N>\` or POST .../issues/<N>/comments).
 
-Your comment MUST end with a single line in this exact format (no extra text after it):
+Never use \`gh pr review\`, \`gh api .../pulls/.../reviews\`, or any Pull Request Review API.
+
+Your comment MUST end with a single line in this exact format (no extra text after that line):
 VERDICT: APPROVE
 or
 VERDICT: CHANGES

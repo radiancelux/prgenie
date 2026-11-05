@@ -40,6 +40,7 @@ Binary: `pnpm local-runner --help` (or `node local-runner/dist/runner.cjs`).
 | `PRGENIE_RUNNER_MODEL`                               | Default model (default `composer-2.5`)                         |
 | `PRGENIE_RUNNER_DRY_RUN`                             | `1` — skip real `cursor-agent` / git worktrees (tests & smoke) |
 | `PRGENIE_RUNNER_NOTIFY_EMAIL`                        | Resend notification recipient                                  |
+| `PRGENIE_RUNNER_FROM_EMAIL`                          | Resend sender (default `PR Genie Local Runner <runner@radiancelux.tech>`; full `Name <addr>` or bare addr) |
 | `RESEND_API_KEY` or `PRGENIE_RUNNER_RESEND_KEY_FILE` | Resend API key (never logged)                                  |
 
 Worktrees (non-dry-run): `~/.cursor/worktrees/<repo-slug>/<job-id>`.
@@ -73,7 +74,7 @@ pnpm local-runner serve
 
 `building` → `reviewing` (round N) → `fixing` → … → `approved` | `changes_remaining` | `stuck` | `failed` | `stopped`
 
-Default **`maxRounds`** = 2 (review/fix cycles). Reviewer must post **one** PR comment ending with `VERDICT: APPROVE` or `VERDICT: CHANGES` (built-in default review prompt enforces this).
+Default **`maxRounds`** = 2 (review/fix cycles). Reviewer must post **one** GitHub issue comment on the PR ending with `VERDICT: APPROVE` or `VERDICT: CHANGES` (built-in default review prompt enforces this). The runner also accepts the same `VERDICT:` line on PR review bodies as a fallback.
 
 ## Example job
 
