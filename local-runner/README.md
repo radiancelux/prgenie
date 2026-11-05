@@ -32,16 +32,16 @@ Binary: `pnpm local-runner --help` (or `node local-runner/dist/runner.cjs`).
 
 ## Config
 
-| Variable                                             | Purpose                                                        |
-| ---------------------------------------------------- | -------------------------------------------------------------- |
-| `PRGENIE_RUNNER_TOKEN`                               | **Required.** Bearer token for MCP + `/api/*`                  |
-| `PRGENIE_RUNNER_PORT`                                | HTTP port (default `9473`)                                     |
-| `PRGENIE_RUNNER_DATA_DIR`                            | Job JSON + logs (default `~/.prgenie/local-runner`)            |
-| `PRGENIE_RUNNER_MODEL`                               | Default model (default `composer-2.5`)                         |
-| `PRGENIE_RUNNER_DRY_RUN`                             | `1` — skip real `cursor-agent` / git worktrees (tests & smoke) |
-| `PRGENIE_RUNNER_NOTIFY_EMAIL`                        | Resend notification recipient                                  |
+| Variable                                             | Purpose                                                                                                    |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `PRGENIE_RUNNER_TOKEN`                               | **Required.** Bearer token for MCP + `/api/*`                                                              |
+| `PRGENIE_RUNNER_PORT`                                | HTTP port (default `9473`)                                                                                 |
+| `PRGENIE_RUNNER_DATA_DIR`                            | Job JSON + logs (default `~/.prgenie/local-runner`)                                                        |
+| `PRGENIE_RUNNER_MODEL`                               | Default model (default `composer-2.5`)                                                                     |
+| `PRGENIE_RUNNER_DRY_RUN`                             | `1` — skip real `cursor-agent` / git worktrees (tests & smoke)                                             |
+| `PRGENIE_RUNNER_NOTIFY_EMAIL`                        | Resend notification recipient                                                                              |
 | `PRGENIE_RUNNER_FROM_EMAIL`                          | Resend sender (default `PR Genie Local Runner <runner@radiancelux.tech>`; full `Name <addr>` or bare addr) |
-| `RESEND_API_KEY` or `PRGENIE_RUNNER_RESEND_KEY_FILE` | Resend API key (never logged)                                  |
+| `RESEND_API_KEY` or `PRGENIE_RUNNER_RESEND_KEY_FILE` | Resend API key (never logged)                                                                              |
 
 Worktrees (non-dry-run): `~/.cursor/worktrees/<repo-slug>/<job-id>`.
 
@@ -64,7 +64,7 @@ pnpm local-runner serve
 
 ### MCP tools
 
-- `start_job` — `repoPath` or `remote`, `branch`, `promptFile`, optional `reviewPromptFile`, `fixPromptFile`, `maxRounds`, `model`, `dryRun`
+- `start_job` — `repoPath` or `remote`, `branch`, `promptFile`, optional `reviewPromptFile`, `fixPromptFile`, `maxRounds`, `model`, `dryRun`, optional `ticketUrl` / `linearIssue` (when omitted, the runner parses `RAD-<n>` from the branch name and links Linear)
 - `list_jobs`
 - `get_job` — status + log tail
 - `steer_job` — queue follow-up text for the next agent step
@@ -75,6 +75,10 @@ pnpm local-runner serve
 `building` → `reviewing` (round N) → `fixing` → … → `approved` | `changes_remaining` | `stuck` | `failed` | `stopped`
 
 Default **`maxRounds`** = 2 (review/fix cycles). Reviewer must post **one** GitHub issue comment on the PR ending with `VERDICT: APPROVE` or `VERDICT: CHANGES` (built-in default review prompt enforces this). The runner also accepts the same `VERDICT:` line on PR review bodies as a fallback.
+
+### Dashboard (localhost UI)
+
+The jobs table shows **Ticket** (Linear), **PR**, **Model**, **Tokens** (summed from cursor-agent `stream-json` usage in the job log), and **CI** status. While a job has a PR, the runner polls CI on a modest interval during active stages and until checks settle on terminal jobs. It prefers **`origin pr checks`** when the Origin CLI is authenticated; otherwise it falls back to GitHub **`gh pr view --json statusCheckRollup`**. The CI badge includes the source (`origin` or `github`).
 
 ## Example job
 

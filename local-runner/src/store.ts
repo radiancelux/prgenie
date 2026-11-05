@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { JobInput, JobRecord, StartJobArgs } from "./types.js";
+import { resolveJobTicket } from "./linear-ticket.js";
 import { jobFile, jobLogFile, jobsDir, logsDir, repoSlugFromPath } from "./paths.js";
 
 export async function ensureDataDirs(dataDir: string): Promise<void> {
@@ -60,6 +61,11 @@ export async function createJob(
   const id = randomUUID();
   const repoPath = args.repoPath?.trim() || "";
   const slug = repoPath ? repoSlugFromPath(repoPath) : "remote";
+  const ticket = resolveJobTicket({
+    branch: args.branch,
+    ticketUrl: args.ticketUrl,
+    linearIssue: args.linearIssue,
+  });
   const input: JobInput = {
     repoPath: repoPath || "",
     branch: args.branch,
@@ -69,6 +75,8 @@ export async function createJob(
     maxRounds: args.maxRounds,
     model: args.model,
     remote: args.remote,
+    ticketUrl: args.ticketUrl,
+    linearIssue: args.linearIssue,
   };
   const logPath = jobLogFile(dataDir, id);
   await writeFile(logPath, "", "utf8");
@@ -85,6 +93,10 @@ export async function createJob(
     repoSlug: slug,
     prUrl: null,
     prNumber: null,
+    linearIssue: ticket.linearIssue,
+    ticketUrl: ticket.ticketUrl,
+    tokenUsage: null,
+    ciStatus: null,
     lastVerdict: null,
     error: null,
     logPath,

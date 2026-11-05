@@ -1,4 +1,5 @@
 import type { RunnerConfig } from "./config.js";
+import { CiWatcher } from "./ci-watcher.js";
 import { runJobLoop, jobSnapshot } from "./job-runner.js";
 import { JobControl } from "./job-control.js";
 import { createJob, listJobs, loadJob, saveJob } from "./store.js";
@@ -10,11 +11,13 @@ const ACTIVE_STAGES = new Set(["building", "reviewing", "fixing"]);
 
 export class RunnerEngine extends EventEmitter {
   private running = new Map<string, Promise<void>>();
+  readonly ciWatcher: CiWatcher;
   /** Shared with in-flight runJobLoop — steer/stop must not reload and clobber the live JobRecord. */
   readonly jobControls = new Map<string, JobControl>();
 
   constructor(readonly config: RunnerConfig) {
     super();
+    this.ciWatcher = new CiWatcher(config, this);
   }
 
   private controlFor(job: JobRecord): JobControl {
@@ -33,6 +36,7 @@ export class RunnerEngine extends EventEmitter {
         this.schedule(job.id);
       }
     }
+    this.ciWatcher.start();
   }
 
   async startJob(args: StartJobArgs): Promise<JobRecord> {
@@ -59,6 +63,7 @@ export class RunnerEngine extends EventEmitter {
     try {
       await runJobLoop(this.config, job, control, {
         onEvent: (id, event) => this.emit("event", id, event),
+        onPrLinked: (id) => void this.ciWatcher.refreshJobById(id),
       });
     } finally {
       this.jobControls.delete(jobId);

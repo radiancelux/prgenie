@@ -18,6 +18,27 @@ export interface JobInput {
   model?: string;
   /** Clone URL instead of local repoPath when set. */
   remote?: string;
+  ticketUrl?: string;
+  linearIssue?: string;
+}
+
+export interface TokenUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+}
+
+export type CiRollupStatus = "pending" | "success" | "failure" | "neutral" | "unknown";
+
+export interface CiStatusInfo {
+  status: CiRollupStatus;
+  summary?: string;
+  checkedAt: string;
+  checksUrl?: string;
+  /** Origin `origin pr checks` when reachable; otherwise GitHub Actions rollup via `gh`. */
+  source: "origin" | "github";
 }
 
 export interface JobRecord {
@@ -33,6 +54,10 @@ export interface JobRecord {
   repoSlug: string;
   prUrl: string | null;
   prNumber: number | null;
+  linearIssue: string | null;
+  ticketUrl: string | null;
+  tokenUsage: TokenUsage | null;
+  ciStatus: CiStatusInfo | null;
   lastVerdict: "APPROVE" | "CHANGES" | null;
   error: string | null;
   logPath: string;
@@ -51,6 +76,8 @@ export interface StartJobArgs {
   maxRounds?: number;
   model?: string;
   dryRun?: boolean;
+  ticketUrl?: string;
+  linearIssue?: string;
 }
 
 export type JobEvent =

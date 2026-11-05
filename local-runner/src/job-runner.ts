@@ -14,11 +14,13 @@ import { DEFAULT_FIX_PROMPT, DEFAULT_REVIEW_PROMPT } from "./prompts.js";
 import { formatJobEmailHtml, sendResendEmail, type FetchFn } from "./resend.js";
 import { readLogTail, saveJob } from "./store.js";
 import type { JobEvent, JobRecord, JobStage } from "./types.js";
+import { sumTokenUsageFromLog } from "./usage.js";
 import { cloneRepo, ensureWorktree, rebaseOntoBase, removeWorktree } from "./worktree.js";
 import { cursorWorktreeDir } from "./paths.js";
 
 export type JobCallbacks = {
   onEvent?: (jobId: string, event: JobEvent) => void;
+  onPrLinked?: (jobId: string) => void;
   fetchImpl?: FetchFn;
 };
 
@@ -65,6 +67,8 @@ async function persistJob(
   control: JobControl,
 ): Promise<void> {
   JobControl.syncSteerQueueForPersist(job, control);
+  const usage = await sumTokenUsageFromLog(job.logPath);
+  if (usage) job.tokenUsage = usage;
   await saveJob(config.dataDir, job);
 }
 
@@ -178,6 +182,7 @@ export async function runJobLoop(
       job.prNumber = pr.number;
       await persistJob(config, job, control);
       emit(callbacks, job, { type: "pr", url: pr.url });
+      callbacks?.onPrLinked?.(job.id);
       await notify(config, job, `PR opened/updated: ${job.input.branch}`, callbacks?.fetchImpl);
     }
 

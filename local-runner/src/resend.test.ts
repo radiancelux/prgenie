@@ -12,18 +12,12 @@ describe("resolveResendFromEmail", () => {
 
   it("defaults to radiancelux.tech runner address", () => {
     delete process.env.PRGENIE_RUNNER_FROM_EMAIL;
-    assert.equal(
-      resolveResendFromEmail(),
-      "PR Genie Local Runner <runner@radiancelux.tech>",
-    );
+    assert.equal(resolveResendFromEmail(), "PR Genie Local Runner <runner@radiancelux.tech>");
   });
 
   it("accepts bare email override", () => {
     process.env.PRGENIE_RUNNER_FROM_EMAIL = "notify@radiancelux.tech";
-    assert.equal(
-      resolveResendFromEmail(),
-      "PR Genie Local Runner <notify@radiancelux.tech>",
-    );
+    assert.equal(resolveResendFromEmail(), "PR Genie Local Runner <notify@radiancelux.tech>");
   });
 
   it("accepts full Name <addr> override", () => {
