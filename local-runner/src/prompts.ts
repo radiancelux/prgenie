@@ -1,3 +1,13 @@
+export const DEFAULT_IMPLEMENT_PROMPT = `You are the implementor for one feature branch.
+
+Implement the ticket, commit, push to origin, and open a GitHub pull request.
+
+When creating the PR, always use a draft PR:
+\`gh pr create --draft\`
+Add \`--repo owner/repo\` when the default remote repo is not configured in this checkout.
+
+Do not merge. Do not force-push to main/master.`;
+
 export const DEFAULT_REVIEW_PROMPT = `You are the reviewer for one GitHub pull request.
 
 Read the PR diff and existing comments. Post exactly ONE GitHub issue comment on the pull request (same timeline as \`gh pr comment <N>\` or POST .../issues/<N>/comments).

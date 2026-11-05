@@ -10,14 +10,20 @@ import {
   type Verdict,
 } from "./github.js";
 import { JobControl } from "./job-control.js";
-import { DEFAULT_FIX_PROMPT, DEFAULT_REVIEW_PROMPT } from "./prompts.js";
+import { DEFAULT_FIX_PROMPT, DEFAULT_IMPLEMENT_PROMPT, DEFAULT_REVIEW_PROMPT } from "./prompts.js";
 import { formatJobEmailHtml, sendResendEmail, type FetchFn } from "./resend.js";
-import { loadNotifySettings, resolveNotifyRecipient } from "./notify-settings.js";
+import {
+  findDriverEntry,
+  loadNotifySettings,
+  loadSettings,
+  resolveNotifyRecipient,
+} from "./notify-settings.js";
 import { readLogTail, saveJob } from "./store.js";
 import type { JobEvent, JobRecord, JobStage } from "./types.js";
 import { sumTokenUsageFromLog } from "./usage.js";
-import { cloneRepo, ensureWorktree, rebaseOntoBase, removeWorktree } from "./worktree.js";
+import { cloneRepo, ensureWorktree, rebaseOntoBase } from "./worktree.js";
 import { cursorWorktreeDir } from "./paths.js";
+import { fetchPrViewInfo, readHeadSha } from "./draft-pr.js";
 
 export type JobCallbacks = {
   onEvent?: (jobId: string, event: JobEvent) => void;
@@ -125,6 +131,16 @@ export async function runJobLoop(
   };
 
   try {
+    const settings = await loadSettings(config.dataDir);
+    const driverEntry =
+      findDriverEntry(settings, job.driverId) ?? findDriverEntry(settings, "cursor-agent");
+    if (!driverEntry) {
+      job.error = `Unknown driver: ${job.driverId}`;
+      await setStage(config, job, "failed", control, callbacks);
+      return;
+    }
+    const outputFormat = driverEntry.kind === "local-model" ? "text" : "stream-json";
+
     let repoRoot = job.input.repoPath;
     if (job.input.remote && !repoRoot) {
       const dest = cursorWorktreeDir(job.repoSlug, `${job.id}-src`);
@@ -150,10 +166,7 @@ export async function runJobLoop(
 
     // --- building / implementor ---
     if (job.stage === "building" && !job.prUrl) {
-      const prompt = await readPromptFile(
-        job.input.promptFile,
-        "Implement the ticket and open a PR.",
-      );
+      const prompt = await readPromptFile(job.input.promptFile, DEFAULT_IMPLEMENT_PROMPT);
       const steer = control.drainSteer();
       const fullPrompt = steer ? `${prompt}\n\n--- steer ---\n${steer}` : prompt;
       const result = await runner.run({
@@ -162,8 +175,10 @@ export async function runJobLoop(
         model: job.model,
         logPath: job.logPath,
         dryRun: job.dryRun,
-        outputFormat: "stream-json",
+        outputFormat,
         signal: control.signal,
+        driverId: job.driverId,
+        driverEntry,
       });
       if (await checkStop()) return;
       if (result.code !== 0) {
@@ -221,8 +236,10 @@ export async function runJobLoop(
         model: job.model,
         logPath: job.logPath,
         dryRun: job.dryRun,
-        outputFormat: "stream-json",
+        outputFormat,
         signal: control.signal,
+        driverId: job.driverId,
+        driverEntry,
       });
       if (await checkStop()) return;
       if (reviewRun.code !== 0) {
@@ -251,14 +268,19 @@ export async function runJobLoop(
       await persistJob(config, job, control);
 
       if (verdict === "APPROVE") {
+        if (!job.dryRun) {
+          const prView = await fetchPrViewInfo(wt, {
+            prNumber: job.prNumber,
+            branch: job.input.branch,
+            prUrl: job.prUrl,
+          });
+          job.approveHeadSha = prView?.headRefOid ?? (await readHeadSha(wt));
+        }
         await setStage(config, job, "approved", control, callbacks);
         await notify(config, job, `Loop approved: ${job.input.branch}`, callbacks?.fetchImpl);
-        if (!job.dryRun) {
-          await removeWorktree(repoRoot, wt);
-        }
-        job.worktreePath = null;
         await persistJob(config, job, control);
         emit(callbacks, job, { type: "done", stage: "approved" });
+        callbacks?.onPrLinked?.(job.id);
         return;
       }
 
@@ -291,8 +313,10 @@ export async function runJobLoop(
         model: job.model,
         logPath: job.logPath,
         dryRun: job.dryRun,
-        outputFormat: "stream-json",
+        outputFormat,
         signal: control.signal,
+        driverId: job.driverId,
+        driverEntry,
       });
       if (await checkStop()) return;
       if (fixRun.code !== 0) {

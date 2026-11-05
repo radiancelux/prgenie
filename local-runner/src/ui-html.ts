@@ -32,6 +32,8 @@ export function runnerUiHtml(
     .badge.merged { color: #c4e4ff; background: rgba(60, 100, 140, 0.35); border-color: rgba(154, 208, 255, 0.4); }
     .badge.merge_conflict { color: #ffb86c; background: rgba(120, 70, 30, 0.3); border-color: rgba(255, 184, 108, 0.4); }
     .badge.closed { color: #c8b8e8; background: rgba(80, 60, 110, 0.35); border-color: rgba(180, 160, 220, 0.35); }
+    .badge.draft { color: #c9d4e8; background: rgba(70, 85, 110, 0.35); border-color: rgba(160, 180, 220, 0.35); }
+    .badge.ready { color: #8fd4a8; background: rgba(40, 90, 60, 0.3); border-color: rgba(120, 200, 150, 0.35); }
     .jobs-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-top: 0.75rem; font-size: 0.85rem; }
     .jobs-toolbar .toggle-row { min-height: auto; }
     .empty-state { color: #9aa3b2; font-size: 0.9rem; padding: 1rem 0.5rem; line-height: 1.5; }
@@ -178,7 +180,7 @@ export function runnerUiHtml(
 </head>
 <body>
   <h1>PR Genie Local Runner</h1>
-  <p class="meta">Runner dashboard · ${reachability}</p>
+  <p class="meta">Runner dashboard · ${reachability} · <a href="/setup">Setup</a></p>
   <div class="token-row">
     <label style="flex:1 1 100%; font-size:0.85rem; color:#9aa3b2;">Bearer token
       <input type="password" id="token" placeholder="PRGENIE_RUNNER_TOKEN" autocomplete="off" />
@@ -202,7 +204,7 @@ export function runnerUiHtml(
     <span class="meta" id="jobsHiddenHint"></span>
   </div>
   <table>
-    <thead><tr><th>Job</th><th>Stage</th><th>Round</th><th>Ticket</th><th>PR</th><th>Status</th><th>Model</th><th>Tokens</th><th>Updated</th></tr></thead>
+    <thead><tr><th>Job</th><th>Stage</th><th>Round</th><th>Ticket</th><th>PR</th><th>Ready</th><th>Status</th><th>Model</th><th>Tokens</th><th>Updated</th></tr></thead>
     <tbody id="jobs"></tbody>
   </table>
   <h2 id="detailTitle">Job log</h2>
@@ -323,6 +325,13 @@ export function runnerUiHtml(
       return ci.summary || ci.status || "—";
     }
 
+    function fmtPrDraft(j) {
+      if (!j.prUrl) return "—";
+      if (j.prIsDraft === true) return '<span class="badge draft">Draft</span>';
+      if (j.prIsDraft === false) return '<span class="badge ready">Ready</span>';
+      return "—";
+    }
+
     function fmtStatus(ci) {
       if (!ci) return "—";
       const label = statusLabel(ci);
@@ -402,7 +411,7 @@ export function runnerUiHtml(
         const msg = jobs.length
           ? "No jobs match the current filter. Turn on Show all to see hidden rows."
           : "<strong>No jobs yet.</strong> Start a job from the CLI or MCP to see it here.";
-        tbody.innerHTML = '<tr><td colspan="9" class="empty-state">' + msg + "</td></tr>";
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">' + msg + "</td></tr>";
         return;
       }
       tbody.innerHTML = visible.map(j => {
@@ -414,6 +423,7 @@ export function runnerUiHtml(
         <td data-label="Round">\${j.reviewRound}/\${j.maxRounds}</td>
         <td data-label="Ticket">\${fmtTicket(j)}</td>
         <td data-label="PR">\${j.prUrl ? '<a href="'+j.prUrl+'" target="_blank" rel="noopener">PR</a>' : "—"}</td>
+        <td data-label="Ready">\${fmtPrDraft(j)}</td>
         <td data-label="Status">\${fmtStatus(j.ciStatus)}</td>
         <td data-label="Model">\${j.model || "—"}</td>
         <td data-label="Tokens">\${fmtTokens(j.tokenUsage)}</td>
@@ -440,12 +450,12 @@ export function runnerUiHtml(
       const res = await fetch("/api/jobs", { headers: authHeaders() });
       const tbody = document.getElementById("jobs");
       if (res.status === 401) {
-        tbody.innerHTML = '<tr><td colspan="9" class="empty-state"><strong>Unauthorized.</strong> Paste your runner bearer token above and click Save token.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><strong>Unauthorized.</strong> Paste your runner bearer token above and click Save token.</td></tr>';
         lastJobs = [];
         return;
       }
       if (!res.ok) {
-        tbody.innerHTML = '<tr><td colspan="9" class="empty-state">Could not reach the runner (' + res.status + "). Check that serve is running.</td></tr>";
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">Could not reach the runner (' + res.status + "). Check that serve is running.</td></tr>";
         lastJobs = [];
         return;
       }

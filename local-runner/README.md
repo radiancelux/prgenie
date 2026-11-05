@@ -1,6 +1,8 @@
 # PR Genie local CLI runner (RAD-315)
 
-Standalone **localhost** orchestrator for the implement → PR → review → fix loop using `cursor-agent`. This package does **not** replace the Cursor plugin steward or extension; it is for workstation dogfood and automation via MCP.
+Standalone **localhost** orchestrator for the implement → PR → review → fix loop using pluggable **AI CLI drivers** (`cursor-agent` default). This package does **not** replace the Cursor plugin steward or extension; it is for workstation dogfood and automation via MCP.
+
+See **`docs/drivers.md`** for the driver adapter contract and built-in drivers.
 
 Linear: [RAD-315](https://linear.app/radiancelux/issue/RAD-315/local-cli-runner-cursor-agent-implementreview-loop-mcp-ui-resend)
 
@@ -46,7 +48,7 @@ Binary: `pnpm local-runner --help` (or `node local-runner/dist/runner.cjs`).
 
 Worktrees (non-dry-run): `~/.cursor/worktrees/<repo-slug>/<job-id>`.
 
-On **`approved`**, the worktree is removed. On **`failed`**, **`stuck`**, or **`changes_remaining`**, it is kept for debugging. Prune:
+Worktrees are **not** removed immediately on `approved` — the runner keeps them until draft→ready promotion finishes or **auto-cleanup** runs (merged PR hidden ≥ ~1h, or terminal jobs when branch is merged/clean). Cleanup **skips** dirty or unpushed worktrees (warning on the job). Manual prune:
 
 ```bash
 pnpm local-runner prune-worktrees
@@ -70,12 +72,13 @@ pnpm local-runner serve
 On startup the runner prints reachable URLs (loopback plus a best-effort LAN IP when bound to `0.0.0.0`). Allow the chosen TCP port through your host firewall if needed. Do **not** expose the runner to the public internet without TLS and a proper reverse proxy (out of scope here).
 
 - **UI:** http://127.0.0.1:9473/ (paste token once; stored in `localStorage`)
+- **Setup:** http://127.0.0.1:9473/setup — default model/driver, notify, driver binaries (bearer-gated `GET`/`PATCH /api/settings`)
 - **MCP HTTP:** `POST http://127.0.0.1:9473/mcp` with `Authorization: Bearer $PRGENIE_RUNNER_TOKEN`
 - **MCP stdio:** `pnpm local-runner mcp` (for Cursor `mcp.json`)
 
 ### MCP tools
 
-- `start_job` — `repoPath` or `remote`, `branch`, `promptFile`, optional `reviewPromptFile`, `fixPromptFile`, `maxRounds`, `model`, `dryRun`, optional `ticketUrl` / `linearIssue` (when omitted, the runner parses `RAD-<n>` from the branch name and links Linear)
+- `start_job` — `repoPath` or `remote`, `branch`, `promptFile`, optional `reviewPromptFile`, `fixPromptFile`, `maxRounds`, `model`, optional **`driver`** (id), `dryRun`, optional `ticketUrl` / `linearIssue` (when omitted, the runner parses `RAD-<n>` from the branch name and links Linear)
 - `list_jobs`
 - `get_job` — status + log tail
 - `steer_job` — queue follow-up text for the next agent step
@@ -89,9 +92,11 @@ Default **`maxRounds`** = 2 (review/fix cycles). Reviewer must post **one** GitH
 
 ### Dashboard (localhost UI)
 
-The jobs table shows **Ticket** (Linear), **PR**, **Status** (CI), **Model**, **Tokens** (summed from cursor-agent `stream-json` usage in the job log), and **Updated**. On narrow screens (~390px) rows become cards. The job detail view shows a **Cursor-style agent transcript** (stream-json), optional raw log toggle, and a **Steer** box that queues follow-up text via the same bearer-protected API as MCP `steer_job`. **Email notifications** can be toggled on/off and a recipient set in the dashboard; settings persist under the runner data dir (`notify-settings.json`). The Resend API key is never shown in the UI — only `RESEND_API_KEY` / `PRGENIE_RUNNER_RESEND_KEY_FILE` on the server. When the dashboard recipient is empty, notify email falls back to `PRGENIE_RUNNER_NOTIFY_EMAIL`. While a job has a PR, the runner polls CI on a modest interval during active stages and until checks settle on terminal jobs. It prefers **`origin pr checks`** when the Origin CLI is authenticated; otherwise it falls back to GitHub **`gh pr view --json statusCheckRollup`**. The CI badge includes the source (`origin` or `github`).
+Default implement prompt requires **`gh pr create --draft`**. After **`VERDICT: APPROVE`** on the current HEAD and **green CI** for that same HEAD, the runner runs **`gh pr ready`** once (stays draft if CI is pending/failed or head moves). Dashboard shows **Draft** vs **Ready** from GitHub `isDraft`. No auto-merge.
 
-Authenticated API: `GET` / `PUT /api/notify-settings` with bearer token (same as other `/api/*` routes).
+The jobs table shows **Ticket** (Linear), **PR**, **Ready** (draft/ready), **Status** (CI), **Model**, **Tokens** (summed from cursor-agent `stream-json` usage in the job log), and **Updated**. On narrow screens (~390px) rows become cards. The job detail view shows a **Cursor-style agent transcript** (stream-json), optional raw log toggle, and a **Steer** box that queues follow-up text via the same bearer-protected API as MCP `steer_job`. **Email notifications** and runner defaults live on the **Setup** screen; settings persist in `$PRGENIE_RUNNER_DATA_DIR/settings.json` (legacy `notify-settings.json` migrates on first load). The Resend API key is never shown in the UI — only `RESEND_API_KEY` / `PRGENIE_RUNNER_RESEND_KEY_FILE` on the server. When the dashboard recipient is empty, notify email falls back to `PRGENIE_RUNNER_NOTIFY_EMAIL`. While a job has a PR, the runner polls CI on a modest interval during active stages and until checks settle on terminal jobs. It prefers **`origin pr checks`** when the Origin CLI is authenticated; otherwise it falls back to GitHub **`gh pr view --json statusCheckRollup`**. The CI badge includes the source (`origin` or `github`).
+
+Authenticated API: `GET` / `PATCH /api/settings`, `GET` / `PUT /api/notify-settings` (legacy) with bearer token (same as other `/api/*` routes).
 
 ## Example job
 
@@ -132,4 +137,4 @@ Emails send when notify is **enabled** in the dashboard (or persisted settings),
 
 ## Persistence
 
-Jobs are JSON under `$PRGENIE_RUNNER_DATA_DIR/jobs/`. Email notify preferences live in `$PRGENIE_RUNNER_DATA_DIR/notify-settings.json`. Restarting `serve` reloads active jobs (`building`, `reviewing`, `fixing`) and continues the loop.
+Jobs are JSON under `$PRGENIE_RUNNER_DATA_DIR/jobs/`. Runner settings (notify, defaults, drivers, reserved `jobTypes` / `presets` bags) live in `$PRGENIE_RUNNER_DATA_DIR/settings.json`. Restarting `serve` reloads active jobs (`building`, `reviewing`, `fixing`) and continues the loop.

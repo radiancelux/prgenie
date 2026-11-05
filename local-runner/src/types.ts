@@ -16,6 +16,8 @@ export interface JobInput {
   fixPromptFile?: string;
   maxRounds?: number;
   model?: string;
+  /** Agent driver id (cursor-agent, claude-code, local-model, …). */
+  driver?: string;
   /** Clone URL instead of local repoPath when set. */
   remote?: string;
   ticketUrl?: string;
@@ -62,10 +64,17 @@ export interface JobRecord {
   reviewRound: number;
   maxRounds: number;
   model: string;
+  driverId: string;
   worktreePath: string | null;
   repoSlug: string;
   prUrl: string | null;
   prNumber: number | null;
+  /** Cached from GitHub isDraft; dashboard Draft/Ready pill. */
+  prIsDraft: boolean | null;
+  /** HEAD SHA when runner recorded VERDICT: APPROVE. */
+  approveHeadSha: string | null;
+  /** ISO timestamp after successful \`gh pr ready\` (idempotent). */
+  readyPromotedAt: string | null;
   linearIssue: string | null;
   ticketUrl: string | null;
   tokenUsage: TokenUsage | null;
@@ -89,6 +98,7 @@ export interface StartJobArgs {
   fixPromptFile?: string;
   maxRounds?: number;
   model?: string;
+  driver?: string;
   dryRun?: boolean;
   ticketUrl?: string;
   linearIssue?: string;
