@@ -19,6 +19,14 @@ export const RUNNER_MCP_TOOLS = [
         maxRounds: { type: "number" },
         model: { type: "string" },
         dryRun: { type: "boolean" },
+        ticketUrl: {
+          type: "string",
+          description: "Linear issue URL (optional; inferred from branch RAD-n when omitted)",
+        },
+        linearIssue: {
+          type: "string",
+          description: "Linear issue id e.g. RAD-321 (optional; builds ticketUrl when set alone)",
+        },
       },
       required: ["branch", "promptFile"],
     },
@@ -75,6 +83,8 @@ export async function handleRunnerTool(
         maxRounds: typeof args.maxRounds === "number" ? args.maxRounds : undefined,
         model: typeof args.model === "string" ? args.model : undefined,
         dryRun: typeof args.dryRun === "boolean" ? args.dryRun : undefined,
+        ticketUrl: typeof args.ticketUrl === "string" ? args.ticketUrl : undefined,
+        linearIssue: typeof args.linearIssue === "string" ? args.linearIssue : undefined,
       };
       if (!input.branch || !input.promptFile) {
         throw new Error("branch and promptFile are required");

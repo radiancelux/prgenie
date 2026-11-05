@@ -26,4 +26,20 @@ describe("job store", () => {
     const all = await listJobs(dataDir);
     assert.equal(all.length, 1);
   });
+
+  it("infers Linear ticket from branch name", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-store-"));
+    const job = await createJob(
+      dataDir,
+      {
+        repoPath: "/tmp/repo",
+        branch: "feat/rad-320-verdict-resend",
+        promptFile: "/tmp/prompt.md",
+        dryRun: true,
+      },
+      { model: "composer-2.5", dryRun: true },
+    );
+    assert.equal(job.linearIssue, "RAD-320");
+    assert.equal(job.ticketUrl, "https://linear.app/radiancelux/issue/RAD-320");
+  });
 });

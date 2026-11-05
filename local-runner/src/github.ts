@@ -78,6 +78,8 @@ export type VerdictRoundScope = {
   sinceIso: string;
   /** Last issue comment id on the PR before this review round started. */
   afterCommentId?: number;
+  /** Last pull request review id before this review round started. */
+  afterReviewId?: number;
   skewMs?: number;
 };
 
@@ -164,6 +166,100 @@ export async function fetchPrCommentVerdictSince(
 ): Promise<Verdict | null> {
   const comments = await fetchPrIssueComments(cwd, prNumber);
   return findVerdictInCommentsSince(comments, scope);
+}
+
+export interface PullRequestReview {
+  id?: number;
+  body: string;
+  submitted_at: string;
+}
+
+function reviewInReviewRound(r: PullRequestReview, scope: VerdictRoundScope): boolean {
+  if (scope.afterReviewId != null && typeof r.id === "number") {
+    return r.id > scope.afterReviewId;
+  }
+  const sinceMs = Date.parse(scope.sinceIso);
+  if (Number.isNaN(sinceMs)) return false;
+  const skewMs = scope.skewMs ?? VERDICT_ROUND_TIME_SKEW_MS;
+  return Date.parse(r.submitted_at) >= sinceMs - skewMs;
+}
+
+/** Accept only a verdict from a PR review body in the current review round. */
+export function findVerdictInReviewsSince(
+  reviews: PullRequestReview[],
+  scope: VerdictRoundScope,
+): Verdict | null {
+  const inRound = reviews
+    .filter((r) => reviewInReviewRound(r, scope))
+    .sort((a, b) => Date.parse(b.submitted_at) - Date.parse(a.submitted_at));
+
+  for (const r of inRound) {
+    const verdict = parseVerdictFromText(r.body);
+    if (verdict) return verdict;
+  }
+  return null;
+}
+
+function parsePullRequestReviewsPayload(stdout: string): PullRequestReview[] {
+  const trimmed = stdout.trim();
+  if (!trimmed) return [];
+  try {
+    const asArray = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(asArray)) {
+      return asArray.filter((r): r is PullRequestReview => {
+        if (r == null || typeof r !== "object") return false;
+        const row = r as PullRequestReview;
+        if (typeof row.body !== "string" || typeof row.submitted_at !== "string") return false;
+        return true;
+      });
+    }
+  } catch {
+    // fall through
+  }
+  const reviews: PullRequestReview[] = [];
+  for (const line of trimmed.split(/\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const row = JSON.parse(line) as PullRequestReview;
+      if (typeof row.body === "string" && typeof row.submitted_at === "string") {
+        reviews.push(row);
+      }
+    } catch {
+      // ignore bad lines
+    }
+  }
+  return reviews;
+}
+
+export async function fetchPrReviews(cwd: string, prNumber: number): Promise<PullRequestReview[]> {
+  const res = await gh(cwd, [
+    "api",
+    `repos/{owner}/{repo}/pulls/${prNumber}/reviews`,
+    "--paginate",
+  ]);
+  if (res.code !== 0) return [];
+  return parsePullRequestReviewsPayload(res.stdout);
+}
+
+export async function fetchLatestPrReviewId(cwd: string, prNumber: number): Promise<number> {
+  const reviews = await fetchPrReviews(cwd, prNumber);
+  let maxId = 0;
+  for (const r of reviews) {
+    if (typeof r.id === "number" && r.id > maxId) maxId = r.id;
+  }
+  return maxId;
+}
+
+/** Prefer issue-comment verdicts; fall back to PR review bodies in the same round. */
+export async function fetchPrVerdictSince(
+  cwd: string,
+  prNumber: number,
+  scope: VerdictRoundScope,
+): Promise<Verdict | null> {
+  const fromComments = await fetchPrCommentVerdictSince(cwd, prNumber, scope);
+  if (fromComments) return fromComments;
+  const reviews = await fetchPrReviews(cwd, prNumber);
+  return findVerdictInReviewsSince(reviews, scope);
 }
 
 export type GitFn = typeof git;

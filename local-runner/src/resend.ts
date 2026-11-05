@@ -6,6 +6,16 @@ export interface ResendSendInput {
 
 export type FetchFn = typeof fetch;
 
+const DEFAULT_FROM = "PR Genie Local Runner <runner@radiancelux.tech>";
+
+/** Resend `from` address; override with PRGENIE_RUNNER_FROM_EMAIL (full `Name <addr>` or bare addr). */
+export function resolveResendFromEmail(): string {
+  const raw = process.env.PRGENIE_RUNNER_FROM_EMAIL?.trim();
+  if (!raw) return DEFAULT_FROM;
+  if (raw.includes("<") && raw.includes(">")) return raw;
+  return `PR Genie Local Runner <${raw}>`;
+}
+
 export async function sendResendEmail(
   apiKey: string,
   input: ResendSendInput,
@@ -18,7 +28,7 @@ export async function sendResendEmail(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: "PR Genie Local Runner <onboarding@resend.dev>",
+      from: resolveResendFromEmail(),
       to: [input.to],
       subject: input.subject,
       html: input.html,

@@ -3,7 +3,8 @@ import type { RunnerConfig } from "./config.js";
 import { AgentRunner } from "./agent.js";
 import {
   fetchLatestPrCommentId,
-  fetchPrCommentVerdictSince,
+  fetchLatestPrReviewId,
+  fetchPrVerdictSince,
   findPrForBranch,
   isBranchSyncedWithOrigin,
   type Verdict,
@@ -13,11 +14,13 @@ import { DEFAULT_FIX_PROMPT, DEFAULT_REVIEW_PROMPT } from "./prompts.js";
 import { formatJobEmailHtml, sendResendEmail, type FetchFn } from "./resend.js";
 import { readLogTail, saveJob } from "./store.js";
 import type { JobEvent, JobRecord, JobStage } from "./types.js";
+import { sumTokenUsageFromLog } from "./usage.js";
 import { cloneRepo, ensureWorktree, rebaseOntoBase, removeWorktree } from "./worktree.js";
 import { cursorWorktreeDir } from "./paths.js";
 
 export type JobCallbacks = {
   onEvent?: (jobId: string, event: JobEvent) => void;
+  onPrLinked?: (jobId: string) => void;
   fetchImpl?: FetchFn;
 };
 
@@ -64,6 +67,8 @@ async function persistJob(
   control: JobControl,
 ): Promise<void> {
   JobControl.syncSteerQueueForPersist(job, control);
+  const usage = await sumTokenUsageFromLog(job.logPath);
+  if (usage) job.tokenUsage = usage;
   await saveJob(config.dataDir, job);
 }
 
@@ -177,6 +182,7 @@ export async function runJobLoop(
       job.prNumber = pr.number;
       await persistJob(config, job, control);
       emit(callbacks, job, { type: "pr", url: pr.url });
+      callbacks?.onPrLinked?.(job.id);
       await notify(config, job, `PR opened/updated: ${job.input.branch}`, callbacks?.fetchImpl);
     }
 
@@ -190,6 +196,10 @@ export async function runJobLoop(
       const reviewBaselineCommentId =
         !job.dryRun && job.prNumber != null
           ? await fetchLatestPrCommentId(wt, job.prNumber)
+          : undefined;
+      const reviewBaselineReviewId =
+        !job.dryRun && job.prNumber != null
+          ? await fetchLatestPrReviewId(wt, job.prNumber)
           : undefined;
       const reviewRoundStartedAt = new Date().toISOString();
 
@@ -222,9 +232,10 @@ export async function runJobLoop(
       if (job.dryRun) {
         verdict = job.reviewRound >= job.maxRounds ? "APPROVE" : "CHANGES";
       } else if (job.prNumber != null) {
-        verdict = await fetchPrCommentVerdictSince(wt, job.prNumber, {
+        verdict = await fetchPrVerdictSince(wt, job.prNumber, {
           sinceIso: reviewRoundStartedAt,
           afterCommentId: reviewBaselineCommentId,
+          afterReviewId: reviewBaselineReviewId,
         });
       }
 
