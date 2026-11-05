@@ -65,9 +65,7 @@ describe("decideDraftReadyPromotion", () => {
 
   it("does not promote when remote PR head moved after approve (local unchanged)", () => {
     assert.deepEqual(
-      decideDraftReadyPromotion(
-        base({ approveHeadSha: "abc", currentHeadSha: "newer-on-github" }),
-      ),
+      decideDraftReadyPromotion(base({ approveHeadSha: "abc", currentHeadSha: "newer-on-github" })),
       { action: "none" },
     );
   });
