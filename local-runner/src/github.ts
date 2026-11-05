@@ -66,20 +66,38 @@ export function parseVerdictFromText(text: string): Verdict | null {
 }
 
 export interface IssueComment {
+  id?: number;
   body: string;
   created_at: string;
 }
 
-/** Accept only a verdict comment posted at or after `sinceIso` (current review round). */
+/** When falling back to timestamps, accept comments slightly before local round start. */
+export const VERDICT_ROUND_TIME_SKEW_MS = 30_000;
+
+export type VerdictRoundScope = {
+  sinceIso: string;
+  /** Last issue comment id on the PR before this review round started. */
+  afterCommentId?: number;
+  skewMs?: number;
+};
+
+function commentInReviewRound(c: IssueComment, scope: VerdictRoundScope): boolean {
+  if (scope.afterCommentId != null && typeof c.id === "number") {
+    return c.id > scope.afterCommentId;
+  }
+  const sinceMs = Date.parse(scope.sinceIso);
+  if (Number.isNaN(sinceMs)) return false;
+  const skewMs = scope.skewMs ?? VERDICT_ROUND_TIME_SKEW_MS;
+  return Date.parse(c.created_at) >= sinceMs - skewMs;
+}
+
+/** Accept only a verdict comment from the current review round. */
 export function findVerdictInCommentsSince(
   comments: IssueComment[],
-  sinceIso: string,
+  scope: VerdictRoundScope,
 ): Verdict | null {
-  const sinceMs = Date.parse(sinceIso);
-  if (Number.isNaN(sinceMs)) return null;
-
   const inRound = comments
-    .filter((c) => Date.parse(c.created_at) >= sinceMs)
+    .filter((c) => commentInReviewRound(c, scope))
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
 
   for (const c of inRound) {
@@ -95,13 +113,12 @@ function parseIssueCommentsPayload(stdout: string): IssueComment[] {
   try {
     const asArray = JSON.parse(trimmed) as unknown;
     if (Array.isArray(asArray)) {
-      return asArray.filter(
-        (c): c is IssueComment =>
-          c != null &&
-          typeof c === "object" &&
-          typeof (c as IssueComment).body === "string" &&
-          typeof (c as IssueComment).created_at === "string",
-      );
+      return asArray.filter((c): c is IssueComment => {
+        if (c == null || typeof c !== "object") return false;
+        const row = c as IssueComment;
+        if (typeof row.body !== "string" || typeof row.created_at !== "string") return false;
+        return true;
+      });
     }
   } catch {
     // fall through — paginate may emit one JSON object per line
@@ -121,19 +138,32 @@ function parseIssueCommentsPayload(stdout: string): IssueComment[] {
   return comments;
 }
 
-export async function fetchPrCommentVerdictSince(
-  cwd: string,
-  prNumber: number,
-  sinceIso: string,
-): Promise<Verdict | null> {
+export async function fetchPrIssueComments(cwd: string, prNumber: number): Promise<IssueComment[]> {
   const res = await gh(cwd, [
     "api",
     `repos/{owner}/{repo}/issues/${prNumber}/comments`,
     "--paginate",
   ]);
-  if (res.code !== 0) return null;
-  const comments = parseIssueCommentsPayload(res.stdout);
-  return findVerdictInCommentsSince(comments, sinceIso);
+  if (res.code !== 0) return [];
+  return parseIssueCommentsPayload(res.stdout);
+}
+
+export async function fetchLatestPrCommentId(cwd: string, prNumber: number): Promise<number> {
+  const comments = await fetchPrIssueComments(cwd, prNumber);
+  let maxId = 0;
+  for (const c of comments) {
+    if (typeof c.id === "number" && c.id > maxId) maxId = c.id;
+  }
+  return maxId;
+}
+
+export async function fetchPrCommentVerdictSince(
+  cwd: string,
+  prNumber: number,
+  scope: VerdictRoundScope,
+): Promise<Verdict | null> {
+  const comments = await fetchPrIssueComments(cwd, prNumber);
+  return findVerdictInCommentsSince(comments, scope);
 }
 
 export type GitFn = typeof git;

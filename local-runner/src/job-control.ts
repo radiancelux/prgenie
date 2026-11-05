@@ -34,6 +34,11 @@ export class JobControl {
     return this.steerQueue.splice(0).join("\n\n");
   }
 
+  /** Pending steers live on JobControl during a run; copy to JobRecord before every persist. */
+  static syncSteerQueueForPersist(job: JobRecord, control: JobControl): void {
+    job.steerQueue = [...control.steerQueue];
+  }
+
   static fromPersisted(job: JobRecord): JobControl {
     const control = new JobControl();
     control.steerQueue = [...job.steerQueue];

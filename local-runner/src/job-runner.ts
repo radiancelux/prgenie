@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import type { RunnerConfig } from "./config.js";
 import { AgentRunner } from "./agent.js";
 import {
+  fetchLatestPrCommentId,
   fetchPrCommentVerdictSince,
   findPrForBranch,
   isBranchSyncedWithOrigin,
@@ -57,14 +58,24 @@ function emit(cb: JobCallbacks | undefined, job: JobRecord, event: JobEvent): vo
   cb?.onEvent?.(job.id, event);
 }
 
+async function persistJob(
+  config: RunnerConfig,
+  job: JobRecord,
+  control: JobControl,
+): Promise<void> {
+  JobControl.syncSteerQueueForPersist(job, control);
+  await saveJob(config.dataDir, job);
+}
+
 async function setStage(
   config: RunnerConfig,
   job: JobRecord,
   stage: JobStage,
+  control: JobControl,
   cb?: JobCallbacks,
 ): Promise<void> {
   job.stage = stage;
-  await saveJob(config.dataDir, job);
+  await persistJob(config, job, control);
   emit(cb, job, { type: "stage", stage, reviewRound: job.reviewRound });
 }
 
@@ -72,13 +83,14 @@ async function ensurePushedBeforeReview(
   config: RunnerConfig,
   job: JobRecord,
   wt: string,
+  control: JobControl,
   callbacks?: JobCallbacks,
 ): Promise<boolean> {
   if (job.dryRun) return true;
   const sync = await isBranchSyncedWithOrigin(wt, job.input.branch);
   if (sync.ok) return true;
   job.error = `Branch not pushed to origin before review: ${sync.reason}`;
-  await setStage(config, job, "stuck", callbacks);
+  await setStage(config, job, "stuck", control, callbacks);
   return false;
 }
 
@@ -98,8 +110,7 @@ export async function runJobLoop(
     if (control.stopRequested) {
       runner.kill();
       job.stopRequested = true;
-      await saveJob(config.dataDir, job);
-      await setStage(config, job, "stopped", callbacks);
+      await setStage(config, job, "stopped", control, callbacks);
       return true;
     }
     return false;
@@ -115,18 +126,18 @@ export async function runJobLoop(
     }
     if (!repoRoot) {
       job.error = "repoPath or remote required";
-      await setStage(config, job, "failed", callbacks);
+      await setStage(config, job, "failed", control, callbacks);
       return;
     }
 
     let wt = repoRoot;
     if (job.dryRun) {
       job.worktreePath = repoRoot;
-      await saveJob(config.dataDir, job);
+      await persistJob(config, job, control);
     } else {
       wt = await ensureWorktree(repoRoot, job.id, job.input.branch);
       job.worktreePath = wt;
-      await saveJob(config.dataDir, job);
+      await persistJob(config, job, control);
     }
 
     // --- building / implementor ---
@@ -149,7 +160,7 @@ export async function runJobLoop(
       if (await checkStop()) return;
       if (result.code !== 0) {
         job.error = `implementor exited ${result.code}`;
-        await setStage(config, job, "failed", callbacks);
+        await setStage(config, job, "failed", control, callbacks);
         return;
       }
 
@@ -159,23 +170,27 @@ export async function runJobLoop(
       }
       if (!pr) {
         job.error = "No GitHub PR for branch — local-only diff guard";
-        await setStage(config, job, "stuck", callbacks);
+        await setStage(config, job, "stuck", control, callbacks);
         return;
       }
       job.prUrl = pr.url;
       job.prNumber = pr.number;
-      await saveJob(config.dataDir, job);
+      await persistJob(config, job, control);
       emit(callbacks, job, { type: "pr", url: pr.url });
       await notify(config, job, `PR opened/updated: ${job.input.branch}`, callbacks?.fetchImpl);
     }
 
-    if (!(await ensurePushedBeforeReview(config, job, wt, callbacks))) return;
+    if (!(await ensurePushedBeforeReview(config, job, wt, control, callbacks))) return;
 
     while (job.reviewRound <= job.maxRounds) {
       if (await checkStop()) return;
 
       job.reviewRound += 1;
-      await setStage(config, job, "reviewing", callbacks);
+      await setStage(config, job, "reviewing", control, callbacks);
+      const reviewBaselineCommentId =
+        !job.dryRun && job.prNumber != null
+          ? await fetchLatestPrCommentId(wt, job.prNumber)
+          : undefined;
       const reviewRoundStartedAt = new Date().toISOString();
 
       const reviewPrompt = await readPromptFile(
@@ -199,7 +214,7 @@ export async function runJobLoop(
       if (await checkStop()) return;
       if (reviewRun.code !== 0) {
         job.error = `reviewer exited ${reviewRun.code}`;
-        await setStage(config, job, "failed", callbacks);
+        await setStage(config, job, "failed", control, callbacks);
         return;
       }
 
@@ -207,32 +222,35 @@ export async function runJobLoop(
       if (job.dryRun) {
         verdict = job.reviewRound >= job.maxRounds ? "APPROVE" : "CHANGES";
       } else if (job.prNumber != null) {
-        verdict = await fetchPrCommentVerdictSince(wt, job.prNumber, reviewRoundStartedAt);
+        verdict = await fetchPrCommentVerdictSince(wt, job.prNumber, {
+          sinceIso: reviewRoundStartedAt,
+          afterCommentId: reviewBaselineCommentId,
+        });
       }
 
       if (!verdict) {
         job.error = "Reviewer did not post VERDICT: APPROVE or VERDICT: CHANGES";
-        await setStage(config, job, "failed", callbacks);
+        await setStage(config, job, "failed", control, callbacks);
         return;
       }
       job.lastVerdict = verdict;
-      await saveJob(config.dataDir, job);
+      await persistJob(config, job, control);
 
       if (verdict === "APPROVE") {
-        await setStage(config, job, "approved", callbacks);
+        await setStage(config, job, "approved", control, callbacks);
         await notify(config, job, `Loop approved: ${job.input.branch}`, callbacks?.fetchImpl);
         if (!job.dryRun) {
           await removeWorktree(repoRoot, wt);
         }
         job.worktreePath = null;
-        await saveJob(config.dataDir, job);
+        await persistJob(config, job, control);
         emit(callbacks, job, { type: "done", stage: "approved" });
         return;
       }
 
       // CHANGES
       if (job.reviewRound >= job.maxRounds) {
-        await setStage(config, job, "changes_remaining", callbacks);
+        await setStage(config, job, "changes_remaining", control, callbacks);
         await notify(
           config,
           job,
@@ -243,7 +261,7 @@ export async function runJobLoop(
         return;
       }
 
-      await setStage(config, job, "fixing", callbacks);
+      await setStage(config, job, "fixing", control, callbacks);
       if (!job.dryRun) {
         await rebaseOntoBase(wt);
       }
@@ -265,10 +283,10 @@ export async function runJobLoop(
       if (await checkStop()) return;
       if (fixRun.code !== 0) {
         job.error = `fixer exited ${fixRun.code}`;
-        await setStage(config, job, "failed", callbacks);
+        await setStage(config, job, "failed", control, callbacks);
         return;
       }
-      if (!(await ensurePushedBeforeReview(config, job, wt, callbacks))) return;
+      if (!(await ensurePushedBeforeReview(config, job, wt, control, callbacks))) return;
       if (!job.dryRun) {
         await notify(
           config,
@@ -281,7 +299,7 @@ export async function runJobLoop(
     }
   } catch (err) {
     job.error = err instanceof Error ? err.message : String(err);
-    await setStage(config, job, "failed", callbacks);
+    await setStage(config, job, "failed", control, callbacks);
   }
 }
 

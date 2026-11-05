@@ -80,10 +80,15 @@ export class RunnerEngine extends EventEmitter {
     if (!trimmed) {
       return loadJob(this.config.dataDir, jobId);
     }
-    this.jobControls.get(jobId)?.pushSteer(trimmed);
+    const control = this.jobControls.get(jobId);
+    control?.pushSteer(trimmed);
     const job = await loadJob(this.config.dataDir, jobId);
     if (!job) return null;
-    job.steerQueue.push(trimmed);
+    if (control) {
+      JobControl.syncSteerQueueForPersist(job, control);
+    } else {
+      job.steerQueue.push(trimmed);
+    }
     await saveJob(this.config.dataDir, job);
     return job;
   }
