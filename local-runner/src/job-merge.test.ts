@@ -32,10 +32,7 @@ describe("syncJobMergedStatus", () => {
 
     const mergedMs = Date.parse(mergedAt);
     assert.equal((await listJobsForDisplay(dataDir, mergedMs + 1000)).length, 1);
-    assert.equal(
-      shouldHideMergedJob(onDisk!, mergedMs + MERGED_HIDE_AFTER_MS),
-      true,
-    );
+    assert.equal(shouldHideMergedJob(onDisk!, mergedMs + MERGED_HIDE_AFTER_MS), true);
     assert.equal((await listJobsForDisplay(dataDir, mergedMs + MERGED_HIDE_AFTER_MS)).length, 0);
   });
 });
