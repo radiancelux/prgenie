@@ -41,6 +41,7 @@ Run `prgenie attach --help` and `prgenie --help` for full command reference.
 - [Default review bar](docs/review-bar.md) — `/review` process bar + authoring `.prgenie/review.md`
 - [Troubleshooting](docs/troubleshooting.md) — `prgenie doctor` checks and common failure modes
 - [Release](docs/release.md) — version alignment, `check-versions`, `pack:extension`
+- [Local CLI runner (RAD-315)](local-runner/README.md) — optional workstation `cursor-agent` loop + MCP + UI (not the plugin steward)
 
 ## What it is not
 

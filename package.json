@@ -10,8 +10,8 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "tsx --test \"packages/*/src/**/*.test.ts\"",
-    "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/cli --noEmit && tsc -p packages/extension --noEmit",
+    "test": "tsx --test \"packages/*/src/**/*.test.ts\" \"local-runner/src/**/*.test.ts\"",
+    "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/cli --noEmit && tsc -p packages/extension --noEmit && tsc -p local-runner --noEmit",
     "lint": "eslint packages/core/src packages/cli/src packages/extension/src scripts",
     "lint:fix": "eslint packages/core/src packages/cli/src packages/extension/src scripts --fix",
     "format": "prettier --write .",
@@ -20,7 +20,8 @@
     "link-plugin": "powershell -ExecutionPolicy Bypass -File scripts/link-plugin.ps1",
     "link-extension": "powershell -ExecutionPolicy Bypass -File scripts/link-extension.ps1",
     "check-versions": "node scripts/check-versions.mjs",
-    "pack:extension": "node scripts/pack-extension.mjs"
+    "pack:extension": "node scripts/pack-extension.mjs",
+    "local-runner": "node local-runner/dist/runner.cjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -60,6 +60,14 @@ await esbuild.build({
   external: ["vscode", "prettier"],
 });
 
+mkdirSync(path.join(root, "local-runner/dist"), { recursive: true });
+await esbuild.build({
+  ...shared,
+  entryPoints: ["local-runner/src/bin.ts"],
+  outfile: "local-runner/dist/runner.cjs",
+  banner: { js: "#!/usr/bin/env node\n" },
+});
+
 console.log("PR Genie build complete.");
 await esbuild.stop();
 process.exit(0);
