@@ -1,4 +1,7 @@
+import { streamJsonLogBrowserScript } from "./stream-json-log.js";
+
 export function runnerUiHtml(port: number): string {
+  const logParserInit = streamJsonLogBrowserScript();
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -10,14 +13,21 @@ export function runnerUiHtml(port: number): string {
     table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
     th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #333; }
     a { color: #7eb8ff; }
-    pre { background: #1a1d24; padding: 0.75rem; overflow: auto; max-height: 20rem; font-size: 0.8rem; }
+    pre { background: #1a1d24; padding: 0.75rem; overflow: auto; max-height: 24rem; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; }
+    .log-panel { margin-top: 0.5rem; }
+    .log-toolbar { display: flex; align-items: center; gap: 0.75rem; margin: 0.35rem 0; font-size: 0.85rem; }
+    .log-toolbar label { color: #9aa3b2; cursor: pointer; user-select: none; }
+    #logSteps { display: block; }
+    #logRaw { display: none; }
+    body.show-raw #logSteps { display: none; }
+    body.show-raw #logRaw { display: block; }
     .meta { color: #9aa3b2; font-size: 0.85rem; }
     input[type=password] { width: 20rem; padding: 0.35rem; }
   </style>
 </head>
 <body>
   <h1>PR Genie Local Runner</h1>
-  <p class="meta">localhost:${port} — log stream uses SSE (stream-json lines when agents run). Batch G: <code>cursor-agent --force --trust</code> required; plain text output is end-only.</p>
+  <p class="meta">localhost:${port} — agent steps from stream-json (SSE). Batch G: <code>cursor-agent --force --trust</code>; plain text output is end-only.</p>
   <p><label>Bearer token <input type="password" id="token" placeholder="PRGENIE_RUNNER_TOKEN" /></label>
   <button id="saveToken">Save</button></p>
   <table>
@@ -25,8 +35,15 @@ export function runnerUiHtml(port: number): string {
     <tbody id="jobs"></tbody>
   </table>
   <h2 id="detailTitle">Log tail</h2>
-  <pre id="log"></pre>
+  <div class="log-toolbar">
+    <label><input type="checkbox" id="showRaw" /> Show raw log (debug)</label>
+  </div>
+  <div class="log-panel">
+    <pre id="logSteps"></pre>
+    <pre id="logRaw"></pre>
+  </div>
   <script>
+    const logParser = ${logParserInit};
     const tokenKey = "prgenie_runner_token";
     const tokenEl = document.getElementById("token");
     tokenEl.value = localStorage.getItem(tokenKey) || "";
@@ -34,12 +51,29 @@ export function runnerUiHtml(port: number): string {
       localStorage.setItem(tokenKey, tokenEl.value);
       refresh();
     };
+    const showRawEl = document.getElementById("showRaw");
+    showRawEl.checked = localStorage.getItem("prgenie_runner_show_raw") === "1";
+    showRawEl.onchange = () => {
+      localStorage.setItem("prgenie_runner_show_raw", showRawEl.checked ? "1" : "0");
+      document.body.classList.toggle("show-raw", showRawEl.checked);
+    };
+    document.body.classList.toggle("show-raw", showRawEl.checked);
+
     function authHeaders() {
       const t = tokenEl.value || localStorage.getItem(tokenKey);
       return t ? { Authorization: "Bearer " + t } : {};
     }
     let selected = null;
     let es = null;
+    let rawLogTail = "";
+
+    function renderLogTail(raw) {
+      rawLogTail = raw || "";
+      document.getElementById("logRaw").textContent = rawLogTail;
+      const steps = logParser.formatAgentLogTail(rawLogTail);
+      document.getElementById("logSteps").textContent = steps || rawLogTail || "";
+    }
+
     async function refresh() {
       const res = await fetch("/api/jobs", { headers: authHeaders() });
       if (!res.ok) { document.getElementById("jobs").innerHTML = "<tr><td colspan=5>Unauthorized or error</td></tr>"; return; }
@@ -63,11 +97,11 @@ export function runnerUiHtml(port: number): string {
       es = new EventSource("/api/jobs/" + id + "/stream?token=" + encodeURIComponent(t || ""));
       es.onmessage = (ev) => {
         const data = JSON.parse(ev.data);
-        if (data.logTail !== undefined) document.getElementById("log").textContent = data.logTail;
+        if (data.logTail !== undefined) renderLogTail(data.logTail);
         if (data.stage) refresh();
       };
       fetch("/api/jobs/" + id, { headers: authHeaders() }).then(r => r.json()).then(j => {
-        document.getElementById("log").textContent = j.logTail || "";
+        renderLogTail(j.logTail || "");
       });
     }
     refresh();
