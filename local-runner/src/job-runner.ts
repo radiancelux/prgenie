@@ -23,7 +23,7 @@ import type { JobEvent, JobRecord, JobStage } from "./types.js";
 import { sumTokenUsageFromLog } from "./usage.js";
 import { cloneRepo, ensureWorktree, rebaseOntoBase } from "./worktree.js";
 import { cursorWorktreeDir } from "./paths.js";
-import { readHeadSha } from "./draft-pr.js";
+import { fetchPrViewInfo, readHeadSha } from "./draft-pr.js";
 
 export type JobCallbacks = {
   onEvent?: (jobId: string, event: JobEvent) => void;
@@ -269,7 +269,12 @@ export async function runJobLoop(
 
       if (verdict === "APPROVE") {
         if (!job.dryRun) {
-          job.approveHeadSha = await readHeadSha(wt);
+          const prView = await fetchPrViewInfo(wt, {
+            prNumber: job.prNumber,
+            branch: job.input.branch,
+            prUrl: job.prUrl,
+          });
+          job.approveHeadSha = prView?.headRefOid ?? (await readHeadSha(wt));
         }
         await setStage(config, job, "approved", control, callbacks);
         await notify(config, job, `Loop approved: ${job.input.branch}`, callbacks?.fetchImpl);

@@ -63,6 +63,15 @@ describe("decideDraftReadyPromotion", () => {
     });
   });
 
+  it("does not promote when remote PR head moved after approve (local unchanged)", () => {
+    assert.deepEqual(
+      decideDraftReadyPromotion(
+        base({ approveHeadSha: "abc", currentHeadSha: "newer-on-github" }),
+      ),
+      { action: "none" },
+    );
+  });
+
   it("idempotent when already ready", () => {
     assert.deepEqual(
       decideDraftReadyPromotion(base({ isDraft: false, readyPromotedAt: "2026-01-01T00:00:00Z" })),

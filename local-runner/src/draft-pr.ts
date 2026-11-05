@@ -134,13 +134,13 @@ export async function syncDraftReadyForJob(
     }
   }
 
-  const head = await readHeadSha(cwd);
+  const currentHeadSha = view?.headRefOid ?? (await readHeadSha(cwd));
   const decision = decideDraftReadyPromotion({
     stage: job.stage,
     lastVerdict: job.lastVerdict,
     ciStatus: job.ciStatus,
     approveHeadSha: job.approveHeadSha,
-    currentHeadSha: head,
+    currentHeadSha,
     isDraft: job.prIsDraft,
     readyPromotedAt: job.readyPromotedAt,
   });
