@@ -1,7 +1,13 @@
 import { readFile } from "node:fs/promises";
 import type { RunnerConfig } from "./config.js";
 import { AgentRunner } from "./agent.js";
-import { fetchLatestPrCommentVerdict, findPrForBranch, gh, type Verdict } from "./github.js";
+import {
+  fetchPrCommentVerdictSince,
+  findPrForBranch,
+  isBranchSyncedWithOrigin,
+  type Verdict,
+} from "./github.js";
+import { JobControl } from "./job-control.js";
 import { DEFAULT_FIX_PROMPT, DEFAULT_REVIEW_PROMPT } from "./prompts.js";
 import { formatJobEmailHtml, sendResendEmail, type FetchFn } from "./resend.js";
 import { readLogTail, saveJob } from "./store.js";
@@ -62,21 +68,37 @@ async function setStage(
   emit(cb, job, { type: "stage", stage, reviewRound: job.reviewRound });
 }
 
+async function ensurePushedBeforeReview(
+  config: RunnerConfig,
+  job: JobRecord,
+  wt: string,
+  callbacks?: JobCallbacks,
+): Promise<boolean> {
+  if (job.dryRun) return true;
+  const sync = await isBranchSyncedWithOrigin(wt, job.input.branch);
+  if (sync.ok) return true;
+  job.error = `Branch not pushed to origin before review: ${sync.reason}`;
+  await setStage(config, job, "stuck", callbacks);
+  return false;
+}
+
 export async function runJobLoop(
   config: RunnerConfig,
   job: JobRecord,
+  control: JobControl,
   callbacks?: JobCallbacks,
 ): Promise<void> {
   const runner = new AgentRunner();
+  control.registerKill(() => runner.kill());
   runner.on("line", (line: string) => {
     emit(callbacks, job, { type: "log", line });
   });
 
-  const abort = new AbortController();
   const checkStop = async (): Promise<boolean> => {
-    if (job.stopRequested) {
-      abort.abort();
+    if (control.stopRequested) {
       runner.kill();
+      job.stopRequested = true;
+      await saveJob(config.dataDir, job);
       await setStage(config, job, "stopped", callbacks);
       return true;
     }
@@ -113,7 +135,7 @@ export async function runJobLoop(
         job.input.promptFile,
         "Implement the ticket and open a PR.",
       );
-      const steer = job.steerQueue.splice(0).join("\n\n");
+      const steer = control.drainSteer();
       const fullPrompt = steer ? `${prompt}\n\n--- steer ---\n${steer}` : prompt;
       const result = await runner.run({
         cwd: wt,
@@ -122,7 +144,7 @@ export async function runJobLoop(
         logPath: job.logPath,
         dryRun: job.dryRun,
         outputFormat: "stream-json",
-        signal: abort.signal,
+        signal: control.signal,
       });
       if (await checkStop()) return;
       if (result.code !== 0) {
@@ -147,17 +169,20 @@ export async function runJobLoop(
       await notify(config, job, `PR opened/updated: ${job.input.branch}`, callbacks?.fetchImpl);
     }
 
+    if (!(await ensurePushedBeforeReview(config, job, wt, callbacks))) return;
+
     while (job.reviewRound <= job.maxRounds) {
       if (await checkStop()) return;
 
       job.reviewRound += 1;
       await setStage(config, job, "reviewing", callbacks);
+      const reviewRoundStartedAt = new Date().toISOString();
 
       const reviewPrompt = await readPromptFile(
         job.input.reviewPromptFile ?? "",
         DEFAULT_REVIEW_PROMPT,
       );
-      const reviewSteer = job.steerQueue.splice(0).join("\n\n");
+      const reviewSteer = control.drainSteer();
       const reviewFull = reviewSteer
         ? `${reviewPrompt}\n\nPR: ${job.prUrl}\n\n--- steer ---\n${reviewSteer}`
         : `${reviewPrompt}\n\nPR: ${job.prUrl}`;
@@ -169,7 +194,7 @@ export async function runJobLoop(
         logPath: job.logPath,
         dryRun: job.dryRun,
         outputFormat: "stream-json",
-        signal: abort.signal,
+        signal: control.signal,
       });
       if (await checkStop()) return;
       if (reviewRun.code !== 0) {
@@ -182,7 +207,7 @@ export async function runJobLoop(
       if (job.dryRun) {
         verdict = job.reviewRound >= job.maxRounds ? "APPROVE" : "CHANGES";
       } else if (job.prNumber != null) {
-        verdict = await fetchLatestPrCommentVerdict(wt, job.prNumber);
+        verdict = await fetchPrCommentVerdictSince(wt, job.prNumber, reviewRoundStartedAt);
       }
 
       if (!verdict) {
@@ -223,7 +248,7 @@ export async function runJobLoop(
         await rebaseOntoBase(wt);
       }
       const fixPrompt = await readPromptFile(job.input.fixPromptFile ?? "", DEFAULT_FIX_PROMPT);
-      const fixSteer = job.steerQueue.splice(0).join("\n\n");
+      const fixSteer = control.drainSteer();
       const fixFull = fixSteer
         ? `${fixPrompt}\n\nPR: ${job.prUrl}\n\n--- steer ---\n${fixSteer}`
         : `${fixPrompt}\n\nPR: ${job.prUrl}`;
@@ -235,7 +260,7 @@ export async function runJobLoop(
         logPath: job.logPath,
         dryRun: job.dryRun,
         outputFormat: "stream-json",
-        signal: abort.signal,
+        signal: control.signal,
       });
       if (await checkStop()) return;
       if (fixRun.code !== 0) {
@@ -243,16 +268,14 @@ export async function runJobLoop(
         await setStage(config, job, "failed", callbacks);
         return;
       }
+      if (!(await ensurePushedBeforeReview(config, job, wt, callbacks))) return;
       if (!job.dryRun) {
-        const push = await gh(wt, ["pr", "view", job.input.branch, "--json", "url"]);
-        if (push.code === 0) {
-          await notify(
-            config,
-            job,
-            `PR pushed after fix round ${job.reviewRound}`,
-            callbacks?.fetchImpl,
-          );
-        }
+        await notify(
+          config,
+          job,
+          `PR pushed after fix round ${job.reviewRound}`,
+          callbacks?.fetchImpl,
+        );
       }
       // loop continues to next review round
     }

@@ -1,5 +1,6 @@
 import type { RunnerConfig } from "./config.js";
 import { runJobLoop, jobSnapshot } from "./job-runner.js";
+import { JobControl } from "./job-control.js";
 import { createJob, listJobs, loadJob, saveJob } from "./store.js";
 import type { JobRecord } from "./types.js";
 import type { JobEvent, StartJobArgs } from "./types.js";
@@ -9,9 +10,20 @@ const ACTIVE_STAGES = new Set(["building", "reviewing", "fixing"]);
 
 export class RunnerEngine extends EventEmitter {
   private running = new Map<string, Promise<void>>();
+  /** Shared with in-flight runJobLoop — steer/stop must not reload and clobber the live JobRecord. */
+  readonly jobControls = new Map<string, JobControl>();
 
   constructor(readonly config: RunnerConfig) {
     super();
+  }
+
+  private controlFor(job: JobRecord): JobControl {
+    let control = this.jobControls.get(job.id);
+    if (!control) {
+      control = JobControl.fromPersisted(job);
+      this.jobControls.set(job.id, control);
+    }
+    return control;
   }
 
   async init(): Promise<void> {
@@ -43,9 +55,14 @@ export class RunnerEngine extends EventEmitter {
   private async runOne(jobId: string): Promise<void> {
     const job = await loadJob(this.config.dataDir, jobId);
     if (!job) return;
-    await runJobLoop(this.config, job, {
-      onEvent: (id, event) => this.emit("event", id, event),
-    });
+    const control = this.controlFor(job);
+    try {
+      await runJobLoop(this.config, job, control, {
+        onEvent: (id, event) => this.emit("event", id, event),
+      });
+    } finally {
+      this.jobControls.delete(jobId);
+    }
   }
 
   async list(): Promise<JobRecord[]> {
@@ -59,9 +76,14 @@ export class RunnerEngine extends EventEmitter {
   }
 
   async steer(jobId: string, prompt: string): Promise<JobRecord | null> {
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      return loadJob(this.config.dataDir, jobId);
+    }
+    this.jobControls.get(jobId)?.pushSteer(trimmed);
     const job = await loadJob(this.config.dataDir, jobId);
     if (!job) return null;
-    job.steerQueue.push(prompt.trim());
+    job.steerQueue.push(trimmed);
     await saveJob(this.config.dataDir, job);
     return job;
   }
@@ -71,6 +93,7 @@ export class RunnerEngine extends EventEmitter {
     if (!job) return null;
     job.stopRequested = true;
     await saveJob(this.config.dataDir, job);
+    this.jobControls.get(jobId)?.requestStop();
     return job;
   }
 }
