@@ -39,9 +39,7 @@ export function decideDraftReadyPromotion(state: DraftReadyState): DraftReadyDec
     return { action: "none" };
   }
   const ci = state.ciStatus?.status;
-  const checksOk = state.docsJob
-    ? ci === "success" || ci === "neutral"
-    : ci === "success";
+  const checksOk = state.docsJob ? ci === "success" || ci === "neutral" : ci === "success";
   if (!checksOk) {
     return { action: "none" };
   }
