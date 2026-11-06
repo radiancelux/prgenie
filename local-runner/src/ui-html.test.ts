@@ -240,8 +240,7 @@ describe("runnerUiHtml jsdom render", () => {
       addEventListener() {}
       removeEventListener() {}
     }
-    // @ts-expect-error test stub
-    window.EventSource = FakeEventSource;
+    (window as unknown as { EventSource: typeof FakeEventSource }).EventSource = FakeEventSource;
 
     const scriptBodies = inlineScriptBodies(html);
     assert.ok(scriptBodies.length >= 1);
