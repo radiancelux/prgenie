@@ -118,13 +118,16 @@ export async function createJob(
     ticketUrl: args.ticketUrl,
     linearIssue: args.linearIssue,
   });
-  const title = await resolveJobTitle({
-    title: args.title,
-    ticketUrl: ticket.ticketUrl ?? args.ticketUrl,
-    linearIssue: ticket.linearIssue,
-    branch: args.branch,
-    promptFile: promptFile || args.promptFile,
-  });
+  const title =
+    (await resolveJobTitle({
+      title: args.title,
+      ticketUrl: ticket.ticketUrl ?? args.ticketUrl,
+      linearIssue: ticket.linearIssue,
+      branch: args.branch,
+      promptFile: promptFile || args.promptFile || "",
+    })) ||
+    args.branch.trim() ||
+    id.slice(0, 8);
   const input: JobInput = {
     repoPath: target.repoPath,
     branch: args.branch,

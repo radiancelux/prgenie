@@ -61,7 +61,7 @@ describe("job store", () => {
         title: "My agent",
         dryRun: true,
       },
-      { model: "composer-2.5", dryRun: true },
+      { model: "composer-2.5", dryRun: true, config: { defaultCodeRepoPath: null } },
     );
     assert.equal(explicit.title, "My agent");
 
@@ -75,7 +75,7 @@ describe("job store", () => {
         ticketUrl: "https://linear.app/radiancelux/issue/RAD-327/dashboard-script-parse",
         dryRun: true,
       },
-      { model: "composer-2.5", dryRun: true },
+      { model: "composer-2.5", dryRun: true, config: { defaultCodeRepoPath: null } },
     );
     assert.equal(fromSlug.title, "dashboard script parse");
   });
