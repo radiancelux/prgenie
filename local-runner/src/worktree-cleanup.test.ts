@@ -46,6 +46,7 @@ function job(overrides: Partial<JobRecord> = {}): JobRecord {
     readyPromotedAt: null,
     linearIssue: null,
     ticketUrl: null,
+    title: "x",
     tokenUsage: null,
     ciStatus: {
       status: "merged",

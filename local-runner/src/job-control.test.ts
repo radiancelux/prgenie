@@ -23,6 +23,7 @@ function minimalJob(overrides: Partial<JobRecord> = {}): JobRecord {
     readyPromotedAt: null,
     linearIssue: null,
     ticketUrl: null,
+    title: "b",
     tokenUsage: null,
     ciStatus: null,
     lastVerdict: null,
