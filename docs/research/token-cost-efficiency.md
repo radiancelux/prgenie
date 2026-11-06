@@ -86,12 +86,12 @@ Lower list rates (or smaller models) tend to win when:
 
 ### Comparison snapshot
 
-| Dimension | Local (`cursor-agent` + local runner) | Cloud Agents |
-| --- | --- | --- |
-| **Billing** | Plan pool + model per-token rates | Same model/plan usage model (public docs) |
-| **Hardware** | Your workstation | Remote VM |
-| **Parallelism** | Limited by local resources | Many parallel agents supported |
-| **Environment** | Local toolchain | Configured cloud dev env |
+| Dimension                   | Local (`cursor-agent` + local runner)           | Cloud Agents                                   |
+| --------------------------- | ----------------------------------------------- | ---------------------------------------------- |
+| **Billing**                 | Plan pool + model per-token rates               | Same model/plan usage model (public docs)      |
+| **Hardware**                | Your workstation                                | Remote VM                                      |
+| **Parallelism**             | Limited by local resources                      | Many parallel agents supported                 |
+| **Environment**             | Local toolchain                                 | Configured cloud dev env                       |
 | **Best for PR Genie today** | Default dogfood path, docs/code on known runner | Heavy integration tests, parallel issue sweeps |
 
 ---
