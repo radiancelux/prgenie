@@ -18,6 +18,7 @@ function testConfig(dataDir: string): RunnerConfig {
     resendApiKey: null,
     defaultModel: "composer-2.5",
     dryRun: true,
+    defaultCodeRepoPath: null,
   };
 }
 
@@ -29,7 +30,7 @@ describe("RunnerEngine steer/stop", () => {
     const job = await createJob(
       dataDir,
       { repoPath: "/tmp/repo", branch: "feat/x", promptFile: "/p", dryRun: true },
-      { model: "composer-2.5", dryRun: true },
+      { model: "composer-2.5", dryRun: true, config: { defaultCodeRepoPath: null } },
     );
     const control = JobControl.fromPersisted(job);
     engine.jobControls.set(job.id, control);
@@ -45,7 +46,7 @@ describe("RunnerEngine steer/stop", () => {
     const job = await createJob(
       dataDir,
       { repoPath: "/tmp/repo", branch: "feat/x", promptFile: "/p", dryRun: true },
-      { model: "composer-2.5", dryRun: true },
+      { model: "composer-2.5", dryRun: true, config: { defaultCodeRepoPath: null } },
     );
     const control = JobControl.fromPersisted(job);
     engine.jobControls.set(job.id, control);
@@ -72,7 +73,7 @@ describe("RunnerEngine steer/stop", () => {
     const job = await createJob(
       dataDir,
       { repoPath: "/tmp/repo", branch: "feat/x", promptFile: "/p", dryRun: true },
-      { model: "composer-2.5", dryRun: true },
+      { model: "composer-2.5", dryRun: true, config: { defaultCodeRepoPath: null } },
     );
     const control = new JobControl();
     engine.jobControls.set(job.id, control);

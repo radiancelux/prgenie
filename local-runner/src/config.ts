@@ -12,6 +12,8 @@ export interface RunnerConfig {
   resendApiKey: string | null;
   defaultModel: string;
   dryRun: boolean;
+  /** Optional fallback local path for code jobs when setup has no code default preset. */
+  defaultCodeRepoPath: string | null;
 }
 
 const DEFAULT_PORT = 9473;
@@ -46,5 +48,6 @@ export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<
     resendApiKey,
     defaultModel: env.PRGENIE_RUNNER_MODEL?.trim() || "composer-2.5",
     dryRun: env.PRGENIE_RUNNER_DRY_RUN === "1" || env.PRGENIE_RUNNER_DRY_RUN === "true",
+    defaultCodeRepoPath: env.PRGENIE_RUNNER_DEFAULT_REPO_PATH?.trim() || null,
   };
 }

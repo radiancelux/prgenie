@@ -1,5 +1,6 @@
 import type { CiStatusInfo, JobRecord, JobStage } from "./types.js";
 import { isCiFinal } from "./ci.js";
+import { isDocsJob } from "./doc-checks.js";
 import { gh, git } from "./github.js";
 import { repoSlugFromPrUrl } from "./ci.js";
 
@@ -20,6 +21,7 @@ export type DraftReadyState = {
   currentHeadSha: string | null;
   isDraft: boolean | null;
   readyPromotedAt: string | null;
+  docsJob?: boolean;
 };
 
 /** Pure decision for unit tests — when to run \`gh pr ready\`. */
@@ -37,7 +39,8 @@ export function decideDraftReadyPromotion(state: DraftReadyState): DraftReadyDec
     return { action: "none" };
   }
   const ci = state.ciStatus?.status;
-  if (ci !== "success") {
+  const checksOk = state.docsJob ? ci === "success" || ci === "neutral" : ci === "success";
+  if (!checksOk) {
     return { action: "none" };
   }
   if (!state.approveHeadSha || !state.currentHeadSha) {
@@ -143,6 +146,7 @@ export async function syncDraftReadyForJob(
     currentHeadSha,
     isDraft: job.prIsDraft,
     readyPromotedAt: job.readyPromotedAt,
+    docsJob: isDocsJob(job),
   });
 
   if (decision.action === "already_ready" && !job.readyPromotedAt) {

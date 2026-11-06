@@ -23,6 +23,7 @@ function testConfig(dataDir: string): RunnerConfig {
     resendApiKey: null,
     defaultModel: "m",
     dryRun: true,
+    defaultCodeRepoPath: null,
   };
 }
 

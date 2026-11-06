@@ -17,6 +17,7 @@ function testConfig(dataDir: string): RunnerConfig {
     resendApiKey: "re_key",
     defaultModel: "composer-2.5",
     dryRun: true,
+    defaultCodeRepoPath: null,
   };
 }
 

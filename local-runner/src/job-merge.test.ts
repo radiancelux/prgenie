@@ -13,7 +13,7 @@ describe("syncJobMergedStatus", () => {
     const job = await createJob(
       dataDir,
       { repoPath: "/tmp/repo", branch: "feat/x", promptFile: "/p", dryRun: true },
-      { model: "m", dryRun: true },
+      { model: "m", dryRun: true, config: { defaultCodeRepoPath: null } },
     );
     job.prNumber = 99;
     job.prUrl = "https://github.com/o/r/pull/99";

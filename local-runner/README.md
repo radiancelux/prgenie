@@ -42,6 +42,7 @@ Binary: `pnpm local-runner --help` (or `node local-runner/dist/runner.cjs`).
 | `PRGENIE_RUNNER_DATA_DIR`                            | Job JSON + logs (default `~/.prgenie/local-runner`)                                                        |
 | `PRGENIE_RUNNER_MODEL`                               | Default model (default `composer-2.5`)                                                                     |
 | `PRGENIE_RUNNER_DRY_RUN`                             | `1` — skip real `cursor-agent` / git worktrees (tests & smoke)                                             |
+| `PRGENIE_RUNNER_DEFAULT_REPO_PATH`                   | Optional local path fallback for **code** jobs when Setup has no code default preset                       |
 | `PRGENIE_RUNNER_NOTIFY_EMAIL`                        | Resend notification recipient                                                                              |
 | `PRGENIE_RUNNER_FROM_EMAIL`                          | Resend sender (default `PR Genie Local Runner <runner@radiancelux.tech>`; full `Name <addr>` or bare addr) |
 | `RESEND_API_KEY` or `PRGENIE_RUNNER_RESEND_KEY_FILE` | Resend API key (never logged)                                                                              |
@@ -72,13 +73,13 @@ pnpm local-runner serve
 On startup the runner prints reachable URLs (loopback plus a best-effort LAN IP when bound to `0.0.0.0`). Allow the chosen TCP port through your host firewall if needed. Do **not** expose the runner to the public internet without TLS and a proper reverse proxy (out of scope here).
 
 - **UI:** http://127.0.0.1:9473/ (paste token once; stored in `localStorage`)
-- **Setup:** http://127.0.0.1:9473/setup — default model/driver, notify, driver binaries (bearer-gated `GET`/`PATCH /api/settings`)
+- **Setup:** http://127.0.0.1:9473/setup — default model/driver, notify, driver binaries, **docs repo presets** and default repo per job type (bearer-gated `GET`/`PATCH /api/settings`)
 - **MCP HTTP:** `POST http://127.0.0.1:9473/mcp` with `Authorization: Bearer $PRGENIE_RUNNER_TOKEN`
 - **MCP stdio:** `pnpm local-runner mcp` (for Cursor `mcp.json`)
 
 ### MCP tools
 
-- `start_job` — `repoPath` or `remote`, `branch`, `promptFile`, optional `reviewPromptFile`, `fixPromptFile`, `maxRounds`, `model`, optional **`driver`** (id), `dryRun`, optional `ticketUrl` / `linearIssue` (when omitted, the runner parses `RAD-<n>` from the branch name and links Linear)
+- `start_job` — `repoPath` or `remote`, `branch`, `promptFile` (code jobs), optional **`jobType`** / **`profile`** (`docs` | code), optional **`docsTemplate`** (`marketing` | `policy` | `research`), optional `reviewPromptFile`, `fixPromptFile`, `maxRounds`, `model`, optional **`driver`** (id), `dryRun`, optional `ticketUrl` / `linearIssue` (when omitted, the runner parses `RAD-<n>` from the branch name and links Linear)
 - `list_jobs`
 - `get_job` — status + log tail
 - `steer_job` — queue follow-up text for the next agent step
@@ -89,6 +90,14 @@ On startup the runner prints reachable URLs (loopback plus a best-effort LAN IP 
 `building` → `reviewing` (round N) → `fixing` → … → `approved` | `changes_remaining` | `stuck` | `failed` | `stopped`
 
 Default **`maxRounds`** = 2 (review/fix cycles). Reviewer must post **one** GitHub issue comment on the PR ending with `VERDICT: APPROVE` or `VERDICT: CHANGES` (built-in default review prompt enforces this). The runner also accepts the same `VERDICT:` line on PR review bodies as a fallback.
+
+### Docs mode (RAD-326)
+
+Non-technical **docs** jobs worktree a **user-configured** business/policy repo (Setup presets + default for `docs`, or per-job `repoPath` / `remote` override). They use built-in implement/review prompts (`docsTemplate`: marketing, policy, research) and open **draft Markdown PRs**. GitHub Actions CI is **not** waited on; optional **doc checks** (markdown lint on changed `.md`) show as **Doc checks** on the dashboard. Draft→ready still requires **`VERDICT: APPROVE`** on the current HEAD and doc checks green (or N/A when disabled). No auto-merge.
+
+Configure research/web in Cursor CLI: [`autoAcceptWebSearch`](https://cursor.com/docs/cli/changelog), WebFetch [`permissions.allow`](https://cursor.com/docs/cli/reference/permissions), headless [`--force`](https://cursor.com/docs/cli/using). Example preset name only (never hardcoded): `cc-consulting-nv/img-business`.
+
+MCP callers share the runner host owner's compute, Cursor login, and `gh` identity unless they run a separate runner + token.
 
 ### Dashboard (localhost UI)
 

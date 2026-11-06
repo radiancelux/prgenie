@@ -8,6 +8,8 @@ export type JobStage =
   | "failed"
   | "stopped";
 
+export type JobProfile = "code" | "docs";
+
 export interface JobInput {
   repoPath: string;
   branch: string;
@@ -22,6 +24,12 @@ export interface JobInput {
   remote?: string;
   ticketUrl?: string;
   linearIssue?: string;
+  /** `docs` worktrees a business/policy repo; default is code. */
+  jobType?: JobProfile;
+  /** Alias for jobType (MCP / dashboard). */
+  profile?: JobProfile;
+  /** Built-in docs template when jobType is docs. */
+  docsTemplate?: "marketing" | "policy" | "research";
   /** Human label for dashboard rows (derived at create when omitted). */
   title?: string;
 }
@@ -54,7 +62,7 @@ export interface CiStatusInfo {
   /** First-line gh/origin stderr when lookup fails (no secrets). */
   reason?: string;
   /** Origin `origin pr checks` when reachable; otherwise GitHub Actions rollup via `gh`. */
-  source: "origin" | "github";
+  source: "origin" | "github" | "doc-checks";
 }
 
 export interface JobRecord {
@@ -97,7 +105,7 @@ export interface StartJobArgs {
   repoPath?: string;
   remote?: string;
   branch: string;
-  promptFile: string;
+  promptFile?: string;
   reviewPromptFile?: string;
   fixPromptFile?: string;
   maxRounds?: number;
@@ -106,6 +114,9 @@ export interface StartJobArgs {
   dryRun?: boolean;
   ticketUrl?: string;
   linearIssue?: string;
+  jobType?: JobProfile;
+  profile?: JobProfile;
+  docsTemplate?: JobInput["docsTemplate"];
   /** Human label for dashboard rows (derived at create when omitted). */
   title?: string;
 }

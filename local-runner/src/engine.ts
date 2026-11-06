@@ -43,6 +43,7 @@ export class RunnerEngine extends EventEmitter {
     const job = await createJob(this.config.dataDir, args, {
       model: this.config.defaultModel,
       dryRun: this.config.dryRun,
+      config: this.config,
     });
     this.schedule(job.id);
     return job;

@@ -332,6 +332,8 @@ const CI_ACTIVE_STAGES = new Set(["building", "reviewing", "fixing", "approved"]
 const MERGE_WATCH_STAGES = new Set(["approved", "changes_remaining", "stuck", "failed", "stopped"]);
 
 export function shouldPollCi(job: JobRecord): boolean {
+  if (job.input.jobType === "docs" || job.input.profile === "docs") return false;
+
   const hasPr = job.prNumber != null || job.prUrl != null;
   if (!hasPr) return false;
 

@@ -5,6 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import { createJob, listJobs, loadJob } from "./store.js";
 
+const createDefaults = {
+  model: "composer-2.5",
+  dryRun: true,
+  config: { defaultCodeRepoPath: null },
+};
+
 describe("job store", () => {
   it("persists jobs across reload", async () => {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-store-"));
@@ -17,7 +23,7 @@ describe("job store", () => {
         maxRounds: 2,
         dryRun: true,
       },
-      { model: "composer-2.5", dryRun: false },
+      { model: "composer-2.5", dryRun: false, config: { defaultCodeRepoPath: null } },
     );
     assert.equal(job.stage, "building");
     const again = await loadJob(dataDir, job.id);
@@ -37,7 +43,7 @@ describe("job store", () => {
         promptFile: "/tmp/prompt.md",
         dryRun: true,
       },
-      { model: "composer-2.5", dryRun: true },
+      createDefaults,
     );
     assert.equal(job.linearIssue, "RAD-320");
     assert.equal(job.ticketUrl, "https://linear.app/radiancelux/issue/RAD-320");
@@ -55,7 +61,7 @@ describe("job store", () => {
         title: "My agent",
         dryRun: true,
       },
-      { model: "composer-2.5", dryRun: true },
+      { model: "composer-2.5", dryRun: true, config: { defaultCodeRepoPath: null } },
     );
     assert.equal(explicit.title, "My agent");
 
@@ -69,8 +75,62 @@ describe("job store", () => {
         ticketUrl: "https://linear.app/radiancelux/issue/RAD-327/dashboard-script-parse",
         dryRun: true,
       },
-      { model: "composer-2.5", dryRun: true },
+      { model: "composer-2.5", dryRun: true, config: { defaultCodeRepoPath: null } },
     );
     assert.equal(fromSlug.title, "dashboard script parse");
+  });
+
+  it("docs job uses setup default repo preset over code default", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-store-docs-"));
+    const { saveSettings } = await import("./settings.js");
+    await saveSettings(dataDir, {
+      presets: {
+        repos: [
+          {
+            id: "biz",
+            name: "Business docs",
+            repoPath: "/data/business-repo",
+            slug: "example-org/example-business",
+          },
+        ],
+      },
+      jobTypes: {
+        defaultPresetId: { code: null, docs: "biz" },
+      },
+    });
+    const job = await createJob(
+      dataDir,
+      {
+        branch: "docs/policy-update",
+        jobType: "docs",
+        docsTemplate: "policy",
+        dryRun: true,
+      },
+      createDefaults,
+    );
+    assert.equal(job.input.repoPath, "/data/business-repo");
+    assert.equal(job.input.jobType, "docs");
+    assert.equal(job.repoSlug, "example-org/example-business");
+  });
+
+  it("per-job repoPath override wins over docs default preset", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-store-override-"));
+    const { saveSettings } = await import("./settings.js");
+    await saveSettings(dataDir, {
+      presets: { repos: [{ id: "biz", name: "B", repoPath: "/data/default" }] },
+      jobTypes: { defaultPresetId: { docs: "biz" } },
+    });
+    const job = await createJob(
+      dataDir,
+      {
+        branch: "docs/x",
+        jobType: "docs",
+        docsTemplate: "research",
+        repoPath: "/override/path",
+        dryRun: true,
+      },
+      createDefaults,
+    );
+    assert.equal(job.input.repoPath, "/override/path");
   });
 });

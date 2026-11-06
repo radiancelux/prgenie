@@ -3,11 +3,14 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { JobInput, JobRecord, StartJobArgs } from "./types.js";
 import { shouldHideMergedJob } from "./ci.js";
+import { resolveJobTarget, normalizeJobType } from "./job-target.js";
+import { isDocsTemplateId } from "./docs-prompts.js";
 import { resolveJobTicket } from "./linear-ticket.js";
 import { jobFile, jobLogFile, jobsDir, logsDir, repoSlugFromPath } from "./paths.js";
 import { resolveJobTitle } from "./job-display.js";
 import { repoOwnerNameFromGitOrigin, repoOwnerNameFromRemoteUrl } from "./repo-display.js";
 import { loadSettings, resolveDefaultDriverId } from "./settings.js";
+import type { RunnerConfig } from "./config.js";
 
 export async function ensureDataDirs(dataDir: string): Promise<void> {
   await mkdir(jobsDir(dataDir), { recursive: true });
@@ -79,43 +82,67 @@ export async function listJobsForDisplay(
 export async function createJob(
   dataDir: string,
   args: StartJobArgs,
-  defaults: { model: string; dryRun: boolean; driverId?: string },
+  defaults: {
+    model: string;
+    dryRun: boolean;
+    driverId?: string;
+    config: Pick<RunnerConfig, "defaultCodeRepoPath">;
+  },
 ): Promise<JobRecord> {
   await ensureDataDirs(dataDir);
   const settings = await loadSettings(dataDir);
+  const jobType = normalizeJobType(args);
+  const target = resolveJobTarget(args, settings, defaults.config);
+  if (!target.ok) {
+    throw new Error(target.error);
+  }
   const id = randomUUID();
-  const repoPath = args.repoPath?.trim() || "";
-  let slug = "remote";
-  if (args.remote?.trim()) {
-    slug = repoOwnerNameFromRemoteUrl(args.remote) ?? repoSlugFromPath(args.remote);
-  } else if (repoPath) {
-    const fromOrigin = await repoOwnerNameFromGitOrigin(repoPath);
-    slug = fromOrigin ?? repoSlugFromPath(repoPath);
+  const docsTemplate =
+    args.docsTemplate && isDocsTemplateId(args.docsTemplate) ? args.docsTemplate : undefined;
+  const promptFile = args.promptFile?.trim() || (jobType === "docs" ? "" : "");
+  if (jobType === "code" && !promptFile) {
+    throw new Error("promptFile is required for code jobs");
+  }
+  if (jobType === "docs" && !promptFile && !docsTemplate) {
+    throw new Error("docs jobs need docsTemplate or promptFile");
+  }
+  let slug = target.repoSlug;
+  if (target.remote?.trim()) {
+    slug = repoOwnerNameFromRemoteUrl(target.remote) ?? repoSlugFromPath(target.remote) ?? slug;
+  } else if (target.repoPath?.trim()) {
+    const fromOrigin = await repoOwnerNameFromGitOrigin(target.repoPath);
+    slug = fromOrigin ?? (slug.includes("/") ? slug : repoSlugFromPath(target.repoPath));
   }
   const ticket = resolveJobTicket({
     branch: args.branch,
     ticketUrl: args.ticketUrl,
     linearIssue: args.linearIssue,
   });
-  const title = await resolveJobTitle({
-    title: args.title,
-    ticketUrl: ticket.ticketUrl ?? args.ticketUrl,
-    linearIssue: ticket.linearIssue,
-    branch: args.branch,
-    promptFile: args.promptFile,
-  });
+  const title =
+    (await resolveJobTitle({
+      title: args.title,
+      ticketUrl: ticket.ticketUrl ?? args.ticketUrl,
+      linearIssue: ticket.linearIssue,
+      branch: args.branch,
+      promptFile: promptFile || args.promptFile || "",
+    })) ||
+    args.branch.trim() ||
+    id.slice(0, 8);
   const input: JobInput = {
-    repoPath: repoPath || "",
+    repoPath: target.repoPath,
     branch: args.branch,
-    promptFile: args.promptFile,
+    promptFile: promptFile || "",
     reviewPromptFile: args.reviewPromptFile,
     fixPromptFile: args.fixPromptFile,
     maxRounds: args.maxRounds,
     model: args.model,
     driver: args.driver,
-    remote: args.remote,
+    remote: target.remote ?? args.remote,
     ticketUrl: args.ticketUrl,
     linearIssue: args.linearIssue,
+    jobType,
+    profile: jobType,
+    docsTemplate,
     title,
   };
   const logPath = jobLogFile(dataDir, id);
