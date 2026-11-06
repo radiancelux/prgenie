@@ -1,5 +1,9 @@
 import type { JobRecord } from "./types.js";
-import { jobAgentDisplayLabel } from "./job-display.js";
+import {
+  humanizeKebabSlug,
+  jobAgentDisplayLabel,
+  linearSlugTitleFromTicketUrl,
+} from "./job-display.js";
 import {
   jobRepoDisplayLabel,
   repoBasenameFromPath,
@@ -100,6 +104,10 @@ export function formatRelativeTime(
 export function dashboardFormatBrowserScript(): string {
   return `(function() {
 const STALE_JOB_HIDE_AFTER_MS = ${STALE_JOB_HIDE_AFTER_MS};
+const MINUTE_MS = ${MINUTE_MS};
+const HOUR_MS = ${HOUR_MS};
+const DAY_MS = ${DAY_MS};
+const DOCS_STAGE_LABELS = ${JSON.stringify(DOCS_STAGE_LABELS)};
 ${isDocsJobRecord.toString()}
 ${dashboardStageLabel.toString()}
 ${dashboardChecksColumnHeader.toString()}
@@ -110,6 +118,8 @@ ${repoOwnerNameFromRemoteUrl.toString()}
 ${repoOwnerNameFromPrUrl.toString()}
 ${repoBasenameFromPath.toString()}
 ${jobRepoDisplayLabel.toString()}
+${humanizeKebabSlug.toString()}
+${linearSlugTitleFromTicketUrl.toString()}
 ${jobAgentDisplayLabel.toString()}
 return { isDocsJobRecord, dashboardStageLabel, dashboardChecksColumnHeader, dashboardChecksStatusLabel, shouldHideStaleJob, formatRelativeTime, jobRepoDisplayLabel, jobAgentDisplayLabel };
 })()`;

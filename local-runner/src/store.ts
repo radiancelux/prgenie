@@ -70,13 +70,26 @@ export async function listJobs(dataDir: string, _opts: ListJobsOptions = {}): Pr
   return jobs;
 }
 
+export type ListJobsForDisplayOptions = { includeFinished?: boolean };
+
 /** Jobs shown on the dashboard and via list_jobs (merged PRs drop off after ~1h). */
 export async function listJobsForDisplay(
   dataDir: string,
   nowMs = Date.now(),
+  opts: ListJobsForDisplayOptions = {},
 ): Promise<JobRecord[]> {
   const jobs = await listJobs(dataDir);
+  if (opts.includeFinished) return jobs;
   return jobs.filter((j) => !shouldHideMergedJob(j, nowMs));
+}
+
+export async function jobsDashboardMeta(
+  dataDir: string,
+  nowMs = Date.now(),
+): Promise<{ totalOnDisk: number; mergedHidden: number }> {
+  const jobs = await listJobs(dataDir);
+  const mergedHidden = jobs.filter((j) => shouldHideMergedJob(j, nowMs)).length;
+  return { totalOnDisk: jobs.length, mergedHidden };
 }
 
 export async function createJob(

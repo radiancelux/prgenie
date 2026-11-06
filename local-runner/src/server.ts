@@ -99,8 +99,18 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
       return;
     }
 
+    if (path === "/api/jobs/meta" && req.method === "GET") {
+      const meta = await engine.jobsMeta();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(meta));
+      return;
+    }
+
     if (path === "/api/jobs" && req.method === "GET") {
-      const jobs = await engine.list();
+      const includeFinished =
+        url.searchParams.get("includeFinished") === "1" ||
+        url.searchParams.get("includeFinished") === "true";
+      const jobs = await engine.list({ includeFinished });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(jobs));
       return;

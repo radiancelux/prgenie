@@ -34,5 +34,13 @@ describe("syncJobMergedStatus", () => {
     assert.equal((await listJobsForDisplay(dataDir, mergedMs + 1000)).length, 1);
     assert.equal(shouldHideMergedJob(onDisk!, mergedMs + MERGED_HIDE_AFTER_MS), true);
     assert.equal((await listJobsForDisplay(dataDir, mergedMs + MERGED_HIDE_AFTER_MS)).length, 0);
+    assert.equal(
+      (
+        await listJobsForDisplay(dataDir, mergedMs + MERGED_HIDE_AFTER_MS, {
+          includeFinished: true,
+        })
+      ).length,
+      1,
+    );
   });
 });
