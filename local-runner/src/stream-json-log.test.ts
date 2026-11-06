@@ -8,6 +8,7 @@ import {
   parseAgentLogBlocks,
   summarizeToolArgs,
   toolPayload,
+  toolStepLabel,
 } from "./stream-json-log.js";
 
 describe("stream-json log formatting", () => {
@@ -43,10 +44,11 @@ describe("stream-json log formatting", () => {
       '{"type":"tool_call","subtype":"started","tool_call":{"readToolCall":{"args":{"path":"/repo/src/foo.ts"}}}}',
     ].join("\n");
     const html = formatAgentLogTailHtml(raw);
-    assert.match(html, /agent-prose/);
+    assert.match(html, /agent-bubble/);
     assert.match(html, /I will read the file/);
-    assert.match(html, /agent-tool-chip/);
-    assert.match(html, />read</);
+    assert.match(html, /agent-tool-step/);
+    assert.match(html, /Reading/);
+    assert.match(html, /<details class="agent-tool-step"/);
     const blocks = parseAgentLogBlocks(raw);
     assert.ok(blocks && blocks.some((b) => b.kind === "prose"));
     assert.ok(blocks && blocks.some((b) => b.kind === "tool" && b.name === "read"));
@@ -64,6 +66,24 @@ describe("stream-json log formatting", () => {
       '{"type":"tool_call","subtype":"completed","tool_call":{"editToolCall":{"args":{"path":"/a/b.ts"},"result":{"error":{"modelVisibleError":"Invalid arguments"}}}}}',
     ].join("\n");
     assert.match(formatAgentLogTail(raw), /✗ edit failed: Invalid arguments/);
+  });
+
+  it("collapses thinking in HTML transcript", () => {
+    const raw = [
+      "--- agent (composer-2.5, stream-json) ---",
+      '{"type":"thinking","subtype":"delta","text":"secret plan"}',
+      '{"type":"thinking","subtype":"completed"}',
+      '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi."}]}}',
+    ].join("\n");
+    const html = formatAgentLogTailHtml(raw);
+    assert.match(html, /agent-thinking-collapse/);
+    assert.match(html, /secret plan/);
+    assert.match(html, /agent-bubble/);
+  });
+
+  it("labels tool steps for the dashboard", () => {
+    assert.equal(toolStepLabel("read"), "Reading");
+    assert.equal(toolStepLabel("shell"), "Running");
   });
 
   it("summarizes shell commands", () => {

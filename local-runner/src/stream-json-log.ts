@@ -64,6 +64,38 @@ export function toolPayload(toolCall: Record<string, unknown>): {
   };
 }
 
+export function toolStepLabel(kind: string | null): string {
+  if (!kind) return "Tool";
+  const labels: Record<string, string> = {
+    read: "Reading",
+    grep: "Searching",
+    glob: "Finding files",
+    shell: "Running",
+    edit: "Editing",
+    write: "Writing",
+    strReplace: "Editing",
+  };
+  return labels[kind] ?? kind.charAt(0).toUpperCase() + kind.slice(1);
+}
+
+export function formatToolResult(result: unknown, _kind: string | null): string {
+  if (result == null) return "";
+  if (typeof result === "string") return truncate(result, 4000);
+  if (typeof result !== "object") return truncate(String(result), 4000);
+  const r = result as Record<string, unknown>;
+  if (r.success && typeof r.success === "object") {
+    const s = r.success as Record<string, unknown>;
+    if (typeof s.content === "string") return truncate(s.content, 4000);
+    if (typeof s.output === "string") return truncate(s.output, 4000);
+  }
+  if (typeof r.output === "string") return truncate(r.output, 4000);
+  try {
+    return truncate(JSON.stringify(result, null, 2), 4000);
+  } catch {
+    return truncate(String(result), 4000);
+  }
+}
+
 export function formatToolError(result: unknown): string | null {
   if (!result || typeof result !== "object") return null;
   const r = result as Record<string, unknown>;
@@ -122,8 +154,9 @@ export type AgentLogBlock =
       name: string;
       summary: string;
       detail: string;
-      phase: "started" | "failed";
+      phase: "started" | "completed" | "failed";
       error?: string;
+      resultDetail?: string;
     }
   | { kind: "plain"; text: string }
   | { kind: "error"; text: string };
@@ -210,7 +243,9 @@ export function parseAgentLogBlocks(raw: string): AgentLogBlock[] | null {
         continue;
       }
       if (subtype === "completed") {
+        flushThinking();
         const err = formatToolError(result);
+        const resultDetail = err ? "" : formatToolResult(result, kind);
         if (err) {
           blocks.push({
             kind: "tool",
@@ -219,6 +254,27 @@ export function parseAgentLogBlocks(raw: string): AgentLogBlock[] | null {
             detail,
             phase: "failed",
             error: err,
+          });
+          continue;
+        }
+        let merged = false;
+        for (let i = blocks.length - 1; i >= 0; i--) {
+          const b = blocks[i];
+          if (b.kind === "tool" && b.name === name && b.phase === "started") {
+            b.phase = "completed";
+            if (resultDetail) b.resultDetail = resultDetail;
+            merged = true;
+            break;
+          }
+        }
+        if (!merged) {
+          blocks.push({
+            kind: "tool",
+            name,
+            summary: argSummary,
+            detail,
+            phase: "completed",
+            resultDetail: resultDetail || undefined,
           });
         }
       }
@@ -316,26 +372,34 @@ export function formatAgentLogTailHtml(raw: string): string {
         break;
       case "thinking":
         parts.push(
-          `<div class="agent-thinking"><span class="agent-thinking-label">Thinking</span> ${escapeHtml(truncate(b.text, 500))}</div>`,
+          `<details class="agent-thinking-collapse"><summary>Thinking</summary><div class="agent-thinking-body">${escapeHtml(b.text)}</div></details>`,
         );
         break;
       case "prose":
-        parts.push(`<div class="agent-prose">${formatProseHtml(b.text)}</div>`);
+        parts.push(
+          `<div class="agent-chat-row"><div class="agent-bubble">${formatProseHtml(b.text)}</div></div>`,
+        );
         break;
       case "tool": {
-        const chip = escapeHtml(b.name);
+        const stepLabel = escapeHtml(toolStepLabel(b.name));
         const summary = b.summary
           ? `<span class="agent-tool-summary">${escapeHtml(b.summary)}</span>`
           : "";
-        if (b.phase === "failed") {
-          parts.push(
-            `<div class="agent-tool agent-tool-failed"><div class="agent-tool-head"><span class="agent-tool-chip">${chip}</span>${summary}</div><div class="agent-tool-error">${escapeHtml(b.error ?? "failed")}</div></div>`,
-          );
-        } else {
-          parts.push(
-            `<div class="agent-tool"><div class="agent-tool-head"><span class="agent-tool-chip">${chip}</span>${summary}</div></div>`,
-          );
-        }
+        const openAttr = b.phase === "failed" ? " open" : "";
+        const detailBlock = b.detail
+          ? `<pre class="agent-tool-body">${escapeHtml(b.detail)}</pre>`
+          : "";
+        const resultBlock =
+          b.resultDetail && b.phase !== "failed"
+            ? `<pre class="agent-tool-result">${escapeHtml(b.resultDetail)}</pre>`
+            : "";
+        const errBlock = b.error
+          ? `<div class="agent-tool-error">${escapeHtml(b.error)}</div>`
+          : "";
+        const failedCls = b.phase === "failed" ? " agent-tool-failed" : "";
+        parts.push(
+          `<details class="agent-tool-step${failedCls}"${openAttr}><summary><span class="agent-tool-step-label">${stepLabel}</span>${summary}</summary>${detailBlock}${resultBlock}${errBlock}</details>`,
+        );
         break;
       }
       case "plain":
@@ -370,6 +434,8 @@ export function streamJsonLogBrowserScript(): string {
     summarizeToolArgs,
     toolPayload,
     formatToolError,
+    formatToolResult,
+    toolStepLabel,
     assistantText,
     looksLikeStreamJsonLog,
     escapeHtml,

@@ -41,7 +41,10 @@ export function runnerUiHtml(
     .log-placeholder { color: #9aa3b2; font-size: 0.9rem; margin: 0.5rem 0 1rem; line-height: 1.5; }
     a { color: #7eb8ff; }
     pre { background: #1a1d24; padding: 0.75rem; overflow: auto; max-height: 24rem; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; margin: 0; border-radius: 0.35rem; }
-    .log-panel { margin-top: 0.35rem; }
+    .log-panel { margin-top: 0.35rem; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    .detail-chat { display: flex; flex-direction: column; margin-top: 0.5rem; min-height: 0; }
+    .chat-composer { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #2a2f3a; }
+    .chat-composer.steer-panel { margin: 0; background: transparent; border: none; border-radius: 0; padding: 0.75rem 0 0; }
     .log-toolbar { display: flex; align-items: center; gap: 0.75rem; margin: 0.35rem 0; font-size: 0.85rem; flex-wrap: wrap; }
     .log-toolbar label { color: #9aa3b2; cursor: pointer; user-select: none; }
     #logSteps {
@@ -49,10 +52,12 @@ export function runnerUiHtml(
       background: #1a1d24;
       padding: 0.75rem;
       overflow: auto;
-      max-height: min(28rem, 55vh);
+      max-height: min(32rem, 52vh);
       font-size: 0.85rem;
       border-radius: 0.35rem;
       border: 1px solid #2a2f3a;
+      flex: 1 1 auto;
+      min-height: 8rem;
     }
     #logRaw { display: none; }
     body.show-raw #logSteps { display: none; }
@@ -117,18 +122,53 @@ export function runnerUiHtml(
     .agent-thinking-label { font-style: normal; text-transform: uppercase; font-size: 0.65rem; letter-spacing: 0.04em; color: #6a7380; margin-right: 0.35rem; }
     .agent-prose { line-height: 1.5; margin: 0.6rem 0; color: #e6e8ec; }
     .agent-prose p { margin: 0.35rem 0; }
-    .agent-tool { margin: 0.5rem 0; padding: 0.45rem 0.55rem; background: #12151c; border-left: 3px solid #4a5568; border-radius: 0 0.25rem 0.25rem 0; }
-    .agent-tool-failed { border-left-color: #c44; }
-    .agent-tool-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.5rem; margin-bottom: 0.25rem; }
-    .agent-tool-chip {
-      font-size: 0.7rem;
+    .agent-chat-row { display: flex; justify-content: flex-start; margin: 0.5rem 0; }
+    .agent-bubble {
+      max-width: min(42rem, 100%);
+      padding: 0.55rem 0.75rem;
+      background: #232833;
+      border: 1px solid #343b48;
+      border-radius: 0.65rem 0.65rem 0.65rem 0.2rem;
+      line-height: 1.5;
+      color: #e6e8ec;
+      word-break: break-word;
+    }
+    .agent-bubble p { margin: 0.25rem 0; }
+    .agent-thinking-collapse { margin: 0.45rem 0; font-size: 0.82rem; color: #8a939f; }
+    .agent-thinking-collapse summary {
+      cursor: pointer;
+      color: #7a8494;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      user-select: none;
+    }
+    .agent-thinking-body { margin-top: 0.35rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+    .agent-tool-step {
+      margin: 0.45rem 0;
+      padding: 0.35rem 0.5rem;
+      background: #12151c;
+      border: 1px solid #2a3140;
+      border-radius: 0.35rem;
+    }
+    .agent-tool-step summary {
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.35rem 0.5rem;
+      font-size: 0.82rem;
+      color: #c5cdd8;
+      user-select: none;
+    }
+    .agent-tool-step summary::-webkit-details-marker { display: none; }
+    .agent-tool-step-label {
+      font-size: 0.72rem;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.03em;
-      padding: 0.12rem 0.4rem;
-      border-radius: 0.2rem;
-      background: #2d3544;
-      color: #b8c4d4;
+      color: #9ab0c8;
       font-family: ui-monospace, monospace;
     }
     .agent-tool-summary { font-size: 0.8rem; color: #9aa3b2; }
@@ -144,6 +184,20 @@ export function runnerUiHtml(
       font-family: ui-monospace, monospace;
       color: #c5cdd8;
     }
+    .agent-tool-result {
+      margin: 0.35rem 0 0;
+      padding: 0.45rem 0.55rem;
+      font-size: 0.75rem;
+      background: #0a0c10;
+      border-radius: 0.25rem;
+      overflow-x: auto;
+      max-height: 12rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: ui-monospace, monospace;
+      color: #a8b4c4;
+    }
+    .agent-tool-failed { border-color: rgba(196, 68, 68, 0.55); }
     .agent-tool-error { font-size: 0.8rem; color: #ff9a9a; margin-top: 0.35rem; }
     .agent-error { color: #ff9a9a; margin: 0.5rem 0; }
     .agent-plain { font-family: ui-monospace, monospace; font-size: 0.8rem; color: #b0b8c4; margin: 0.35rem 0; }
@@ -183,7 +237,9 @@ export function runnerUiHtml(
       }
       #jobs tr.job-row td:first-child { font-weight: 600; }
       .agent-label { max-width: min(14rem, calc(100vw - 7rem)); }
+      #logSteps { max-height: min(24rem, 45vh); }
       .steer-row button { flex: 1 1 calc(50% - 0.25rem); }
+      .agent-bubble { max-width: 100%; }
     }
   </style>
 </head>
@@ -242,7 +298,7 @@ export function runnerUiHtml(
     <div id="newJobStatus" class="meta" style="min-height:1.2rem; margin-top:0.35rem;"></div>
   </div>
   <div class="jobs-toolbar">
-    <label class="toggle-row"><input type="checkbox" id="showAllJobs" /> Show all</label>
+    <label class="toggle-row"><input type="checkbox" id="showAllJobs" /> Show finished</label>
     <span class="meta" id="jobsHiddenHint"></span>
   </div>
   <table>
@@ -251,27 +307,30 @@ export function runnerUiHtml(
   </table>
   <h2 id="detailTitle">Agent log</h2>
   <p class="log-placeholder" id="logPlaceholder">Select an agent from the table to view its transcript.</p>
-  <div class="steer-panel">
-    <label for="steerPrompt">Steer selected agent (queued for next agent step)</label>
-    <div class="steer-row">
-      <textarea id="steerPrompt" rows="2" placeholder="Add guidance… Enter to send, Shift+Enter for newline"></textarea>
-      <button type="button" class="primary" id="steerBtn">Steer</button>
-      <button type="button" class="danger" id="stopBtn">Stop</button>
+  <div class="detail-chat" id="detailChat" style="display:none;">
+    <div class="log-toolbar">
+      <label><input type="checkbox" id="showRaw" /> Raw</label>
     </div>
-    <div id="steerStatus"></div>
-  </div>
-  <div class="log-toolbar">
-    <label><input type="checkbox" id="showRaw" /> Raw</label>
-  </div>
-  <div class="log-panel">
-    <div id="logSteps"></div>
-    <pre id="logRaw"></pre>
+    <div class="log-panel">
+      <div id="logSteps"></div>
+      <pre id="logRaw"></pre>
+    </div>
+    <div class="chat-composer steer-panel">
+      <label for="steerPrompt">Steer (queued for next agent step)</label>
+      <div class="steer-row">
+        <textarea id="steerPrompt" rows="2" placeholder="Add guidance… Enter to send, Shift+Enter for newline"></textarea>
+        <button type="button" class="primary" id="steerBtn">Steer</button>
+        <button type="button" class="danger" id="stopBtn">Stop</button>
+      </div>
+      <div id="steerStatus"></div>
+    </div>
   </div>
   <script>
     const logParser = ${logParserInit};
     const dashFmt = ${dashFmtInit};
     const tokenKey = "prgenie_runner_token";
-    const showAllJobsKey = "prgenie_runner_show_all_jobs";
+    const showAllJobsKey = "prgenie_runner_show_finished";
+    const showAllJobsLegacyKey = "prgenie_runner_show_all_jobs";
     const tokenEl = document.getElementById("token");
     tokenEl.value = localStorage.getItem(tokenKey) || "";
     document.getElementById("saveToken").onclick = () => {
@@ -332,10 +391,13 @@ export function runnerUiHtml(
 
     const showAllJobsEl = document.getElementById("showAllJobs");
     const jobsHiddenHint = document.getElementById("jobsHiddenHint");
+    if (localStorage.getItem(showAllJobsKey) === null && localStorage.getItem(showAllJobsLegacyKey) === "1") {
+      localStorage.setItem(showAllJobsKey, "1");
+    }
     showAllJobsEl.checked = localStorage.getItem(showAllJobsKey) === "1";
     showAllJobsEl.onchange = () => {
       localStorage.setItem(showAllJobsKey, showAllJobsEl.checked ? "1" : "0");
-      renderJobTable(lastJobs);
+      void refresh();
     };
 
     const TERMINAL_STAGES = new Set(["approved", "failed", "stopped", "changes_remaining"]);
@@ -354,6 +416,7 @@ export function runnerUiHtml(
     let selectedJobStage = null;
     let es = null;
     let lastJobs = [];
+    let lastJobsMeta = { totalOnDisk: 0, mergedHidden: 0 };
 
     function fmtUpdated(iso) {
       const r = dashFmt.formatRelativeTime(iso, Date.now());
@@ -398,9 +461,7 @@ export function runnerUiHtml(
     function updateDetailVisibility() {
       const hasJob = Boolean(selected);
       document.getElementById("logPlaceholder").style.display = hasJob ? "none" : "block";
-      document.querySelector(".steer-panel").style.display = hasJob ? "block" : "none";
-      document.querySelector(".log-toolbar").style.display = hasJob ? "flex" : "none";
-      document.querySelector(".log-panel").style.display = hasJob ? "block" : "none";
+      document.getElementById("detailChat").style.display = hasJob ? "flex" : "none";
       if (!hasJob) {
         document.getElementById("detailTitle").textContent = "Agent log";
         renderLogTail("");
@@ -467,15 +528,29 @@ export function runnerUiHtml(
     }
 
     function renderJobTable(jobs) {
-      const showAll = showAllJobsEl.checked;
-      const hidden = showAll ? 0 : jobs.filter((j) => dashFmt.shouldHideStaleJob(j)).length;
-      const visible = showAll ? jobs : jobs.filter((j) => !dashFmt.shouldHideStaleJob(j));
-      jobsHiddenHint.textContent = hidden ? "(" + hidden + " hidden)" : "";
+      const showFinished = showAllJobsEl.checked;
+      const staleHidden = showFinished ? 0 : jobs.filter((j) => dashFmt.shouldHideStaleJob(j)).length;
+      const visible = showFinished ? jobs : jobs.filter((j) => !dashFmt.shouldHideStaleJob(j));
+      const hintParts = [];
+      if (!showFinished && lastJobsMeta.mergedHidden > 0) {
+        hintParts.push("(" + lastJobsMeta.mergedHidden + " finished hidden)");
+      }
+      if (staleHidden > 0) hintParts.push("(" + staleHidden + " stale hidden)");
+      jobsHiddenHint.textContent = hintParts.join(" ");
       const tbody = document.getElementById("jobs");
       if (!visible.length) {
-        const msg = jobs.length
-          ? "No agents match the current filter. Turn on Show all to see hidden rows."
-          : "<strong>No agents yet.</strong> Start an agent below or from MCP.";
+        let msg;
+        if (jobs.length === 0 && lastJobsMeta.totalOnDisk === 0) {
+          msg = "<strong>No agents yet.</strong> Start an agent below or from MCP.";
+        } else if (jobs.length === 0 && lastJobsMeta.mergedHidden > 0) {
+          msg =
+            "<strong>Finished agents are hidden.</strong> Turn on <em>Show finished</em> to see " +
+            lastJobsMeta.mergedHidden +
+            " finished agent(s).";
+        } else {
+          msg =
+            "No agents match the current filter. Turn on <em>Show finished</em> to include finished and stale rows.";
+        }
         tbody.innerHTML = '<tr><td colspan="11" class="empty-state">' + msg + "</td></tr>";
         return;
       }
@@ -514,7 +589,12 @@ export function runnerUiHtml(
     }
 
     async function refresh() {
-      const res = await fetch("/api/jobs", { headers: authHeaders() });
+      const metaRes = await fetch("/api/jobs/meta", { headers: authHeaders() });
+      if (metaRes.ok) {
+        lastJobsMeta = await metaRes.json();
+      }
+      const jobsPath = showAllJobsEl.checked ? "/api/jobs?includeFinished=1" : "/api/jobs";
+      const res = await fetch(jobsPath, { headers: authHeaders() });
       const tbody = document.getElementById("jobs");
       if (res.status === 401) {
         tbody.innerHTML = '<tr><td colspan="11" class="empty-state"><strong>Unauthorized.</strong> Paste your runner bearer token above and click Save token.</td></tr>';

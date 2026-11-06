@@ -2,7 +2,14 @@ import type { RunnerConfig } from "./config.js";
 import { CiWatcher } from "./ci-watcher.js";
 import { runJobLoop, jobSnapshot } from "./job-runner.js";
 import { JobControl } from "./job-control.js";
-import { createJob, listJobs, listJobsForDisplay, loadJob, saveJob } from "./store.js";
+import {
+  createJob,
+  jobsDashboardMeta,
+  listJobs,
+  listJobsForDisplay,
+  loadJob,
+  saveJob,
+} from "./store.js";
 import type { JobRecord } from "./types.js";
 import type { JobEvent, StartJobArgs } from "./types.js";
 import { EventEmitter } from "node:events";
@@ -71,8 +78,14 @@ export class RunnerEngine extends EventEmitter {
     }
   }
 
-  async list(): Promise<JobRecord[]> {
-    return listJobsForDisplay(this.config.dataDir);
+  async list(opts?: { includeFinished?: boolean }): Promise<JobRecord[]> {
+    return listJobsForDisplay(this.config.dataDir, Date.now(), {
+      includeFinished: opts?.includeFinished,
+    });
+  }
+
+  async jobsMeta(): Promise<{ totalOnDisk: number; mergedHidden: number }> {
+    return jobsDashboardMeta(this.config.dataDir);
   }
 
   async get(jobId: string) {
