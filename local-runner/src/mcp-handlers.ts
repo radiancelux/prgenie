@@ -47,6 +47,11 @@ export const RUNNER_MCP_TOOLS = [
           enum: ["marketing", "policy", "research"],
           description: "Built-in docs implementor template (docs jobs)",
         },
+        title: {
+          type: "string",
+          description:
+            "Dashboard agent row label (optional; derived from Linear slug, prompt # heading, or branch)",
+        },
       },
       required: ["branch"],
     },
@@ -118,6 +123,7 @@ export async function handleRunnerTool(
               ? args.profile
               : undefined,
         profile: args.profile === "docs" || args.profile === "code" ? args.profile : undefined,
+        title: typeof args.title === "string" ? args.title : undefined,
       };
       if (!input.branch) {
         throw new Error("branch is required");

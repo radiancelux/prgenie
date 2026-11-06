@@ -6,7 +6,9 @@ import { shouldHideMergedJob } from "./ci.js";
 import { resolveJobTarget, normalizeJobType } from "./job-target.js";
 import { isDocsTemplateId } from "./docs-prompts.js";
 import { resolveJobTicket } from "./linear-ticket.js";
-import { jobFile, jobLogFile, jobsDir, logsDir } from "./paths.js";
+import { jobFile, jobLogFile, jobsDir, logsDir, repoSlugFromPath } from "./paths.js";
+import { resolveJobTitle } from "./job-display.js";
+import { repoOwnerNameFromGitOrigin, repoOwnerNameFromRemoteUrl } from "./repo-display.js";
 import { loadSettings, resolveDefaultDriverId } from "./settings.js";
 import type { RunnerConfig } from "./config.js";
 
@@ -37,6 +39,9 @@ export async function loadJob(dataDir: string, id: string): Promise<JobRecord | 
     if (job.prIsDraft === undefined) job.prIsDraft = null;
     if (job.approveHeadSha === undefined) job.approveHeadSha = null;
     if (job.readyPromotedAt === undefined) job.readyPromotedAt = null;
+    if (job.title === undefined || job.title === null) {
+      job.title = job.input?.branch?.trim() || job.id.slice(0, 8);
+    }
     return job;
   } catch {
     return null;
@@ -101,10 +106,24 @@ export async function createJob(
   if (jobType === "docs" && !promptFile && !docsTemplate) {
     throw new Error("docs jobs need docsTemplate or promptFile");
   }
+  let slug = target.repoSlug;
+  if (target.remote?.trim()) {
+    slug = repoOwnerNameFromRemoteUrl(target.remote) ?? repoSlugFromPath(target.remote) ?? slug;
+  } else if (target.repoPath?.trim()) {
+    const fromOrigin = await repoOwnerNameFromGitOrigin(target.repoPath);
+    slug = fromOrigin ?? (slug.includes("/") ? slug : repoSlugFromPath(target.repoPath));
+  }
   const ticket = resolveJobTicket({
     branch: args.branch,
     ticketUrl: args.ticketUrl,
     linearIssue: args.linearIssue,
+  });
+  const title = await resolveJobTitle({
+    title: args.title,
+    ticketUrl: ticket.ticketUrl ?? args.ticketUrl,
+    linearIssue: ticket.linearIssue,
+    branch: args.branch,
+    promptFile: promptFile || args.promptFile,
   });
   const input: JobInput = {
     repoPath: target.repoPath,
@@ -121,6 +140,7 @@ export async function createJob(
     jobType,
     profile: jobType,
     docsTemplate,
+    title,
   };
   const logPath = jobLogFile(dataDir, id);
   await writeFile(logPath, "", "utf8");
@@ -135,7 +155,7 @@ export async function createJob(
     model: args.model?.trim() || settings.defaultModel?.trim() || defaults.model,
     driverId: args.driver?.trim() || defaults.driverId?.trim() || resolveDefaultDriverId(settings),
     worktreePath: null,
-    repoSlug: target.repoSlug,
+    repoSlug: slug,
     prUrl: null,
     prNumber: null,
     prIsDraft: null,
@@ -143,6 +163,7 @@ export async function createJob(
     readyPromotedAt: null,
     linearIssue: ticket.linearIssue,
     ticketUrl: ticket.ticketUrl,
+    title,
     tokenUsage: null,
     ciStatus: null,
     lastVerdict: null,

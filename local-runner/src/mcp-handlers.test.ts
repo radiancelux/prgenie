@@ -12,6 +12,7 @@ describe("start_job MCP schema", () => {
     assert.ok(props.jobType);
     assert.ok(props.profile);
     assert.ok(props.docsTemplate);
+    assert.ok(props.title);
   });
 });
 
@@ -46,6 +47,7 @@ describe("start_job validation", () => {
       jobType: "docs",
       profile: undefined,
       docsTemplate: "policy",
+      title: undefined,
     });
   });
 });

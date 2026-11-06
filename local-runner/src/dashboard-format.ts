@@ -1,4 +1,11 @@
 import type { JobRecord } from "./types.js";
+import { jobAgentDisplayLabel } from "./job-display.js";
+import {
+  jobRepoDisplayLabel,
+  repoBasenameFromPath,
+  repoOwnerNameFromPrUrl,
+  repoOwnerNameFromRemoteUrl,
+} from "./repo-display.js";
 
 /** Hide failed/stopped clutter with no PR or ticket after this long. */
 export const STALE_JOB_HIDE_AFTER_MS = 60 * 60 * 1000;
@@ -99,6 +106,11 @@ ${dashboardChecksColumnHeader.toString()}
 ${dashboardChecksStatusLabel.toString()}
 ${shouldHideStaleJob.toString()}
 ${formatRelativeTime.toString()}
-return { isDocsJobRecord, dashboardStageLabel, dashboardChecksColumnHeader, dashboardChecksStatusLabel, shouldHideStaleJob, formatRelativeTime };
+${repoOwnerNameFromRemoteUrl.toString()}
+${repoOwnerNameFromPrUrl.toString()}
+${repoBasenameFromPath.toString()}
+${jobRepoDisplayLabel.toString()}
+${jobAgentDisplayLabel.toString()}
+return { isDocsJobRecord, dashboardStageLabel, dashboardChecksColumnHeader, dashboardChecksStatusLabel, shouldHideStaleJob, formatRelativeTime, jobRepoDisplayLabel, jobAgentDisplayLabel };
 })()`;
 }

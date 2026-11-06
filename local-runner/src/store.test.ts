@@ -47,6 +47,37 @@ describe("job store", () => {
     );
     assert.equal(job.linearIssue, "RAD-320");
     assert.equal(job.ticketUrl, "https://linear.app/radiancelux/issue/RAD-320");
+    assert.equal(job.title, "feat/rad-320-verdict-resend");
+  });
+
+  it("stores explicit title and derives from linear slug", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-store-"));
+    const explicit = await createJob(
+      dataDir,
+      {
+        repoPath: "/tmp/repo",
+        branch: "feat/x",
+        promptFile: "/tmp/prompt.md",
+        title: "My agent",
+        dryRun: true,
+      },
+      { model: "composer-2.5", dryRun: true },
+    );
+    assert.equal(explicit.title, "My agent");
+
+    const dataDir2 = await mkdtemp(path.join(os.tmpdir(), "lr-store-"));
+    const fromSlug = await createJob(
+      dataDir2,
+      {
+        repoPath: "/tmp/repo",
+        branch: "feat/x",
+        promptFile: "/tmp/prompt.md",
+        ticketUrl: "https://linear.app/radiancelux/issue/RAD-327/dashboard-script-parse",
+        dryRun: true,
+      },
+      { model: "composer-2.5", dryRun: true },
+    );
+    assert.equal(fromSlug.title, "dashboard script parse");
   });
 
   it("docs job uses setup default repo preset over code default", async () => {

@@ -30,6 +30,8 @@ export interface JobInput {
   profile?: JobProfile;
   /** Built-in docs template when jobType is docs. */
   docsTemplate?: "marketing" | "policy" | "research";
+  /** Human label for dashboard rows (derived at create when omitted). */
+  title?: string;
 }
 
 export interface TokenUsage {
@@ -85,6 +87,8 @@ export interface JobRecord {
   readyPromotedAt: string | null;
   linearIssue: string | null;
   ticketUrl: string | null;
+  /** Base title for agent row (without Linear issue prefix). */
+  title: string;
   tokenUsage: TokenUsage | null;
   ciStatus: CiStatusInfo | null;
   lastVerdict: "APPROVE" | "CHANGES" | null;
@@ -113,6 +117,8 @@ export interface StartJobArgs {
   jobType?: JobProfile;
   profile?: JobProfile;
   docsTemplate?: JobInput["docsTemplate"];
+  /** Human label for dashboard rows (derived at create when omitted). */
+  title?: string;
 }
 
 export type JobEvent =
