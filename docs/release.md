@@ -11,6 +11,8 @@ These files must share the same `version` string:
 - `packages/cli/package.json`
 - `packages/extension/package.json`
 - `packages/plugin/package.json`
+- `packages/npm-prgenie/package.json`
+- `local-runner/package.json`
 
 The extension package version is also what `doctor`'s `extension` check compares against the install under `~/.cursor/extensions`.
 
@@ -48,6 +50,16 @@ pnpm pack:extension
 | ------------------ | ---------------------------------------------------- |
 | `package-versions` | Monorepo `package.json` skew and lagging local VSIX  |
 | `extension`        | Installed sidebar extension ≠ extension package.json |
+
+## npm runner (`prgenie`)
+
+The publishable tarball is built at `packages/npm-prgenie/` (`pnpm build` copies `local-runner/dist/runner.cjs`). Verify contents without publishing:
+
+```bash
+pnpm pack:runner
+```
+
+Release workflow `.github/workflows/release-npm.yml` runs tests and `npm publish --dry-run --provenance` on `prgenie-v*` tags. **Maintainers publish to npm manually** — do not rely on CI to ship.
 
 ## See also
 

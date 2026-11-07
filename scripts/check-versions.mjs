@@ -12,6 +12,8 @@ const PATHS = [
   "packages/cli/package.json",
   "packages/extension/package.json",
   "packages/plugin/package.json",
+  "packages/npm-prgenie/package.json",
+  "local-runner/package.json",
 ];
 
 function versionFromVsixFileName(fileName) {

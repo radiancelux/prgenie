@@ -2,6 +2,8 @@
 
 Standalone **localhost** orchestrator for the implement → PR → review → fix loop using pluggable **AI CLI drivers** (`cursor-agent` default). This package does **not** replace the Cursor plugin steward or extension; it is for workstation local development and automation via MCP.
 
+**End users:** install the published npm package — see [packages/npm-prgenie/README.md](../packages/npm-prgenie/README.md) (`npx -y prgenie mcp`). This folder is the development source; `pnpm build` copies the bundle into `packages/npm-prgenie` for `npm pack`.
+
 See **`docs/drivers.md`** for the driver adapter contract and built-in drivers.
 
 ## Batch G lessons (cursor-agent)
@@ -36,18 +38,18 @@ Binary: `pnpm local-runner --help` (or `node local-runner/dist/runner.cjs`).
 
 ## Config
 
-| Variable                                             | Purpose                                                                                               |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `PRGENIE_RUNNER_TOKEN`                               | **Required.** Bearer token for MCP + `/api/*`                                                         |
-| `PRGENIE_RUNNER_HOST`                                | Bind address (default `127.0.0.1`; use `0.0.0.0` for same-LAN phones/tablets)                         |
-| `PRGENIE_RUNNER_PORT`                                | HTTP port (default `9473`)                                                                            |
-| `PRGENIE_RUNNER_DATA_DIR`                            | Job JSON + logs (default `~/.prgenie/local-runner`)                                                   |
-| `PRGENIE_RUNNER_MODEL`                               | Default model (default `composer-2.5`)                                                                |
-| `PRGENIE_RUNNER_DRY_RUN`                             | `1` — skip real `cursor-agent` / git worktrees (tests & smoke)                                        |
-| `PRGENIE_RUNNER_DEFAULT_REPO_PATH`                   | Optional local path fallback for **code** jobs when Setup has no code default preset                  |
-| `PRGENIE_RUNNER_NOTIFY_EMAIL`                        | Resend notification recipient                                                                         |
-| `PRGENIE_RUNNER_FROM_EMAIL`                          | Resend sender (default `PR Genie Local Runner <runner@example.com>`; full `Name <addr>` or bare addr) |
-| `RESEND_API_KEY` or `PRGENIE_RUNNER_RESEND_KEY_FILE` | Resend API key (never logged)                                                                         |
+| Variable                                             | Purpose                                                                                                                 |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `PRGENIE_RUNNER_TOKEN`                               | **Required for `serve` only** (HTTP UI + bearer MCP). Stdio `mcp` needs no token. `prgenie init` writes `runner.token`. |
+| `PRGENIE_RUNNER_HOST`                                | Bind address (default `127.0.0.1`; use `0.0.0.0` for same-LAN phones/tablets)                                           |
+| `PRGENIE_RUNNER_PORT`                                | HTTP port (default `9473`)                                                                                              |
+| `PRGENIE_RUNNER_DATA_DIR`                            | Job JSON + logs (default `~/.prgenie/local-runner`)                                                                     |
+| `PRGENIE_RUNNER_MODEL`                               | Default model (default `composer-2.5`)                                                                                  |
+| `PRGENIE_RUNNER_DRY_RUN`                             | `1` — skip real `cursor-agent` / git worktrees (tests & smoke)                                                          |
+| `PRGENIE_RUNNER_DEFAULT_REPO_PATH`                   | Optional local path fallback for **code** jobs when Setup has no code default preset                                    |
+| `PRGENIE_RUNNER_NOTIFY_EMAIL`                        | Resend notification recipient                                                                                           |
+| `PRGENIE_RUNNER_FROM_EMAIL`                          | Resend sender (default `PR Genie Local Runner <runner@example.com>`; full `Name <addr>` or bare addr)                   |
+| `RESEND_API_KEY` or `PRGENIE_RUNNER_RESEND_KEY_FILE` | Resend API key (never logged)                                                                                           |
 
 Worktrees (non-dry-run): `~/.cursor/worktrees/<repo-slug>/<job-id>`.
 
@@ -89,6 +91,7 @@ On startup the runner prints reachable URLs (loopback plus a best-effort LAN IP 
 - `archive_job` — `id`; removes a finished job from the dashboard (see [Removing jobs](#removing-jobs-archive)). Errors while the job is running.
 - `restore_job` — `id`; moves an archived job back. Errors if a live job already uses that id.
 - `continue_job` — `id`, optional `prompt` / `promptFile`, `extraRounds` (default 1), optional `model` (fix stage). Runs additional fix→review round(s) on a **terminal** job (`approved`, `changes_remaining`, `stuck`, `stopped`, `failed`). Refuses archived jobs (restore first) and branches held by another active job.
+- `settings` — read (no args) or patch runner defaults (same shape as `PATCH /api/settings`).
 
 ### Job stages
 

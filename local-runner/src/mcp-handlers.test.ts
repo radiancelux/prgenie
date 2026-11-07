@@ -25,6 +25,10 @@ describe("start_job MCP schema", () => {
     assert.ok(props.title);
   });
 
+  it("lists settings tool for maintainable registry", () => {
+    assert.ok(RUNNER_MCP_TOOLS.some((t) => t.name === "settings"));
+  });
+
   it("advertises per-stage models so MCP clients can send an explicit fix model", () => {
     const tool = RUNNER_MCP_TOOLS.find((t) => t.name === "start_job");
     const props = tool!.inputSchema.properties as Record<
