@@ -251,11 +251,17 @@ describe("clearFailedJobs", () => {
 });
 
 describe("archive worktree safety", () => {
+  const worktreesRoot = os.tmpdir();
+
   it("keeps a dirty worktree with a warning and never force-removes it", async () => {
     const dataDir = await tmpDataDir();
+    const repo = await mkdtemp(path.join(os.tmpdir(), "lr-archive-repo-"));
     const wt = await mkdtemp(path.join(os.tmpdir(), "lr-archive-wt-"));
     await writeFile(path.join(wt, "dirty.txt"), "wip", "utf8");
-    await seed(dataDir, { worktreePath: wt, input: { repoPath: wt, branch: "b", promptFile: "" } });
+    await seed(dataDir, {
+      worktreePath: wt,
+      input: { repoPath: repo, branch: "b", promptFile: "" },
+    });
     const calls: string[][] = [];
     const gitImpl = async (_cwd: string, args: string[]) => {
       calls.push(args);
@@ -263,7 +269,10 @@ describe("archive worktree safety", () => {
       return { code: 0, stdout: "", stderr: "" };
     };
 
-    const res = await archiveJob(testConfig(dataDir), "job-1", { gitImpl: gitImpl as never });
+    const res = await archiveJob(testConfig(dataDir), "job-1", {
+      gitImpl: gitImpl as never,
+      worktreesRoot,
+    });
     assert.ok(res.ok);
     assert.equal(res.worktree, "kept");
     assert.match(res.warning ?? "", /uncommitted changes/);
@@ -276,14 +285,21 @@ describe("archive worktree safety", () => {
 
   it("keeps a clean worktree whose branch has unpushed commits", async () => {
     const dataDir = await tmpDataDir();
+    const repo = await mkdtemp(path.join(os.tmpdir(), "lr-archive-repo-"));
     const wt = await mkdtemp(path.join(os.tmpdir(), "lr-archive-wt-"));
-    await seed(dataDir, { worktreePath: wt, input: { repoPath: wt, branch: "b", promptFile: "" } });
+    await seed(dataDir, {
+      worktreePath: wt,
+      input: { repoPath: repo, branch: "b", promptFile: "" },
+    });
     const gitImpl = async (_cwd: string, args: string[]) => {
       if (args.includes("HEAD")) return { code: 0, stdout: "aaa\n", stderr: "" };
       if (args.includes("origin/b")) return { code: 0, stdout: "bbb\n", stderr: "" };
       return { code: 0, stdout: "", stderr: "" };
     };
-    const res = await archiveJob(testConfig(dataDir), "job-1", { gitImpl: gitImpl as never });
+    const res = await archiveJob(testConfig(dataDir), "job-1", {
+      gitImpl: gitImpl as never,
+      worktreesRoot,
+    });
     assert.ok(res.ok);
     assert.equal(res.worktree, "kept");
     assert.match(res.warning ?? "", /not on origin/);
@@ -305,11 +321,61 @@ describe("archive worktree safety", () => {
       if (args[0] === "ls-remote") return { code: 0, stdout: "abc\trefs/heads/b\n", stderr: "" };
       return { code: 0, stdout: "", stderr: "" };
     };
-    const res = await archiveJob(testConfig(dataDir), "job-1", { gitImpl: gitImpl as never });
+    const res = await archiveJob(testConfig(dataDir), "job-1", {
+      gitImpl: gitImpl as never,
+      worktreesRoot,
+    });
     assert.ok(res.ok);
     assert.equal(res.worktree, "removed");
     assert.equal(res.warning, undefined);
     assert.equal(await exists(wt), false);
     assert.equal((await loadArchivedJob(dataDir, "job-1"))?.worktreePath, null);
+  });
+
+  it("never cleans the repo checkout a dry-run job used as its worktree", async () => {
+    const dataDir = await tmpDataDir();
+    const repo = await mkdtemp(path.join(os.tmpdir(), "lr-archive-dry-"));
+    await writeFile(path.join(repo, "keep.txt"), "repo file", "utf8");
+    await seed(dataDir, {
+      stage: "approved",
+      dryRun: true,
+      worktreePath: repo,
+      input: { repoPath: repo, branch: "b", promptFile: "" },
+    });
+    const calls: string[][] = [];
+    const gitImpl = async (_cwd: string, args: string[]) => {
+      calls.push(args);
+      if (args[0] === "rev-parse") return { code: 0, stdout: "same\n", stderr: "" };
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const res = await archiveJob(testConfig(dataDir), "job-1", {
+      gitImpl: gitImpl as never,
+      worktreesRoot,
+    });
+    assert.ok(res.ok);
+    assert.equal(res.worktree, "none");
+    assert.equal(res.warning, undefined);
+    assert.deepEqual(calls, [], "no git command run against the repo checkout");
+    assert.equal(await readFile(path.join(repo, "keep.txt"), "utf8"), "repo file");
+  });
+
+  it("keeps a worktree outside the managed worktrees root", async () => {
+    const dataDir = await tmpDataDir();
+    const repo = await mkdtemp(path.join(os.tmpdir(), "lr-archive-repo-"));
+    const wt = await mkdtemp(path.join(os.tmpdir(), "lr-archive-wt-"));
+    await seed(dataDir, {
+      worktreePath: wt,
+      input: { repoPath: repo, branch: "b", promptFile: "" },
+    });
+    const gitImpl = async () => ({ code: 0, stdout: "same\n", stderr: "" });
+    const managedRoot = await mkdtemp(path.join(os.tmpdir(), "lr-archive-root-"));
+    const res = await archiveJob(testConfig(dataDir), "job-1", {
+      gitImpl: gitImpl as never,
+      worktreesRoot: managedRoot,
+    });
+    assert.ok(res.ok);
+    assert.equal(res.worktree, "kept");
+    assert.match(res.warning ?? "", /outside the runner's managed worktrees directory/);
+    assert.equal(await exists(wt), true);
   });
 });

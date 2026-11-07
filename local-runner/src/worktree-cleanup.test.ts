@@ -81,6 +81,7 @@ describe("worktree cleanup", () => {
     const r = await tryRemoveJobWorktree(config, j, {
       reason: "merged_hidden",
       gitImpl: gitImpl as never,
+      worktreesRoot: os.tmpdir(),
     });
     assert.equal(r.removed, true);
     assert.equal(j.worktreePath, null);
@@ -88,9 +89,10 @@ describe("worktree cleanup", () => {
 
   it("skips dirty worktree with warning", async () => {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-wt-dirty-"));
+    const repo = await mkdtemp(path.join(os.tmpdir(), "lr-wt-repo-"));
     const wt = await mkdtemp(path.join(os.tmpdir(), "lr-wt-dir-"));
     const config = testConfig(dataDir);
-    const j = job({ worktreePath: wt, input: { repoPath: wt, branch: "b", promptFile: "/p" } });
+    const j = job({ worktreePath: wt, input: { repoPath: repo, branch: "b", promptFile: "/p" } });
     assert.equal(await worktreePathExists(wt), true);
 
     const gitImpl = async (_cwd: string, args: string[]) => {
@@ -102,6 +104,7 @@ describe("worktree cleanup", () => {
     const r = await tryRemoveJobWorktree(config, j, {
       reason: "merged_hidden",
       gitImpl: gitImpl as never,
+      worktreesRoot: os.tmpdir(),
     });
     assert.equal(r.removed, false);
     if ("skipped" in r) assert.equal(r.skipped, "dirty");
@@ -130,6 +133,7 @@ describe("worktree cleanup", () => {
     const r = await tryRemoveJobWorktree(config, j, {
       reason: "merged_hidden",
       gitImpl: gitImpl as never,
+      worktreesRoot: os.tmpdir(),
     });
     assert.equal(r.removed, false);
     if ("skipped" in r) assert.equal(r.skipped, "unpushed");
@@ -167,6 +171,7 @@ describe("worktree cleanup", () => {
     const r = await tryRemoveJobWorktree(config, j, {
       reason: "merged_hidden",
       gitImpl: gitImpl as never,
+      worktreesRoot: os.tmpdir(),
     });
     assert.equal(r.removed, true);
     const onDisk = await loadJob(dataDir, "job-1");

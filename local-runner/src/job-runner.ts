@@ -31,7 +31,7 @@ import { sumTokenUsageFromLog } from "./usage.js";
 import { cloneRepo, ensureWorktree, rebaseOntoBase } from "./worktree.js";
 import { cursorWorktreeDir } from "./paths.js";
 import { fetchPrViewInfo, readHeadSha } from "./draft-pr.js";
-import { runAgentWithWatchdog } from "./stage-watchdog.js";
+import { runAgentWithWatchdog, type StageWatchdogOptions } from "./stage-watchdog.js";
 import { modelForActiveStage, recordActualModel } from "./job-models.js";
 import { setJobError } from "./job-error.js";
 import { parseWatchdogPolicy } from "./runner-policy.js";
@@ -40,7 +40,11 @@ export type JobCallbacks = {
   onEvent?: (jobId: string, event: JobEvent) => void;
   onPrLinked?: (jobId: string) => void;
   fetchImpl?: FetchFn;
+  agentRunner?: AgentRunner;
+  watchdogTiming?: WatchdogTiming;
 };
+
+type WatchdogTiming = Pick<StageWatchdogOptions, "now" | "tickMs" | "childGraceMs">;
 
 async function readPromptFile(filePath: string, fallback: string): Promise<string> {
   if (!filePath?.trim()) return fallback;
@@ -112,6 +116,7 @@ async function runAgentStage(
   settings: Awaited<ReturnType<typeof loadSettings>>,
   stage: "building" | "reviewing" | "fixing",
   opts: Parameters<AgentRunner["run"]>[0],
+  timing?: WatchdogTiming,
 ): Promise<{ code: number; output: string } | null> {
   const policy = watchdogPolicyForJob(job, settings);
   job.watchdog = job.watchdog ?? {
@@ -132,10 +137,15 @@ async function runAgentStage(
 
   const wd = await runAgentWithWatchdog(
     {
+      ...timing,
       policy,
       killChild: () => runner.kill(),
       onStall: (reason) => {
         job.watchdog!.lastStallReason = reason;
+      },
+      onRecovery: () => {
+        job.watchdog!.recoveryAttemptsUsed += 1;
+        job.watchdog!.lastRecoveryAt = new Date().toISOString();
       },
     },
     async (tap) => {
@@ -152,7 +162,6 @@ async function runAgentStage(
     },
   );
 
-  job.watchdog.recoveryAttemptsUsed = wd.recoveryAttempts;
   if (!wd.ok) {
     job.error = setJobError(job.error, `watchdog: ${wd.reason}`);
     return null;
@@ -208,7 +217,7 @@ export async function runJobLoop(
   control: JobControl,
   callbacks?: JobCallbacks,
 ): Promise<void> {
-  const runner = new AgentRunner();
+  const runner = callbacks?.agentRunner ?? new AgentRunner();
   control.registerKill(() => runner.kill());
   runner.on("line", (line: string) => {
     emit(callbacks, job, { type: "log", line });
@@ -290,6 +299,7 @@ export async function runJobLoop(
         settings,
         "building",
         baseRun,
+        callbacks?.watchdogTiming,
       );
       if (await checkStop()) return;
       if (!result || result.code !== 0) {
@@ -350,17 +360,26 @@ export async function runJobLoop(
         ? `${reviewPrompt}\n\nPR: ${job.prUrl}\n\n--- steer ---\n${reviewSteer}`
         : `${reviewPrompt}\n\nPR: ${job.prUrl}`;
 
-      const reviewRun = await runAgentStage(runner, config, job, control, settings, "reviewing", {
-        cwd: wt,
-        prompt: reviewFull,
-        model: job.model,
-        logPath: job.logPath,
-        dryRun: job.dryRun,
-        outputFormat,
-        signal: control.signal,
-        driverId: job.driverId,
-        driverEntry,
-      });
+      const reviewRun = await runAgentStage(
+        runner,
+        config,
+        job,
+        control,
+        settings,
+        "reviewing",
+        {
+          cwd: wt,
+          prompt: reviewFull,
+          model: job.model,
+          logPath: job.logPath,
+          dryRun: job.dryRun,
+          outputFormat,
+          signal: control.signal,
+          driverId: job.driverId,
+          driverEntry,
+        },
+        callbacks?.watchdogTiming,
+      );
       if (await checkStop()) return;
       if (!reviewRun || reviewRun.code !== 0) {
         if (!reviewRun) {
@@ -439,17 +458,26 @@ export async function runJobLoop(
         ? `${fixPrompt}\n\nPR: ${job.prUrl}\n\n--- steer ---\n${fixSteer}`
         : `${fixPrompt}\n\nPR: ${job.prUrl}`;
 
-      const fixRun = await runAgentStage(runner, config, job, control, settings, "fixing", {
-        cwd: wt,
-        prompt: fixFull,
-        model: job.model,
-        logPath: job.logPath,
-        dryRun: job.dryRun,
-        outputFormat,
-        signal: control.signal,
-        driverId: job.driverId,
-        driverEntry,
-      });
+      const fixRun = await runAgentStage(
+        runner,
+        config,
+        job,
+        control,
+        settings,
+        "fixing",
+        {
+          cwd: wt,
+          prompt: fixFull,
+          model: job.model,
+          logPath: job.logPath,
+          dryRun: job.dryRun,
+          outputFormat,
+          signal: control.signal,
+          driverId: job.driverId,
+          driverEntry,
+        },
+        callbacks?.watchdogTiming,
+      );
       if (await checkStop()) return;
       if (!fixRun || fixRun.code !== 0) {
         if (!fixRun) {

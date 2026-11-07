@@ -109,7 +109,9 @@ Default implement prompt requires **`gh pr create --draft`**. After **`VERDICT: 
 
 The jobs table shows **Ticket** (issue id), **PR**, **Ready** (draft/ready), **Status** (CI), **Model**, **Tokens** (summed from cursor-agent `stream-json` usage in the job log), and **Updated**. On narrow screens (~390px) rows become cards. The job detail view shows a **Cursor-style agent transcript** (stream-json), optional raw log toggle, and a **Steer** box that queues follow-up text via the same bearer-protected API as MCP `steer_job`. **Email notifications** and runner defaults live on the **Setup** screen; settings persist in `$PRGENIE_RUNNER_DATA_DIR/settings.json` (legacy `notify-settings.json` migrates on first load). The Resend API key is never shown in the UI — only `RESEND_API_KEY` / `PRGENIE_RUNNER_RESEND_KEY_FILE` on the server. When the dashboard recipient is empty, notify email falls back to `PRGENIE_RUNNER_NOTIFY_EMAIL`. While a job has a PR, the runner polls CI on a modest interval during active stages and until checks settle on terminal jobs. It uses GitHub **`gh pr view --json statusCheckRollup`** first; when that is unavailable it falls back to **`origin pr checks`** when the Origin CLI can read the PR. The CI badge includes the source (`github` or `origin`).
 
-Authenticated API: `GET` / `PATCH /api/settings`, `GET` / `PUT /api/notify-settings` (legacy) with bearer token (same as other `/api/*` routes).
+Authenticated API: `GET` / `PATCH /api/settings`, `GET` / `PUT /api/notify-settings` (legacy) with bearer token (same as other `/api/*` routes). Out-of-range or wrong-type settings (`defaultMaxRounds` 1–10, `maxActiveJobs` 1–8, `watchdog.*` bounds, `expectedRevision`) return `400 { error }`; a stale `expectedRevision` returns `409`.
+
+`POST /api/jobs` and MCP `start_job` share one validator, so the same bad payload yields the same message (`400` over HTTP, a tool error over MCP): `branch` is required, `maxRounds` must be a number in 1–10, and `driver` / `jobType` / `profile` / `docsTemplate` must be known values.
 
 ### Removing jobs (archive)
 

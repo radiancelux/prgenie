@@ -5,9 +5,14 @@ export function repoSlugFromPath(repoPath: string): string {
   return base.replace(/[^a-zA-Z0-9._-]+/g, "-").toLowerCase() || "repo";
 }
 
-export function cursorWorktreeDir(repoSlug: string, jobId: string): string {
+/** Parent of every worktree (and remote clone) the runner creates for jobs. */
+export function managedWorktreesRoot(): string {
   const home = process.env.HOME || process.env.USERPROFILE || "";
-  return path.join(home, ".cursor", "worktrees", repoSlug, jobId);
+  return path.join(home, ".cursor", "worktrees");
+}
+
+export function cursorWorktreeDir(repoSlug: string, jobId: string): string {
+  return path.join(managedWorktreesRoot(), repoSlug, jobId);
 }
 
 export function jobsDir(dataDir: string): string {

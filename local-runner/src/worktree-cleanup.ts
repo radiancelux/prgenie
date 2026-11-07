@@ -1,5 +1,7 @@
 import { access } from "node:fs/promises";
+import path from "node:path";
 import type { RunnerConfig } from "./config.js";
+import { managedWorktreesRoot } from "./paths.js";
 import { shouldHideMergedJob } from "./ci.js";
 import { fetchPrMerged, git, isBranchSyncedWithOrigin } from "./github.js";
 import { resolveJobSpawnCwd } from "./job-cwd.js";
@@ -53,8 +55,38 @@ export function worktreeCleanupReason(job: JobRecord, nowMs = Date.now()): Workt
 
 export type TryCleanupResult =
   | { removed: true }
-  | { removed: false; skipped: "dirty" | "unpushed" | "branch_exists" | "missing_path" }
+  | {
+      removed: false;
+      skipped:
+        | "dirty"
+        | "unpushed"
+        | "branch_exists"
+        | "missing_path"
+        | "repo_checkout"
+        | "outside_managed_root";
+    }
   | { removed: false; reason: string };
+
+function isStrictlyInside(parent: string, child: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+/**
+ * Dry-run jobs record the repo checkout itself as worktreePath; only paths the runner created
+ * under the managed worktrees root may ever be removed.
+ */
+export function unremovableWorktreeReason(
+  worktreePath: string,
+  repoPath: string,
+  worktreesRoot: string,
+): "repo_checkout" | "outside_managed_root" | null {
+  const wt = path.resolve(worktreePath);
+  const repo = path.resolve(repoPath);
+  if (wt === repo || isStrictlyInside(wt, repo)) return "repo_checkout";
+  if (!isStrictlyInside(path.resolve(worktreesRoot), wt)) return "outside_managed_root";
+  return null;
+}
 
 export async function tryRemoveJobWorktree(
   config: RunnerConfig,
@@ -63,6 +95,7 @@ export async function tryRemoveJobWorktree(
     reason: WorktreeCleanupReason;
     gitImpl?: typeof git;
     log?: (msg: string) => void;
+    worktreesRoot?: string;
   },
 ): Promise<TryCleanupResult> {
   const wt = job.worktreePath?.trim();
@@ -77,6 +110,16 @@ export async function tryRemoveJobWorktree(
     job.worktreePath = null;
     await saveJob(config.dataDir, job);
     return { removed: true };
+  }
+
+  const unremovable = unremovableWorktreeReason(
+    wt,
+    repoRoot,
+    opts.worktreesRoot ?? managedWorktreesRoot(),
+  );
+  if (unremovable) {
+    opts.log?.(`worktree cleanup skipped (${opts.reason}): ${unremovable} ${wt}`);
+    return { removed: false, skipped: unremovable };
   }
 
   if (await worktreeHasUncommittedChanges(wt, gitImpl)) {

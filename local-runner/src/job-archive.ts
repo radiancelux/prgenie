@@ -61,6 +61,8 @@ export type ArchiveDeps = {
   dataDir?: string;
   gitImpl?: typeof git;
   log?: (msg: string) => void;
+  /** Defaults to the managed worktrees root; tests point it at a temp dir. */
+  worktreesRoot?: string;
 };
 
 function keptWorktreeWarning(worktreePath: string, res: TryCleanupResult): string {
@@ -71,7 +73,9 @@ function keptWorktreeWarning(worktreePath: string, res: TryCleanupResult): strin
         ? "it has uncommitted changes"
         : res.skipped === "unpushed"
           ? "the branch has commits that are not on origin"
-          : res.skipped;
+          : res.skipped === "outside_managed_root"
+            ? "it is outside the runner's managed worktrees directory"
+            : res.skipped;
   } else if ("reason" in res) {
     why = res.reason;
   } else {
@@ -92,8 +96,10 @@ async function releaseJobWorktree(
     reason: "archived",
     gitImpl: deps.gitImpl,
     log: deps.log,
+    worktreesRoot: deps.worktreesRoot,
   });
   if (res.removed) return { worktree: "removed" };
+  if ("skipped" in res && res.skipped === "repo_checkout") return { worktree: "none" };
   return { worktree: "kept", warning: keptWorktreeWarning(wt, res) };
 }
 

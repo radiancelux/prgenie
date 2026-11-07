@@ -6,7 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import type { RunnerConfig } from "./config.js";
 import { RunnerEngine } from "./engine.js";
-import { startHttpServer } from "./server.js";
+import { handleStartJobRequest, startHttpServer } from "./server.js";
+import { handleMcpJsonRpc, handleRunnerTool } from "./mcp-handlers.js";
+import { ValidationError } from "./settings-validation.js";
 import { archivedJobFile, archivedLogFile, jobFile, jobLogFile } from "./paths.js";
 import { saveJob } from "./store.js";
 import type { JobStage } from "./types.js";
@@ -403,5 +405,271 @@ describe("job archive over HTTP and MCP", () => {
     } finally {
       await s.close();
     }
+  });
+});
+
+describe("PATCH /api/settings validation", () => {
+  const invalid: Array<[string, Record<string, unknown>, string]> = [
+    ["defaultMaxRounds 0", { defaultMaxRounds: 0 }, "maxRounds must be between 1 and 10"],
+    ["defaultMaxRounds 11", { defaultMaxRounds: 11 }, "maxRounds must be between 1 and 10"],
+    ["defaultMaxRounds string", { defaultMaxRounds: "x" }, "maxRounds must be a finite number"],
+    ["defaultMaxRounds null", { defaultMaxRounds: null }, "maxRounds must be a finite number"],
+    ["maxActiveJobs -1", { maxActiveJobs: -1 }, "maxActiveJobs must be between 1 and 8"],
+    ["maxActiveJobs 9", { maxActiveJobs: 9 }, "maxActiveJobs must be between 1 and 8"],
+    ["maxActiveJobs string", { maxActiveJobs: "2" }, "maxActiveJobs must be a finite number"],
+    ["watchdog not object", { watchdog: 5 }, "watchdog must be an object"],
+    [
+      "watchdog.inactivityMs low",
+      { watchdog: { inactivityMs: 1_000 } },
+      "watchdog.inactivityMs must be between 60000 and 3600000",
+    ],
+    [
+      "watchdog.stageCapMs string",
+      { watchdog: { stageCapMs: "big" } },
+      "watchdog.stageCapMs must be a finite number",
+    ],
+    [
+      "watchdog.stageCapMs high",
+      { watchdog: { stageCapMs: 9 * 60 * 60 * 1000 } },
+      "watchdog.stageCapMs must be between 300000 and 28800000",
+    ],
+    [
+      "watchdog.recoveryAttempts 4",
+      { watchdog: { recoveryAttempts: 4 } },
+      "watchdog.recoveryAttempts must be between 0 and 3",
+    ],
+    [
+      "watchdog.recoveryAttempts -1",
+      { watchdog: { recoveryAttempts: -1 } },
+      "watchdog.recoveryAttempts must be between 0 and 3",
+    ],
+    ["stageModels not object", { stageModels: "fast" }, "stageModels must be an object"],
+    [
+      "stageModels.build number",
+      { stageModels: { build: 3 } },
+      "stageModels.build must be a string or null",
+    ],
+    [
+      "notifyEvents.onFailed string",
+      { notifyEvents: { onFailed: "yes" } },
+      "notifyEvents.onFailed must be a boolean",
+    ],
+    [
+      "expectedRevision string",
+      { expectedRevision: "1" },
+      "expectedRevision must be a non-negative integer",
+    ],
+  ];
+
+  it("returns 400 with the validation message for each invalid field", async () => {
+    const s = await startTestServer();
+    try {
+      const before = await httpRequest(s.port, "GET", "/api/settings", { token: TOKEN });
+      for (const [label, body, message] of invalid) {
+        const res = await httpRequest(s.port, "PATCH", "/api/settings", {
+          token: TOKEN,
+          body: JSON.stringify(body),
+        });
+        assert.equal(res.status, 400, label);
+        assert.deepEqual(JSON.parse(res.body), { error: message }, label);
+      }
+      const after = await httpRequest(s.port, "GET", "/api/settings", { token: TOKEN });
+      assert.deepEqual(JSON.parse(after.body), JSON.parse(before.body), "nothing persisted");
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("round-trips a valid PATCH", async () => {
+    const s = await startTestServer();
+    try {
+      const res = await httpRequest(s.port, "PATCH", "/api/settings", {
+        token: TOKEN,
+        body: JSON.stringify({
+          defaultMaxRounds: 5,
+          maxActiveJobs: 4,
+          watchdog: { inactivityMs: 120_000, recoveryAttempts: 2 },
+          stageModels: { review: "review-model" },
+          notifyEvents: { onStuck: false },
+        }),
+      });
+      assert.equal(res.status, 200);
+      const got = JSON.parse(
+        (await httpRequest(s.port, "GET", "/api/settings", { token: TOKEN })).body,
+      ) as {
+        defaultMaxRounds: number;
+        maxActiveJobs: number;
+        watchdog: { inactivityMs: number; stageCapMs: number; recoveryAttempts: number };
+        stageModels: { review: string | null };
+        notifyEvents: { onStuck: boolean; onFailed: boolean };
+        settingsRevision: number;
+      };
+      assert.equal(got.defaultMaxRounds, 5);
+      assert.equal(got.maxActiveJobs, 4);
+      assert.deepEqual(got.watchdog, {
+        inactivityMs: 120_000,
+        stageCapMs: 120 * 60 * 1000,
+        recoveryAttempts: 2,
+      });
+      assert.equal(got.stageModels.review, "review-model");
+      assert.equal(got.notifyEvents.onStuck, false);
+      assert.equal(got.notifyEvents.onFailed, true);
+
+      const stale = await httpRequest(s.port, "PATCH", "/api/settings", {
+        token: TOKEN,
+        body: JSON.stringify({ expectedRevision: got.settingsRevision - 1, maxActiveJobs: 3 }),
+      });
+      assert.equal(stale.status, 409);
+      assert.match(stale.body, /settings changed on disk/);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("still rejects malformed JSON with 400", async () => {
+    const s = await startTestServer();
+    try {
+      const res = await httpRequest(s.port, "PATCH", "/api/settings", {
+        token: TOKEN,
+        body: "{not-json",
+      });
+      assert.equal(res.status, 400);
+      assert.deepEqual(JSON.parse(res.body), { error: "invalid json" });
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+describe("start job validation parity (HTTP POST /api/jobs vs MCP start_job)", () => {
+  const base = { branch: "feat/parity", promptFile: "/prompt.md", repoPath: "/repo" };
+  const DRIVER_MSG = /^driver must be a registered built-in id \(/;
+  const cases: Array<[string, Record<string, unknown>, string | RegExp]> = [
+    ["empty payload", {}, "branch is required"],
+    ["missing branch", { promptFile: "/prompt.md", repoPath: "/repo" }, "branch is required"],
+    ["blank branch", { ...base, branch: "   " }, "branch is required"],
+    ["non-string branch", { ...base, branch: 7 }, "branch must be a string"],
+    [
+      "missing promptFile",
+      { branch: "feat/parity", repoPath: "/repo" },
+      "promptFile is required for code jobs",
+    ],
+    [
+      "missing repo",
+      { branch: "feat/parity", promptFile: "/prompt.md" },
+      "repoPath or remote required (or configure a code default repo in Setup)",
+    ],
+    ["non-string repoPath", { ...base, repoPath: 42 }, "repoPath must be a string"],
+    ["maxRounds 0", { ...base, maxRounds: 0 }, "maxRounds must be between 1 and 10"],
+    ["maxRounds 11", { ...base, maxRounds: 11 }, "maxRounds must be between 1 and 10"],
+    ["maxRounds -3", { ...base, maxRounds: -3 }, "maxRounds must be between 1 and 10"],
+    ['maxRounds "3"', { ...base, maxRounds: "3" }, "maxRounds must be a finite number"],
+    ["maxRounds NaN", { ...base, maxRounds: Number.NaN }, "maxRounds must be a finite number"],
+    [
+      "maxRounds Infinity",
+      { ...base, maxRounds: Number.POSITIVE_INFINITY },
+      "maxRounds must be a finite number",
+    ],
+    ["unknown driver", { ...base, driver: "nope" }, DRIVER_MSG],
+    ["non-string driver", { ...base, driver: 5 }, DRIVER_MSG],
+    ["bad jobType", { ...base, jobType: "ops" }, "jobType must be one of: code, docs"],
+    ["bad profile", { ...base, profile: "ops" }, "profile must be one of: code, docs"],
+    [
+      "bad docsTemplate",
+      { ...base, jobType: "docs", docsTemplate: "blog" },
+      "docsTemplate must be one of: marketing, policy, research",
+    ],
+    [
+      "docs job without template or prompt",
+      { branch: "docs/x", repoPath: "/repo", jobType: "docs" },
+      "docs jobs need docsTemplate or promptFile",
+    ],
+    ["non-boolean dryRun", { ...base, dryRun: "yes" }, "dryRun must be a boolean"],
+    ["non-object stageModels", { ...base, stageModels: "fast" }, "stageModels must be an object"],
+    [
+      "non-string stage model",
+      { ...base, stageModels: { review: 1 } },
+      "stageModels.review must be a string",
+    ],
+  ];
+
+  function assertMessage(actual: string, expected: string | RegExp, label: string): void {
+    if (typeof expected === "string") assert.equal(actual, expected, label);
+    else assert.match(actual, expected, label);
+  }
+
+  it("rejects each bad payload with the same message over the HTTP and MCP handlers", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-parity-"));
+    const engine = new RunnerEngine(cfg(dataDir, 0));
+    for (const [label, payload, expected] of cases) {
+      const httpReply = await handleStartJobRequest(engine, { ...payload });
+      const mcp = await handleMcpJsonRpc(engine, {
+        id: 1,
+        method: "tools/call",
+        params: { name: "start_job", arguments: { ...payload } },
+      });
+      assert.equal(httpReply.status, 400, label);
+      const httpMsg = (httpReply.body as { error: string }).error;
+      assertMessage(httpMsg, expected, `${label} (http)`);
+      assert.equal(mcp?.error?.message, httpMsg, `${label} (mcp matches http)`);
+    }
+    assert.deepEqual(await engine.list({ includeFinished: true }), [], "no job was created");
+  });
+
+  it("returns identical errors over the wire (HTTP 400 vs MCP error)", async () => {
+    const s = await startTestServer();
+    try {
+      for (const [label, payload, expected] of cases) {
+        // JSON cannot carry NaN/Infinity; the 1e999 request below covers that over the wire.
+        if (Object.values(payload).some((v) => typeof v === "number" && !Number.isFinite(v))) {
+          continue;
+        }
+        const body = JSON.stringify(payload);
+        const res = await httpRequest(s.port, "POST", "/api/jobs", { token: TOKEN, body });
+        assert.equal(res.status, 400, label);
+        const httpMsg = (JSON.parse(res.body) as { error: string }).error;
+        assertMessage(httpMsg, expected, `${label} (http)`);
+        const mcp = await mcpCall(s.port, "start_job", payload);
+        assert.equal(mcp.error?.message, httpMsg, `${label} (mcp matches http)`);
+      }
+      const inf = await httpRequest(s.port, "POST", "/api/jobs", {
+        token: TOKEN,
+        body: '{"branch":"feat/parity","promptFile":"/prompt.md","repoPath":"/repo","maxRounds":1e999}',
+      });
+      assert.equal(inf.status, 400);
+      assert.deepEqual(JSON.parse(inf.body), { error: "maxRounds must be a finite number" });
+
+      const meta = await httpRequest(s.port, "GET", "/api/jobs/meta", { token: TOKEN });
+      assert.equal((JSON.parse(meta.body) as { totalOnDisk: number }).totalOnDisk, 0);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("hands both paths the same normalized args for a valid payload", async () => {
+    const captured: unknown[] = [];
+    const engine = {
+      startJob: async (args: unknown) => {
+        captured.push(args);
+        return { id: "x" } as unknown;
+      },
+    } as unknown as RunnerEngine;
+    const payload = { ...base, branch: "  feat/parity  ", maxRounds: 10, driver: "claude-code" };
+    const httpReply = await handleStartJobRequest(engine, { ...payload });
+    await handleRunnerTool(engine, "start_job", { ...payload });
+    assert.equal(httpReply.status, 201);
+    assert.equal(captured.length, 2);
+    assert.deepEqual(captured[0], captured[1]);
+    assert.equal((captured[0] as { branch: string }).branch, "feat/parity");
+    assert.equal((captured[0] as { maxRounds: number }).maxRounds, 10);
+  });
+
+  it("engine.startJob enforces the same bounds for direct callers", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-parity-engine-"));
+    const engine = new RunnerEngine(cfg(dataDir, 0));
+    await assert.rejects(
+      engine.startJob({ ...base, maxRounds: 0 }),
+      (err: Error) => err instanceof ValidationError && /between 1 and 10/.test(err.message),
+    );
   });
 });

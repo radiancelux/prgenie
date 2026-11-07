@@ -1,10 +1,65 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   isMeaningfulAgentLine,
   runAgentWithWatchdog,
   InactivityTracker,
 } from "./stage-watchdog.js";
+import { AgentRunner, type AgentDriverRunResult } from "./agent.js";
+import type { RunnerConfig } from "./config.js";
+import { JobControl } from "./job-control.js";
+import { runJobLoop } from "./job-runner.js";
+import { saveSettings } from "./settings.js";
+import { createJob, loadJob } from "./store.js";
+
+/** First run stays silent until killed; every later run reports progress and exits 0. */
+class SilentOnceRunner extends AgentRunner {
+  calls = 0;
+  kills = 0;
+  private release: (() => void) | null = null;
+
+  constructor(private readonly advanceClock: (ms: number) => void) {
+    super();
+  }
+
+  override async run(): Promise<AgentDriverRunResult> {
+    this.calls += 1;
+    if (this.calls === 1) {
+      return new Promise((resolve) => {
+        const timer = setInterval(() => this.advanceClock(30_000), 5);
+        this.release = () => {
+          clearInterval(timer);
+          resolve({ code: 143, output: "" });
+        };
+      });
+    }
+    this.emit("line", '{"type":"assistant","message":{}}');
+    return { code: 0, output: "ok" };
+  }
+
+  override kill(): void {
+    this.kills += 1;
+    this.release?.();
+    this.release = null;
+  }
+}
+
+function testConfig(dataDir: string): RunnerConfig {
+  return {
+    host: "127.0.0.1",
+    port: 9473,
+    token: "t",
+    dataDir,
+    notifyEmail: null,
+    resendApiKey: null,
+    defaultModel: "composer-2.5",
+    dryRun: true,
+    defaultCodeRepoPath: null,
+  };
+}
 
 describe("stage watchdog", () => {
   it("detects meaningful stream-json lines", () => {
@@ -51,5 +106,70 @@ describe("stage watchdog", () => {
     assert.equal(res.ok, false);
     if (!res.ok) assert.match(res.reason, /meaningful agent activity/);
     assert.ok(kills >= 1);
+  });
+
+  it("kills a silent agent, retries, and returns the retried run's result", async () => {
+    let now = 0;
+    const runner = new SilentOnceRunner((ms) => {
+      now += ms;
+    });
+    const recoveries: number[] = [];
+    const res = await runAgentWithWatchdog(
+      {
+        policy: { inactivityMs: 60_000, stageCapMs: 3_600_000, recoveryAttempts: 1 },
+        now: () => now,
+        tickMs: 5,
+        childGraceMs: 1,
+        killChild: () => runner.kill(),
+        onRecovery: (attempt) => recoveries.push(attempt),
+      },
+      () => runner.run(),
+    );
+    assert.equal(res.ok, true);
+    assert.equal(res.recoveryAttempts, 1);
+    if (res.ok) assert.deepEqual(res.value, { code: 0, output: "ok" });
+    assert.deepEqual(recoveries, [1]);
+    assert.equal(runner.calls, 2);
+    assert.ok(runner.kills >= 1);
+  });
+
+  it("job proceeds to approved after the watchdog recovers a silent build stage", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-wd-job-"));
+    const repo = await mkdtemp(path.join(os.tmpdir(), "lr-wd-repo-"));
+    const config = testConfig(dataDir);
+    await saveSettings(dataDir, { watchdog: { inactivityMs: 60_000, recoveryAttempts: 1 } });
+    const job = await createJob(
+      dataDir,
+      {
+        repoPath: repo,
+        branch: "feat/wd",
+        promptFile: path.join(repo, "missing-prompt.md"),
+        maxRounds: 1,
+        dryRun: true,
+      },
+      { model: "composer-2.5", dryRun: true, config },
+    );
+    assert.equal(job.effectiveSnapshot?.watchdogRecoveryAttempts, 1);
+
+    let now = 0;
+    const runner = new SilentOnceRunner((ms) => {
+      now += ms;
+    });
+    await runJobLoop(config, job, JobControl.fromPersisted(job), {
+      agentRunner: runner,
+      watchdogTiming: { now: () => now, tickMs: 5, childGraceMs: 1 },
+    });
+
+    assert.equal(job.stage, "approved", job.error ?? "");
+    assert.equal(job.error, null);
+    assert.equal(runner.calls, 3, "silent build, retried build, review");
+    assert.ok(runner.kills >= 1);
+    assert.equal(job.watchdog?.recoveryAttemptsUsed, 1);
+    assert.ok(job.watchdog?.lastRecoveryAt);
+    assert.match(job.watchdog?.lastStallReason ?? "", /meaningful agent activity/);
+
+    const persisted = await loadJob(dataDir, job.id);
+    assert.equal(persisted?.stage, "approved");
+    assert.equal(persisted?.watchdog?.recoveryAttemptsUsed, 1);
   });
 });

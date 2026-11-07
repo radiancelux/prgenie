@@ -10,6 +10,8 @@ export type StageWatchdogOptions = {
   childGraceMs?: number;
   killChild: () => void;
   onStall?: (reason: string) => void;
+  /** Called once per retry, after the stalled child was killed and before it is re-run. */
+  onRecovery?: (attempt: number, reason: string) => void;
 };
 
 /** True when a stream-json or agent log line indicates meaningful progress (not CI noise). */
@@ -104,6 +106,7 @@ export async function runAgentWithWatchdog<T>(
       opts.onStall?.(stallReason);
       if (recoveryAttempts < maxRecovery) {
         recoveryAttempts += 1;
+        opts.onRecovery?.(recoveryAttempts, stallReason);
         await sleep(childGraceMs);
         continue;
       }

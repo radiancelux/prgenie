@@ -11,7 +11,11 @@ import {
   parseWatchdogPolicy,
 } from "./runner-policy.js";
 import { normalizeStageModels } from "./job-models.js";
-import { validateDefaultMaxRounds, validateMaxActiveJobs } from "./settings-validation.js";
+import {
+  validateDefaultMaxRounds,
+  validateMaxActiveJobs,
+  validateWatchdogPatch,
+} from "./settings-validation.js";
 
 export type DriverKind = "cursor-agent" | "claude-code" | "local-model" | "custom";
 
@@ -384,7 +388,7 @@ export async function saveSettings(dataDir: string, patch: SettingsPatch): Promi
     stageModels: mergeStageModels(current.stageModels, patch.stageModels),
     watchdog:
       patch.watchdog !== undefined
-        ? parseWatchdogPolicy({ ...current.watchdog, ...patch.watchdog })
+        ? parseWatchdogPolicy({ ...current.watchdog, ...validateWatchdogPatch(patch.watchdog) })
         : current.watchdog,
     maxActiveJobs:
       patch.maxActiveJobs !== undefined

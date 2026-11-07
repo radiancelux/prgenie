@@ -123,17 +123,8 @@ export async function handleRunnerTool(
   args: Json,
 ): Promise<unknown> {
   switch (name) {
-    case "start_job": {
-      const input = normalizeStartJobArgs(args);
-      const isDocs = input.jobType === "docs" || input.profile === "docs";
-      if (!isDocs && !input.promptFile?.trim()) {
-        throw new Error("promptFile is required for code jobs");
-      }
-      if (isDocs && !input.promptFile?.trim() && !input.docsTemplate) {
-        throw new Error("docs jobs need docsTemplate or promptFile");
-      }
-      return engine.startJob(input);
-    }
+    case "start_job":
+      return engine.startJob(normalizeStartJobArgs(args));
     case "list_jobs":
       return engine.list({ includeArchived: args.includeArchived === true });
     case "get_job": {

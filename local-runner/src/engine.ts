@@ -25,6 +25,7 @@ import { EventEmitter } from "node:events";
 import { loadSettings } from "./settings.js";
 import { countActiveJobs, decideJobStart, listJobsForQueue, nextQueuedJob } from "./job-queue.js";
 import { clearJobSettling, markJobSettling } from "./job-settling.js";
+import { normalizeStartJobArgs } from "./settings-validation.js";
 
 const ACTIVE_STAGES = new Set(["building", "reviewing", "fixing"]);
 
@@ -60,7 +61,7 @@ export class RunnerEngine extends EventEmitter {
   }
 
   async startJob(args: StartJobArgs): Promise<JobRecord> {
-    const job = await this.createJobRecord(args);
+    const job = await this.createJobRecord(normalizeStartJobArgs({ ...args }));
     if (!job.queueState?.queued) {
       this.schedule(job.id);
     }
