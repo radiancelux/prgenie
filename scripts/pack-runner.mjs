@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,25 +11,39 @@ if (!existsSync(bundle)) {
   execFileSync("pnpm", ["build"], { cwd: root, stdio: "inherit", timeout: 300_000 });
 }
 
-const out = execFileSync("npm", ["pack", "--dry-run"], {
+const out = execFileSync("npm", ["pack", "--dry-run", "--json"], {
   cwd: npmDir,
   encoding: "utf8",
   timeout: 60_000,
 });
+const [pack] = JSON.parse(out);
+const names = pack.files.map((f) => f.path);
 
-const forbidden = /\.(test|spec)\.|\/src\/|fixtures?\/|\.env\b/i;
-const lines = out.split("\n");
-const bad = [];
-for (const line of lines) {
-  const m = line.match(/^\s+[\d.]+\s+([\w./-]+)/);
-  if (!m) continue;
-  const name = m[1];
-  if (forbidden.test(name)) bad.push(name);
+for (const f of pack.files) console.log(`${String(f.size).padStart(10)}  ${f.path}`);
+console.log(`${pack.filename}  ${pack.entryCount} files  ${pack.size} bytes packed`);
+
+const forbidden = /\.(test|spec)\.|(^|\/)src\/|fixtures?\/|\.env\b/i;
+const required = [
+  "package.json",
+  "runner.cjs",
+  "markdownlint-prose-defaults.jsonc",
+  "README.md",
+  "LICENSE",
+];
+const bad = names.filter((n) => forbidden.test(n));
+const missing = required.filter((n) => !names.includes(n));
+const failures = [];
+if (bad.length) failures.push(`disallowed paths: ${bad.join(", ")}`);
+if (missing.length) failures.push(`missing required files: ${missing.join(", ")}`);
+
+const license = readFileSync(path.join(npmDir, "LICENSE"), "utf8");
+if (license !== readFileSync(path.join(root, "LICENSE"), "utf8")) {
+  failures.push("packages/npm-prgenie/LICENSE differs from the repository LICENSE");
 }
+if (!/^MIT License\b/.test(license)) failures.push("LICENSE is not the MIT license text");
 
-console.log(out.trim());
-if (bad.length) {
-  console.error(`FAIL  npm pack would ship disallowed paths: ${bad.join(", ")}`);
+if (failures.length) {
+  for (const f of failures) console.error(`FAIL  npm pack: ${f}`);
   process.exit(1);
 }
-console.log("ok    npm pack contents look publishable (no tests/fixtures/src).");
+console.log("ok    npm pack contents look publishable (MIT LICENSE, no tests/fixtures/src).");

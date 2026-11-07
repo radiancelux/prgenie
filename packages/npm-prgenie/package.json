@@ -22,7 +22,8 @@
     "runner.cjs",
     "markdownlint-prose-defaults.jsonc",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public",

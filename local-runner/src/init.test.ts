@@ -5,7 +5,14 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { runnerTokenFile } from "./config.js";
-import { formatInitReport, runInit } from "./init.js";
+import {
+  claudeCodeMcpAddCommand,
+  cursorMcpJsonSnippet,
+  formatInitReport,
+  RUNNER_MCP_SERVER_ID,
+  runInit,
+  vscodeMcpJsonSnippet,
+} from "./init.js";
 
 describe("prgenie init", () => {
   let dir = "";
@@ -34,5 +41,24 @@ describe("prgenie init", () => {
     const second = await runInit({ dataDir });
     assert.equal(second.createdToken, false);
     assert.equal(await readFile(first.tokenFile, "utf8"), token);
+  });
+});
+
+describe("prgenie config snippets", () => {
+  it("uses a server id distinct from the plugin's prgenie MCP", () => {
+    assert.equal(RUNNER_MCP_SERVER_ID, "prgenie-runner");
+    const cursor = JSON.parse(cursorMcpJsonSnippet()) as { mcpServers: Record<string, unknown> };
+    assert.deepEqual(cursor.mcpServers, {
+      "prgenie-runner": { type: "stdio", command: "npx", args: ["-y", "prgenie", "mcp"] },
+    });
+    const vscode = JSON.parse(vscodeMcpJsonSnippet()) as { servers: Record<string, unknown> };
+    assert.deepEqual(Object.keys(vscode.servers), ["prgenie-runner"]);
+  });
+
+  it("prints the Claude Code stdio registration command", () => {
+    assert.equal(
+      claudeCodeMcpAddCommand(),
+      "claude mcp add --scope user prgenie-runner -- npx -y prgenie mcp\n",
+    );
   });
 });

@@ -6,9 +6,18 @@ Optional: `prgenie serve` for a browser dashboard and HTTP MCP (localhost + toke
 
 Requires **Node.js 22+**, **git**, **GitHub CLI (`gh`)**, and **`cursor-agent`** for real (non–dry-run) jobs.
 
+## Install (recommended: system-level)
+
+The runner is a per-machine tool, so register it once for every repo rather than per project:
+
+- **`npx` (recommended, no install):** every snippet below runs `npx -y prgenie mcp`. npm caches the package after the first launch.
+- **Global install (pin a version):** `npm install -g prgenie` (or `npm install -g prgenie@0.1.2`), then use `"command": "prgenie", "args": ["mcp"]` in place of `npx -y prgenie mcp`. Upgrade with `npm install -g prgenie@latest`.
+
+A repo-local devDependency also works but is optional; see [Optional: project devDependency](#optional-project-devdependency).
+
 ## Quick start — MCP client config
 
-All snippets use the published CLI. No token is required for stdio.
+All snippets use the published CLI. No token is required for stdio. The server id `prgenie-runner` keeps this separate from the Cursor plugin's `prgenie` steward MCP.
 
 ### Cursor (`.cursor/mcp.json` in your repo or user config)
 
@@ -27,6 +36,24 @@ All snippets use the published CLI. No token is required for stdio.
 Use a **different server id** than the Cursor plugin’s `prgenie` steward MCP (e.g. `prgenie-runner` above) so both can coexist.
 
 Print the same snippet: `npx -y prgenie config --client cursor`
+
+### Claude Code (`claude mcp add`)
+
+Register the stdio server for all your projects (verified with Claude Code 2.1):
+
+```bash
+claude mcp add --scope user prgenie-runner -- npx -y prgenie mcp
+claude mcp list
+# prgenie-runner: npx -y prgenie mcp - ✔ Connected
+```
+
+- Everything after `--` is the server command, so Claude Code does not parse `-y` as its own flag.
+- `--scope user` makes it available in every project (stored in `~/.claude.json`). `--scope project` writes a shareable `.mcp.json` in the repo root instead; the default `--scope local` applies to the current project only.
+- With a global install: `claude mcp add --scope user prgenie-runner -- prgenie mcp`.
+- Make every job a dry-run while you try it out: `claude mcp add --scope user prgenie-runner -e PRGENIE_RUNNER_DRY_RUN=1 -- npx -y prgenie mcp` (keep the server name before `-e`).
+- Check it with `claude mcp get prgenie-runner`; remove it with `claude mcp remove prgenie-runner -s user`.
+
+Print the same command: `npx -y prgenie config --client claude-code`
 
 ### Claude Desktop (`claude_desktop_config.json`)
 
@@ -71,12 +98,16 @@ Print the same snippet: `npx -y prgenie config --client vscode`
 }
 ```
 
-### Project devDependency (pnpm / npm / yarn)
+### Optional: project devDependency
+
+**Optional — not the recommended setup.** Use this only when a repo must pin its own runner version. Prefer the system-level `npx` or global install above: MCP clients launch servers from their own working directory, and the runner's job store (`~/.prgenie/local-runner`) is per machine anyway.
 
 ```bash
-pnpm add -D prgenie
+pnpm add -D prgenie   # or: npm install -D prgenie / yarn add -D prgenie
 pnpm exec prgenie mcp
 ```
+
+Point the client at the repo-local binary, for example `"command": "pnpm", "args": ["exec", "prgenie", "mcp"]` in a project-scoped `.cursor/mcp.json`, or `claude mcp add --scope project prgenie-runner -- pnpm exec prgenie mcp`.
 
 ## First job walkthrough
 
@@ -126,6 +157,7 @@ pnpm exec prgenie mcp
 | `steer_job`                   | Queue follow-up prompt         |
 | `stop_job`                    | Stop running job               |
 | `archive_job` / `restore_job` | Remove / restore finished jobs |
+| `continue_job`                | Extra fix→review round(s)      |
 | `settings`                    | Read or patch runner settings  |
 
 Stdio and `serve` share one on-disk job store (file lock when both run).
@@ -164,4 +196,4 @@ Source lives under `local-runner/` in [github.com/radiancelux/prgenie](https://g
 
 ## License
 
-MIT — see repository `LICENSE`.
+MIT — see [`LICENSE`](LICENSE) (shipped in the npm package).

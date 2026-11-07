@@ -226,7 +226,8 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
         const msg = await readMcpMessage(req, guard);
         if (!msg || guard.started) return;
         const reply = await handleMcpJsonRpc(engine, msg);
-        guard.json(200, reply ?? {});
+        if (reply) guard.json(200, reply);
+        else guard.text(202, "");
         return;
       }
 

@@ -68,11 +68,14 @@ export function formatInitReport(result: InitResult): string {
   return `${lines.join("\n")}\n`;
 }
 
+/** Distinct from the Cursor plugin's `prgenie` steward MCP so both can be enabled together. */
+export const RUNNER_MCP_SERVER_ID = "prgenie-runner";
+
 export function clientMcpSnippet(command: string, args: string[]): string {
   return `${JSON.stringify(
     {
       mcpServers: {
-        prgenie: {
+        [RUNNER_MCP_SERVER_ID]: {
           type: "stdio",
           command,
           args,
@@ -92,7 +95,7 @@ export function vscodeMcpJsonSnippet(): string {
   return `${JSON.stringify(
     {
       servers: {
-        prgenie: {
+        [RUNNER_MCP_SERVER_ID]: {
           type: "stdio",
           command: "npx",
           args: ["-y", "prgenie", "mcp"],
@@ -102,4 +105,8 @@ export function vscodeMcpJsonSnippet(): string {
     null,
     2,
   )}\n`;
+}
+
+export function claudeCodeMcpAddCommand(): string {
+  return `claude mcp add --scope user ${RUNNER_MCP_SERVER_ID} -- npx -y prgenie mcp\n`;
 }

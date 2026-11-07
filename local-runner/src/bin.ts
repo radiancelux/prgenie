@@ -6,8 +6,14 @@ import { runnerListenUrls } from "./listen-urls.js";
 import { startHttpServer } from "./server.js";
 import { listJobs } from "./store.js";
 import { removeWorktree } from "./worktree.js";
-import { encodeMcpFrame, MCP_STDIO_READY, takeMcpMessages } from "./mcp-stdio.js";
-import { formatInitReport, runInit, cursorMcpJsonSnippet, vscodeMcpJsonSnippet } from "./init.js";
+import { MCP_STDIO_READY, serveMcpStdio } from "./mcp-stdio.js";
+import {
+  claudeCodeMcpAddCommand,
+  cursorMcpJsonSnippet,
+  formatInitReport,
+  runInit,
+  vscodeMcpJsonSnippet,
+} from "./init.js";
 import { formatRunnerDoctorReport, runRunnerDoctor } from "./runner-doctor.js";
 
 async function cmdServe(): Promise<void> {
@@ -32,19 +38,14 @@ async function cmdMcpStdio(): Promise<void> {
   const engine = new RunnerEngine(config);
   await engine.init();
   writeSync(2, `${MCP_STDIO_READY}\n`);
-  let buffer: Buffer = Buffer.alloc(0);
-  process.stdin.on("data", (chunk: Buffer) => {
-    buffer = Buffer.concat([buffer, chunk]) as Buffer;
-    const { messages, rest } = takeMcpMessages(buffer);
-    buffer = rest;
-    for (const raw of messages) {
-      void (async () => {
-        const msg = raw as { id?: unknown; method?: string; params?: Record<string, unknown> };
-        const reply = await handleMcpJsonRpc(engine, msg);
-        if (reply) writeSync(1, encodeMcpFrame(reply));
-      })();
-    }
-  });
+  await serveMcpStdio(
+    process.stdin,
+    (frame) => writeSync(1, frame),
+    (msg) => handleMcpJsonRpc(engine, msg),
+  );
+  // Client hung up: drop the CI poll interval so the process exits once in-flight jobs settle
+  // instead of lingering as an orphan under npx.
+  engine.ciWatcher.stop();
 }
 
 async function cmdInit(): Promise<void> {
@@ -73,9 +74,13 @@ function cmdConfig(): void {
     process.stdout.write(vscodeMcpJsonSnippet());
     return;
   }
+  if (client === "claude-code") {
+    process.stdout.write(claudeCodeMcpAddCommand());
+    return;
+  }
   process.stdout.write(
     [
-      "Usage: prgenie config --client cursor|vscode",
+      "Usage: prgenie config --client cursor|vscode|claude-code",
       "",
       "Generic stdio (Claude Desktop, portable .mcp.json):",
       cursorMcpJsonSnippet(),
@@ -108,7 +113,7 @@ Usage:
   prgenie doctor
   prgenie mcp              MCP over stdio (no bearer token)
   prgenie serve            HTTP dashboard + bearer MCP
-  prgenie config --client cursor|vscode
+  prgenie config --client cursor|vscode|claude-code
   prgenie prune-worktrees
 
 Env: PRGENIE_RUNNER_DATA_DIR, PRGENIE_RUNNER_TOKEN (serve only),

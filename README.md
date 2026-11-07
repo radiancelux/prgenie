@@ -2,7 +2,63 @@
 
 Local pull requests for agent work. GitHub when you say so.
 
-PR Genie is a **pre-GitHub review lane** for Cursor (and any git checkout, including Conductor workspaces and GitLens worktrees). Each loop gets a feature branch (never the repo base) and a git worktree so you can switch this window onto the implementor's files.
+## Quick start (npm)
+
+The fastest path is the **`prgenie` npm package**: a local runner that drives an implement → PR → review → fix loop and talks to your MCP client over stdio. No clone, build, port, or token needed.
+
+Requires **Node.js 22+**, **git**, the **GitHub CLI (`gh`)**, and **`cursor-agent`** for real (non–dry-run) jobs. Install it system-wide (via `npx`, or `npm install -g prgenie`), not per repo. Full details are in the [package README](packages/npm-prgenie/README.md).
+
+### 1. Add the MCP server
+
+**Cursor** (`.cursor/mcp.json`) — also works for Claude Desktop (`claude_desktop_config.json`) and other stdio clients:
+
+```json
+{
+  "mcpServers": {
+    "prgenie-runner": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "prgenie", "mcp"]
+    }
+  }
+}
+```
+
+**Claude Code:**
+
+```bash
+claude mcp add --scope user prgenie-runner -- npx -y prgenie mcp
+```
+
+**VS Code** (`.vscode/mcp.json`): print the snippet with `npx -y prgenie config --client vscode`.
+
+Keep the `prgenie-runner` id so it does not collide with the Cursor plugin's `prgenie` MCP.
+
+### 2. Run your first job
+
+1. `npx -y prgenie init` creates the data directory (`~/.prgenie/local-runner`).
+2. `npx -y prgenie doctor` checks Node, git, `gh auth`, and `cursor-agent`, and tells you how to fix anything missing.
+3. Run a **dry-run** job (no agent, safe smoke test). In your MCP client, call the `start_job` tool:
+
+   ```json
+   {
+     "branch": "chore/runner-smoke",
+     "promptFile": "README.md",
+     "repoPath": "/path/to/your/git/repo",
+     "dryRun": true,
+     "maxRounds": 1
+   }
+   ```
+
+   Then call `get_job` with the returned `id` and watch it reach `approved`.
+
+4. Run a **real job** with the same call on a throwaway branch, `dryRun` omitted, and `cursor-agent` installed.
+
+Optional: `npx -y prgenie serve` opens a browser dashboard and HTTP MCP. See the [package README](packages/npm-prgenie/README.md#optional-http-dashboard) and its [troubleshooting](packages/npm-prgenie/README.md#troubleshooting) section.
+
+## Cursor plugin and local PRs
+
+PR Genie is also a **pre-GitHub review lane** for Cursor (and any git checkout, including Conductor workspaces and GitLens worktrees). Each loop gets a feature branch (never the repo base) and a git worktree so you can switch this window onto the implementor's files.
 
 A local PR is a git-native review loop: branch, base, diff, comments, and status. It never leaves the machine until you export it. PR Genie loop agents are steered — and hooked — away from `git push` / `gh pr create`; other agents keep normal `git` / `gh` (their token is the boundary), and nobody but the human runs `prgenie export`.
 
@@ -42,6 +98,7 @@ Run `prgenie attach --help` and `prgenie --help` for full command reference.
 - [Default review bar](docs/review-bar.md) — `/review` process bar + authoring `.prgenie/review.md`
 - [Troubleshooting](docs/troubleshooting.md) — `prgenie doctor` checks and common failure modes
 - [Release](docs/release.md) — version alignment, `check-versions`, `pack:extension`
+- [npm package (`prgenie`)](packages/npm-prgenie/README.md) — install, MCP client setup (Cursor, Claude Code, Claude Desktop, VS Code), first job, troubleshooting
 - [Local CLI runner](local-runner/README.md) — optional workstation `cursor-agent` loop + MCP + UI (not the plugin steward)
 
 ## What it is not
@@ -50,7 +107,9 @@ Run `prgenie attach --help` and `prgenie --help` for full command reference.
 - Not a GitHub PR client (GitLens owns remote PRs after export)
 - Not a Conductor replacement
 
-## Install (dev)
+## Install from source (monorepo, Cursor plugin, extension)
+
+Only needed for the Cursor plugin, the extension, or contributing. For the runner alone, use the [npm Quick start](#quick-start-npm) above.
 
 Requires Node 20+ and git. Generated MCP/hook bundles (`packages/plugin/mcp/server.cjs`, `packages/plugin/hooks/*.cjs`) are **not** committed — `pnpm build` (and `pnpm link-plugin`, which runs build first) produce them.
 

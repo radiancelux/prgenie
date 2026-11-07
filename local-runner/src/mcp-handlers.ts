@@ -208,53 +208,101 @@ export async function handleRunnerTool(
   name: string,
   args: Json,
 ): Promise<unknown> {
-  const handler = RUNNER_TOOL_HANDLERS[name];
-  if (!handler) throw new Error(`unknown tool: ${name}`);
-  return handler(engine, args);
+  if (!isRunnerTool(name)) throw new Error(`unknown tool: ${name}`);
+  return RUNNER_TOOL_HANDLERS[name](engine, args);
 }
 
+function isRunnerTool(name: string): boolean {
+  return Object.hasOwn(RUNNER_TOOL_HANDLERS, name);
+}
+
+export const MCP_PROTOCOL_VERSION = "2024-11-05";
+
+export const JSONRPC_INVALID_REQUEST = -32600;
+export const JSONRPC_METHOD_NOT_FOUND = -32601;
+export const JSONRPC_INVALID_PARAMS = -32602;
+export const JSONRPC_INTERNAL_ERROR = -32603;
+export const JSONRPC_TOOL_ERROR = -32000;
+
+export type JsonRpcId = string | number | null;
+
+export type JsonRpcResponse = {
+  jsonrpc: "2.0";
+  id: JsonRpcId;
+  result?: unknown;
+  error?: { code: number; message: string };
+};
+
+export function jsonRpcResult(id: JsonRpcId, result: unknown): JsonRpcResponse {
+  return { jsonrpc: "2.0", id, result };
+}
+
+export function jsonRpcError(id: JsonRpcId, code: number, message: string): JsonRpcResponse {
+  return { jsonrpc: "2.0", id, error: { code, message } };
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Returns `null` for notifications (no `id`): JSON-RPC 2.0 forbids replying to them.
+ * Every other reply carries `jsonrpc: "2.0"` and echoes the request `id`.
+ */
 export async function handleMcpJsonRpc(
   engine: RunnerEngine,
-  msg: { id?: unknown; method?: string; params?: Json },
-): Promise<{ id?: unknown; result?: unknown; error?: { code: number; message: string } } | null> {
-  const { id, method, params } = msg;
-  if (method === "initialize") {
-    return {
-      id,
-      result: {
-        protocolVersion: "2024-11-05",
-        capabilities: { tools: {} },
-        serverInfo: { name: "prgenie", version: "0.1.2" },
-      },
-    };
+  msg: unknown,
+): Promise<JsonRpcResponse | null> {
+  if (!msg || typeof msg !== "object" || Array.isArray(msg)) {
+    return jsonRpcError(null, JSONRPC_INVALID_REQUEST, "Invalid Request");
   }
-  if (method === "notifications/initialized" || method === "ping") {
-    return null;
+  const { id, method, params } = msg as { id?: unknown; method?: unknown; params?: unknown };
+  if (id === undefined) return null;
+  if (typeof id !== "string" && typeof id !== "number") {
+    return jsonRpcError(
+      null,
+      JSONRPC_INVALID_REQUEST,
+      "Invalid Request: id must be string or number",
+    );
   }
-  if (method === "tools/list") {
-    return { id, result: { tools: RUNNER_MCP_TOOLS } };
+  if (typeof method !== "string") {
+    return jsonRpcError(id, JSONRPC_INVALID_REQUEST, "Invalid Request: method must be a string");
   }
-  if (method === "tools/call") {
-    const name = String(params?.name ?? "");
-    const toolArgs = (params?.arguments ?? {}) as Json;
-    try {
-      const structured = await handleRunnerTool(engine, name, toolArgs);
-      return {
-        id,
-        result: {
-          content: [{ type: "text", text: JSON.stringify(structured, null, 2) }],
-          structuredContent: structured,
-        },
-      };
-    } catch (err) {
-      return {
-        id,
-        error: { code: -32000, message: err instanceof Error ? err.message : String(err) },
-      };
+  const p = (params && typeof params === "object" ? params : {}) as Json;
+  try {
+    switch (method) {
+      case "initialize":
+        return jsonRpcResult(id, {
+          protocolVersion: MCP_PROTOCOL_VERSION,
+          capabilities: { tools: {} },
+          serverInfo: { name: "prgenie", version: "0.1.2" },
+        });
+      case "ping":
+        return jsonRpcResult(id, {});
+      case "tools/list":
+        return jsonRpcResult(id, { tools: RUNNER_MCP_TOOLS });
+      case "tools/call": {
+        const name = String(p.name ?? "");
+        if (!isRunnerTool(name)) {
+          return jsonRpcError(id, JSONRPC_INVALID_PARAMS, `unknown tool: ${name}`);
+        }
+        const toolArgs = (
+          p.arguments && typeof p.arguments === "object" ? p.arguments : {}
+        ) as Json;
+        try {
+          const structured = await handleRunnerTool(engine, name, toolArgs);
+          return jsonRpcResult(id, {
+            content: [{ type: "text", text: JSON.stringify(structured, null, 2) }],
+            structuredContent: structured,
+          });
+        } catch (err) {
+          return jsonRpcError(id, JSONRPC_TOOL_ERROR, errorMessage(err));
+        }
+      }
+      default:
+        return jsonRpcError(id, JSONRPC_METHOD_NOT_FOUND, `Method not found: ${method}`);
     }
+  } catch (err) {
+    return jsonRpcError(id, JSONRPC_INTERNAL_ERROR, errorMessage(err));
   }
-  if (id !== undefined) {
-    return { id, error: { code: -32601, message: `Method not found: ${method}` } };
-  }
-  return null;
 }
