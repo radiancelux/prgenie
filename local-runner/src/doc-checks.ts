@@ -1,10 +1,59 @@
-import type { CiRollupStatus, CiStatusInfo, JobRecord } from "./types.js";
+import { existsSync } from "node:fs";
+import { access } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import type { CiRollupStatus, CiStatusInfo, DocLintFinding, JobRecord } from "./types.js";
+import { DOC_LINT_FINDINGS_CAP } from "./types.js";
 import { isCiFinal } from "./ci.js";
 import type { DocChecksConfig } from "./docs-settings.js";
 import { parseDocsSettings } from "./docs-settings.js";
 import type { RunnerSettings } from "./settings.js";
 import { git } from "./github.js";
 import { spawnCommand } from "./spawn-cmd.js";
+
+let proseDefaultsCached: string | undefined;
+
+/** Resolved at runtime (dist bundle copies jsonc next to runner.cjs). */
+export function proseMarkdownlintConfigPath(): string {
+  if (proseDefaultsCached) return proseDefaultsCached;
+  const candidates: string[] = [];
+  if (process.argv[1]) {
+    candidates.push(path.join(path.dirname(process.argv[1]), "markdownlint-prose-defaults.jsonc"));
+  }
+  try {
+    if (typeof import.meta !== "undefined" && import.meta.url) {
+      candidates.push(
+        path.resolve(
+          path.dirname(fileURLToPath(import.meta.url)),
+          "..",
+          "markdownlint-prose-defaults.jsonc",
+        ),
+      );
+    }
+  } catch {
+    /* bundled cjs — import.meta empty */
+  }
+  for (const c of candidates) {
+    if (existsSync(c)) {
+      proseDefaultsCached = c;
+      return c;
+    }
+  }
+  proseDefaultsCached = candidates[0] ?? "markdownlint-prose-defaults.jsonc";
+  return proseDefaultsCached;
+}
+
+const MARKDOWNLINT_CONFIG_NAMES = [
+  ".markdownlint.json",
+  ".markdownlint.yaml",
+  ".markdownlint.yml",
+  ".markdownlint.jsonc",
+  ".markdownlint-cli2.jsonc",
+  ".markdownlint-cli2.yaml",
+  ".markdownlint-cli2.yml",
+];
+
+const FINDING_LINE = /^(.+?):(\d+)(?::(\d+))?\s+(?:error|warning)\s+([^\s]+)\s+(.+)$/;
 
 export function isDocsJob(job: JobRecord): boolean {
   return job.input.jobType === "docs" || job.input.profile === "docs";
@@ -49,30 +98,91 @@ export async function listChangedMarkdownPaths(cwd: string): Promise<string[]> {
     .filter((l) => l.endsWith(".md"));
 }
 
+export async function repoHasMarkdownlintConfig(cwd: string): Promise<boolean> {
+  for (const name of MARKDOWNLINT_CONFIG_NAMES) {
+    try {
+      await access(path.join(cwd, name));
+      return true;
+    } catch {
+      /* not present */
+    }
+  }
+  return false;
+}
+
+export function parseMarkdownlintFindings(output: string): {
+  findings: DocLintFinding[];
+  truncated: boolean;
+} {
+  const findings: DocLintFinding[] = [];
+  let truncated = false;
+  for (const line of output.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const m = trimmed.match(FINDING_LINE);
+    if (!m) continue;
+    findings.push({
+      file: m[1],
+      line: Number(m[2]),
+      column: m[3] ? Number(m[3]) : undefined,
+      rule: m[4],
+      message: m[5],
+    });
+    if (findings.length >= DOC_LINT_FINDINGS_CAP) {
+      truncated = true;
+      break;
+    }
+  }
+  return { findings, truncated };
+}
+
 export type DocCheckRunResult = {
   ok: boolean;
   skipped: boolean;
   summary: string;
   detail?: string;
+  findings?: DocLintFinding[];
+  findingsTruncated?: boolean;
 };
 
 export async function runMarkdownDocChecks(
   cwd: string,
   paths: string[],
+  options?: { proseDefaultsPath?: string; hasRepoConfig?: boolean },
 ): Promise<DocCheckRunResult> {
   if (paths.length === 0) {
     return { ok: true, skipped: true, summary: "no markdown changed" };
   }
-  const args = ["--yes", "markdownlint-cli2", ...paths];
+  const hasRepoConfig =
+    options?.hasRepoConfig !== undefined
+      ? options.hasRepoConfig
+      : await repoHasMarkdownlintConfig(cwd);
+  const args = ["--yes", "markdownlint-cli2"];
+  if (!hasRepoConfig) {
+    args.push("--config", options?.proseDefaultsPath ?? proseMarkdownlintConfigPath());
+  }
+  args.push(...paths);
   const res = await spawnCommand("npx", cwd, args);
   if (res.code === 0) {
     return { ok: true, skipped: false, summary: `lint ok (${paths.length} file(s))` };
   }
-  const err = (res.stderr || res.stdout).trim().slice(0, 400);
-  if (/ENOENT|not found|could not determine executable/i.test(err)) {
+  const combined = (res.stderr || res.stdout).trim();
+  if (/ENOENT|not found|could not determine executable/i.test(combined)) {
     return { ok: true, skipped: true, summary: "markdownlint not available" };
   }
-  return { ok: false, skipped: false, summary: "markdown lint failed", detail: err };
+  const { findings, truncated } = parseMarkdownlintFindings(combined);
+  const detail =
+    findings.length > 0
+      ? `${findings.length} finding(s)${truncated ? ` (cap ${DOC_LINT_FINDINGS_CAP})` : ""}`
+      : combined.slice(0, 2000);
+  return {
+    ok: false,
+    skipped: false,
+    summary: "markdown lint failed",
+    detail,
+    findings: findings.length ? findings : undefined,
+    findingsTruncated: truncated || undefined,
+  };
 }
 
 export function rollupDocCheckResult(
@@ -91,7 +201,11 @@ export function rollupDocCheckResult(
   if (config.failHard) {
     return { status: "failure", summary: result.summary, reason: result.detail };
   }
-  return { status: "neutral", summary: `soft: ${result.summary}`, reason: result.detail };
+  return {
+    status: "neutral",
+    summary: `warning (non-blocking): ${result.summary}`,
+    reason: result.detail,
+  };
 }
 
 export async function fetchDocChecksStatus(
@@ -117,5 +231,7 @@ export async function fetchDocChecksStatus(
     summary: rolled.summary,
     reason: rolled.reason,
     source: "doc-checks",
+    findings: result.findings,
+    findingsTruncated: result.findingsTruncated,
   };
 }

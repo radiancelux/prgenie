@@ -9,7 +9,7 @@ import type { JobRecord } from "./types.js";
 import { removeWorktree } from "./worktree.js";
 
 export type WorktreeCleanupReason =
-  "merged_hidden" | "terminal_merged" | "terminal_branch_gone" | null;
+  "merged_hidden" | "terminal_merged" | "terminal_branch_gone" | "archived" | null;
 
 export async function worktreePathExists(worktreePath: string | null): Promise<boolean> {
   if (!worktreePath?.trim()) return false;
@@ -96,7 +96,11 @@ export async function tryRemoveJobWorktree(
     return { removed: false, skipped: "unpushed" };
   }
 
-  if (opts.reason === "terminal_merged" || opts.reason === "merged_hidden") {
+  if (
+    opts.reason === "terminal_merged" ||
+    opts.reason === "merged_hidden" ||
+    opts.reason === "archived"
+  ) {
     // ok
   } else if (job.stage === "failed" || job.stage === "stopped") {
     const onOrigin = await branchExistsOnOrigin(wt, job.input.branch, gitImpl);

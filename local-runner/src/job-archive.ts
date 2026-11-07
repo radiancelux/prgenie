@@ -1,0 +1,143 @@
+import type { RunnerConfig } from "./config.js";
+import type { git } from "./github.js";
+import { isSafeJobId } from "./paths.js";
+import { listJobs, loadJob, moveJobToArchive, restoreJobFromArchive } from "./store.js";
+import type { JobRecord, JobStage } from "./types.js";
+import { tryRemoveJobWorktree, type TryCleanupResult } from "./worktree-cleanup.js";
+
+/** Stages a job may be archived from; building/reviewing/fixing are still running. */
+export const ARCHIVABLE_STAGES: ReadonlySet<JobStage> = new Set<JobStage>([
+  "failed",
+  "stuck",
+  "stopped",
+  "approved",
+  "changes_remaining",
+]);
+
+export function clearFailedStages(includeStuckStopped: boolean): ReadonlySet<JobStage> {
+  return new Set<JobStage>(includeStuckStopped ? ["failed", "stuck", "stopped"] : ["failed"]);
+}
+
+export type ArchiveWorktreeOutcome = "removed" | "kept" | "none";
+
+export type ArchiveJobResult =
+  | {
+      ok: true;
+      id: string;
+      archivedAt: string;
+      worktree: ArchiveWorktreeOutcome;
+      warning?: string;
+    }
+  | {
+      ok: false;
+      code: "invalid_id" | "not_found" | "running";
+      error: string;
+      stage?: JobStage;
+    };
+
+export type RestoreJobResult =
+  | { ok: true; id: string; job: JobRecord }
+  | { ok: false; code: "invalid_id" | "not_found" | "collision"; error: string };
+
+export type ClearFailedResult = {
+  ok: true;
+  stages: JobStage[];
+  archived: string[];
+  warnings: Array<{ id: string; warning: string }>;
+  skipped: Array<{ id: string; error: string }>;
+};
+
+export type ArchiveDeps = {
+  /** True while the engine still has a loop for this job (e.g. stop requested, not yet settled). */
+  isRunning?: (jobId: string) => boolean;
+  gitImpl?: typeof git;
+  log?: (msg: string) => void;
+};
+
+function keptWorktreeWarning(worktreePath: string, res: TryCleanupResult): string {
+  let why: string;
+  if ("skipped" in res) {
+    why =
+      res.skipped === "dirty"
+        ? "it has uncommitted changes"
+        : res.skipped === "unpushed"
+          ? "the branch has commits that are not on origin"
+          : res.skipped;
+  } else if ("reason" in res) {
+    why = res.reason;
+  } else {
+    why = "unknown";
+  }
+  return `Worktree kept at ${worktreePath} because ${why}. Clean it up manually to free the branch.`;
+}
+
+/** Remove the job's worktree when clean; dirty or unpushed trees are kept (never forced). */
+async function releaseJobWorktree(
+  config: RunnerConfig,
+  job: JobRecord,
+  deps: ArchiveDeps,
+): Promise<{ worktree: ArchiveWorktreeOutcome; warning?: string }> {
+  const wt = job.worktreePath?.trim();
+  if (!wt) return { worktree: "none" };
+  const res = await tryRemoveJobWorktree(config, job, {
+    reason: "archived",
+    gitImpl: deps.gitImpl,
+    log: deps.log,
+  });
+  if (res.removed) return { worktree: "removed" };
+  return { worktree: "kept", warning: keptWorktreeWarning(wt, res) };
+}
+
+export async function archiveJob(
+  config: RunnerConfig,
+  id: string,
+  deps: ArchiveDeps = {},
+): Promise<ArchiveJobResult> {
+  if (!isSafeJobId(id)) return { ok: false, code: "invalid_id", error: "invalid job id" };
+  const job = await loadJob(config.dataDir, id);
+  if (!job) return { ok: false, code: "not_found", error: "job not found" };
+  if (!ARCHIVABLE_STAGES.has(job.stage) || deps.isRunning?.(id)) {
+    return {
+      ok: false,
+      code: "running",
+      error: `job is still running (${job.stage}); stop it before removing`,
+      stage: job.stage,
+    };
+  }
+  const released = await releaseJobWorktree(config, job, deps);
+  await moveJobToArchive(config.dataDir, job);
+  return { ok: true, id, archivedAt: job.archivedAt ?? new Date().toISOString(), ...released };
+}
+
+export async function restoreJob(config: RunnerConfig, id: string): Promise<RestoreJobResult> {
+  if (!isSafeJobId(id)) return { ok: false, code: "invalid_id", error: "invalid job id" };
+  const res = await restoreJobFromArchive(config.dataDir, id);
+  if (!res.ok) return res;
+  return { ok: true, id, job: res.job };
+}
+
+/** Archive every live job in `failed` (optionally also `stuck` / `stopped`). */
+export async function clearFailedJobs(
+  config: RunnerConfig,
+  opts: { includeStuckStopped?: boolean } & ArchiveDeps = {},
+): Promise<ClearFailedResult> {
+  const stages = clearFailedStages(Boolean(opts.includeStuckStopped));
+  const result: ClearFailedResult = {
+    ok: true,
+    stages: [...stages],
+    archived: [],
+    warnings: [],
+    skipped: [],
+  };
+  for (const job of await listJobs(config.dataDir)) {
+    if (!stages.has(job.stage)) continue;
+    const r = await archiveJob(config, job.id, opts);
+    if (r.ok) {
+      result.archived.push(r.id);
+      if (r.warning) result.warnings.push({ id: r.id, warning: r.warning });
+    } else {
+      result.skipped.push({ id: job.id, error: r.error });
+    }
+  }
+  return result;
+}

@@ -1,5 +1,6 @@
 import * as esbuild from "esbuild";
-import { mkdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -61,11 +62,29 @@ await esbuild.build({
 });
 
 mkdirSync(path.join(root, "local-runner/dist"), { recursive: true });
+
+const dashboardCssIn = path.join(root, "local-runner/src/dashboard.css");
+const dashboardCssOut = path.join(root, "local-runner/dist/dashboard.min.css");
+const tailwindBin = path.join(root, "node_modules/@tailwindcss/cli/dist/index.mjs");
+execFileSync(
+  process.execPath,
+  [tailwindBin, "-i", dashboardCssIn, "-o", dashboardCssOut, "--minify"],
+  { cwd: root, stdio: "inherit" },
+);
+const dashboardCss = readFileSync(dashboardCssOut, "utf8");
+copyFileSync(
+  path.join(root, "local-runner/markdownlint-prose-defaults.jsonc"),
+  path.join(root, "local-runner/dist/markdownlint-prose-defaults.jsonc"),
+);
+
 await esbuild.build({
   ...shared,
   entryPoints: ["local-runner/src/bin.ts"],
   outfile: "local-runner/dist/runner.cjs",
   banner: { js: "#!/usr/bin/env node\n" },
+  define: {
+    __DASHBOARD_CSS__: JSON.stringify(dashboardCss),
+  },
 });
 
 console.log("PR Genie build complete.");

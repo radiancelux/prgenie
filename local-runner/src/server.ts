@@ -13,6 +13,13 @@ import {
 import { loadSettings, saveSettings, toPublicSettings, type SettingsPatch } from "./settings.js";
 import { runnerUiHtml } from "./ui-html.js";
 import { setupUiHtml } from "./setup-ui-html.js";
+import {
+  HttpResponseGuard,
+  parseJsonBody,
+  parseJsonObject,
+  readBoundedBody,
+  safeHandlerMessage,
+} from "./http-request.js";
 
 const TERMINAL_JOB_STAGES = new Set([
   "approved",
@@ -22,9 +29,20 @@ const TERMINAL_JOB_STAGES = new Set([
   "stuck",
 ]);
 
-function unauthorized(res: http.ServerResponse): void {
-  res.writeHead(401, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ error: "unauthorized" }));
+const ARCHIVE_ERROR_STATUS = {
+  invalid_id: 400,
+  not_found: 404,
+  running: 409,
+  collision: 409,
+} as const;
+
+function queryFlag(url: URL, name: string): boolean {
+  const v = url.searchParams.get(name);
+  return v === "1" || v === "true";
+}
+
+function unauthorized(guard: HttpResponseGuard): void {
+  guard.json(401, { error: "unauthorized" });
 }
 
 function checkAuth(req: http.IncomingMessage, config: RunnerConfig, url: URL): boolean {
@@ -34,17 +52,77 @@ function checkAuth(req: http.IncomingMessage, config: RunnerConfig, url: URL): b
   return q === config.token;
 }
 
-function readBody(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (c) => chunks.push(c));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    req.on("error", reject);
-  });
+async function readJsonObject(
+  req: http.IncomingMessage,
+  guard: HttpResponseGuard,
+): Promise<Record<string, unknown> | null> {
+  const body = await readBoundedBody(req);
+  if (!body.ok) {
+    guard.json(body.status, { error: body.error });
+    return null;
+  }
+  const parsed = parseJsonObject(body.text);
+  if (!parsed.ok) {
+    guard.json(400, { error: parsed.error });
+    return null;
+  }
+  return parsed.value;
+}
+
+/** Like readJsonObject, but an empty body is `{}`. */
+async function readOptionalJsonObject(
+  req: http.IncomingMessage,
+  guard: HttpResponseGuard,
+): Promise<Record<string, unknown> | null> {
+  const body = await readBoundedBody(req);
+  if (!body.ok) {
+    guard.json(body.status, { error: body.error });
+    return null;
+  }
+  if (!body.text.trim()) return {};
+  const parsed = parseJsonObject(body.text);
+  if (!parsed.ok) {
+    guard.json(400, { error: parsed.error });
+    return null;
+  }
+  return parsed.value;
+}
+
+async function readMcpMessage(
+  req: http.IncomingMessage,
+  guard: HttpResponseGuard,
+): Promise<{ id?: unknown; method?: string; params?: Record<string, unknown> } | null> {
+  const body = await readBoundedBody(req);
+  if (!body.ok) {
+    guard.json(body.status, { error: body.error });
+    return null;
+  }
+  const parsed = parseJsonBody(body.text);
+  if (!parsed.ok) {
+    guard.json(400, { error: parsed.error });
+    return null;
+  }
+  const value = parsed.value;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    guard.json(400, { error: "expected json object" });
+    return null;
+  }
+  return value as { id?: unknown; method?: string; params?: Record<string, unknown> };
 }
 
 export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): http.Server {
   const sseClients = new Map<string, Set<http.ServerResponse>>();
+  const listClients = new Set<http.ServerResponse>();
+
+  engine.on("jobs", () => {
+    for (const res of listClients) {
+      try {
+        res.write(`data: ${JSON.stringify({ type: "jobs" })}\n\n`);
+      } catch {
+        /* client gone */
+      }
+    }
+  });
 
   engine.on("event", async (jobId: string) => {
     const clients = sseClients.get(jobId);
@@ -57,298 +135,324 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
       logTail: job.logTail,
     });
     for (const res of clients) {
-      res.write(`data: ${payload}\n\n`);
+      try {
+        res.write(`data: ${payload}\n\n`);
+      } catch {
+        /* client gone */
+      }
     }
   });
 
   const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url ?? "/", `http://${urlHostForRequest(config.host)}:${config.port}`);
-    const path = url.pathname;
-
-    if (path === "/" && req.method === "GET") {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(runnerUiHtml(config.port, runnerListenUrls(config.host, config.port)));
-      return;
-    }
-
-    if (path === "/setup" && req.method === "GET") {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(setupUiHtml(config.port, runnerListenUrls(config.host, config.port)));
-      return;
-    }
-
-    const needsAuth = path.startsWith("/api/") || path === "/mcp";
-    if (needsAuth && !checkAuth(req, config, url)) {
-      unauthorized(res);
-      return;
-    }
-
-    if (path === "/mcp" && req.method === "POST") {
-      const body = await readBody(req);
-      let msg: { id?: unknown; method?: string; params?: Record<string, unknown> };
-      try {
-        msg = JSON.parse(body);
-      } catch {
-        res.writeHead(400);
-        res.end("{}");
-        return;
-      }
-      const reply = await handleMcpJsonRpc(engine, msg);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(reply ? JSON.stringify(reply) : "{}");
-      return;
-    }
-
-    if (path === "/api/jobs/meta" && req.method === "GET") {
-      const meta = await engine.jobsMeta();
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(meta));
-      return;
-    }
-
-    if (path === "/api/jobs" && req.method === "GET") {
-      const includeFinished =
-        url.searchParams.get("includeFinished") === "1" ||
-        url.searchParams.get("includeFinished") === "true";
-      const jobs = await engine.list({ includeFinished });
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(jobs));
-      return;
-    }
-
-    if (path === "/api/jobs" && req.method === "POST") {
-      const body = await readBody(req);
-      let payload: Record<string, unknown>;
-      try {
-        payload = JSON.parse(body) as Record<string, unknown>;
-      } catch {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "invalid json" }));
-        return;
-      }
-      try {
-        const job = await engine.startJob({
-          repoPath: typeof payload.repoPath === "string" ? payload.repoPath : undefined,
-          remote: typeof payload.remote === "string" ? payload.remote : undefined,
-          branch: String(payload.branch ?? ""),
-          promptFile: typeof payload.promptFile === "string" ? payload.promptFile : undefined,
-          reviewPromptFile:
-            typeof payload.reviewPromptFile === "string" ? payload.reviewPromptFile : undefined,
-          fixPromptFile:
-            typeof payload.fixPromptFile === "string" ? payload.fixPromptFile : undefined,
-          maxRounds: typeof payload.maxRounds === "number" ? payload.maxRounds : undefined,
-          model: typeof payload.model === "string" ? payload.model : undefined,
-          driver: typeof payload.driver === "string" ? payload.driver : undefined,
-          dryRun: typeof payload.dryRun === "boolean" ? payload.dryRun : undefined,
-          ticketUrl: typeof payload.ticketUrl === "string" ? payload.ticketUrl : undefined,
-          linearIssue: typeof payload.linearIssue === "string" ? payload.linearIssue : undefined,
-          jobType:
-            payload.jobType === "docs" || payload.jobType === "code" ? payload.jobType : undefined,
-          profile:
-            payload.profile === "docs" || payload.profile === "code" ? payload.profile : undefined,
-          docsTemplate:
-            payload.docsTemplate === "marketing" ||
-            payload.docsTemplate === "policy" ||
-            payload.docsTemplate === "research"
-              ? payload.docsTemplate
-              : undefined,
-        });
-        res.writeHead(201, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(job));
-      } catch (err) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
-      }
-      return;
-    }
-
-    if (path === "/api/notify-settings" && req.method === "GET") {
-      const settings = await loadNotifySettings(config.dataDir);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(toPublicNotifySettings(config, settings)));
-      return;
-    }
-
-    if (path === "/api/notify-settings" && req.method === "PUT") {
-      const body = await readBody(req);
-      let payload: { enabled?: unknown; recipient?: unknown };
-      try {
-        payload = JSON.parse(body) as { enabled?: unknown; recipient?: unknown };
-      } catch {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "invalid json" }));
-        return;
-      }
-      const patch: { enabled?: boolean; recipient?: string | null } = {};
-      if (payload.enabled !== undefined) patch.enabled = Boolean(payload.enabled);
-      if (payload.recipient !== undefined) {
-        patch.recipient =
-          payload.recipient === null || payload.recipient === ""
-            ? null
-            : String(payload.recipient).trim();
-      }
-      const saved = await saveNotifySettings(config.dataDir, patch);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(toPublicNotifySettings(config, saved)));
-      return;
-    }
-
-    if (path === "/api/settings" && req.method === "GET") {
-      const settings = await loadSettings(config.dataDir);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(toPublicSettings(config, settings)));
-      return;
-    }
-
-    if (path === "/api/settings" && req.method === "PATCH") {
-      const body = await readBody(req);
-      let payload: SettingsPatch & { notify?: { enabled?: unknown; recipient?: unknown } };
-      try {
-        payload = JSON.parse(body) as SettingsPatch;
-      } catch {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "invalid json" }));
-        return;
-      }
-      const patch: SettingsPatch = {};
-      if (payload.configured !== undefined) patch.configured = Boolean(payload.configured);
-      if (payload.defaultModel !== undefined) {
-        patch.defaultModel =
-          payload.defaultModel === null || payload.defaultModel === ""
-            ? null
-            : String(payload.defaultModel).trim();
-      }
-      if (payload.defaultDriver !== undefined) {
-        patch.defaultDriver = String(payload.defaultDriver ?? "").trim() || "cursor-agent";
-      }
-      if (payload.hostBindHint !== undefined) {
-        patch.hostBindHint =
-          payload.hostBindHint === null || payload.hostBindHint === ""
-            ? null
-            : String(payload.hostBindHint).trim();
-      }
-      if (payload.notify) {
-        patch.notify = {};
-        if (payload.notify.enabled !== undefined) {
-          patch.notify.enabled = Boolean(payload.notify.enabled);
-        }
-        if (payload.notify.recipient !== undefined) {
-          patch.notify.recipient =
-            payload.notify.recipient === null || payload.notify.recipient === ""
-              ? null
-              : String(payload.notify.recipient).trim();
-        }
-      }
-      if (Array.isArray(payload.drivers)) {
-        patch.drivers = payload.drivers.map((d) => ({
-          id: String(d.id ?? ""),
-          kind: d.kind,
-          binary: d.binary ?? null,
-          endpoint: d.endpoint ?? null,
-          notes: d.notes ?? null,
-          apiKey:
-            typeof d.apiKey === "string" && d.apiKey.trim() && !/^•+$/.test(d.apiKey.trim())
-              ? d.apiKey.trim()
-              : d.apiKey === null
-                ? null
-                : undefined,
-        }));
-      }
-      if (payload.jobTypes !== undefined && typeof payload.jobTypes === "object") {
-        patch.jobTypes = payload.jobTypes as Record<string, unknown>;
-      }
-      if (payload.presets !== undefined && typeof payload.presets === "object") {
-        patch.presets = payload.presets as Record<string, unknown>;
-      }
-      const saved = await saveSettings(config.dataDir, patch);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(toPublicSettings(config, saved)));
-      return;
-    }
-
-    const jobMatch = path.match(/^\/api\/jobs\/([^/]+)$/);
-    if (jobMatch && req.method === "GET") {
-      const job = await engine.get(jobMatch[1]);
-      if (!job) {
-        res.writeHead(404);
-        res.end("{}");
-        return;
-      }
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(job));
-      return;
-    }
-
-    const streamMatch = path.match(/^\/api\/jobs\/([^/]+)\/stream$/);
-    if (streamMatch && req.method === "GET") {
-      const jobId = streamMatch[1];
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      });
-      if (!sseClients.has(jobId)) sseClients.set(jobId, new Set());
-      sseClients.get(jobId)!.add(res);
-      req.on("close", () => {
-        sseClients.get(jobId)?.delete(res);
-      });
-      const job = await engine.get(jobId);
-      const tail = job?.logTail ?? (job ? await readLogTail(job.logPath) : "");
-      res.write(`data: ${JSON.stringify({ logTail: tail, stage: job?.stage })}\n\n`);
-      return;
-    }
-
-    const steerMatch = path.match(/^\/api\/jobs\/([^/]+)\/steer$/);
-    if (steerMatch && req.method === "POST") {
-      const body = await readBody(req);
-      let payload: { prompt?: unknown };
-      try {
-        payload = JSON.parse(body) as { prompt?: unknown };
-      } catch {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "invalid json" }));
-        return;
-      }
-      const prompt = String(payload.prompt ?? "");
-      const existing = await engine.get(steerMatch[1]);
-      if (!existing) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "not found" }));
-        return;
-      }
-      if (TERMINAL_JOB_STAGES.has(existing.stage)) {
-        res.writeHead(409, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "job is terminal", stage: existing.stage }));
-        return;
-      }
-      const job = await engine.steer(steerMatch[1], prompt);
-      if (!job) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "not found" }));
-        return;
-      }
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(
-        JSON.stringify({ ok: true, stage: job.stage, steerQueueLength: job.steerQueue.length }),
+    const guard = new HttpResponseGuard(res);
+    try {
+      const url = new URL(
+        req.url ?? "/",
+        `http://${urlHostForRequest(config.host)}:${config.port}`,
       );
-      return;
-    }
+      const path = url.pathname;
 
-    const stopMatch = path.match(/^\/api\/jobs\/([^/]+)\/stop$/);
-    if (stopMatch && req.method === "POST") {
-      const job = await engine.stop(stopMatch[1]);
-      if (!job) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "not found" }));
+      if (path === "/" && req.method === "GET") {
+        guard.html(200, runnerUiHtml(config.port, runnerListenUrls(config.host, config.port)));
         return;
       }
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true, stage: job.stage }));
-      return;
-    }
 
-    res.writeHead(404);
-    res.end("not found");
+      if (path === "/setup" && req.method === "GET") {
+        guard.html(200, setupUiHtml(config.port, runnerListenUrls(config.host, config.port)));
+        return;
+      }
+
+      const needsAuth = path.startsWith("/api/") || path === "/mcp";
+      if (needsAuth && !checkAuth(req, config, url)) {
+        unauthorized(guard);
+        return;
+      }
+
+      if (path === "/mcp" && req.method === "POST") {
+        const msg = await readMcpMessage(req, guard);
+        if (!msg || guard.started) return;
+        const reply = await handleMcpJsonRpc(engine, msg);
+        guard.json(200, reply ?? {});
+        return;
+      }
+
+      if (path === "/api/jobs/meta" && req.method === "GET") {
+        const meta = await engine.jobsMeta();
+        guard.json(200, meta);
+        return;
+      }
+
+      if (path === "/api/events" && req.method === "GET") {
+        guard.begin({
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        });
+        listClients.add(res);
+        req.on("close", () => {
+          listClients.delete(res);
+        });
+        res.write(": connected\n\n");
+        return;
+      }
+
+      if (path === "/api/jobs" && req.method === "GET") {
+        const jobs = await engine.list({
+          includeFinished: queryFlag(url, "includeFinished"),
+          includeArchived: queryFlag(url, "includeArchived"),
+        });
+        guard.json(200, jobs);
+        return;
+      }
+
+      if (path === "/api/jobs/clear-failed" && req.method === "POST") {
+        const payload = await readOptionalJsonObject(req, guard);
+        if (!payload || guard.started) return;
+        if (
+          payload.includeStuckStopped !== undefined &&
+          typeof payload.includeStuckStopped !== "boolean"
+        ) {
+          guard.json(400, { error: "includeStuckStopped must be a boolean" });
+          return;
+        }
+        const result = await engine.clearFailed({
+          includeStuckStopped: payload.includeStuckStopped === true,
+        });
+        guard.json(200, result);
+        return;
+      }
+
+      if (path === "/api/jobs" && req.method === "POST") {
+        const payload = await readJsonObject(req, guard);
+        if (!payload || guard.started) return;
+        try {
+          const job = await engine.startJob({
+            repoPath: typeof payload.repoPath === "string" ? payload.repoPath : undefined,
+            remote: typeof payload.remote === "string" ? payload.remote : undefined,
+            branch: typeof payload.branch === "string" ? payload.branch : "",
+            promptFile: typeof payload.promptFile === "string" ? payload.promptFile : undefined,
+            reviewPromptFile:
+              typeof payload.reviewPromptFile === "string" ? payload.reviewPromptFile : undefined,
+            fixPromptFile:
+              typeof payload.fixPromptFile === "string" ? payload.fixPromptFile : undefined,
+            maxRounds: typeof payload.maxRounds === "number" ? payload.maxRounds : undefined,
+            model: typeof payload.model === "string" ? payload.model : undefined,
+            driver: typeof payload.driver === "string" ? payload.driver : undefined,
+            dryRun: typeof payload.dryRun === "boolean" ? payload.dryRun : undefined,
+            ticketUrl: typeof payload.ticketUrl === "string" ? payload.ticketUrl : undefined,
+            linearIssue: typeof payload.linearIssue === "string" ? payload.linearIssue : undefined,
+            jobType:
+              payload.jobType === "docs" || payload.jobType === "code"
+                ? payload.jobType
+                : undefined,
+            profile:
+              payload.profile === "docs" || payload.profile === "code"
+                ? payload.profile
+                : undefined,
+            docsTemplate:
+              payload.docsTemplate === "marketing" ||
+              payload.docsTemplate === "policy" ||
+              payload.docsTemplate === "research"
+                ? payload.docsTemplate
+                : undefined,
+          });
+          guard.json(201, job);
+        } catch (err) {
+          guard.json(400, { error: safeHandlerMessage(err) });
+        }
+        return;
+      }
+
+      if (path === "/api/notify-settings" && req.method === "GET") {
+        const settings = await loadNotifySettings(config.dataDir);
+        guard.json(200, toPublicNotifySettings(config, settings));
+        return;
+      }
+
+      if (path === "/api/notify-settings" && req.method === "PUT") {
+        const payload = await readJsonObject(req, guard);
+        if (!payload || guard.started) return;
+        const patch: { enabled?: boolean; recipient?: string | null } = {};
+        if (payload.enabled !== undefined) patch.enabled = Boolean(payload.enabled);
+        if (payload.recipient !== undefined) {
+          patch.recipient =
+            payload.recipient === null || payload.recipient === ""
+              ? null
+              : String(payload.recipient).trim();
+        }
+        const saved = await saveNotifySettings(config.dataDir, patch);
+        guard.json(200, toPublicNotifySettings(config, saved) as Record<string, unknown>);
+        return;
+      }
+
+      if (path === "/api/settings" && req.method === "GET") {
+        const settings = await loadSettings(config.dataDir);
+        guard.json(200, toPublicSettings(config, settings));
+        return;
+      }
+
+      if (path === "/api/settings" && req.method === "PATCH") {
+        const payload = (await readJsonObject(req, guard)) as
+          (SettingsPatch & { notify?: { enabled?: unknown; recipient?: unknown } }) | null;
+        if (!payload || guard.started) return;
+        const patch: SettingsPatch = {};
+        if (payload.configured !== undefined) patch.configured = Boolean(payload.configured);
+        if (payload.defaultModel !== undefined) {
+          patch.defaultModel =
+            payload.defaultModel === null || payload.defaultModel === ""
+              ? null
+              : String(payload.defaultModel).trim();
+        }
+        if (payload.defaultDriver !== undefined) {
+          patch.defaultDriver = String(payload.defaultDriver ?? "").trim() || "cursor-agent";
+        }
+        if (payload.hostBindHint !== undefined) {
+          patch.hostBindHint =
+            payload.hostBindHint === null || payload.hostBindHint === ""
+              ? null
+              : String(payload.hostBindHint).trim();
+        }
+        if (payload.notify) {
+          patch.notify = {};
+          if (payload.notify.enabled !== undefined) {
+            patch.notify.enabled = Boolean(payload.notify.enabled);
+          }
+          if (payload.notify.recipient !== undefined) {
+            patch.notify.recipient =
+              payload.notify.recipient === null || payload.notify.recipient === ""
+                ? null
+                : String(payload.notify.recipient).trim();
+          }
+        }
+        if (Array.isArray(payload.drivers)) {
+          patch.drivers = payload.drivers.map((d) => ({
+            id: String(d.id ?? ""),
+            kind: d.kind,
+            binary: d.binary ?? null,
+            endpoint: d.endpoint ?? null,
+            notes: d.notes ?? null,
+            apiKey:
+              typeof d.apiKey === "string" && d.apiKey.trim() && !/^•+$/.test(d.apiKey.trim())
+                ? d.apiKey.trim()
+                : d.apiKey === null
+                  ? null
+                  : undefined,
+          }));
+        }
+        if (payload.jobTypes !== undefined && typeof payload.jobTypes === "object") {
+          patch.jobTypes = payload.jobTypes as Record<string, unknown>;
+        }
+        if (payload.presets !== undefined && typeof payload.presets === "object") {
+          patch.presets = payload.presets as Record<string, unknown>;
+        }
+        const saved = await saveSettings(config.dataDir, patch);
+        guard.json(200, toPublicSettings(config, saved) as Record<string, unknown>);
+        return;
+      }
+
+      const jobMatch = path.match(/^\/api\/jobs\/([^/]+)$/);
+      if (jobMatch && req.method === "GET") {
+        const job = await engine.get(jobMatch[1]);
+        if (!job) {
+          guard.json(404, { error: "not found" });
+          return;
+        }
+        guard.json(200, job);
+        return;
+      }
+
+      const streamMatch = path.match(/^\/api\/jobs\/([^/]+)\/stream$/);
+      if (streamMatch && req.method === "GET") {
+        const jobId = streamMatch[1];
+        guard.begin({
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        });
+        if (!sseClients.has(jobId)) sseClients.set(jobId, new Set());
+        sseClients.get(jobId)!.add(res);
+        req.on("close", () => {
+          sseClients.get(jobId)?.delete(res);
+        });
+        const job = await engine.get(jobId);
+        const tail = job?.logTail ?? (job ? await readLogTail(job.logPath) : "");
+        res.write(`data: ${JSON.stringify({ logTail: tail, stage: job?.stage })}\n\n`);
+        return;
+      }
+
+      const steerMatch = path.match(/^\/api\/jobs\/([^/]+)\/steer$/);
+      if (steerMatch && req.method === "POST") {
+        const payload = await readJsonObject(req, guard);
+        if (!payload || guard.started) return;
+        if (typeof payload.prompt !== "string" && payload.prompt !== undefined) {
+          guard.json(400, { error: "prompt must be a string" });
+          return;
+        }
+        const prompt = typeof payload.prompt === "string" ? payload.prompt : "";
+        const existing = await engine.get(steerMatch[1]);
+        if (!existing) {
+          guard.json(404, { error: "not found" });
+          return;
+        }
+        if (TERMINAL_JOB_STAGES.has(existing.stage)) {
+          guard.json(409, { error: "job is terminal", stage: existing.stage });
+          return;
+        }
+        const job = await engine.steer(steerMatch[1], prompt);
+        if (!job) {
+          guard.json(404, { error: "not found" });
+          return;
+        }
+        guard.json(200, {
+          ok: true,
+          stage: job.stage,
+          steerQueueLength: job.steerQueue.length,
+        });
+        return;
+      }
+
+      const stopMatch = path.match(/^\/api\/jobs\/([^/]+)\/stop$/);
+      if (stopMatch && req.method === "POST") {
+        const job = await engine.stop(stopMatch[1]);
+        if (!job) {
+          guard.json(404, { error: "not found" });
+          return;
+        }
+        guard.json(200, { ok: true, stage: job.stage });
+        return;
+      }
+
+      const archiveMatch = path.match(/^\/api\/jobs\/([^/]+)\/archive$/);
+      if (archiveMatch && req.method === "POST") {
+        const result = await engine.archive(archiveMatch[1]);
+        if (!result.ok) {
+          guard.json(ARCHIVE_ERROR_STATUS[result.code], {
+            error: result.error,
+            ...(result.stage ? { stage: result.stage } : {}),
+          });
+          return;
+        }
+        guard.json(200, result);
+        return;
+      }
+
+      const restoreMatch = path.match(/^\/api\/jobs\/([^/]+)\/restore$/);
+      if (restoreMatch && req.method === "POST") {
+        const result = await engine.restore(restoreMatch[1]);
+        if (!result.ok) {
+          guard.json(ARCHIVE_ERROR_STATUS[result.code], { error: result.error });
+          return;
+        }
+        guard.json(200, { ok: true, id: result.id, stage: result.job.stage });
+        return;
+      }
+
+      guard.text(404, "not found");
+    } catch (err) {
+      if (!guard.started) {
+        guard.json(500, { error: safeHandlerMessage(err) });
+      }
+    }
   });
 
   server.listen(config.port, config.host);

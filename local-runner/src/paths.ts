@@ -26,6 +26,31 @@ export function jobLogFile(dataDir: string, jobId: string): string {
   return path.join(logsDir(dataDir), `${jobId}.log`);
 }
 
+/** Job ids become file names; anything beyond `[A-Za-z0-9_-]` could escape the data dir. */
+export function isSafeJobId(jobId: string): boolean {
+  return /^[A-Za-z0-9_-]{1,128}$/.test(jobId);
+}
+
+export function archivedDir(dataDir: string): string {
+  return path.join(dataDir, "archived");
+}
+
+export function archivedJobsDir(dataDir: string): string {
+  return path.join(archivedDir(dataDir), "jobs");
+}
+
+export function archivedLogsDir(dataDir: string): string {
+  return path.join(archivedDir(dataDir), "logs");
+}
+
+export function archivedJobFile(dataDir: string, jobId: string): string {
+  return path.join(archivedJobsDir(dataDir), `${jobId}.json`);
+}
+
+export function archivedLogFile(dataDir: string, jobId: string): string {
+  return path.join(archivedLogsDir(dataDir), `${jobId}.log`);
+}
+
 export function notifySettingsFile(dataDir: string): string {
   return path.join(dataDir, "notify-settings.json");
 }

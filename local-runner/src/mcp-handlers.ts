@@ -60,7 +60,15 @@ export const RUNNER_MCP_TOOLS = [
     name: "list_jobs",
     description:
       "List runner jobs (newest first). Merged PRs drop off the list after about one hour.",
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: {
+      type: "object",
+      properties: {
+        includeArchived: {
+          type: "boolean",
+          description: "Also list archived (removed) jobs; they have archivedAt set",
+        },
+      },
+    },
   },
   {
     name: "get_job",
@@ -83,6 +91,25 @@ export const RUNNER_MCP_TOOLS = [
   {
     name: "stop_job",
     description: "Request job stop (kills in-flight cursor-agent).",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
+    },
+  },
+  {
+    name: "archive_job",
+    description:
+      "Remove a finished job from the dashboard (moves it under archived/). Rejected while the job is running. Removes the worktree only when clean; otherwise keeps it and returns a warning.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
+    },
+  },
+  {
+    name: "restore_job",
+    description: "Restore an archived job back onto the dashboard.",
     inputSchema: {
       type: "object",
       properties: { id: { type: "string" } },
@@ -142,7 +169,7 @@ export async function handleRunnerTool(
       return engine.startJob(input);
     }
     case "list_jobs":
-      return engine.list();
+      return engine.list({ includeArchived: args.includeArchived === true });
     case "get_job": {
       const id = String(args.id ?? "");
       const job = await engine.get(id);
@@ -161,6 +188,18 @@ export async function handleRunnerTool(
       const job = await engine.stop(id);
       if (!job) throw new Error(`job not found: ${id}`);
       return job;
+    }
+    case "archive_job": {
+      const id = String(args.id ?? "");
+      const result = await engine.archive(id);
+      if (!result.ok) throw new Error(`${result.error}: ${id}`);
+      return result;
+    }
+    case "restore_job": {
+      const id = String(args.id ?? "");
+      const result = await engine.restore(id);
+      if (!result.ok) throw new Error(`${result.error}: ${id}`);
+      return { ok: true, id: result.id, stage: result.job.stage };
     }
     default:
       throw new Error(`unknown tool: ${name}`);

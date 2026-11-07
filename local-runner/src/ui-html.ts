@@ -1,4 +1,5 @@
 import { dashboardFormatBrowserScript } from "./dashboard-format.js";
+import { dashboardStylesheet } from "./dashboard-styles.js";
 import { streamJsonLogBrowserScript } from "./stream-json-log.js";
 
 export function runnerUiHtml(
@@ -14,317 +15,110 @@ export function runnerUiHtml(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PR Genie Local Runner</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; margin: 1rem 1.25rem 2rem; background: #0f1115; color: #e6e8ec; max-width: 72rem; }
-    h1 { font-size: 1.25rem; margin: 0 0 0.35rem; }
-    h2 { font-size: 1rem; margin: 1.25rem 0 0.5rem; font-weight: 600; }
-    table { border-collapse: collapse; width: 100%; margin-top: 0.75rem; }
-    th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #333; font-size: 0.85rem; vertical-align: top; }
-    tr.job-row { cursor: pointer; }
-    tr.job-row.selected { background: #1e2430; }
-    tr.job-row:hover { background: #181c24; }
-    .badge { font-size: 0.75rem; padding: 0.2rem 0.45rem; border-radius: 999px; display: inline-block; font-weight: 500; border: 1px solid transparent; }
-    .badge.success { color: #6fdc8c; background: rgba(46, 125, 70, 0.22); border-color: rgba(111, 220, 140, 0.35); }
-    .badge.failure { color: #ff8a8a; background: rgba(140, 50, 50, 0.25); border-color: rgba(255, 138, 138, 0.35); }
-    .badge.pending { color: #e8d878; background: rgba(120, 100, 30, 0.28); border-color: rgba(201, 180, 88, 0.4); }
-    .badge.neutral, .badge.unknown { color: #b0b8c4; background: rgba(80, 88, 100, 0.35); border-color: rgba(154, 163, 178, 0.35); }
-    .badge.merged { color: #c4e4ff; background: rgba(60, 100, 140, 0.35); border-color: rgba(154, 208, 255, 0.4); }
-    .badge.merge_conflict { color: #ffb86c; background: rgba(120, 70, 30, 0.3); border-color: rgba(255, 184, 108, 0.4); }
-    .badge.closed { color: #c8b8e8; background: rgba(80, 60, 110, 0.35); border-color: rgba(180, 160, 220, 0.35); }
-    .badge.draft { color: #c9d4e8; background: rgba(70, 85, 110, 0.35); border-color: rgba(160, 180, 220, 0.35); }
-    .badge.ready { color: #8fd4a8; background: rgba(40, 90, 60, 0.3); border-color: rgba(120, 200, 150, 0.35); }
-    .jobs-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-top: 0.75rem; font-size: 0.85rem; }
-    .jobs-toolbar .toggle-row { min-height: auto; }
-    .empty-state { color: #9aa3b2; font-size: 0.9rem; padding: 1rem 0.5rem; line-height: 1.5; }
-    .empty-state strong { color: #e6e8ec; font-weight: 600; }
-    .log-placeholder { color: #9aa3b2; font-size: 0.9rem; margin: 0.5rem 0 1rem; line-height: 1.5; }
-    a { color: #7eb8ff; }
-    pre { background: #1a1d24; padding: 0.75rem; overflow: auto; max-height: 24rem; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; margin: 0; border-radius: 0.35rem; }
-    .log-panel { margin-top: 0.35rem; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-    .detail-chat { display: flex; flex-direction: column; margin-top: 0.5rem; min-height: 0; }
-    .chat-composer { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #2a2f3a; }
-    .chat-composer.steer-panel { margin: 0; background: transparent; border: none; border-radius: 0; padding: 0.75rem 0 0; }
-    .log-toolbar { display: flex; align-items: center; gap: 0.75rem; margin: 0.35rem 0; font-size: 0.85rem; flex-wrap: wrap; }
-    .log-toolbar label { color: #9aa3b2; cursor: pointer; user-select: none; }
-    #logSteps {
-      display: block;
-      background: #1a1d24;
-      padding: 0.75rem;
-      overflow: auto;
-      max-height: min(32rem, 52vh);
-      font-size: 0.85rem;
-      border-radius: 0.35rem;
-      border: 1px solid #2a2f3a;
-      flex: 1 1 auto;
-      min-height: 8rem;
-    }
-    #logRaw { display: none; }
-    body.show-raw #logSteps { display: none; }
-    body.show-raw #logRaw { display: block; }
-    .meta { color: #9aa3b2; font-size: 0.85rem; line-height: 1.45; }
-    .token-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.75rem 0; }
-    .token-row input[type=password] { flex: 1 1 12rem; min-width: 0; max-width: 24rem; padding: 0.55rem 0.65rem; font-size: 1rem; border-radius: 0.35rem; border: 1px solid #333; background: #1a1d24; color: #e6e8ec; }
-    button, .btn {
-      padding: 0.55rem 0.85rem;
-      font-size: 0.95rem;
-      border-radius: 0.35rem;
-      border: 1px solid #444;
-      background: #2a2f3a;
-      color: #e6e8ec;
-      cursor: pointer;
-      min-height: 2.75rem;
-    }
-    button:disabled { opacity: 0.45; cursor: not-allowed; }
-    button.primary { background: #3d5a8a; border-color: #5a7ab0; }
-    button.danger { background: #5a3030; border-color: #884444; }
-    .steer-panel { margin: 1rem 0; padding: 0.75rem; background: #141820; border: 1px solid #2a2f3a; border-radius: 0.5rem; }
-    .settings-panel { margin: 1rem 0; padding: 0.75rem; background: #141820; border: 1px solid #2a2f3a; border-radius: 0.5rem; }
-    .settings-panel h2 { margin: 0 0 0.35rem; font-size: 1rem; }
-    .settings-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; margin-top: 0.5rem; }
-    .settings-row label { font-size: 0.85rem; color: #9aa3b2; }
-    .toggle-row { display: flex; align-items: center; gap: 0.45rem; min-height: 2.75rem; color: #e6e8ec; cursor: pointer; user-select: none; }
-    .toggle-row input { width: 1.1rem; height: 1.1rem; }
-    #notifyRecipient {
-      display: block;
-      width: 100%;
-      min-width: 12rem;
-      max-width: 24rem;
-      margin-top: 0.25rem;
-      padding: 0.55rem 0.65rem;
-      font-size: 1rem;
-      border-radius: 0.35rem;
-      border: 1px solid #333;
-      background: #1a1d24;
-      color: #e6e8ec;
-    }
-    #notifyStatus { margin-top: 0.35rem; min-height: 1.2rem; }
-    .steer-panel label { display: block; font-size: 0.85rem; color: #9aa3b2; margin-bottom: 0.35rem; }
-    .steer-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; }
-    #steerPrompt {
-      flex: 1 1 100%;
-      min-height: 3.5rem;
-      padding: 0.55rem 0.65rem;
-      font-size: 1rem;
-      border-radius: 0.35rem;
-      border: 1px solid #333;
-      background: #1a1d24;
-      color: #e6e8ec;
-      resize: vertical;
-      font-family: inherit;
-    }
-    #steerStatus { font-size: 0.85rem; color: #9aa3b2; margin-top: 0.35rem; min-height: 1.2rem; }
-    .agent-turn { margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #2a2f3a; }
-    .agent-turn:last-child { border-bottom: none; margin-bottom: 0; }
-    .agent-banner { font-size: 0.75rem; color: #7a8494; margin-bottom: 0.5rem; font-family: ui-monospace, monospace; }
-    .agent-meta { font-size: 0.8rem; color: #9aa3b2; margin: 0.35rem 0; }
-    .agent-thinking { font-size: 0.8rem; color: #8a939f; font-style: italic; margin: 0.5rem 0; line-height: 1.4; }
-    .agent-thinking-label { font-style: normal; text-transform: uppercase; font-size: 0.65rem; letter-spacing: 0.04em; color: #6a7380; margin-right: 0.35rem; }
-    .agent-prose { line-height: 1.5; margin: 0.6rem 0; color: #e6e8ec; }
-    .agent-prose p { margin: 0.35rem 0; }
-    .agent-chat-row { display: flex; justify-content: flex-start; margin: 0.5rem 0; }
-    .agent-bubble {
-      max-width: min(42rem, 100%);
-      padding: 0.55rem 0.75rem;
-      background: #232833;
-      border: 1px solid #343b48;
-      border-radius: 0.65rem 0.65rem 0.65rem 0.2rem;
-      line-height: 1.5;
-      color: #e6e8ec;
-      word-break: break-word;
-    }
-    .agent-bubble p { margin: 0.25rem 0; }
-    .agent-thinking-collapse { margin: 0.45rem 0; font-size: 0.82rem; color: #8a939f; }
-    .agent-thinking-collapse summary {
-      cursor: pointer;
-      color: #7a8494;
-      font-size: 0.72rem;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      user-select: none;
-    }
-    .agent-thinking-body { margin-top: 0.35rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
-    .agent-tool-step {
-      margin: 0.45rem 0;
-      padding: 0.35rem 0.5rem;
-      background: #12151c;
-      border: 1px solid #2a3140;
-      border-radius: 0.35rem;
-    }
-    .agent-tool-step summary {
-      cursor: pointer;
-      list-style: none;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 0.35rem 0.5rem;
-      font-size: 0.82rem;
-      color: #c5cdd8;
-      user-select: none;
-    }
-    .agent-tool-step summary::-webkit-details-marker { display: none; }
-    .agent-tool-step-label {
-      font-size: 0.72rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-      color: #9ab0c8;
-      font-family: ui-monospace, monospace;
-    }
-    .agent-tool-summary { font-size: 0.8rem; color: #9aa3b2; }
-    .agent-tool-body {
-      margin: 0.35rem 0 0;
-      padding: 0.45rem 0.55rem;
-      font-size: 0.78rem;
-      background: #0d0f14;
-      border-radius: 0.25rem;
-      overflow-x: auto;
-      white-space: pre-wrap;
-      word-break: break-word;
-      font-family: ui-monospace, monospace;
-      color: #c5cdd8;
-    }
-    .agent-tool-result {
-      margin: 0.35rem 0 0;
-      padding: 0.45rem 0.55rem;
-      font-size: 0.75rem;
-      background: #0a0c10;
-      border-radius: 0.25rem;
-      overflow-x: auto;
-      max-height: 12rem;
-      white-space: pre-wrap;
-      word-break: break-word;
-      font-family: ui-monospace, monospace;
-      color: #a8b4c4;
-    }
-    .agent-tool-failed { border-color: rgba(196, 68, 68, 0.55); }
-    .agent-tool-error { font-size: 0.8rem; color: #ff9a9a; margin-top: 0.35rem; }
-    .agent-error { color: #ff9a9a; margin: 0.5rem 0; }
-    .agent-plain { font-family: ui-monospace, monospace; font-size: 0.8rem; color: #b0b8c4; margin: 0.35rem 0; }
-    .agent-label {
-      display: inline-block;
-      max-width: min(16rem, 42vw);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      vertical-align: top;
-    }
-    .agent-pass-through { margin: 0; background: transparent; padding: 0; max-height: none; }
-    @media (max-width: 720px) {
-      body { margin: 0.75rem; }
-      thead { display: none; }
-      #jobs { display: block; }
-      #jobs tr.job-row {
-        display: block;
-        border: 1px solid #333;
-        border-radius: 0.5rem;
-        margin-bottom: 0.65rem;
-        padding: 0.5rem 0.65rem;
-      }
-      #jobs tr.job-row td {
-        display: flex;
-        justify-content: space-between;
-        gap: 0.75rem;
-        border: none;
-        padding: 0.3rem 0;
-        font-size: 0.9rem;
-      }
-      #jobs tr.job-row td::before {
-        content: attr(data-label);
-        color: #9aa3b2;
-        font-size: 0.75rem;
-        flex-shrink: 0;
-      }
-      #jobs tr.job-row td:first-child { font-weight: 600; }
-      .agent-label { max-width: min(14rem, calc(100vw - 7rem)); }
-      #logSteps { max-height: min(24rem, 45vh); }
-      .steer-row button { flex: 1 1 calc(50% - 0.25rem); }
-      .agent-bubble { max-width: 100%; }
-    }
-  </style>
+  ${dashboardStylesheet()}
 </head>
-<body>
-  <h1>PR Genie Local Runner</h1>
-  <p class="meta">Runner dashboard · ${reachability} · <a href="/setup">Setup</a></p>
-  <div class="token-row">
-    <label style="flex:1 1 100%; font-size:0.85rem; color:#9aa3b2;">Bearer token
-      <input type="password" id="token" placeholder="PRGENIE_RUNNER_TOKEN" autocomplete="off" />
+<body class="min-h-screen bg-zinc-950 text-zinc-100 antialiased">
+  <a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-sky-800 focus:px-3 focus:py-2">Skip to content</a>
+  <main id="main" class="mx-auto max-w-6xl px-3 py-4 pb-10 sm:px-5">
+  <h1 class="text-xl font-semibold tracking-tight">PR Genie Local Runner</h1>
+  <p class="meta text-sm leading-relaxed text-zinc-400">Runner dashboard · ${reachability} · <a class="text-sky-400 underline-offset-2 hover:underline" href="/setup">Setup</a></p>
+  <div class="my-3 flex w-full flex-wrap items-end gap-2">
+    <label class="block w-full text-sm text-zinc-400 sm:flex-1">Bearer token
+      <input type="password" id="token" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base text-zinc-100" placeholder="PRGENIE_RUNNER_TOKEN" autocomplete="off" />
     </label>
-    <button type="button" id="saveToken">Save token</button>
+    <button type="button" id="saveToken" class="min-h-11 w-full rounded-md border border-zinc-600 bg-zinc-800 px-4 py-2 text-zinc-100 sm:w-auto">Save token</button>
   </div>
-  <div class="settings-panel">
-    <h2>Email notifications</h2>
-    <p class="meta">Resend API key is server-side only (env). Choose whether to send agent notify emails and the recipient.</p>
-    <div class="settings-row">
-      <label class="toggle-row"><input type="checkbox" id="notifyEnabled" /> Send notify emails</label>
-      <label style="flex:1 1 14rem;">Recipient
-        <input type="email" id="notifyRecipient" placeholder="you@example.com" autocomplete="email" inputmode="email" />
+  <details class="settings-panel mb-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3" open>
+    <summary class="cursor-pointer text-sm font-medium text-zinc-200 select-none">Email notifications</summary>
+    <p class="meta mt-2 text-sm text-zinc-400">Resend API key is server-side only (env). Choose whether to send agent notify emails and the recipient.</p>
+    <div class="mt-2 flex flex-wrap items-end gap-3">
+      <label class="toggle-row flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" id="notifyEnabled" class="h-4 w-4" /> Send notify emails</label>
+      <label class="block w-full flex-1 text-sm text-zinc-400 sm:min-w-[14rem]">Recipient
+        <input type="email" id="notifyRecipient" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base" placeholder="you@example.com" autocomplete="email" inputmode="email" />
       </label>
-      <button type="button" id="saveNotify">Save</button>
+      <button type="button" id="saveNotify" class="min-h-11 w-full rounded-md border border-zinc-600 bg-zinc-800 px-4 py-2 sm:w-auto">Save</button>
     </div>
-    <div id="notifyStatus"></div>
-  </div>
-  <div class="settings-panel">
-    <h2>New agent</h2>
-    <p class="meta">Start a code or docs writing agent on this runner. Docs agents use Setup defaults unless you override the repo path.</p>
-    <div class="settings-row">
-      <label style="flex:1 1 8rem;">Type
-        <select id="newJobType" style="display:block; width:100%; margin-top:0.25rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem;">
+    <div id="notifyStatus" class="mt-1 min-h-5 text-sm text-zinc-400" role="status" aria-live="polite"></div>
+  </details>
+  <section class="settings-panel mb-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
+    <h2 class="text-base font-semibold">New agent</h2>
+    <p class="meta mt-1 text-sm text-zinc-400">Start a code or docs writing agent on this runner. Docs agents use Setup defaults unless you override the repo path.</p>
+    <div class="mt-2 flex flex-wrap gap-3">
+      <label class="block w-full text-sm text-zinc-400 sm:w-32">Type
+        <select id="newJobType" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-zinc-100">
           <option value="code">Code (default)</option>
           <option value="docs">Docs / policy / marketing</option>
         </select>
       </label>
-      <label style="flex:2 1 12rem;">Branch
-        <input id="newJobBranch" placeholder="docs/policy-xyz" style="display:block; width:100%; margin-top:0.25rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem;" />
+      <label class="block min-w-0 flex-1 text-sm text-zinc-400">Branch
+        <input id="newJobBranch" placeholder="docs/policy-xyz" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2" />
       </label>
     </div>
-    <div class="settings-row" id="newJobDocsRow" style="display:none;">
-      <label style="flex:1 1 12rem;">Doc template
-        <select id="newJobTemplate" style="display:block; width:100%; margin-top:0.25rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem;">
+    <div class="mt-2 hidden flex-wrap gap-3" id="newJobDocsRow">
+      <label class="block w-full text-sm text-zinc-400">Doc template
+        <select id="newJobTemplate" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2">
           <option value="marketing">Marketing copy</option>
           <option value="policy">Policy doc</option>
           <option value="research">Research brief</option>
         </select>
       </label>
     </div>
-    <label>Repo path override (optional)
-      <input id="newJobRepo" placeholder="Local clone path on this machine" style="display:block; width:100%; margin-top:0.25rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem;" />
+    <label class="mt-2 block text-sm text-zinc-400">Repo path override (optional)
+      <input id="newJobRepo" placeholder="Local clone path on this machine" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2" />
     </label>
-    <label id="newJobPromptLabel">Prompt file (code jobs)
-      <input id="newJobPrompt" placeholder="/path/to/prompt.md" style="display:block; width:100%; margin-top:0.25rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem;" />
+    <label id="newJobPromptLabel" class="mt-2 block text-sm text-zinc-400">Prompt file (code jobs)
+      <input id="newJobPrompt" placeholder="/path/to/prompt.md" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2" />
     </label>
-    <textarea id="newJobInline" rows="3" placeholder="Optional extra task text (appended via prompt file content if you paste a one-off prompt path)" style="display:none; width:100%; margin-top:0.5rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem; font-family:inherit;"></textarea>
-    <button type="button" class="primary" id="startJobBtn" style="margin-top:0.75rem;">Start agent</button>
-    <div id="newJobStatus" class="meta" style="min-height:1.2rem; margin-top:0.35rem;"></div>
+    <button type="button" id="startJobBtn" class="primary mt-3 min-h-11 w-full rounded-md border border-sky-700 bg-sky-900/50 px-4 py-2 font-medium text-sky-100 sm:w-auto">Start agent</button>
+    <div id="newJobStatus" class="meta mt-1 min-h-5 text-sm text-zinc-400" role="status" aria-live="polite"></div>
+  </section>
+  <h2 id="agentsHeading" class="text-base font-semibold">Agents</h2>
+  <div class="jobs-toolbar mb-2 flex flex-wrap items-center gap-3 text-sm">
+    <label class="toggle-row flex min-h-11 items-center gap-2"><input type="checkbox" id="showAllJobs" class="h-4 w-4" /> Show finished</label>
+    <label class="toggle-row flex min-h-11 items-center gap-2"><input type="checkbox" id="showArchived" class="h-4 w-4" /> Show archived</label>
+    <div class="flex flex-wrap items-center gap-2">
+      <button type="button" id="clearFailedBtn" class="min-h-11 rounded-md border border-red-900 bg-red-950/40 px-3 py-2 text-red-100">Clear failed</button>
+      <label class="toggle-row flex min-h-11 items-center gap-2"><input type="checkbox" id="clearIncludeStuck" class="h-4 w-4" /> Include stuck &amp; stopped</label>
+    </div>
+    <span class="meta text-zinc-500" id="jobsHiddenHint"></span>
+    <span class="meta text-zinc-500" id="jobsSelectHint">Select an agent to open its transcript, steer, and stop controls.</span>
   </div>
-  <div class="jobs-toolbar">
-    <label class="toggle-row"><input type="checkbox" id="showAllJobs" /> Show finished</label>
-    <span class="meta" id="jobsHiddenHint"></span>
-  </div>
-  <table>
-    <thead><tr><th>Agent</th><th>Repo</th><th>Stage</th><th>Round</th><th>Ticket</th><th>PR</th><th>Ready</th><th>Status</th><th>Model</th><th>Tokens</th><th>Updated</th></tr></thead>
+  <div id="jobsStatus" class="meta mb-2 min-h-5 text-sm text-zinc-400 wrap-anywhere" role="status" aria-live="polite"></div>
+  <div id="jobCards" class="flex min-w-0 flex-col gap-3 lg:hidden" role="list" aria-labelledby="agentsHeading"></div>
+  <div id="jobsTableWrap" class="relative hidden max-w-full overflow-x-auto lg:block">
+  <table class="w-full table-auto border-collapse text-sm" aria-labelledby="agentsHeading">
+    <thead class="text-left text-zinc-400"><tr class="border-b border-zinc-800"><th class="p-2">Agent</th><th class="p-2">Repo</th><th class="p-2">Stage</th><th class="p-2">Round</th><th class="p-2">Ticket</th><th class="p-2">PR</th><th class="p-2">Ready</th><th class="p-2">Status</th><th class="p-2">Model</th><th class="p-2">Tokens</th><th class="p-2">Updated</th><th class="p-2"><span class="sr-only">Actions</span></th></tr></thead>
     <tbody id="jobs"></tbody>
   </table>
-  <h2 id="detailTitle">Agent log</h2>
-  <p class="log-placeholder" id="logPlaceholder">Select an agent from the table to view its transcript.</p>
-  <div class="detail-chat" id="detailChat" style="display:none;">
-    <div class="log-toolbar">
-      <label><input type="checkbox" id="showRaw" /> Raw</label>
-    </div>
-    <div class="log-panel">
-      <div id="logSteps"></div>
-      <pre id="logRaw"></pre>
-    </div>
-    <div class="chat-composer steer-panel">
-      <label for="steerPrompt">Steer (queued for next agent step)</label>
-      <div class="steer-row">
-        <textarea id="steerPrompt" rows="2" placeholder="Add guidance… Enter to send, Shift+Enter for newline"></textarea>
-        <button type="button" class="primary" id="steerBtn">Steer</button>
-        <button type="button" class="danger" id="stopBtn">Stop</button>
-      </div>
-      <div id="steerStatus"></div>
-    </div>
   </div>
+  <div id="detailHome" hidden>
+  <section id="jobDetailPanel" class="job-detail flex w-full min-w-0 max-w-full flex-col rounded-lg border border-sky-900/60 bg-zinc-950/80 p-3 wrap-anywhere [contain:inline-size]" role="region" aria-labelledby="detailTitle">
+    <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <h3 id="detailTitle" class="text-base font-semibold">Agent log</h3>
+      <div id="detailStatus" class="flex flex-wrap items-center gap-2 text-sm text-zinc-400"></div>
+    </div>
+    <div id="docFindings" class="doc-findings mb-3 hidden rounded-lg border border-zinc-800 bg-zinc-900/50 p-3" aria-live="polite"></div>
+    <div class="log-toolbar flex flex-wrap items-center gap-3 text-sm text-zinc-400">
+      <label class="flex min-h-11 items-center gap-2"><input type="checkbox" id="showRaw" class="h-4 w-4" /> Raw log</label>
+      <label class="flex min-h-11 items-center gap-2"><input type="checkbox" id="followLive" class="h-4 w-4" checked /> Follow live</label>
+    </div>
+    <div class="log-panel flex min-h-0 min-w-0 flex-1 flex-col">
+      <div id="logSteps" class="max-h-[min(32rem,52vh)] min-h-32 min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-sm lg:max-h-[min(24rem,45vh)]"></div>
+      <pre id="logRaw" class="max-h-96 min-w-0 max-w-full overflow-auto rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-xs whitespace-pre-wrap wrap-anywhere"></pre>
+    </div>
+    <div class="chat-composer steer-panel mt-3 border-t border-zinc-800 pt-3">
+      <label for="steerPrompt" class="mb-1 block text-sm text-zinc-400">Steer (queued for next agent step)</label>
+      <div class="steer-row flex flex-wrap gap-2">
+        <textarea id="steerPrompt" rows="2" class="min-h-14 w-full min-w-0 flex-[1_1_100%] rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base" placeholder="Add guidance… Enter to send, Shift+Enter for newline"></textarea>
+        <button type="button" class="primary min-h-11 flex-1 rounded-md border border-sky-700 bg-sky-900/50 px-4 py-2 sm:flex-none" id="steerBtn">Steer</button>
+        <button type="button" class="danger min-h-11 flex-1 rounded-md border border-red-800 bg-red-950/60 px-4 py-2 sm:flex-none" id="stopBtn">Stop</button>
+        <button type="button" class="min-h-11 flex-1 rounded-md border border-zinc-600 bg-zinc-800 px-4 py-2 sm:flex-none" id="archiveBtn" data-action="archive" hidden>Remove</button>
+      </div>
+      <div id="steerStatus" class="mt-1 min-h-5 text-sm text-zinc-400" role="status" aria-live="polite"></div>
+    </div>
+  </section>
+  </div>
+  </main>
   <script>
     const logParser = ${logParserInit};
     const dashFmt = ${dashFmtInit};
@@ -336,6 +130,7 @@ export function runnerUiHtml(
     document.getElementById("saveToken").onclick = () => {
       localStorage.setItem(tokenKey, tokenEl.value);
       refresh();
+      connectListEvents();
       void loadNotifySettingsUi();
     };
     const notifyEnabledEl = document.getElementById("notifyEnabled");
@@ -388,6 +183,12 @@ export function runnerUiHtml(
       document.body.classList.toggle("show-raw", showRawEl.checked);
     };
     document.body.classList.toggle("show-raw", showRawEl.checked);
+    const followLiveEl = document.getElementById("followLive");
+    const followLiveKey = "prgenie_runner_follow_live";
+    if (localStorage.getItem(followLiveKey) === "0") followLiveEl.checked = false;
+    followLiveEl.onchange = () => {
+      localStorage.setItem(followLiveKey, followLiveEl.checked ? "1" : "0");
+    };
 
     const showAllJobsEl = document.getElementById("showAllJobs");
     const jobsHiddenHint = document.getElementById("jobsHiddenHint");
@@ -399,12 +200,24 @@ export function runnerUiHtml(
       localStorage.setItem(showAllJobsKey, showAllJobsEl.checked ? "1" : "0");
       void refresh();
     };
+    const showArchivedKey = "prgenie_runner_show_archived";
+    const showArchivedEl = document.getElementById("showArchived");
+    showArchivedEl.checked = localStorage.getItem(showArchivedKey) === "1";
+    showArchivedEl.onchange = () => {
+      localStorage.setItem(showArchivedKey, showArchivedEl.checked ? "1" : "0");
+      void refresh();
+    };
 
-    const TERMINAL_STAGES = new Set(["approved", "failed", "stopped", "changes_remaining"]);
+    // Mirrors the server: Remove (archive) is only offered for these; building/reviewing/fixing never.
+    const TERMINAL_STAGES = new Set(["approved", "failed", "stopped", "changes_remaining", "stuck"]);
     const steerEl = document.getElementById("steerPrompt");
     const steerBtn = document.getElementById("steerBtn");
     const stopBtn = document.getElementById("stopBtn");
+    const archiveBtn = document.getElementById("archiveBtn");
     const steerStatus = document.getElementById("steerStatus");
+    const jobsStatus = document.getElementById("jobsStatus");
+    const clearFailedBtn = document.getElementById("clearFailedBtn");
+    const clearIncludeStuckEl = document.getElementById("clearIncludeStuck");
 
     function authHeaders(json) {
       const t = tokenEl.value || localStorage.getItem(tokenKey);
@@ -416,7 +229,7 @@ export function runnerUiHtml(
     let selectedJobStage = null;
     let es = null;
     let lastJobs = [];
-    let lastJobsMeta = { totalOnDisk: 0, mergedHidden: 0 };
+    let lastJobsMeta = { totalOnDisk: 0, mergedHidden: 0, archived: 0 };
 
     function fmtUpdated(iso) {
       const r = dashFmt.formatRelativeTime(iso, Date.now());
@@ -431,20 +244,34 @@ export function runnerUiHtml(
     function fmtChecks(job, ci) {
       if (!ci) return "—";
       const label = statusLabel(job, ci);
-      const cls = "badge " + (ci.status === "success" ? "success" : ci.status || "neutral");
+      const cls = dashFmt.ciStatusBadgeClass(ci.status);
       const tip = ci.reason ? ' title="' + String(ci.reason).replace(/"/g, "&quot;") + '"' : "";
       const colLabel = dashFmt.isDocsJobRecord(job) ? "Doc checks" : "Status";
+      const aria = ' role="status"';
       if (ci.checksUrl && !dashFmt.isDocsJobRecord(job)) {
-        return '<a class="' + cls + '" href="' + ci.checksUrl + '" target="_blank" rel="noopener"' + tip + ">" + label + "</a>";
+        return '<a class="' + cls + '" href="' + ci.checksUrl + '" target="_blank" rel="noopener"' + tip + aria + ">" + label + "</a>";
       }
-      return '<span class="' + cls + '"' + tip + ' data-label="' + colLabel + '">' + label + '</span>';
+      return '<span class="' + cls + '"' + tip + aria + ' data-label="' + colLabel + '">' + label + '</span>';
     }
 
     function fmtPrDraft(j) {
       if (!j.prUrl) return "—";
-      if (j.prIsDraft === true) return '<span class="badge draft">Draft</span>';
-      if (j.prIsDraft === false) return '<span class="badge ready">Ready</span>';
+      if (j.prIsDraft === true) return '<span class="' + dashFmt.PR_DRAFT_BADGE_CLASS.draft + '">Draft</span>';
+      if (j.prIsDraft === false) return '<span class="' + dashFmt.PR_DRAFT_BADGE_CLASS.ready + '">Ready</span>';
       return "—";
+    }
+
+    function renderDocFindings(job) {
+      const el = document.getElementById("docFindings");
+      if (!job || !dashFmt.isDocsJobRecord(job) || !job.ciStatus?.findings?.length) {
+        el.classList.add("hidden");
+        el.innerHTML = "";
+        return;
+      }
+      el.classList.remove("hidden");
+      el.innerHTML =
+        '<h3 class="text-sm font-medium text-zinc-200">Doc lint findings</h3>' +
+        dashFmt.formatDocLintFindingsHtml(job.ciStatus.findings, job.ciStatus.findingsTruncated);
     }
 
     function fmtStatus(job, ci) {
@@ -456,16 +283,11 @@ export function runnerUiHtml(
       steerEl.disabled = disabled;
       steerBtn.disabled = disabled;
       stopBtn.disabled = !selected || TERMINAL_STAGES.has(selectedJobStage || "");
-    }
-
-    function updateDetailVisibility() {
-      const hasJob = Boolean(selected);
-      document.getElementById("logPlaceholder").style.display = hasJob ? "none" : "block";
-      document.getElementById("detailChat").style.display = hasJob ? "flex" : "none";
-      if (!hasJob) {
-        document.getElementById("detailTitle").textContent = "Agent log";
-        renderLogTail("");
-      }
+      const picked = selected ? lastJobs.find((j) => j.id === selected) : null;
+      const archived = Boolean(picked && picked.archivedAt);
+      archiveBtn.hidden = !selected || (!archived && !TERMINAL_STAGES.has(selectedJobStage || ""));
+      archiveBtn.dataset.action = archived ? "restore" : "archive";
+      archiveBtn.textContent = archived ? "Restore" : "Remove";
     }
 
     function fmtTokens(u) {
@@ -493,7 +315,7 @@ export function runnerUiHtml(
 
     function renderLogTail(raw) {
       const stepsEl = document.getElementById("logSteps");
-      const stick = stickScrollIfNearBottom(stepsEl);
+      const stick = followLiveEl.checked && stickScrollIfNearBottom(stepsEl);
       rawLogTail = raw || "";
       document.getElementById("logRaw").textContent = rawLogTail;
       const html = logParser.formatAgentLogTailHtml(rawLogTail);
@@ -515,7 +337,7 @@ export function runnerUiHtml(
       const d = dashFmt.jobAgentDisplayLabel(j);
       const tip = d.tooltip.replace(/"/g, "&quot;");
       const label = d.label.replace(/</g, "&lt;");
-      let html = '<span class="agent-label" title="' + tip + '">' + label + '</span>';
+      let html = '<span class="agent-label inline-block max-w-[min(16rem,42vw)] truncate align-top lg:max-w-36 xl:max-w-64" title="' + tip + '">' + label + '</span>';
       if (dashFmt.isDocsJobRecord(j) && j.input && j.input.docsTemplate) {
         html += '<br><span class="meta">' + String(j.input.docsTemplate).replace(/</g, "&lt;") + '</span>';
       }
@@ -527,18 +349,260 @@ export function runnerUiHtml(
       return dashFmt.jobAgentDisplayLabel(j).label;
     }
 
+    function renderDetailHeader(j) {
+      document.getElementById("detailTitle").textContent = detailTitleForJob(j);
+      const stage = j
+        ? '<span class="rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-300">' + dashFmt.dashboardStageLabel(j) + "</span>"
+        : "";
+      setHtml(document.getElementById("detailStatus"), j ? stage + fmtStatus(j, j.ciStatus) : "");
+    }
+
+    const tbodyEl = document.getElementById("jobs");
+    const cardsEl = document.getElementById("jobCards");
+    const detailHome = document.getElementById("detailHome");
+    const detailPanel = document.getElementById("jobDetailPanel");
+    const detailRowEl = document.createElement("tr");
+    detailRowEl.className = "job-detail-row";
+    const detailCellEl = document.createElement("td");
+    detailCellEl.colSpan = 12;
+    detailCellEl.className = "job-detail-cell border-b border-zinc-800 bg-zinc-900/40 p-3";
+    detailRowEl.appendChild(detailCellEl);
+    // Tailwind lg: breakpoint — the 12-column table is shown at and above it, cards below it.
+    const desktopMq = typeof window.matchMedia === "function" ? window.matchMedia("(min-width: 64rem)") : null;
+    const rowEls = new Map();
+    let panelJobId = null;
+
+    function isDesktopLayout() {
+      return desktopMq ? desktopMq.matches : true;
+    }
+
+    function detailPanelId(id) {
+      return "job-detail-" + id;
+    }
+
+    function visibleToggle(els) {
+      return isDesktopLayout() ? els.toggles[0] : els.toggles[1];
+    }
+
+    function setHtml(el, html) {
+      if (el._prgHtml === html) return;
+      el._prgHtml = html;
+      el.innerHTML = html;
+    }
+
+    /** Reorder parent's children to match nodes, moving only out-of-place nodes. */
+    function syncChildren(parent, nodes) {
+      let cursor = parent.firstChild;
+      for (const node of nodes) {
+        if (node === cursor) {
+          cursor = cursor.nextSibling;
+          continue;
+        }
+        parent.insertBefore(node, cursor);
+      }
+      while (cursor) {
+        const next = cursor.nextSibling;
+        parent.removeChild(cursor);
+        cursor = next;
+      }
+    }
+
+    /** Moving a node in the DOM drops its focus and scroll offset; restore both. */
+    function keepFocusAndScroll(fn) {
+      const active = document.activeElement;
+      let selStart = null;
+      let selEnd = null;
+      try {
+        if (active && typeof active.selectionStart === "number") {
+          selStart = active.selectionStart;
+          selEnd = active.selectionEnd;
+        }
+      } catch {}
+      const scrollers = [document.getElementById("logSteps"), document.getElementById("logRaw")];
+      const offsets = scrollers.map((el) => el.scrollTop);
+      fn();
+      scrollers.forEach((el, i) => {
+        if (el.scrollTop !== offsets[i]) el.scrollTop = offsets[i];
+      });
+      if (active && active !== document.body && active.isConnected && document.activeElement !== active) {
+        active.focus({ preventScroll: true });
+        if (selStart !== null) {
+          try { active.setSelectionRange(selStart, selEnd); } catch {}
+        }
+      }
+    }
+
+    const TOGGLE_CLASS =
+      "job-toggle group flex min-h-11 w-full items-start gap-2 rounded-md text-left text-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500";
+    const TOGGLE_INNER =
+      '<span aria-hidden="true" class="job-chevron mt-0.5 inline-block w-3 shrink-0 text-zinc-500 transition-transform group-aria-expanded:rotate-90 group-aria-expanded:text-sky-400">▸</span><span class="job-toggle-label min-w-0 flex-1"></span>';
+    const CELL_LABELS = ["Agent", "Repo", "Stage", "Round", "Ticket", "PR", "Ready", "Status", "Model", "Tokens", "Updated", "Actions"];
+    const ACTIONS_CELL = CELL_LABELS.length - 1;
+    const ACTION_BTN_CLASS =
+      "job-action min-h-11 rounded-md border px-3 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500";
+
+    function escapeAttr(s) {
+      return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+    }
+
+    /** Remove for terminal jobs, Restore for archived ones, nothing while the job is running. */
+    function fmtActions(j) {
+      const label = escapeAttr(dashFmt.jobAgentDisplayLabel(j).label);
+      if (j.archivedAt) {
+        return '<button type="button" data-action="restore" class="' + ACTION_BTN_CLASS + ' border-zinc-600 bg-zinc-800 text-zinc-100" aria-label="Restore ' + label + '">Restore</button>';
+      }
+      if (!TERMINAL_STAGES.has(j.stage)) return "";
+      return '<button type="button" data-action="archive" class="' + ACTION_BTN_CLASS + ' border-red-900 bg-red-950/40 text-red-100" aria-label="Remove ' + label + '">Remove</button>';
+    }
+
+    function onActionClick(e, id) {
+      const btn = e.target.closest("[data-action]");
+      if (!btn) return;
+      e.stopPropagation();
+      if (btn.dataset.action === "restore") void restoreJobUi(id);
+      else void archiveJobUi(id);
+    }
+
+    function createJobEls(id) {
+      const tr = document.createElement("tr");
+      tr.className = "job-row cursor-pointer border-b border-zinc-800 hover:bg-zinc-900/80";
+      tr.dataset.id = id;
+      tr.innerHTML = CELL_LABELS.map((label, i) => {
+        const cls = i === 1 ? "meta p-2 text-zinc-400" : "p-2";
+        const inner = i === 0 ? '<button type="button" class="' + TOGGLE_CLASS + '">' + TOGGLE_INNER + "</button>" : "";
+        return '<td class="' + cls + '" data-label="' + label + '">' + inner + "</td>";
+      }).join("");
+      tr.addEventListener("click", (e) => {
+        if (e.target.closest("a, button, input, textarea, select, summary, label")) return;
+        toggleJob(id);
+      });
+      const card = document.createElement("div");
+      card.className = "job-row job-card rounded-xl border border-zinc-800 bg-zinc-900/50 p-3";
+      card.setAttribute("role", "listitem");
+      card.dataset.id = id;
+      card.innerHTML =
+        '<div class="flex items-start gap-2"><button type="button" class="' + TOGGLE_CLASS + '">' + TOGGLE_INNER + '</button><div class="job-card-actions shrink-0"></div></div>' +
+        '<details class="job-card-more mt-2 text-sm text-zinc-300"><summary class="cursor-pointer text-zinc-500">More</summary><div class="job-card-meta mt-2 grid gap-1"></div></details>';
+      const toggles = [tr.querySelector(".job-toggle"), card.querySelector(".job-toggle")];
+      toggles.forEach((b) => b.addEventListener("click", () => toggleJob(id)));
+      const cells = [...tr.children];
+      const cardActions = card.querySelector(".job-card-actions");
+      cells[ACTIONS_CELL].addEventListener("click", (e) => onActionClick(e, id));
+      cardActions.addEventListener("click", (e) => onActionClick(e, id));
+      return {
+        tr,
+        cells,
+        card,
+        toggles,
+        cardLabel: card.querySelector(".job-toggle-label"),
+        cardMeta: card.querySelector(".job-card-meta"),
+        cardActions,
+      };
+    }
+
+    function updateJobEls(els, j) {
+      const stageLabel = dashFmt.dashboardStageLabel(j);
+      const pr = j.prUrl ? '<a class="text-sky-400" href="' + j.prUrl + '" target="_blank" rel="noopener">PR</a>' : "—";
+      const archivedBadge = j.archivedAt
+        ? ' <span class="job-archived-badge ml-1 rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400">Archived</span>'
+        : "";
+      const values = [
+        fmtAgent(j) + archivedBadge,
+        fmtRepo(j),
+        stageLabel,
+        j.reviewRound + "/" + j.maxRounds,
+        fmtTicket(j),
+        pr,
+        fmtPrDraft(j),
+        fmtStatus(j, j.ciStatus),
+        j.model || "—",
+        fmtTokens(j.tokenUsage),
+        fmtUpdated(j.updatedAt),
+        fmtActions(j),
+      ];
+      setHtml(els.cells[0].querySelector(".job-toggle-label"), values[0]);
+      for (let i = 1; i < values.length; i++) setHtml(els.cells[i], values[i]);
+      setHtml(els.cardActions, values[ACTIONS_CELL]);
+      els.tr.classList.toggle("opacity-60", Boolean(j.archivedAt));
+      els.card.classList.toggle("opacity-60", Boolean(j.archivedAt));
+      els.cells[7].dataset.label = dashFmt.isDocsJobRecord(j) ? "Doc checks" : "Status";
+      setHtml(
+        els.cardLabel,
+        '<span class="block font-medium leading-snug">' + values[0] + '</span><span class="meta mt-1 block text-sm text-zinc-400">' + values[1] + " · " + stageLabel + "</span>",
+      );
+      setHtml(els.cardMeta, values[4] + " · " + pr + " · " + values[6] + " · " + values[7]);
+    }
+
+    function syncSelectionUi() {
+      for (const [id, els] of rowEls) {
+        const on = id === selected;
+        for (const b of els.toggles) {
+          b.setAttribute("aria-expanded", on ? "true" : "false");
+          b.setAttribute("aria-controls", detailPanelId(id));
+        }
+        els.tr.classList.toggle("bg-zinc-800/80", on);
+        els.tr.classList.toggle("hover:bg-zinc-900/80", !on);
+        els.card.classList.toggle("ring-2", on);
+        els.card.classList.toggle("ring-sky-600/50", on);
+      }
+    }
+
+    /** Attach the single detail panel under the selected row (table) or inside its card. */
+    function placeDetail() {
+      const els = selected ? rowEls.get(selected) : null;
+      if (!els) {
+        if (detailRowEl.parentNode) detailRowEl.remove();
+        if (detailPanel.parentNode !== detailHome) detailHome.appendChild(detailPanel);
+        detailPanel.id = "jobDetailPanel";
+        delete detailRowEl.dataset.detailFor;
+        return;
+      }
+      detailPanel.id = detailPanelId(selected);
+      if (isDesktopLayout()) {
+        detailRowEl.dataset.detailFor = selected;
+        if (els.tr.nextSibling !== detailRowEl) els.tr.after(detailRowEl);
+        if (detailPanel.parentNode !== detailCellEl) detailCellEl.appendChild(detailPanel);
+      } else {
+        if (detailRowEl.parentNode) detailRowEl.remove();
+        delete detailRowEl.dataset.detailFor;
+        if (detailPanel.parentNode !== els.card) els.card.appendChild(detailPanel);
+      }
+      detailPanel.classList.toggle("mt-3", !isDesktopLayout());
+    }
+
+    function showJobsMessage(html) {
+      rowEls.clear();
+      placeDetail();
+      tbodyEl.innerHTML = '<tr><td colspan="12" class="empty-state p-3 text-zinc-400">' + html + "</td></tr>";
+      cardsEl.innerHTML = '<div role="listitem" class="empty-state rounded-xl border border-zinc-800 p-3 text-sm text-zinc-400">' + html + "</div>";
+    }
+
+    /** A removed row (e.g. its Remove button was focused) must not drop focus to <body>. */
     function renderJobTable(jobs) {
+      const active = document.activeElement;
+      renderJobList(jobs);
+      const now = document.activeElement;
+      if (active && active !== document.body && (!now || now === document.body)) {
+        showAllJobsEl.focus({ preventScroll: true });
+      }
+    }
+
+    function renderJobList(jobs) {
       const showFinished = showAllJobsEl.checked;
-      const staleHidden = showFinished ? 0 : jobs.filter((j) => dashFmt.shouldHideStaleJob(j)).length;
-      const visible = showFinished ? jobs : jobs.filter((j) => !dashFmt.shouldHideStaleJob(j));
+      const isStale = (j) => !j.archivedAt && dashFmt.shouldHideStaleJob(j);
+      const staleHidden = showFinished ? 0 : jobs.filter(isStale).length;
+      const visible = showFinished ? jobs : jobs.filter((j) => !isStale(j));
       const hintParts = [];
       if (!showFinished && lastJobsMeta.mergedHidden > 0) {
         hintParts.push("(" + lastJobsMeta.mergedHidden + " finished hidden)");
       }
       if (staleHidden > 0) hintParts.push("(" + staleHidden + " stale hidden)");
+      if (!showArchivedEl.checked && lastJobsMeta.archived > 0) {
+        hintParts.push("(" + lastJobsMeta.archived + " archived)");
+      }
       jobsHiddenHint.textContent = hintParts.join(" ");
-      const tbody = document.getElementById("jobs");
       if (!visible.length) {
+        if (selected) collapseDetail();
         let msg;
         if (jobs.length === 0 && lastJobsMeta.totalOnDisk === 0) {
           msg = "<strong>No agents yet.</strong> Start an agent below or from MCP.";
@@ -551,78 +615,104 @@ export function runnerUiHtml(
           msg =
             "No agents match the current filter. Turn on <em>Show finished</em> to include finished and stale rows.";
         }
-        tbody.innerHTML = '<tr><td colspan="11" class="empty-state">' + msg + "</td></tr>";
+        showJobsMessage(msg);
         return;
       }
-      tbody.innerHTML = visible.map(j => {
-        const stageLabel = dashFmt.dashboardStageLabel(j);
-        const sel = j.id === selected ? " selected" : "";
-        const checksLabel = dashFmt.isDocsJobRecord(j) ? "Doc checks" : "Status";
-        return \`<tr class="job-row\${sel}" data-id="\${j.id}">
-        <td data-label="Agent">\${fmtAgent(j)}</td>
-        <td data-label="Repo" class="meta">\${fmtRepo(j)}</td>
-        <td data-label="Stage">\${stageLabel}</td>
-        <td data-label="Round">\${j.reviewRound}/\${j.maxRounds}</td>
-        <td data-label="Ticket">\${fmtTicket(j)}</td>
-        <td data-label="PR">\${j.prUrl ? '<a href="'+j.prUrl+'" target="_blank" rel="noopener">PR</a>' : "—"}</td>
-        <td data-label="Ready">\${fmtPrDraft(j)}</td>
-        <td data-label="\${checksLabel}">\${fmtStatus(j, j.ciStatus)}</td>
-        <td data-label="Model">\${j.model || "—"}</td>
-        <td data-label="Tokens">\${fmtTokens(j.tokenUsage)}</td>
-        <td data-label="Updated">\${fmtUpdated(j.updatedAt)}</td>
-      </tr>\`;
-      }).join("");
-      tbody.querySelectorAll("tr.job-row").forEach(tr => tr.onclick = () => selectJob(tr.dataset.id));
-      if (selected) {
-        const row = tbody.querySelector('tr[data-id="' + selected + '"]');
-        if (row) {
-          selectedJobStage = jobs.find(j => j.id === selected)?.stage ?? selectedJobStage;
-          row.classList.add("selected");
-        } else if (!visible.some(j => j.id === selected)) {
-          selected = null;
-          selectedJobStage = null;
-          if (es) { es.close(); es = null; }
-          updateDetailVisibility();
+      const visibleIds = new Set(visible.map((j) => j.id));
+      for (const id of [...rowEls.keys()]) {
+        if (!visibleIds.has(id)) rowEls.delete(id);
+      }
+      if (selected && !visibleIds.has(selected)) collapseDetail();
+      const desktop = isDesktopLayout();
+      keepFocusAndScroll(() => {
+        const rows = [];
+        const cards = [];
+        for (const j of visible) {
+          let els = rowEls.get(j.id);
+          if (!els) {
+            els = createJobEls(j.id);
+            rowEls.set(j.id, els);
+          }
+          updateJobEls(els, j);
+          rows.push(els.tr);
+          if (j.id === selected && desktop) rows.push(detailRowEl);
+          cards.push(els.card);
         }
+        syncChildren(tbodyEl, rows);
+        syncChildren(cardsEl, cards);
+        placeDetail();
+      });
+      syncSelectionUi();
+      if (selected) {
+        const picked = visible.find((j) => j.id === selected);
+        selectedJobStage = picked?.stage ?? selectedJobStage;
+        renderDetailHeader(picked);
       }
       updateSteerUi();
     }
 
+    let refreshSeq = 0;
     async function refresh() {
+      const seq = ++refreshSeq;
       const metaRes = await fetch("/api/jobs/meta", { headers: authHeaders() });
       if (metaRes.ok) {
         lastJobsMeta = await metaRes.json();
       }
-      const jobsPath = showAllJobsEl.checked ? "/api/jobs?includeFinished=1" : "/api/jobs";
+      const params = [];
+      if (showAllJobsEl.checked) params.push("includeFinished=1");
+      if (showArchivedEl.checked) params.push("includeArchived=1");
+      const jobsPath = "/api/jobs" + (params.length ? "?" + params.join("&") : "");
       const res = await fetch(jobsPath, { headers: authHeaders() });
-      const tbody = document.getElementById("jobs");
+      if (seq !== refreshSeq) return;
       if (res.status === 401) {
-        tbody.innerHTML = '<tr><td colspan="11" class="empty-state"><strong>Unauthorized.</strong> Paste your runner bearer token above and click Save token.</td></tr>';
+        showJobsMessage("<strong>Unauthorized.</strong> Paste your runner bearer token above and click Save token.");
         lastJobs = [];
         return;
       }
       if (!res.ok) {
-        tbody.innerHTML = '<tr><td colspan="11" class="empty-state">Could not reach the runner (' + res.status + "). Check that serve is running.</td></tr>";
+        showJobsMessage("Could not reach the runner (" + res.status + "). Check that serve is running.");
         lastJobs = [];
         return;
       }
-      lastJobs = await res.json();
+      const jobs = await res.json();
+      if (seq !== refreshSeq) return;
+      lastJobs = jobs;
       renderJobTable(lastJobs);
     }
 
+    function toggleJob(id) {
+      if (selected === id) collapseDetail();
+      else selectJob(id);
+    }
+
     function selectJob(id) {
+      const prevEls = rowEls.get(id);
+      const anchor = prevEls ? visibleToggle(prevEls) : null;
+      const anchorTop = anchor ? anchor.getBoundingClientRect().top : 0;
       selected = id;
       steerStatus.textContent = "";
       const picked = lastJobs.find((j) => j.id === id);
-      document.getElementById("detailTitle").textContent = detailTitleForJob(picked);
-      updateDetailVisibility();
-      document.querySelectorAll("tr.job-row").forEach(tr => {
-        tr.classList.toggle("selected", tr.dataset.id === id);
-      });
+      selectedJobStage = picked ? picked.stage : null;
+      if (panelJobId !== id) {
+        panelJobId = id;
+        steerEl.value = "";
+        renderLogTail("");
+        renderDocFindings(null);
+      }
+      renderDetailHeader(picked);
+      keepFocusAndScroll(placeDetail);
+      syncSelectionUi();
+      updateSteerUi();
+      if (anchor) {
+        const shift = anchor.getBoundingClientRect().top - anchorTop;
+        if (shift) window.scrollBy(0, shift);
+      }
       if (es) es.close();
       const t = tokenEl.value || localStorage.getItem(tokenKey);
-      es = new EventSource("/api/jobs/" + id + "/stream?token=" + encodeURIComponent(t || ""));
-      es.onmessage = (ev) => {
+      const stream = new EventSource("/api/jobs/" + id + "/stream?token=" + encodeURIComponent(t || ""));
+      es = stream;
+      stream.onmessage = (ev) => {
+        if (es !== stream || selected !== id) return;
         const data = JSON.parse(ev.data);
         if (data.logTail !== undefined) renderLogTail(data.logTail);
         if (data.stage) {
@@ -632,12 +722,42 @@ export function runnerUiHtml(
         }
       };
       fetch("/api/jobs/" + id, { headers: authHeaders() }).then(r => r.json()).then(j => {
+        if (selected !== id) return;
         selectedJobStage = j.stage;
         updateSteerUi();
-        document.getElementById("detailTitle").textContent = detailTitleForJob(j);
+        renderDetailHeader(j);
         renderLogTail(j.logTail || "");
+        renderDocFindings(j);
       });
     }
+
+    function collapseDetail() {
+      const id = selected;
+      const focusWasInPanel = detailPanel.contains(document.activeElement);
+      selected = null;
+      selectedJobStage = null;
+      if (es) { es.close(); es = null; }
+      placeDetail();
+      syncSelectionUi();
+      updateSteerUi();
+      if (focusWasInPanel) {
+        const els = id ? rowEls.get(id) : null;
+        (els ? visibleToggle(els) : showAllJobsEl).focus();
+      }
+    }
+
+    detailPanel.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && selected) {
+        e.preventDefault();
+        collapseDetail();
+      }
+    });
+
+    const onLayoutChange = () => {
+      if (rowEls.size && lastJobs.length) renderJobTable(lastJobs);
+    };
+    if (desktopMq && desktopMq.addEventListener) desktopMq.addEventListener("change", onLayoutChange);
+    else if (desktopMq && desktopMq.addListener) desktopMq.addListener(onLayoutChange);
 
     async function steerJob() {
       const prompt = steerEl.value.trim();
@@ -672,8 +792,112 @@ export function runnerUiHtml(
       }
     }
 
+    function jobLabelFor(id) {
+      const j = lastJobs.find((x) => x.id === id);
+      return j ? dashFmt.jobAgentDisplayLabel(j).label : id.slice(0, 8);
+    }
+
+    async function postJobAction(path, body) {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: authHeaders(body !== undefined),
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+      const data = await res.json().catch(() => ({}));
+      return { res, data };
+    }
+
+    async function archiveJobUi(id) {
+      const label = jobLabelFor(id);
+      const ok = window.confirm(
+        'Remove "' + label + '" from the dashboard? Its job record and log move to the archive (use Show archived to restore). A clean worktree is deleted; one with uncommitted changes is kept.',
+      );
+      if (!ok) return;
+      jobsStatus.textContent = "Removing…";
+      try {
+        const { res, data } = await postJobAction("/api/jobs/" + encodeURIComponent(id) + "/archive");
+        if (!res.ok) {
+          jobsStatus.textContent = "Remove failed: " + (data.error || res.status) + ".";
+          return;
+        }
+        jobsStatus.textContent = 'Removed "' + label + '".' + (data.warning ? " " + data.warning : "");
+      } catch {
+        jobsStatus.textContent = "Remove failed (network).";
+        return;
+      }
+      await refresh();
+    }
+
+    async function restoreJobUi(id) {
+      const label = jobLabelFor(id);
+      jobsStatus.textContent = "Restoring…";
+      try {
+        const { res, data } = await postJobAction("/api/jobs/" + encodeURIComponent(id) + "/restore");
+        if (!res.ok) {
+          jobsStatus.textContent = "Restore failed: " + (data.error || res.status) + ".";
+          return;
+        }
+        jobsStatus.textContent = 'Restored "' + label + '".';
+      } catch {
+        jobsStatus.textContent = "Restore failed (network).";
+        return;
+      }
+      await refresh();
+    }
+
+    async function clearFailedUi() {
+      const includeStuckStopped = clearIncludeStuckEl.checked;
+      const stages = includeStuckStopped ? ["failed", "stuck", "stopped"] : ["failed"];
+      const count = lastJobs.filter((j) => !j.archivedAt && stages.includes(j.stage)).length;
+      const what = includeStuckStopped ? "failed, stuck, or stopped" : "failed";
+      if (!count) {
+        jobsStatus.textContent = "No " + what + " agents to clear.";
+        return;
+      }
+      const ok = window.confirm(
+        "Remove " + count + " " + what + " agent(s) from the dashboard? They move to the archive. Clean worktrees are deleted; ones with uncommitted changes are kept.",
+      );
+      if (!ok) return;
+      jobsStatus.textContent = "Clearing…";
+      try {
+        const { res, data } = await postJobAction("/api/jobs/clear-failed", { includeStuckStopped });
+        if (!res.ok) {
+          jobsStatus.textContent = "Clear failed: " + (data.error || res.status) + ".";
+          return;
+        }
+        const parts = ["Removed " + (data.archived || []).length + " agent(s)."];
+        for (const w of data.warnings || []) parts.push(w.warning);
+        if ((data.skipped || []).length) parts.push(data.skipped.length + " skipped (still running).");
+        jobsStatus.textContent = parts.join(" ");
+      } catch {
+        jobsStatus.textContent = "Clear failed (network).";
+        return;
+      }
+      await refresh();
+    }
+
+    let listEs = null;
+    /** Other dashboards archive/restore/start jobs; refresh the list when the server says so. */
+    function connectListEvents() {
+      if (listEs) listEs.close();
+      listEs = null;
+      const t = tokenEl.value || localStorage.getItem(tokenKey);
+      if (!t || typeof EventSource !== "function") return;
+      const stream = new EventSource("/api/events?token=" + encodeURIComponent(t));
+      listEs = stream;
+      stream.onmessage = () => {
+        if (listEs === stream) void refresh();
+      };
+    }
+
     steerBtn.onclick = () => void steerJob();
     stopBtn.onclick = () => void stopJob();
+    archiveBtn.onclick = () => {
+      if (!selected) return;
+      if (archiveBtn.dataset.action === "restore") void restoreJobUi(selected);
+      else void archiveJobUi(selected);
+    };
+    clearFailedBtn.onclick = () => void clearFailedUi();
     steerEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
@@ -690,6 +914,7 @@ export function runnerUiHtml(
     function syncNewJobForm() {
       const docs = newJobTypeEl.value === "docs";
       newJobDocsRow.style.display = docs ? "flex" : "none";
+      newJobDocsRow.classList.toggle("hidden", !docs);
       newJobPromptLabel.textContent = docs ? "Prompt file (optional — uses template if empty)" : "Prompt file (code jobs)";
       newJobPromptEl.required = !docs;
     }
@@ -737,8 +962,8 @@ export function runnerUiHtml(
     };
 
     updateSteerUi();
-    updateDetailVisibility();
     refresh();
+    connectListEvents();
     void loadNotifySettingsUi();
     setInterval(refresh, 8000);
     setInterval(() => { if (lastJobs.length) renderJobTable(lastJobs); }, 30000);
