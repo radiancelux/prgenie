@@ -22,6 +22,10 @@ const TERMINAL_JOB_STAGES = new Set([
   "stuck",
 ]);
 
+const MAX_BODY_BYTES = 1024 * 1024;
+
+class BodyTooLargeError extends Error {}
+
 function unauthorized(res: http.ServerResponse): void {
   res.writeHead(401, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: "unauthorized" }));
@@ -37,10 +41,66 @@ function checkAuth(req: http.IncomingMessage, config: RunnerConfig, url: URL): b
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (c) => chunks.push(c));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    let size = 0;
+    let tooLarge = false;
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (tooLarge) return;
+      if (size > MAX_BODY_BYTES) {
+        tooLarge = true;
+        chunks.length = 0;
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => {
+      if (tooLarge) reject(new BodyTooLargeError());
+      else resolve(Buffer.concat(chunks).toString("utf8"));
+    });
     req.on("error", reject);
   });
+}
+
+/** Write a JSON error without ever writing a second response. */
+function respondError(res: http.ServerResponse, status: number, code: string): void {
+  try {
+    if (res.destroyed) return;
+    if (res.headersSent) {
+      if (!res.writableEnded) res.end();
+      return;
+    }
+    res.writeHead(status, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: code }));
+  } catch {
+    // Socket went away between the checks and the write; nothing left to send.
+  }
+}
+
+/** Last-resort boundary for the whole request path: log diagnostics, never leak input. */
+function handleRequestFailure(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  err: unknown,
+): void {
+  if (err instanceof BodyTooLargeError) {
+    respondError(res, 413, "payload_too_large");
+    return;
+  }
+  const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+  console.error(`[runner] ${req.method ?? "unknown"} request failed: ${detail}`);
+  respondError(res, 500, "internal_error");
+}
+
+/** Parse a JSON object body, rejecting malformed JSON and non-object payload shapes. */
+function parseJsonObject(body: string): Record<string, unknown> | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
 }
 
 export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): http.Server {
@@ -61,8 +121,14 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
     }
   });
 
-  const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url ?? "/", `http://${urlHostForRequest(config.host)}:${config.port}`);
+  async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    let url: URL;
+    try {
+      url = new URL(req.url ?? "/", `http://${urlHostForRequest(config.host)}:${config.port}`);
+    } catch {
+      respondError(res, 400, "invalid_request");
+      return;
+    }
     const path = url.pathname;
 
     if (path === "/" && req.method === "GET") {
@@ -85,12 +151,13 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
 
     if (path === "/mcp" && req.method === "POST") {
       const body = await readBody(req);
-      let msg: { id?: unknown; method?: string; params?: Record<string, unknown> };
-      try {
-        msg = JSON.parse(body);
-      } catch {
-        res.writeHead(400);
-        res.end("{}");
+      const msg = parseJsonObject(body) as {
+        id?: unknown;
+        method?: string;
+        params?: Record<string, unknown>;
+      } | null;
+      if (!msg) {
+        respondError(res, 400, "invalid_request");
         return;
       }
       const reply = await handleMcpJsonRpc(engine, msg);
@@ -118,12 +185,9 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
 
     if (path === "/api/jobs" && req.method === "POST") {
       const body = await readBody(req);
-      let payload: Record<string, unknown>;
-      try {
-        payload = JSON.parse(body) as Record<string, unknown>;
-      } catch {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "invalid json" }));
+      const payload = parseJsonObject(body);
+      if (!payload) {
+        respondError(res, 400, "invalid_payload");
         return;
       }
       try {
@@ -171,12 +235,9 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
 
     if (path === "/api/notify-settings" && req.method === "PUT") {
       const body = await readBody(req);
-      let payload: { enabled?: unknown; recipient?: unknown };
-      try {
-        payload = JSON.parse(body) as { enabled?: unknown; recipient?: unknown };
-      } catch {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "invalid json" }));
+      const payload = parseJsonObject(body) as { enabled?: unknown; recipient?: unknown } | null;
+      if (!payload) {
+        respondError(res, 400, "invalid_payload");
         return;
       }
       const patch: { enabled?: boolean; recipient?: string | null } = {};
@@ -202,12 +263,10 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
 
     if (path === "/api/settings" && req.method === "PATCH") {
       const body = await readBody(req);
-      let payload: SettingsPatch & { notify?: { enabled?: unknown; recipient?: unknown } };
-      try {
-        payload = JSON.parse(body) as SettingsPatch;
-      } catch {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "invalid json" }));
+      const payload = parseJsonObject(body) as
+        (SettingsPatch & { notify?: { enabled?: unknown; recipient?: unknown } }) | null;
+      if (!payload) {
+        respondError(res, 400, "invalid_payload");
         return;
       }
       const patch: SettingsPatch = {};
@@ -301,12 +360,9 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
     const steerMatch = path.match(/^\/api\/jobs\/([^/]+)\/steer$/);
     if (steerMatch && req.method === "POST") {
       const body = await readBody(req);
-      let payload: { prompt?: unknown };
-      try {
-        payload = JSON.parse(body) as { prompt?: unknown };
-      } catch {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "invalid json" }));
+      const payload = parseJsonObject(body) as { prompt?: unknown } | null;
+      if (!payload) {
+        respondError(res, 400, "invalid_payload");
         return;
       }
       const prompt = String(payload.prompt ?? "");
@@ -349,6 +405,10 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
 
     res.writeHead(404);
     res.end("not found");
+  }
+
+  const server = http.createServer((req, res) => {
+    void handleRequest(req, res).catch((err) => handleRequestFailure(req, res, err));
   });
 
   server.listen(config.port, config.host);
