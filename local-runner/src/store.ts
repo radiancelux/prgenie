@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { JobInput, JobRecord, StartJobArgs } from "./types.js";
 import { shouldHideMergedJob } from "./ci.js";
-import { resolveJobTarget, normalizeJobType } from "./job-target.js";
+import { resolveJobTarget, normalizeJobType, type ResolvedJobTarget } from "./job-target.js";
+import { ValidationError } from "./validation-error.js";
 import { isDocsTemplateId } from "./docs-prompts.js";
 import { resolveJobTicket } from "./linear-ticket.js";
 import {
@@ -72,6 +73,7 @@ function mergeCiStatus(
 }
 
 export async function saveJob(dataDir: string, job: JobRecord): Promise<void> {
+  const loadedAt = job.updatedAt;
   job.updatedAt = new Date().toISOString();
   // Stale in-memory copies (CI poll, worktree cleanup) must not resurrect an archived job.
   if (await fileExists(archivedJobFile(dataDir, job.id))) return;
@@ -81,7 +83,10 @@ export async function saveJob(dataDir: string, job: JobRecord): Promise<void> {
     if (await fileExists(archivedJobFile(dataDir, job.id))) return;
   } else {
     job.ciStatus = mergeCiStatus(onDisk.ciStatus, job.ciStatus);
-    job.error = mergeJobErrors(onDisk.error, job.error);
+    // Only a copy older than disk merges errors; an up-to-date writer may clear `error`.
+    if (onDisk.updatedAt > (loadedAt ?? "")) {
+      job.error = mergeJobErrors(onDisk.error, job.error);
+    }
   }
   await atomicWriteJson(livePath, job);
 }
@@ -232,6 +237,21 @@ export async function restoreJobFromArchive(
   return { ok: true, job };
 }
 
+/** Canonical `owner/name` for a job target; the queue matches same-branch jobs on this key. */
+export async function resolveJobRepoSlug(
+  target: Pick<Extract<ResolvedJobTarget, { ok: true }>, "repoPath" | "remote" | "repoSlug">,
+): Promise<string> {
+  const slug = target.repoSlug;
+  if (target.remote?.trim()) {
+    return repoOwnerNameFromRemoteUrl(target.remote) ?? repoSlugFromPath(target.remote) ?? slug;
+  }
+  if (target.repoPath?.trim()) {
+    const fromOrigin = await repoOwnerNameFromGitOrigin(target.repoPath);
+    return fromOrigin ?? (slug.includes("/") ? slug : repoSlugFromPath(target.repoPath));
+  }
+  return slug;
+}
+
 export async function createJob(
   dataDir: string,
   args: StartJobArgs,
@@ -247,25 +267,19 @@ export async function createJob(
   const jobType = normalizeJobType(args);
   const target = resolveJobTarget(args, settings, defaults.config);
   if (!target.ok) {
-    throw new Error(target.error);
+    throw new ValidationError(target.error);
   }
   const id = randomUUID();
   const docsTemplate =
     args.docsTemplate && isDocsTemplateId(args.docsTemplate) ? args.docsTemplate : undefined;
   const promptFile = args.promptFile?.trim() || (jobType === "docs" ? "" : "");
   if (jobType === "code" && !promptFile) {
-    throw new Error("promptFile is required for code jobs");
+    throw new ValidationError("promptFile is required for code jobs");
   }
   if (jobType === "docs" && !promptFile && !docsTemplate) {
-    throw new Error("docs jobs need docsTemplate or promptFile");
+    throw new ValidationError("docs jobs need docsTemplate or promptFile");
   }
-  let slug = target.repoSlug;
-  if (target.remote?.trim()) {
-    slug = repoOwnerNameFromRemoteUrl(target.remote) ?? repoSlugFromPath(target.remote) ?? slug;
-  } else if (target.repoPath?.trim()) {
-    const fromOrigin = await repoOwnerNameFromGitOrigin(target.repoPath);
-    slug = fromOrigin ?? (slug.includes("/") ? slug : repoSlugFromPath(target.repoPath));
-  }
+  const slug = await resolveJobRepoSlug(target);
   const ticket = resolveJobTicket({
     branch: args.branch,
     ticketUrl: args.ticketUrl,

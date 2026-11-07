@@ -55,7 +55,19 @@ async function readPromptFile(filePath: string, fallback: string): Promise<strin
   }
 }
 
+const NOTIFY_DEDUP_MAX = 500;
+/** Last notified event per job, oldest evicted first (Map keeps insertion order). */
 const notifyDedup = new Map<string, string>();
+
+function rememberNotified(jobId: string, eventKey: string): void {
+  notifyDedup.delete(jobId);
+  notifyDedup.set(jobId, eventKey);
+  while (notifyDedup.size > NOTIFY_DEDUP_MAX) {
+    const oldest = notifyDedup.keys().next().value;
+    if (oldest === undefined) break;
+    notifyDedup.delete(oldest);
+  }
+}
 
 async function notify(
   config: RunnerConfig,
@@ -71,7 +83,7 @@ async function notify(
   if (eventKey) {
     const prev = notifyDedup.get(job.id);
     if (prev === eventKey) return;
-    notifyDedup.set(job.id, eventKey);
+    rememberNotified(job.id, eventKey);
   }
   const failureLike = /failed|stuck|watchdog/i.test(headline);
   if (failureLike) {
@@ -106,6 +118,16 @@ function watchdogPolicyForJob(job: JobRecord, settings: Awaited<ReturnType<typeo
     });
   }
   return settings.watchdog;
+}
+
+/** In-flight jobs keep the base ref recorded at creation, not the live Setup value. */
+function baseRefSettingsForJob(
+  job: JobRecord,
+  settings: Awaited<ReturnType<typeof loadSettings>>,
+): Awaited<ReturnType<typeof loadSettings>> {
+  const snap = job.effectiveSnapshot;
+  if (!snap) return settings;
+  return { ...settings, defaultBaseBranch: snap.baseRef };
 }
 
 async function runAgentStage(
@@ -235,6 +257,7 @@ export async function runJobLoop(
 
   try {
     const settings = await loadSettings(config.dataDir);
+    const baseSettings = baseRefSettingsForJob(job, settings);
     const driverEntry =
       findDriverEntry(settings, job.driverId) ?? findDriverEntry(settings, "cursor-agent");
     if (!driverEntry) {
@@ -263,7 +286,7 @@ export async function runJobLoop(
       job.worktreePath = repoRoot;
       await persistJob(config, job, control);
     } else {
-      wt = await ensureWorktree(repoRoot, job.id, job.input.branch, settings);
+      wt = await ensureWorktree(repoRoot, job.id, job.input.branch, baseSettings);
       job.worktreePath = wt;
       await persistJob(config, job, control);
     }
@@ -449,7 +472,7 @@ export async function runJobLoop(
 
       await setStage(config, job, "fixing", control, callbacks);
       if (!job.dryRun) {
-        await rebaseOntoBase(wt, settings);
+        await rebaseOntoBase(wt, baseSettings);
       }
       const fixDefault = isDocsJob(job) ? resolveDocsFixPrompt() : DEFAULT_FIX_PROMPT;
       const fixPrompt = await readPromptFile(job.input.fixPromptFile ?? "", fixDefault);

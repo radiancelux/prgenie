@@ -1,10 +1,17 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { RunnerConfig } from "./config.js";
-import { createJob, listJobs, loadJob } from "./store.js";
+import { createJob, listJobs, loadJob, saveJob } from "./store.js";
+import {
+  clearStaleSettlingMarkers,
+  isJobSettling,
+  markJobSettling,
+  readJobSettling,
+  settlingDir,
+} from "./job-settling.js";
 
 function testConfig(dataDir: string): RunnerConfig {
   return {
@@ -147,5 +154,49 @@ describe("job store", () => {
       createDefaults(dataDir),
     );
     assert.equal(job.input.repoPath, "/override/path");
+  });
+
+  it("an up-to-date writer can clear error; a stale copy still merges it", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-store-err-"));
+    const job = await createJob(
+      dataDir,
+      { repoPath: "/tmp/repo", branch: "feat/x", promptFile: "/tmp/prompt.md", dryRun: true },
+      createDefaults(dataDir),
+    );
+    const stale = (await loadJob(dataDir, job.id))!;
+    stale.updatedAt = "2000-01-01T00:00:00.000Z";
+
+    job.error = "first failure";
+    await saveJob(dataDir, job);
+    job.error = null;
+    await saveJob(dataDir, job);
+    assert.equal((await loadJob(dataDir, job.id))?.error, null);
+
+    job.error = "second failure";
+    await saveJob(dataDir, job);
+    stale.ciStatus = null;
+    await saveJob(dataDir, stale);
+    assert.equal((await loadJob(dataDir, job.id))?.error, "second failure");
+  });
+});
+
+describe("job settling markers", () => {
+  it("treats a marker from a dead process as stale and removes it", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-settle-"));
+    await markJobSettling(dataDir, "live");
+    assert.equal(await isJobSettling(dataDir, "live"), true);
+
+    await mkdir(settlingDir(dataDir), { recursive: true });
+    const dead = { jobId: "dead", pid: 2_147_483_646, since: new Date().toISOString() };
+    await writeFile(path.join(settlingDir(dataDir), "dead.json"), JSON.stringify(dead), "utf8");
+    assert.equal(await isJobSettling(dataDir, "dead"), false);
+    assert.equal(await readJobSettling(dataDir, "dead"), null);
+  });
+
+  it("clears this pid's leftover markers at startup", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-settle-boot-"));
+    await markJobSettling(dataDir, "leftover");
+    await clearStaleSettlingMarkers(dataDir);
+    assert.equal(await isJobSettling(dataDir, "leftover"), false);
   });
 });

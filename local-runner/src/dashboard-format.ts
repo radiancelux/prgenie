@@ -30,6 +30,7 @@ export const DOCS_STAGE_LABELS: Record<string, string> = {
 };
 
 export function dashboardStageLabel(job: JobRecord): string {
+  if (job.queueState && job.queueState.queued) return "queued";
   if (!isDocsJobRecord(job)) {
     if (job.stage === "reviewing") return `reviewing (r${job.reviewRound})`;
     return job.stage;

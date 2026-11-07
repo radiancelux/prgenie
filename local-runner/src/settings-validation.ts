@@ -22,6 +22,9 @@ import type {
   StageModelDefaults,
 } from "./settings.js";
 import { listBuiltInDriverIds } from "./drivers/built-in.js";
+import { ValidationError } from "./validation-error.js";
+
+export { ValidationError };
 
 const EXECUTABLE_DRIVERS = new Set(listBuiltInDriverIds());
 
@@ -37,14 +40,6 @@ const NOTIFY_EVENT_KEYS: readonly (keyof NotifyEventSettings)[] = [
   "onStuck",
   "onWatchdogExhausted",
 ];
-
-/** Caller supplied a bad value; HTTP maps this to 400, MCP to a tool error. */
-export class ValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ValidationError";
-  }
-}
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);

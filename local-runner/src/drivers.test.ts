@@ -7,6 +7,7 @@ import { getAgentDriver, listBuiltInDriverIds } from "./drivers/built-in.js";
 import { AgentRunner } from "./agent.js";
 import type { RunnerConfig } from "./config.js";
 import { createJob } from "./store.js";
+import { loadSettings, findDriverEntry } from "./settings.js";
 
 function testConfig(dataDir: string): RunnerConfig {
   return {
@@ -21,7 +22,6 @@ function testConfig(dataDir: string): RunnerConfig {
     defaultCodeRepoPath: null,
   };
 }
-import { loadSettings, findDriverEntry } from "./settings.js";
 
 describe("agent drivers", () => {
   it("lists built-in drivers with cursor-agent default id", () => {

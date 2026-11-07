@@ -43,20 +43,20 @@ export function clampInt(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.trunc(n)));
 }
 
-export function parseBoundedMs(raw: unknown, fallback: number, min: number, max: number): number {
+export function parseBoundedInt(raw: unknown, fallback: number, min: number, max: number): number {
   if (typeof raw !== "number" || !Number.isFinite(raw)) return fallback;
   return clampInt(raw, min, max);
 }
 
 export function parseWatchdogPolicy(raw: Partial<WatchdogPolicy> | undefined): WatchdogPolicy {
   return {
-    inactivityMs: parseBoundedMs(
+    inactivityMs: parseBoundedInt(
       raw?.inactivityMs,
       DEFAULT_WATCHDOG.inactivityMs,
       WATCHDOG_INACTIVITY_MS_MIN,
       WATCHDOG_INACTIVITY_MS_MAX,
     ),
-    stageCapMs: parseBoundedMs(
+    stageCapMs: parseBoundedInt(
       raw?.stageCapMs,
       DEFAULT_WATCHDOG.stageCapMs,
       WATCHDOG_STAGE_CAP_MS_MIN,

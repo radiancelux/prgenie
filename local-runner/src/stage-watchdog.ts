@@ -7,6 +7,7 @@ export type StageWatchdogOptions = {
   policy: WatchdogPolicy;
   now?: WatchdogClock;
   tickMs?: number;
+  /** How long a killed child may take to exit before the watchdog stops waiting for it. */
   childGraceMs?: number;
   killChild: () => void;
   onStall?: (reason: string) => void;
@@ -31,36 +32,45 @@ export type StageWatchdogResult<T> =
   | { ok: true; value: T; recoveryAttempts: number }
   | { ok: false; reason: string; recoveryAttempts: number };
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 export type StageWatchdogMonitor = {
   onLine: (line: string) => void;
-  awaitRun: <T>(run: Promise<T>) => Promise<{ value?: T; stallReason: string }>;
+  awaitRun: <T>(
+    run: Promise<T>,
+  ) => Promise<{ value?: T; stallReason: string; abandoned?: boolean }>;
   stop: () => void;
 };
 
 export function startStageWatchdogMonitor(opts: StageWatchdogOptions): StageWatchdogMonitor {
   const now = opts.now ?? Date.now;
   const tickMs = opts.tickMs ?? 1_000;
+  const childGraceMs = opts.childGraceMs ?? WATCHDOG_CHILD_GRACE_MS;
   const stageStarted = now();
   let lastActivity = stageStarted;
   let stallReason = "";
+  let killedAt: number | null = null;
   let running = true;
+  let abandon: (() => void) | null = null;
+  const abandoned = new Promise<void>((resolve) => {
+    abandon = resolve;
+  });
 
   const timer = setInterval(() => {
     if (!running) return;
     const t = now();
-    if (t - stageStarted >= opts.policy.stageCapMs) {
-      stallReason = `stage exceeded hard cap (${opts.policy.stageCapMs}ms)`;
-      opts.killChild();
+    if (killedAt != null) {
+      // The child ignored the kill (e.g. trapped SIGTERM): stop waiting so the cap is enforced.
+      if (t - killedAt >= childGraceMs) abandon?.();
       return;
     }
-    if (t - lastActivity >= opts.policy.inactivityMs) {
+    if (t - stageStarted >= opts.policy.stageCapMs) {
+      stallReason = `stage exceeded hard cap (${opts.policy.stageCapMs}ms)`;
+    } else if (t - lastActivity >= opts.policy.inactivityMs) {
       stallReason = `no meaningful agent activity for ${opts.policy.inactivityMs}ms`;
-      opts.killChild();
+    } else {
+      return;
     }
+    killedAt = t;
+    opts.killChild();
   }, tickMs);
   if (typeof timer === "object" && "unref" in timer) timer.unref();
 
@@ -70,8 +80,15 @@ export function startStageWatchdogMonitor(opts: StageWatchdogOptions): StageWatc
     },
     async awaitRun<T>(run: Promise<T>) {
       try {
-        const value = await run;
-        return { value, stallReason };
+        const settled = await Promise.race([
+          run.then((value) => ({ value })),
+          abandoned.then(() => null),
+        ]);
+        if (!settled) {
+          run.catch(() => undefined);
+          return { stallReason, abandoned: true };
+        }
+        return { value: settled.value, stallReason };
       } catch (err) {
         if (stallReason) return { stallReason };
         throw err;
@@ -94,7 +111,6 @@ export async function runAgentWithWatchdog<T>(
   opts: StageWatchdogOptions,
   runOnce: (onLine: (line: string) => void) => Promise<T>,
 ): Promise<StageWatchdogResult<T>> {
-  const childGraceMs = opts.childGraceMs ?? WATCHDOG_CHILD_GRACE_MS;
   let recoveryAttempts = 0;
   const maxRecovery = opts.policy.recoveryAttempts;
 
@@ -107,7 +123,6 @@ export async function runAgentWithWatchdog<T>(
       if (recoveryAttempts < maxRecovery) {
         recoveryAttempts += 1;
         opts.onRecovery?.(recoveryAttempts, stallReason);
-        await sleep(childGraceMs);
         continue;
       }
       return { ok: false, reason: stallReason, recoveryAttempts };

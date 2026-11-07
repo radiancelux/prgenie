@@ -9,6 +9,7 @@ import { RunnerEngine } from "./engine.js";
 import { handleStartJobRequest, startHttpServer } from "./server.js";
 import { handleMcpJsonRpc, handleRunnerTool } from "./mcp-handlers.js";
 import { ValidationError } from "./settings-validation.js";
+import { BranchConflictError } from "./job-queue.js";
 import { archivedJobFile, archivedLogFile, jobFile, jobLogFile } from "./paths.js";
 import { saveJob } from "./store.js";
 import type { JobStage } from "./types.js";
@@ -662,6 +663,27 @@ describe("start job validation parity (HTTP POST /api/jobs vs MCP start_job)", (
     assert.deepEqual(captured[0], captured[1]);
     assert.equal((captured[0] as { branch: string }).branch, "feat/parity");
     assert.equal((captured[0] as { maxRounds: number }).maxRounds, 10);
+  });
+
+  it("maps branch conflicts to 409 and internal start failures to 500", async () => {
+    const conflict = await handleStartJobRequest(
+      {
+        startJob: async () => {
+          throw new BranchConflictError("another active job is already using branch feat/x");
+        },
+      } as unknown as RunnerEngine,
+      { ...base },
+    );
+    assert.equal(conflict.status, 409);
+    const internal = await handleStartJobRequest(
+      {
+        startJob: async () => {
+          throw new Error("EACCES: permission denied");
+        },
+      } as unknown as RunnerEngine,
+      { ...base },
+    );
+    assert.equal(internal.status, 500);
   });
 
   it("engine.startJob enforces the same bounds for direct callers", async () => {

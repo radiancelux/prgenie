@@ -17,20 +17,34 @@ import {
   listJobsForDisplay,
   loadArchivedJob,
   loadJob,
+  resolveJobRepoSlug,
   saveJob,
 } from "./store.js";
 import type { JobRecord } from "./types.js";
 import type { JobEvent, StartJobArgs } from "./types.js";
 import { EventEmitter } from "node:events";
 import { loadSettings } from "./settings.js";
-import { countActiveJobs, decideJobStart, listJobsForQueue, nextQueuedJob } from "./job-queue.js";
-import { clearJobSettling, markJobSettling } from "./job-settling.js";
-import { normalizeStartJobArgs } from "./settings-validation.js";
+import {
+  BranchConflictError,
+  decideJobStart,
+  listJobsForQueue,
+  runnableQueuedJobs,
+} from "./job-queue.js";
+import {
+  clearJobSettling,
+  clearStaleSettlingMarkers,
+  isJobSettling,
+  markJobSettling,
+} from "./job-settling.js";
+import { normalizeStartJobArgs, ValidationError } from "./settings-validation.js";
+import { resolveJobTarget } from "./job-target.js";
 
 const ACTIVE_STAGES = new Set(["building", "reviewing", "fixing"]);
 
 export class RunnerEngine extends EventEmitter {
   private running = new Map<string, Promise<void>>();
+  /** Serializes queue decisions so concurrent starts cannot both pass the branch/cap check. */
+  private queueLock: Promise<unknown> = Promise.resolve();
   readonly ciWatcher: CiWatcher;
   /** Shared with in-flight runJobLoop — steer/stop must not reload and clobber the live JobRecord. */
   readonly jobControls = new Map<string, JobControl>();
@@ -49,7 +63,14 @@ export class RunnerEngine extends EventEmitter {
     return control;
   }
 
+  private withQueueLock<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.queueLock.then(fn, fn);
+    this.queueLock = next.catch(() => undefined);
+    return next;
+  }
+
   async init(): Promise<void> {
+    await clearStaleSettlingMarkers(this.config.dataDir);
     const jobs = await listJobs(this.config.dataDir);
     for (const job of jobs) {
       if (ACTIVE_STAGES.has(job.stage) && !job.stopRequested && !job.queueState?.queued) {
@@ -61,21 +82,25 @@ export class RunnerEngine extends EventEmitter {
   }
 
   async startJob(args: StartJobArgs): Promise<JobRecord> {
-    const job = await this.createJobRecord(normalizeStartJobArgs({ ...args }));
-    if (!job.queueState?.queued) {
-      this.schedule(job.id);
-    }
+    const normalized = normalizeStartJobArgs({ ...args });
+    const job = await this.withQueueLock(async () => {
+      const created = await this.createJobRecord(normalized);
+      if (!created.queueState?.queued) this.schedule(created.id);
+      return created;
+    });
     this.emitJobsChanged();
     return job;
   }
 
   private async createJobRecord(args: StartJobArgs): Promise<JobRecord> {
     const settings = await loadSettings(this.config.dataDir);
+    const target = resolveJobTarget(args, settings, this.config);
+    if (!target.ok) throw new ValidationError(target.error);
+    const repoSlug = await resolveJobRepoSlug(target);
     const jobs = await listJobsForQueue(this.config.dataDir);
-    const repoKey = args.repoPath?.trim() || args.remote?.trim() || "default";
-    const decision = decideJobStart(jobs, args.branch, repoKey, settings.maxActiveJobs);
+    const decision = decideJobStart(jobs, args.branch, repoSlug, settings.maxActiveJobs);
     if (decision.action === "reject") {
-      throw new Error(decision.reason);
+      throw new BranchConflictError(decision.reason);
     }
     const job = await createJob(this.config.dataDir, args, {
       model: this.config.defaultModel,
@@ -93,16 +118,20 @@ export class RunnerEngine extends EventEmitter {
     return job;
   }
 
+  /** Start queued jobs until every free slot is used. */
   private async drainQueue(): Promise<void> {
-    const settings = await loadSettings(this.config.dataDir);
-    const jobs = await listJobsForQueue(this.config.dataDir);
-    if (countActiveJobs(jobs) >= settings.maxActiveJobs) return;
-    const next = nextQueuedJob(jobs);
-    if (!next) return;
-    next.queueState = undefined;
-    await saveJob(this.config.dataDir, next);
-    this.schedule(next.id);
-    this.emitJobsChanged();
+    const started = await this.withQueueLock(async () => {
+      const settings = await loadSettings(this.config.dataDir);
+      const jobs = await listJobsForQueue(this.config.dataDir);
+      const next = runnableQueuedJobs(jobs, settings.maxActiveJobs);
+      for (const job of next) {
+        job.queueState = undefined;
+        await saveJob(this.config.dataDir, job);
+        this.schedule(job.id);
+      }
+      return next.length;
+    });
+    if (started) this.emitJobsChanged();
   }
 
   /** List-level change (job added, archived, restored) for dashboards subscribed to /api/events. */
@@ -163,13 +192,14 @@ export class RunnerEngine extends EventEmitter {
   }
 
   async archive(jobId: string): Promise<ArchiveJobResult> {
-    const result = await archiveJob(this.config, jobId, {
-      isRunning: (id) => this.isRunning(id),
-      isSettling: async (id) =>
-        (await import("./job-settling.js")).isJobSettling(this.config.dataDir, id),
-      dataDir: this.config.dataDir,
-      log: (msg) => console.warn(`[archive] ${msg}`),
-    });
+    const result = await this.withQueueLock(() =>
+      archiveJob(this.config, jobId, {
+        isRunning: (id) => this.isRunning(id),
+        isSettling: (id) => isJobSettling(this.config.dataDir, id),
+        dataDir: this.config.dataDir,
+        log: (msg) => console.warn(`[archive] ${msg}`),
+      }),
+    );
     if (result.ok) this.emitJobsChanged();
     return result;
   }
@@ -184,8 +214,7 @@ export class RunnerEngine extends EventEmitter {
     const result = await clearFailedJobs(this.config, {
       includeStuckStopped: opts.includeStuckStopped,
       isRunning: (id) => this.isRunning(id),
-      isSettling: async (id) =>
-        (await import("./job-settling.js")).isJobSettling(this.config.dataDir, id),
+      isSettling: (id) => isJobSettling(this.config.dataDir, id),
       dataDir: this.config.dataDir,
       log: (msg) => console.warn(`[archive] ${msg}`),
     });
@@ -212,11 +241,19 @@ export class RunnerEngine extends EventEmitter {
   }
 
   async stop(jobId: string): Promise<JobRecord | null> {
-    const job = await loadJob(this.config.dataDir, jobId);
-    if (!job) return null;
-    job.stopRequested = true;
-    await saveJob(this.config.dataDir, job);
+    const job = await this.withQueueLock(async () => {
+      const loaded = await loadJob(this.config.dataDir, jobId);
+      if (!loaded) return null;
+      loaded.stopRequested = true;
+      if (loaded.queueState?.queued && !this.isRunning(jobId)) {
+        loaded.queueState = undefined;
+        loaded.stage = "stopped";
+      }
+      await saveJob(this.config.dataDir, loaded);
+      return loaded;
+    });
     this.jobControls.get(jobId)?.requestStop();
+    if (job?.stage === "stopped") this.emitJobsChanged();
     return job;
   }
 }

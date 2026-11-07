@@ -12,7 +12,7 @@ import { isJobSettling } from "./job-settling.js";
 import type { JobRecord, JobStage } from "./types.js";
 import { tryRemoveJobWorktree, type TryCleanupResult } from "./worktree-cleanup.js";
 
-/** Stages a job may be archived from; building/reviewing/fixing are still running. */
+/** Stages a job may be archived from; building/reviewing/fixing are running unless still queued. */
 export const ARCHIVABLE_STAGES: ReadonlySet<JobStage> = new Set<JobStage>([
   "failed",
   "stuck",
@@ -127,7 +127,8 @@ export async function archiveJob(
   }
   const job = await loadJob(config.dataDir, id);
   if (!job) return { ok: false, code: "not_found", error: "job not found" };
-  if (!ARCHIVABLE_STAGES.has(job.stage) || (await jobStillRunning(id, deps))) {
+  const archivable = ARCHIVABLE_STAGES.has(job.stage) || Boolean(job.queueState?.queued);
+  if (!archivable || (await jobStillRunning(id, deps))) {
     return {
       ok: false,
       code: "running",

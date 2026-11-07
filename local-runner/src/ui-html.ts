@@ -445,13 +445,14 @@ export function runnerUiHtml(
       return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
     }
 
-    /** Remove for terminal jobs, Restore for archived ones, nothing while the job is running. */
+    /** Remove for terminal or queued jobs, Restore for archived ones, nothing while running. */
     function fmtActions(j) {
       const label = escapeAttr(dashFmt.jobAgentDisplayLabel(j).label);
       if (j.archivedAt) {
         return '<button type="button" data-action="restore" class="' + ACTION_BTN_CLASS + ' border-zinc-600 bg-zinc-800 text-zinc-100" aria-label="Restore ' + label + '">Restore</button>';
       }
-      if (!TERMINAL_STAGES.has(j.stage)) return "";
+      const queued = Boolean(j.queueState && j.queueState.queued);
+      if (!TERMINAL_STAGES.has(j.stage) && !queued) return "";
       return '<button type="button" data-action="archive" class="' + ACTION_BTN_CLASS + ' border-red-900 bg-red-950/40 text-red-100" aria-label="Remove ' + label + '">Remove</button>';
     }
 

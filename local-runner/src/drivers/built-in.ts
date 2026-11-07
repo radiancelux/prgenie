@@ -7,7 +7,8 @@ import type {
   AgentDriverRunOptions,
   AgentDriverRunResult,
 } from "./driver-types.js";
-import { binaryOnPath } from "./driver-types.js";
+import { binaryOnPath, escalatingKill } from "./driver-types.js";
+import { WATCHDOG_CHILD_GRACE_MS } from "../runner-policy.js";
 
 async function runSpawnedCli(
   binary: string,
@@ -17,9 +18,7 @@ async function runSpawnedCli(
   outputFormat: "stream-json" | "text",
 ): Promise<{ result: Promise<AgentDriverRunResult>; handle: AgentDriverHandle }> {
   let child: ChildProcess | null = null;
-  const handle: AgentDriverHandle = {
-    kill: () => child?.kill("SIGTERM"),
-  };
+  const handle = escalatingKill(() => child, WATCHDOG_CHILD_GRACE_MS);
 
   const result = new Promise<AgentDriverRunResult>((resolve, reject) => {
     child = spawn(binary, args, {
@@ -181,7 +180,7 @@ export const localModelDriver: AgentDriver = {
     const env = { ...process.env, OLLAMA_HOST: endpoint.replace(/\/$/, "") };
     const args = ["run", opts.model, opts.prompt];
     let child: ChildProcess | null = null;
-    const handle: AgentDriverHandle = { kill: () => child?.kill("SIGTERM") };
+    const handle = escalatingKill(() => child, WATCHDOG_CHILD_GRACE_MS);
 
     const result = new Promise<AgentDriverRunResult>((resolve, reject) => {
       child = spawn(binary, args, {

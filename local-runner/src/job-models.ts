@@ -2,7 +2,7 @@ import type { RunnerConfig } from "./config.js";
 import type { JobInput, JobRecord } from "./types.js";
 import { BUILTIN_FIX_MODEL } from "./runner-policy.js";
 import { resolveDefaultModel, type RunnerSettings, type StageModelDefaults } from "./settings.js";
-import { listBuiltInDriverIds } from "./drivers/built-in.js";
+import { ValidationError } from "./validation-error.js";
 
 export type ResolvedStageModels = {
   build: string;
@@ -16,7 +16,8 @@ export type ResolvedStageModelsWithSources = ResolvedStageModels & {
   sources: Record<keyof ResolvedStageModels, ModelSource>;
 };
 
-const AUTO_SUPPORTED_DRIVERS = new Set(listBuiltInDriverIds());
+/** Only cursor-agent resolves the `auto` model id; claude/ollama would receive it literally. */
+const AUTO_SUPPORTED_DRIVERS = new Set(["cursor-agent"]);
 
 export function driverSupportsAuto(driverId: string): boolean {
   return AUTO_SUPPORTED_DRIVERS.has(driverId.trim());
@@ -55,7 +56,9 @@ export function resolveStageModelsForJob(
   const defaults = settings.stageModels;
   const settingsBuild = defaults.build?.trim() || settings.defaultModel?.trim() || envBuild;
   const settingsReview = defaults.review?.trim() || settingsBuild;
-  const settingsFix = defaults.fix?.trim() || BUILTIN_FIX_MODEL;
+  const configuredFix = defaults.fix?.trim() || BUILTIN_FIX_MODEL;
+  const settingsFix =
+    configuredFix === "auto" && !driverSupportsAuto(driverId) ? settingsBuild : configuredFix;
 
   if (input.model?.trim()) {
     const m = input.model.trim();
@@ -78,7 +81,9 @@ export function resolveStageModelsForJob(
     ["review", reviewR.value],
   ] as const) {
     if (pair[1] === "auto" && !driverSupportsAuto(driverId)) {
-      throw new Error(`driver ${driverId} does not support model "auto" for ${pair[0]} stage`);
+      throw new ValidationError(
+        `driver ${driverId} does not support model "auto" for ${pair[0]} stage`,
+      );
     }
   }
 

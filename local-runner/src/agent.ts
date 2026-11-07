@@ -26,11 +26,13 @@ export class AgentRunner extends EventEmitter {
     };
 
     const { result, handle } = await driver.start({ ...opts, driver: opts.driverEntry }, hooks);
-    this.killFn = () => handle.kill();
+    const kill = () => handle.kill();
+    this.killFn = kill;
     try {
       return await result;
     } finally {
-      this.killFn = null;
+      // An abandoned run can settle after its retry started; keep the retry's kill hook.
+      if (this.killFn === kill) this.killFn = null;
     }
   }
 

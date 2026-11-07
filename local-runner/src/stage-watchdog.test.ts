@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +15,7 @@ import { JobControl } from "./job-control.js";
 import { runJobLoop } from "./job-runner.js";
 import { saveSettings } from "./settings.js";
 import { createJob, loadJob } from "./store.js";
+import { escalatingKill } from "./drivers/driver-types.js";
 
 /** First run stays silent until killed; every later run reports progress and exits 0. */
 class SilentOnceRunner extends AgentRunner {
@@ -131,6 +133,45 @@ describe("stage watchdog", () => {
     assert.deepEqual(recoveries, [1]);
     assert.equal(runner.calls, 2);
     assert.ok(runner.kills >= 1);
+  });
+
+  it("gives up on a child that ignores kill once the grace period expires", async () => {
+    let now = 0;
+    let kills = 0;
+    const clock = setInterval(() => {
+      now += 25;
+    }, 5);
+    const res = await runAgentWithWatchdog(
+      {
+        policy: { inactivityMs: 3_600_000, stageCapMs: 100, recoveryAttempts: 0 },
+        now: () => now,
+        tickMs: 5,
+        childGraceMs: 50,
+        killChild: () => {
+          kills += 1;
+        },
+      },
+      () => new Promise<never>(() => undefined),
+    ).finally(() => clearInterval(clock));
+    assert.equal(res.ok, false);
+    if (!res.ok) assert.match(res.reason, /hard cap/);
+    assert.equal(kills, 1, "kill is sent once, not re-sent every tick");
+  });
+
+  it("escalatingKill sends SIGKILL to a child that traps SIGTERM", async () => {
+    const child = spawn(
+      process.execPath,
+      ["-e", 'process.on("SIGTERM", () => {}); console.log("ready"); setInterval(() => {}, 1000);'],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+    await new Promise<void>((resolve) => child.stdout.once("data", () => resolve()));
+    const exited = new Promise<NodeJS.Signals | null>((resolve) =>
+      child.once("exit", (_code, signal) => resolve(signal)),
+    );
+    const handle = escalatingKill(() => child, 50);
+    handle.kill();
+    handle.kill();
+    assert.equal(await exited, "SIGKILL");
   });
 
   it("job proceeds to approved after the watchdog recovers a silent build stage", async () => {

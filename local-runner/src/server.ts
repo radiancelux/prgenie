@@ -16,6 +16,7 @@ import {
   parseSettingsPatch,
   ValidationError,
 } from "./settings-validation.js";
+import { BranchConflictError } from "./job-queue.js";
 import { runnerUiHtml } from "./ui-html.js";
 import { setupUiHtml } from "./setup-ui-html.js";
 import {
@@ -41,10 +42,10 @@ const ARCHIVE_ERROR_STATUS = {
   collision: 409,
 } as const;
 
-/** Validation is 400, an optimistic-concurrency miss is 409, anything else is a server fault. */
+/** Validation is 400, a settings or branch conflict is 409, anything else is a server fault. */
 function errorStatus(err: unknown): number {
   if (err instanceof ValidationError) return 400;
-  if (err instanceof SettingsConflictError) return 409;
+  if (err instanceof SettingsConflictError || err instanceof BranchConflictError) return 409;
   return 500;
 }
 
@@ -56,7 +57,7 @@ export async function handleStartJobRequest(
   try {
     return { status: 201, body: await engine.startJob(normalizeStartJobArgs(payload)) };
   } catch (err) {
-    return { status: 400, body: { error: safeHandlerMessage(err) } };
+    return { status: errorStatus(err), body: { error: safeHandlerMessage(err) } };
   }
 }
 

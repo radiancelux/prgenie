@@ -8,6 +8,11 @@ import {
   BUILTIN_FIX_MODEL,
   DEFAULT_WATCHDOG,
   MAX_ACTIVE_JOBS_DEFAULT,
+  MAX_ACTIVE_JOBS_MAX,
+  MAX_ACTIVE_JOBS_MIN,
+  MAX_ROUNDS_MAX,
+  MAX_ROUNDS_MIN,
+  parseBoundedInt,
   parseWatchdogPolicy,
 } from "./runner-policy.js";
 import { normalizeStageModels } from "./job-models.js";
@@ -197,18 +202,17 @@ function mergeDrivers(existing: DriverEntry[], patch: DriverEntry[] | undefined)
   return [...byId.values()];
 }
 
-function migrateLegacySingleModel(raw: Partial<RunnerSettings>): StageModelDefaults {
+/** Unset build/review stay null so they keep inheriting `defaultModel` (the Setup UI control). */
+function parseStageModels(raw: Partial<RunnerSettings>): StageModelDefaults {
   const stage = normalizeStageModels(raw.stageModels);
-  if (stage.build || stage.review) return stage;
-  if (typeof raw.defaultModel === "string" && raw.defaultModel.trim()) {
-    return { build: raw.defaultModel.trim(), review: null, fix: stage.fix ?? BUILTIN_FIX_MODEL };
-  }
-  return { ...DEFAULT_STAGE_MODELS, ...stage };
+  if (raw.stageModels?.fix === undefined) stage.fix = DEFAULT_STAGE_MODELS.fix;
+  return stage;
 }
 
+/** Lenient on-disk parse: one hand-edited bad value must not reset every other setting. */
 function parseSettings(raw: Partial<RunnerSettings>): RunnerSettings {
   const version = raw.version === 2 || raw.defaultMaxRounds !== undefined ? 2 : 1;
-  const stageModels = migrateLegacySingleModel(raw);
+  const stageModels = parseStageModels(raw);
   return {
     version: version === 2 ? 2 : 1,
     configured: Boolean(raw.configured),
@@ -234,10 +238,20 @@ function parseSettings(raw: Partial<RunnerSettings>): RunnerSettings {
       typeof raw.defaultDriver === "string" && raw.defaultDriver.trim()
         ? raw.defaultDriver.trim()
         : "cursor-agent",
-    defaultMaxRounds: validateDefaultMaxRounds(raw.defaultMaxRounds),
+    defaultMaxRounds: parseBoundedInt(
+      raw.defaultMaxRounds,
+      BUILTIN_DEFAULT_MAX_ROUNDS,
+      MAX_ROUNDS_MIN,
+      MAX_ROUNDS_MAX,
+    ),
     stageModels,
     watchdog: parseWatchdogPolicy(raw.watchdog),
-    maxActiveJobs: validateMaxActiveJobs(raw.maxActiveJobs, MAX_ACTIVE_JOBS_DEFAULT),
+    maxActiveJobs: parseBoundedInt(
+      raw.maxActiveJobs,
+      MAX_ACTIVE_JOBS_DEFAULT,
+      MAX_ACTIVE_JOBS_MIN,
+      MAX_ACTIVE_JOBS_MAX,
+    ),
     defaultBaseBranch:
       typeof raw.defaultBaseBranch === "string" && raw.defaultBaseBranch.trim()
         ? raw.defaultBaseBranch.trim()
