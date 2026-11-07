@@ -8,10 +8,60 @@ import {
   firstMarkdownHeading,
   humanizeKebabSlug,
   jobAgentDisplayLabel,
+  jobTicketLinks,
   linearSlugTitleFromTicketUrl,
   resolveJobTitle,
   stripRadIssuePrefix,
 } from "./job-display.js";
+
+describe("jobTicketLinks", () => {
+  const issues = "https://github.com/example-org/example-app/issues";
+
+  it("returns nothing without an http(s) ticket", () => {
+    assert.deepEqual(jobTicketLinks({ title: "#5 thing", ticketUrl: null }), []);
+    assert.deepEqual(jobTicketLinks({ ticketUrl: "javascript:alert(1)" }), []);
+    assert.deepEqual(jobTicketLinks({ ticketUrls: ["ftp://x/1", " "] }), []);
+  });
+
+  it("labels GitHub issues by number and Linear-style URLs by issue id", () => {
+    assert.deepEqual(jobTicketLinks({ ticketUrl: `${issues}/142`, title: "Continue job" }), [
+      { url: `${issues}/142`, label: "#142" },
+    ]);
+    assert.deepEqual(
+      jobTicketLinks({ ticketUrl: "https://example.com/issue/ISSUE-319/some-slug" }),
+      [{ url: "https://example.com/issue/ISSUE-319/some-slug", label: "ISSUE-319" }],
+    );
+    assert.deepEqual(
+      jobTicketLinks({ ticketUrl: "https://tracker.example.com/t/9", linearIssue: "ISSUE-9" }),
+      [{ url: "https://tracker.example.com/t/9", label: "ISSUE-9" }],
+    );
+  });
+
+  it("merges ticketUrls after the primary, without duplicates", () => {
+    assert.deepEqual(
+      jobTicketLinks({
+        ticketUrl: `${issues}/143`,
+        ticketUrls: [`${issues}/143`, ` ${issues}/150 `, "https://tracker.example.com/t/2"],
+      }).map((t) => t.label),
+      ["#143", "#150", "ticket 3"],
+    );
+  });
+
+  it("links leading #n title refs in the primary ticket's GitHub repo", () => {
+    assert.deepEqual(
+      jobTicketLinks({ ticketUrl: `${issues}/143`, title: "#143 #144 npm package #9" }),
+      [
+        { url: `${issues}/143`, label: "#143" },
+        { url: `${issues}/144`, label: "#144" },
+      ],
+    );
+    assert.equal(
+      jobTicketLinks({ ticketUrl: "https://example.com/issue/ISSUE-1", title: "#2 x" }).length,
+      1,
+      "only GitHub tickets imply a repo",
+    );
+  });
+});
 
 describe("linearSlugTitleFromTicketUrl", () => {
   it("humanizes slug after issue id", () => {

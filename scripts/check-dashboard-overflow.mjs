@@ -109,10 +109,30 @@ const job = {
   dryRun: false,
   archivedAt: null,
 };
-const jobs = [job, { ...job, id: "bbbbbbbb-cccc-dddd-eeee-ffffffffffff", stage: "building" }];
+const issues = "https://github.com/example-org/synthetic-app/issues";
+/** One ticket (with Remove), several tickets (with Remove), and no ticket (running). */
+const jobs = [
+  job,
+  {
+    ...job,
+    id: "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+    stage: "stopped",
+    linearIssue: null,
+    title: `#901 #902 ${job.title}`,
+    ticketUrl: `${issues}/901`,
+    ticketUrls: [`${issues}/901`, `${issues}/903`, longUrl],
+  },
+  {
+    ...job,
+    id: "cccccccc-dddd-eeee-ffff-000000000000",
+    stage: "building",
+    linearIssue: null,
+    ticketUrl: null,
+  },
+];
 
 const widths = [
-  320, 360, 390, 414, 600, 640, 700, 767, 768, 800, 900, 1000, 1023, 1024, 1100, 1280, 1440,
+  320, 360, 390, 414, 460, 600, 640, 700, 767, 768, 800, 900, 1000, 1023, 1024, 1100, 1280, 1440,
 ];
 /** Also force the table layout below its breakpoint, so the table's own constraints are covered. */
 const forcedTableWidths = [768, 1024];
@@ -166,7 +186,20 @@ async function measure(page, width) {
   const collapsedTableWidth = await page.evaluate(tableWidth);
   await toggle.click();
   await page.locator("#logSteps .agent-tool-result").waitFor({ state: "attached" });
+  const ticketMenu = page.locator("#jobCards [data-ticket-menu]").locator("visible=true");
+  if (await ticketMenu.count()) await ticketMenu.first().click();
   const m = await page.evaluate(() => {
+    const shown = (el) => el.offsetParent !== null;
+    const ticketRects = [...document.querySelectorAll("#jobCards .job-ticket")]
+      .filter(shown)
+      .map((el) => el.getBoundingClientRect());
+    const titleLines = [...document.querySelectorAll("#jobCards .job-card-title")]
+      .filter(shown)
+      .map((t) =>
+        Math.round(t.getBoundingClientRect().height / parseFloat(getComputedStyle(t).lineHeight)),
+      );
+    const list = [...document.querySelectorAll("#jobCards .job-ticket-list")].find(shown);
+    const listRect = list && list.getBoundingClientRect();
     for (const d of document.querySelectorAll("details")) d.open = true;
     for (const id of ["logSteps", "logRaw"]) {
       const el = document.getElementById(id);
@@ -187,6 +220,10 @@ async function measure(page, width) {
         (b) => b.offsetParent !== null,
       ).length,
       layout: panel.closest("tr") ? "table" : "card",
+      ticketTargets: ticketRects.length,
+      smallTicketTargets: ticketRects.filter((r) => r.width < 44 || r.height < 44).length,
+      maxTitleLines: Math.max(0, ...titleLines),
+      ticketList: listRect ? [Math.round(listRect.left), Math.round(listRect.right)] : null,
     };
   });
   return { ...m, collapsedTableWidth, expandedTableWidth: await page.evaluate(tableWidth) };
@@ -206,14 +243,29 @@ try {
       // the expanded detail must never widen it or the page.
       const panelFits =
         forceTable || (m.panelLeft >= 0 && m.panelRight <= m.clientWidth && !m.tableScrolls);
+      // Cards: a 44px icon for the one-ticket and several-ticket jobs, none for the third; titles
+      // clamp at two lines; the open ticket list stays inside the viewport.
+      const cardHeaderOk =
+        m.layout !== "card" ||
+        (m.ticketTargets === 2 &&
+          m.smallTicketTargets === 0 &&
+          m.maxTitleLines <= 2 &&
+          m.ticketList !== null &&
+          m.ticketList[0] >= 0 &&
+          m.ticketList[1] <= m.clientWidth);
       const ok =
         m.scrollWidth <= m.clientWidth &&
         panelFits &&
+        cardHeaderOk &&
         m.expandedTableWidth <= m.collapsedTableWidth &&
         m.expanded === 1;
       const label = `${width}px ${m.layout}${forceTable ? " (forced)" : ""}`;
+      const cardInfo =
+        m.layout === "card"
+          ? ` tickets=${m.ticketTargets} small=${m.smallTicketTargets} titleLines<=${m.maxTitleLines} list=${JSON.stringify(m.ticketList)}`
+          : "";
       console.log(
-        `${ok ? "ok  " : "FAIL"} ${label}: scrollWidth=${m.scrollWidth} clientWidth=${m.clientWidth} panel=[${m.panelLeft},${m.panelRight}] table=${m.collapsedTableWidth}->${m.expandedTableWidth}`,
+        `${ok ? "ok  " : "FAIL"} ${label}: scrollWidth=${m.scrollWidth} clientWidth=${m.clientWidth} panel=[${m.panelLeft},${m.panelRight}] table=${m.collapsedTableWidth}->${m.expandedTableWidth}${cardInfo}`,
       );
       if (!ok) failures.push(label);
     }

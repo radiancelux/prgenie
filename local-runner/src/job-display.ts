@@ -86,6 +86,55 @@ export function jobAgentDisplayLabel(job: JobAgentDisplayFields): {
   return { label: full, tooltip: full };
 }
 
+export type JobTicketLink = { url: string; label: string };
+
+export type JobTicketFields = {
+  title?: string | null;
+  linearIssue?: string | null;
+  ticketUrl?: string | null;
+  ticketUrls?: string[] | null;
+};
+
+/** `#143` for GitHub issues/PRs, the issue id for Linear-style `/issue/ABC-12` URLs. */
+export function ticketLinkLabel(url: string): string | null {
+  const gh = url.match(/^https?:\/\/github\.com\/[^/]+\/[^/]+\/(?:issues|pull)\/(\d+)(?:[/?#]|$)/i);
+  if (gh) return "#" + gh[1];
+  const issue = url.match(/\/issue\/([a-z]+-\d+)(?:[/?#]|$)/i);
+  return issue ? issue[1].toUpperCase() : null;
+}
+
+/**
+ * Every http(s) ticket a job covers, primary first. A GitHub job titled `#143 #144 …` also links
+ * the leading `#n` issues in its primary ticket's repo.
+ */
+export function jobTicketLinks(job: JobTicketFields): JobTicketLink[] {
+  const urls: string[] = [];
+  const given: unknown[] = [job.ticketUrl].concat(
+    Array.isArray(job.ticketUrls) ? job.ticketUrls : [],
+  );
+  for (const raw of given) {
+    const url = typeof raw === "string" ? raw.trim() : "";
+    if (/^https?:\/\/\S+$/i.test(url) && !urls.includes(url)) urls.push(url);
+  }
+  const repo = urls.length
+    ? urls[0].match(/^(https?:\/\/github\.com\/[^/]+\/[^/]+)\/(?:issues|pull)\/\d+/i)
+    : null;
+  const leading = repo ? (job.title || "").match(/^(?:#\d+[\s,&+]*)+/) : null;
+  for (const n of leading ? leading[0].match(/\d+/g) || [] : []) {
+    if (!urls.some((url) => ticketLinkLabel(url) === "#" + n)) urls.push(repo![1] + "/issues/" + n);
+  }
+  return urls.map((url, i) => ({
+    url,
+    label:
+      ticketLinkLabel(url) ||
+      (i === 0 && job.linearIssue
+        ? job.linearIssue
+        : urls.length > 1
+          ? "ticket " + (i + 1)
+          : "ticket"),
+  }));
+}
+
 /** Character cap helper for narrow layouts (~390px); CSS ellipsis is primary in the dashboard. */
 export function ellipsizeAgentLabel(text: string, maxChars: number): string {
   if (maxChars < 2 || text.length <= maxChars) return text;

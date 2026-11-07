@@ -2,7 +2,9 @@ import type { CiRollupStatus, DocLintFinding, JobRecord } from "./types.js";
 import {
   humanizeKebabSlug,
   jobAgentDisplayLabel,
+  jobTicketLinks,
   linearSlugTitleFromTicketUrl,
+  ticketLinkLabel,
 } from "./job-display.js";
 import {
   jobRepoDisplayLabel,
@@ -179,6 +181,8 @@ ${jobRepoDisplayLabel.toString()}
 ${humanizeKebabSlug.toString()}
 ${linearSlugTitleFromTicketUrl.toString()}
 ${jobAgentDisplayLabel.toString()}
-return { isDocsJobRecord, dashboardStageLabel, dashboardChecksColumnHeader, dashboardChecksStatusLabel, ciStatusBadgeClass, formatDocLintFindingsHtml, shouldHideStaleJob, formatRelativeTime, jobRepoDisplayLabel, jobAgentDisplayLabel, CI_STATUS_BADGE_CLASS, PR_DRAFT_BADGE_CLASS };
+${ticketLinkLabel.toString()}
+${jobTicketLinks.toString()}
+return { isDocsJobRecord, dashboardStageLabel, dashboardChecksColumnHeader, dashboardChecksStatusLabel, ciStatusBadgeClass, formatDocLintFindingsHtml, shouldHideStaleJob, formatRelativeTime, jobRepoDisplayLabel, jobAgentDisplayLabel, jobTicketLinks, CI_STATUS_BADGE_CLASS, PR_DRAFT_BADGE_CLASS };
 })()`;
 }

@@ -310,9 +310,14 @@ export async function createJob(
     throw new ValidationError("docs jobs need docsTemplate or promptFile");
   }
   const slug = await resolveJobRepoSlug(target);
+  const ticketUrls = [
+    ...new Set(
+      [args.ticketUrl?.trim(), ...(args.ticketUrls ?? [])].filter((u): u is string => !!u),
+    ),
+  ];
   const ticket = resolveJobTicket({
     branch: args.branch,
-    ticketUrl: args.ticketUrl,
+    ticketUrl: ticketUrls[0],
     linearIssue: args.linearIssue,
   });
   const title =
@@ -353,6 +358,7 @@ export async function createJob(
     driver: driverId,
     remote: target.remote ?? args.remote,
     ticketUrl: args.ticketUrl,
+    ticketUrls: args.ticketUrls,
     linearIssue: args.linearIssue,
     jobType,
     profile: jobType,
@@ -404,6 +410,7 @@ export async function createJob(
     readyPromotedAt: null,
     linearIssue: ticket.linearIssue,
     ticketUrl: ticket.ticketUrl,
+    ...(ticketUrls.length > 1 ? { ticketUrls } : {}),
     title,
     tokenUsage: null,
     ciStatus: null,

@@ -32,6 +32,8 @@ export interface JobInput {
   /** Clone URL instead of local repoPath when set. */
   remote?: string;
   ticketUrl?: string;
+  /** Extra tickets the job covers (http(s) links). */
+  ticketUrls?: string[];
   linearIssue?: string;
   /** `docs` worktrees a business/policy repo; default is code. */
   jobType?: JobProfile;
@@ -150,7 +152,9 @@ export interface JobRecord {
   /** ISO timestamp after successful \`gh pr ready\` (idempotent). */
   readyPromotedAt: string | null;
   linearIssue: string | null;
+  /** Primary ticket; `ticketUrls` lists every ticket (primary first) when the job covers several. */
   ticketUrl: string | null;
+  ticketUrls?: string[];
   /** Base title for agent row (without Linear issue prefix). */
   title: string;
   tokenUsage: TokenUsage | null;
@@ -188,6 +192,7 @@ export interface StartJobArgs {
   driver?: string;
   dryRun?: boolean;
   ticketUrl?: string;
+  ticketUrls?: string[];
   linearIssue?: string;
   jobType?: JobProfile;
   profile?: JobProfile;

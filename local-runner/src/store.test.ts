@@ -72,6 +72,28 @@ describe("job store", () => {
     assert.equal(job.title, "feat/issue-320-verdict-resend");
   });
 
+  it("keeps every ticket for multi-ticket jobs, primary first", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-store-tickets-"));
+    const issues = "https://github.com/example-org/example-app/issues";
+    const base = { repoPath: "/tmp/repo", branch: "feat/x", promptFile: "/tmp/p.md", dryRun: true };
+    const many = await createJob(
+      dataDir,
+      { ...base, ticketUrl: `${issues}/143`, ticketUrls: [`${issues}/143`, `${issues}/144`] },
+      createDefaults(dataDir),
+    );
+    const stored = await loadJob(dataDir, many.id);
+    assert.equal(stored?.ticketUrl, `${issues}/143`);
+    assert.deepEqual(stored?.ticketUrls, [`${issues}/143`, `${issues}/144`]);
+
+    const listOnly = await createJob(
+      dataDir,
+      { ...base, branch: "feat/y", ticketUrls: [`${issues}/7`] },
+      createDefaults(dataDir),
+    );
+    assert.equal(listOnly.ticketUrl, `${issues}/7`, "first listed ticket becomes primary");
+    assert.equal(listOnly.ticketUrls, undefined, "a single ticket needs no list");
+  });
+
   it("stores explicit title and derives from linear slug", async () => {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-store-"));
     const explicit = await createJob(

@@ -1,7 +1,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { access, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { RunnerConfig } from "./config.js";
@@ -11,8 +11,9 @@ import { handleMcpJsonRpc, handleRunnerTool } from "./mcp-handlers.js";
 import { ValidationError } from "./settings-validation.js";
 import { BranchConflictError } from "./job-queue.js";
 import { archivedJobFile, archivedLogFile, jobFile, jobLogFile } from "./paths.js";
+import { saveSettings } from "./settings.js";
 import { saveJob } from "./store.js";
-import type { JobStage } from "./types.js";
+import type { JobRecord, JobStage } from "./types.js";
 
 function cfg(dataDir: string, port: number): RunnerConfig {
   return {
@@ -598,6 +599,21 @@ describe("start job validation parity (HTTP POST /api/jobs vs MCP start_job)", (
       { ...base, stageModels: { review: 1 } },
       "stageModels.review must be a string",
     ],
+    [
+      "non-array ticketUrls",
+      { ...base, ticketUrls: "https://example.com/1" },
+      "ticketUrls must be an array of strings",
+    ],
+    [
+      "non-http ticketUrls",
+      { ...base, ticketUrls: ["javascript:alert(1)"] },
+      "ticketUrls entries must be http(s) URLs",
+    ],
+    [
+      "too many ticketUrls",
+      { ...base, ticketUrls: Array.from({ length: 11 }, (_, i) => `https://example.com/${i}`) },
+      "ticketUrls allows at most 10 entries",
+    ],
   ];
 
   function assertMessage(actual: string, expected: string | RegExp, label: string): void {
@@ -669,6 +685,50 @@ describe("start job validation parity (HTTP POST /api/jobs vs MCP start_job)", (
     assert.deepEqual(captured[0], captured[1]);
     assert.equal((captured[0] as { branch: string }).branch, "feat/parity");
     assert.equal((captured[0] as { maxRounds: number }).maxRounds, 10);
+  });
+
+  it("stores the same stage models for HTTP and MCP starts (#146)", async () => {
+    const s = await startTestServer();
+    try {
+      await saveSettings(s.dataDir, { maxActiveJobs: 1 });
+      await seedJob(s.dataDir, "occupies-slot", "building");
+      const repoPath = await mkdtemp(path.join(os.tmpdir(), "lr-parity-models-repo-"));
+      const requests: Array<[string, Record<string, unknown>, Record<string, string>]> = [
+        [
+          "explicit fix beats legacy model",
+          { model: "composer-2.5", stageModels: { review: "review-x", fix: "auto" } },
+          { build: "composer-2.5", review: "review-x", fix: "auto" },
+        ],
+        ["no fix model given", {}, { build: "composer-2.5", review: "composer-2.5", fix: "auto" }],
+        [
+          "explicit non-auto fix",
+          { stageModels: { fix: "fix-x" } },
+          { build: "composer-2.5", review: "composer-2.5", fix: "fix-x" },
+        ],
+      ];
+      for (const [i, [label, extra, expected]] of requests.entries()) {
+        const payload = { ...base, repoPath, ...extra };
+        const res = await httpRequest(s.port, "POST", "/api/jobs", {
+          token: TOKEN,
+          body: JSON.stringify({ ...payload, branch: `feat/http-${i}` }),
+        });
+        assert.equal(res.status, 201, label);
+        const viaHttp = JSON.parse(res.body) as JobRecord;
+        const mcp = await mcpCall(s.port, "start_job", { ...payload, branch: `feat/mcp-${i}` });
+        const viaMcp = mcp.result?.structuredContent as unknown as JobRecord;
+        assert.ok(viaMcp, `${label}: ${mcp.error?.message ?? ""}`);
+        for (const job of [viaHttp, viaMcp]) {
+          const stored = JSON.parse(
+            await readFile(jobFile(s.dataDir, job.id), "utf8"),
+          ) as JobRecord;
+          assert.deepEqual(stored.stageModels, expected, label);
+          assert.deepEqual(stored.effectiveSnapshot?.stageModels, expected, label);
+          assert.equal(stored.queueState?.queued, true, `${label}: job must not run in tests`);
+        }
+      }
+    } finally {
+      await s.close();
+    }
   });
 
   it("maps branch conflicts to 409 and internal start failures to 500", async () => {
