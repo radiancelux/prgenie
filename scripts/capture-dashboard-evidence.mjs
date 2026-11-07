@@ -1,6 +1,7 @@
 /**
  * Generates responsive dashboard screenshots (synthetic fixture) with the first job expanded.
- * Requires: pnpm build && npx playwright install chromium
+ * Requires: pnpm build && pnpm exec playwright install chromium
+ * Run: timeout 180 pnpm exec tsx scripts/capture-dashboard-evidence.mjs
  */
 import { execFileSync } from "node:child_process";
 import { setTimeout as startTimer } from "node:timers";

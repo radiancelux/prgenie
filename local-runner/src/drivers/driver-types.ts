@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import { access } from "node:fs/promises";
 import type { DriverEntry } from "../settings.js";
 
@@ -31,6 +32,32 @@ export interface AgentDriver {
     },
   ): Promise<{ result: Promise<AgentDriverRunResult>; handle: AgentDriverHandle }>;
   steer?(prompt: string, hooks: { appendLog: (text: string) => Promise<void> }): void;
+}
+
+/**
+ * Kill handle for a spawned CLI: SIGTERM first, then SIGKILL if the child is still alive after
+ * `graceMs` (agents that trap SIGTERM would otherwise hang the stage forever).
+ */
+export function escalatingKill(
+  getChild: () => ChildProcess | null,
+  graceMs: number,
+): AgentDriverHandle {
+  let escalation: NodeJS.Timeout | null = null;
+  return {
+    kill() {
+      const child = getChild();
+      if (!child || child.exitCode !== null || child.signalCode !== null) return;
+      child.kill("SIGTERM");
+      if (escalation) return;
+      escalation = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      }, graceMs);
+      escalation.unref();
+      child.once("exit", () => {
+        if (escalation) clearTimeout(escalation);
+      });
+    },
+  };
 }
 
 export async function binaryOnPath(binary: string): Promise<boolean> {

@@ -10,7 +10,13 @@ import {
   saveNotifySettings,
   toPublicNotifySettings,
 } from "./notify-settings.js";
-import { loadSettings, saveSettings, toPublicSettings, type SettingsPatch } from "./settings.js";
+import { loadSettings, saveSettings, SettingsConflictError, toPublicSettings } from "./settings.js";
+import {
+  normalizeStartJobArgs,
+  parseSettingsPatch,
+  ValidationError,
+} from "./settings-validation.js";
+import { BranchConflictError } from "./job-queue.js";
 import { runnerUiHtml } from "./ui-html.js";
 import { setupUiHtml } from "./setup-ui-html.js";
 import {
@@ -35,6 +41,25 @@ const ARCHIVE_ERROR_STATUS = {
   running: 409,
   collision: 409,
 } as const;
+
+/** Validation is 400, a settings or branch conflict is 409, anything else is a server fault. */
+function errorStatus(err: unknown): number {
+  if (err instanceof ValidationError) return 400;
+  if (err instanceof SettingsConflictError || err instanceof BranchConflictError) return 409;
+  return 500;
+}
+
+/** POST /api/jobs: same normalizer as MCP start_job, so both reject bad input identically. */
+export async function handleStartJobRequest(
+  engine: RunnerEngine,
+  payload: Record<string, unknown>,
+): Promise<{ status: number; body: unknown }> {
+  try {
+    return { status: 201, body: await engine.startJob(normalizeStartJobArgs(payload)) };
+  } catch (err) {
+    return { status: errorStatus(err), body: { error: safeHandlerMessage(err) } };
+  }
+}
 
 function queryFlag(url: URL, name: string): boolean {
   const v = url.searchParams.get(name);
@@ -225,41 +250,8 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
       if (path === "/api/jobs" && req.method === "POST") {
         const payload = await readJsonObject(req, guard);
         if (!payload || guard.started) return;
-        try {
-          const job = await engine.startJob({
-            repoPath: typeof payload.repoPath === "string" ? payload.repoPath : undefined,
-            remote: typeof payload.remote === "string" ? payload.remote : undefined,
-            branch: typeof payload.branch === "string" ? payload.branch : "",
-            promptFile: typeof payload.promptFile === "string" ? payload.promptFile : undefined,
-            reviewPromptFile:
-              typeof payload.reviewPromptFile === "string" ? payload.reviewPromptFile : undefined,
-            fixPromptFile:
-              typeof payload.fixPromptFile === "string" ? payload.fixPromptFile : undefined,
-            maxRounds: typeof payload.maxRounds === "number" ? payload.maxRounds : undefined,
-            model: typeof payload.model === "string" ? payload.model : undefined,
-            driver: typeof payload.driver === "string" ? payload.driver : undefined,
-            dryRun: typeof payload.dryRun === "boolean" ? payload.dryRun : undefined,
-            ticketUrl: typeof payload.ticketUrl === "string" ? payload.ticketUrl : undefined,
-            linearIssue: typeof payload.linearIssue === "string" ? payload.linearIssue : undefined,
-            jobType:
-              payload.jobType === "docs" || payload.jobType === "code"
-                ? payload.jobType
-                : undefined,
-            profile:
-              payload.profile === "docs" || payload.profile === "code"
-                ? payload.profile
-                : undefined,
-            docsTemplate:
-              payload.docsTemplate === "marketing" ||
-              payload.docsTemplate === "policy" ||
-              payload.docsTemplate === "research"
-                ? payload.docsTemplate
-                : undefined,
-          });
-          guard.json(201, job);
-        } catch (err) {
-          guard.json(400, { error: safeHandlerMessage(err) });
-        }
+        const reply = await handleStartJobRequest(engine, payload);
+        guard.json(reply.status, reply.body);
         return;
       }
 
@@ -292,59 +284,9 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
       }
 
       if (path === "/api/settings" && req.method === "PATCH") {
-        const payload = (await readJsonObject(req, guard)) as
-          (SettingsPatch & { notify?: { enabled?: unknown; recipient?: unknown } }) | null;
+        const payload = await readJsonObject(req, guard);
         if (!payload || guard.started) return;
-        const patch: SettingsPatch = {};
-        if (payload.configured !== undefined) patch.configured = Boolean(payload.configured);
-        if (payload.defaultModel !== undefined) {
-          patch.defaultModel =
-            payload.defaultModel === null || payload.defaultModel === ""
-              ? null
-              : String(payload.defaultModel).trim();
-        }
-        if (payload.defaultDriver !== undefined) {
-          patch.defaultDriver = String(payload.defaultDriver ?? "").trim() || "cursor-agent";
-        }
-        if (payload.hostBindHint !== undefined) {
-          patch.hostBindHint =
-            payload.hostBindHint === null || payload.hostBindHint === ""
-              ? null
-              : String(payload.hostBindHint).trim();
-        }
-        if (payload.notify) {
-          patch.notify = {};
-          if (payload.notify.enabled !== undefined) {
-            patch.notify.enabled = Boolean(payload.notify.enabled);
-          }
-          if (payload.notify.recipient !== undefined) {
-            patch.notify.recipient =
-              payload.notify.recipient === null || payload.notify.recipient === ""
-                ? null
-                : String(payload.notify.recipient).trim();
-          }
-        }
-        if (Array.isArray(payload.drivers)) {
-          patch.drivers = payload.drivers.map((d) => ({
-            id: String(d.id ?? ""),
-            kind: d.kind,
-            binary: d.binary ?? null,
-            endpoint: d.endpoint ?? null,
-            notes: d.notes ?? null,
-            apiKey:
-              typeof d.apiKey === "string" && d.apiKey.trim() && !/^•+$/.test(d.apiKey.trim())
-                ? d.apiKey.trim()
-                : d.apiKey === null
-                  ? null
-                  : undefined,
-          }));
-        }
-        if (payload.jobTypes !== undefined && typeof payload.jobTypes === "object") {
-          patch.jobTypes = payload.jobTypes as Record<string, unknown>;
-        }
-        if (payload.presets !== undefined && typeof payload.presets === "object") {
-          patch.presets = payload.presets as Record<string, unknown>;
-        }
+        const patch = parseSettingsPatch(payload);
         const saved = await saveSettings(config.dataDir, patch);
         guard.json(200, toPublicSettings(config, saved) as Record<string, unknown>);
         return;
@@ -450,7 +392,7 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
       guard.text(404, "not found");
     } catch (err) {
       if (!guard.started) {
-        guard.json(500, { error: safeHandlerMessage(err) });
+        guard.json(errorStatus(err), { error: safeHandlerMessage(err) });
       }
     }
   });

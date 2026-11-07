@@ -1,6 +1,6 @@
 import { fetchPrMerged, type FetchPrMergedFn } from "./github.js";
 import { resolveJobSpawnCwd } from "./job-cwd.js";
-import { saveJob } from "./store.js";
+import { patchJob } from "./store.js";
 import type { JobRecord } from "./types.js";
 import { isMergedStatus } from "./ci.js";
 
@@ -23,14 +23,17 @@ export async function syncJobMergedStatus(
   });
   if (!merged) return { job, updated: false };
 
-  job.ciStatus = {
+  const ciStatus: JobRecord["ciStatus"] = {
     status: "merged",
     summary: "merged",
     mergedAt: mergedAt ?? new Date().toISOString(),
     checkedAt: new Date().toISOString(),
     source: "github",
   };
-  await saveJob(dataDir, job);
+  job.ciStatus = ciStatus;
+  await patchJob(dataDir, job.id, (fresh) => {
+    fresh.ciStatus = ciStatus;
+  });
   return { job, updated: true };
 }
 

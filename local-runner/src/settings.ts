@@ -3,6 +3,24 @@ import { parseDocsSettings, type ParsedDocsSettings } from "./docs-settings.js";
 import path from "node:path";
 import type { RunnerConfig } from "./config.js";
 import { notifySettingsFile, runnerSettingsFile } from "./paths.js";
+import {
+  BUILTIN_DEFAULT_MAX_ROUNDS,
+  BUILTIN_FIX_MODEL,
+  DEFAULT_WATCHDOG,
+  MAX_ACTIVE_JOBS_DEFAULT,
+  MAX_ACTIVE_JOBS_MAX,
+  MAX_ACTIVE_JOBS_MIN,
+  MAX_ROUNDS_MAX,
+  MAX_ROUNDS_MIN,
+  parseBoundedInt,
+  parseWatchdogPolicy,
+} from "./runner-policy.js";
+import { normalizeStageModels } from "./job-models.js";
+import {
+  validateDefaultMaxRounds,
+  validateMaxActiveJobs,
+  validateWatchdogPatch,
+} from "./settings-validation.js";
 
 export type DriverKind = "cursor-agent" | "claude-code" | "local-model" | "custom";
 
@@ -18,16 +36,37 @@ export type DriverEntry = {
   apiKey?: string | null;
 };
 
+export type StageModelDefaults = {
+  build: string | null;
+  review: string | null;
+  fix: string | null;
+};
+
+export type NotifyEventSettings = {
+  onFailed: boolean;
+  onStuck: boolean;
+  onWatchdogExhausted: boolean;
+};
+
 export type RunnerSettings = {
-  version: 1;
+  version: 1 | 2;
   /** Set true after first explicit save from setup (or migration). */
   configured: boolean;
+  /** Monotonic revision for optimistic concurrent-save detection. */
+  settingsRevision: number;
   notify: {
     enabled: boolean;
     recipient: string | null;
   };
+  notifyEvents: NotifyEventSettings;
   defaultModel: string | null;
   defaultDriver: string | null;
+  defaultMaxRounds: number;
+  stageModels: StageModelDefaults;
+  watchdog: ReturnType<typeof parseWatchdogPolicy>;
+  maxActiveJobs: number;
+  /** null or "auto" = detect repository default branch; otherwise explicit git ref. */
+  defaultBaseBranch: string | null;
   /** Display-only hint; server may still bind from env. */
   hostBindHint: string | null;
   drivers: DriverEntry[];
@@ -44,12 +83,21 @@ export type DriverEntryPublic = Omit<DriverEntry, "apiKey"> & {
 export type RunnerSettingsPublic = Omit<RunnerSettings, "drivers"> & {
   dataDirNote: string;
   envDefaultModel: string;
+  envDefaultFixModel: string;
   envHostBind: string;
   resendConfigured: boolean;
   envFallbackRecipient: string | null;
+  effectiveDefaultMaxRounds: number;
   drivers: DriverEntryPublic[];
   docsSettings: ParsedDocsSettings;
   envDefaultCodeRepoPath: string | null;
+  /** Documented nice-to-haves (not implemented as persistent knobs). */
+  policyNotes: {
+    ciPollIntervalMs: number;
+    mergedHideAfterMs: number;
+    worktreeCleanupGraceMs: number | null;
+    logRetention: string;
+  };
 };
 
 const DEFAULT_DRIVERS: DriverEntry[] = [
@@ -74,17 +122,47 @@ const DEFAULT_DRIVERS: DriverEntry[] = [
   },
 ];
 
+const DEFAULT_NOTIFY_EVENTS: NotifyEventSettings = {
+  onFailed: true,
+  onStuck: true,
+  onWatchdogExhausted: true,
+};
+
+const DEFAULT_STAGE_MODELS: StageModelDefaults = {
+  build: null,
+  review: null,
+  fix: BUILTIN_FIX_MODEL,
+};
+
 const DEFAULT: RunnerSettings = {
-  version: 1,
+  version: 2,
   configured: false,
+  settingsRevision: 0,
   notify: { enabled: false, recipient: null },
+  notifyEvents: { ...DEFAULT_NOTIFY_EVENTS },
   defaultModel: null,
   defaultDriver: "cursor-agent",
+  defaultMaxRounds: BUILTIN_DEFAULT_MAX_ROUNDS,
+  stageModels: { ...DEFAULT_STAGE_MODELS },
+  watchdog: { ...DEFAULT_WATCHDOG },
+  maxActiveJobs: MAX_ACTIVE_JOBS_DEFAULT,
+  defaultBaseBranch: null,
   hostBindHint: null,
   drivers: DEFAULT_DRIVERS,
   jobTypes: {},
   presets: {},
 };
+
+function parseNotifyEvents(raw: Partial<NotifyEventSettings> | undefined): NotifyEventSettings {
+  return {
+    onFailed: raw?.onFailed !== undefined ? Boolean(raw.onFailed) : DEFAULT_NOTIFY_EVENTS.onFailed,
+    onStuck: raw?.onStuck !== undefined ? Boolean(raw.onStuck) : DEFAULT_NOTIFY_EVENTS.onStuck,
+    onWatchdogExhausted:
+      raw?.onWatchdogExhausted !== undefined
+        ? Boolean(raw.onWatchdogExhausted)
+        : DEFAULT_NOTIFY_EVENTS.onWatchdogExhausted,
+  };
+}
 
 async function atomicWriteJson(filePath: string, value: unknown): Promise<void> {
   const dir = path.dirname(filePath);
@@ -124,10 +202,26 @@ function mergeDrivers(existing: DriverEntry[], patch: DriverEntry[] | undefined)
   return [...byId.values()];
 }
 
+/** Unset build/review stay null so they keep inheriting `defaultModel` (the Setup UI control). */
+function parseStageModels(raw: Partial<RunnerSettings>): StageModelDefaults {
+  const stage = normalizeStageModels(raw.stageModels);
+  if (raw.stageModels?.fix === undefined) stage.fix = DEFAULT_STAGE_MODELS.fix;
+  return stage;
+}
+
+/** Lenient on-disk parse: one hand-edited bad value must not reset every other setting. */
 function parseSettings(raw: Partial<RunnerSettings>): RunnerSettings {
+  const version = raw.version === 2 || raw.defaultMaxRounds !== undefined ? 2 : 1;
+  const stageModels = parseStageModels(raw);
   return {
-    version: 1,
+    version: version === 2 ? 2 : 1,
     configured: Boolean(raw.configured),
+    settingsRevision:
+      typeof raw.settingsRevision === "number" && Number.isFinite(raw.settingsRevision)
+        ? Math.max(0, Math.trunc(raw.settingsRevision))
+        : raw.configured
+          ? 1
+          : 0,
     notify: {
       enabled: Boolean(raw.notify?.enabled),
       recipient:
@@ -135,6 +229,7 @@ function parseSettings(raw: Partial<RunnerSettings>): RunnerSettings {
           ? raw.notify.recipient.trim()
           : null,
     },
+    notifyEvents: parseNotifyEvents(raw.notifyEvents),
     defaultModel:
       typeof raw.defaultModel === "string" && raw.defaultModel.trim()
         ? raw.defaultModel.trim()
@@ -143,6 +238,24 @@ function parseSettings(raw: Partial<RunnerSettings>): RunnerSettings {
       typeof raw.defaultDriver === "string" && raw.defaultDriver.trim()
         ? raw.defaultDriver.trim()
         : "cursor-agent",
+    defaultMaxRounds: parseBoundedInt(
+      raw.defaultMaxRounds,
+      BUILTIN_DEFAULT_MAX_ROUNDS,
+      MAX_ROUNDS_MIN,
+      MAX_ROUNDS_MAX,
+    ),
+    stageModels,
+    watchdog: parseWatchdogPolicy(raw.watchdog),
+    maxActiveJobs: parseBoundedInt(
+      raw.maxActiveJobs,
+      MAX_ACTIVE_JOBS_DEFAULT,
+      MAX_ACTIVE_JOBS_MIN,
+      MAX_ACTIVE_JOBS_MAX,
+    ),
+    defaultBaseBranch:
+      typeof raw.defaultBaseBranch === "string" && raw.defaultBaseBranch.trim()
+        ? raw.defaultBaseBranch.trim()
+        : null,
     hostBindHint:
       typeof raw.hostBindHint === "string" && raw.hostBindHint.trim()
         ? raw.hostBindHint.trim()
@@ -157,11 +270,11 @@ function parseSettings(raw: Partial<RunnerSettings>): RunnerSettings {
     ),
     jobTypes:
       raw.jobTypes && typeof raw.jobTypes === "object" && !Array.isArray(raw.jobTypes)
-        ? (raw.jobTypes as Record<string, unknown>)
+        ? { ...(raw.jobTypes as Record<string, unknown>) }
         : {},
     presets:
       raw.presets && typeof raw.presets === "object" && !Array.isArray(raw.presets)
-        ? (raw.presets as Record<string, unknown>)
+        ? { ...(raw.presets as Record<string, unknown>) }
         : {},
   };
 }
@@ -209,20 +322,59 @@ export async function loadSettings(dataDir: string): Promise<RunnerSettings> {
 
 export type SettingsPatch = {
   configured?: boolean;
+  expectedRevision?: number;
   notify?: Partial<RunnerSettings["notify"]>;
+  notifyEvents?: Partial<NotifyEventSettings>;
   defaultModel?: string | null;
   defaultDriver?: string | null;
+  defaultMaxRounds?: number;
+  stageModels?: Partial<StageModelDefaults>;
+  watchdog?: Partial<RunnerSettings["watchdog"]>;
+  maxActiveJobs?: number;
+  defaultBaseBranch?: string | null;
   hostBindHint?: string | null;
   drivers?: DriverEntry[];
   jobTypes?: Record<string, unknown>;
   presets?: Record<string, unknown>;
 };
 
+export class SettingsConflictError extends Error {
+  constructor() {
+    super("settings changed on disk; reload and retry");
+    this.name = "SettingsConflictError";
+  }
+}
+
+function mergeStageModels(
+  current: StageModelDefaults,
+  patch: Partial<StageModelDefaults> | undefined,
+): StageModelDefaults {
+  if (!patch) return current;
+  return normalizeStageModels({
+    build: patch.build !== undefined ? patch.build : current.build,
+    review: patch.review !== undefined ? patch.review : current.review,
+    fix: patch.fix !== undefined ? patch.fix : current.fix,
+  });
+}
+
+function shallowMergeJobTypes(
+  current: Record<string, unknown>,
+  patch: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!patch) return current;
+  return { ...current, ...patch };
+}
+
 export async function saveSettings(dataDir: string, patch: SettingsPatch): Promise<RunnerSettings> {
   const current = await loadSettings(dataDir);
+  if (patch.expectedRevision !== undefined && patch.expectedRevision !== current.settingsRevision) {
+    throw new SettingsConflictError();
+  }
   const next = parseSettings({
     ...current,
+    version: 2,
     configured: patch.configured !== undefined ? Boolean(patch.configured) : true,
+    settingsRevision: current.settingsRevision + 1,
     notify: {
       enabled:
         patch.notify?.enabled !== undefined
@@ -233,21 +385,50 @@ export async function saveSettings(dataDir: string, patch: SettingsPatch): Promi
           ? patch.notify.recipient?.trim() || null
           : current.notify.recipient,
     },
+    notifyEvents: {
+      ...current.notifyEvents,
+      ...(patch.notifyEvents ?? {}),
+    },
     defaultModel:
       patch.defaultModel !== undefined ? patch.defaultModel?.trim() || null : current.defaultModel,
     defaultDriver:
       patch.defaultDriver !== undefined
         ? patch.defaultDriver?.trim() || "cursor-agent"
         : current.defaultDriver,
+    defaultMaxRounds:
+      patch.defaultMaxRounds !== undefined
+        ? validateDefaultMaxRounds(patch.defaultMaxRounds)
+        : current.defaultMaxRounds,
+    stageModels: mergeStageModels(current.stageModels, patch.stageModels),
+    watchdog:
+      patch.watchdog !== undefined
+        ? parseWatchdogPolicy({ ...current.watchdog, ...validateWatchdogPatch(patch.watchdog) })
+        : current.watchdog,
+    maxActiveJobs:
+      patch.maxActiveJobs !== undefined
+        ? validateMaxActiveJobs(patch.maxActiveJobs, current.maxActiveJobs)
+        : current.maxActiveJobs,
+    defaultBaseBranch:
+      patch.defaultBaseBranch !== undefined
+        ? patch.defaultBaseBranch?.trim() || null
+        : current.defaultBaseBranch,
     hostBindHint:
       patch.hostBindHint !== undefined ? patch.hostBindHint?.trim() || null : current.hostBindHint,
     drivers:
       patch.drivers !== undefined ? mergeDrivers(current.drivers, patch.drivers) : current.drivers,
-    jobTypes: patch.jobTypes !== undefined ? patch.jobTypes : current.jobTypes,
-    presets: patch.presets !== undefined ? patch.presets : current.presets,
+    jobTypes:
+      patch.jobTypes !== undefined
+        ? shallowMergeJobTypes(current.jobTypes, patch.jobTypes)
+        : current.jobTypes,
+    presets:
+      patch.presets !== undefined ? { ...current.presets, ...patch.presets } : current.presets,
   });
   await atomicWriteJson(runnerSettingsFile(dataDir), next);
   return next;
+}
+
+export function resolveDefaultMaxRounds(settings: RunnerSettings): number {
+  return settings.defaultMaxRounds;
 }
 
 export function maskSecret(value: string | null | undefined): string | null {
@@ -265,9 +446,17 @@ export function toPublicSettings(
     ...settings,
     dataDirNote: config.dataDir,
     envDefaultModel: config.defaultModel,
+    envDefaultFixModel: BUILTIN_FIX_MODEL,
     envHostBind: `${config.host}:${config.port}`,
     resendConfigured: Boolean(config.resendApiKey),
     envFallbackRecipient: config.notifyEmail,
+    effectiveDefaultMaxRounds: resolveDefaultMaxRounds(settings),
+    policyNotes: {
+      ciPollIntervalMs: 45_000,
+      mergedHideAfterMs: 60 * 60 * 1000,
+      worktreeCleanupGraceMs: null,
+      logRetention: "disabled (no automatic deletion)",
+    },
     drivers: settings.drivers.map((d) => ({
       id: d.id,
       kind: d.kind,

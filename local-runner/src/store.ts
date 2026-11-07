@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { JobInput, JobRecord, StartJobArgs } from "./types.js";
 import { shouldHideMergedJob } from "./ci.js";
-import { resolveJobTarget, normalizeJobType } from "./job-target.js";
+import { resolveJobTarget, normalizeJobType, type ResolvedJobTarget } from "./job-target.js";
+import { ValidationError } from "./validation-error.js";
 import { isDocsTemplateId } from "./docs-prompts.js";
 import { resolveJobTicket } from "./linear-ticket.js";
 import {
@@ -20,8 +21,11 @@ import {
 } from "./paths.js";
 import { resolveJobTitle } from "./job-display.js";
 import { repoOwnerNameFromGitOrigin, repoOwnerNameFromRemoteUrl } from "./repo-display.js";
-import { loadSettings, resolveDefaultDriverId } from "./settings.js";
+import { loadSettings, resolveDefaultDriverId, resolveDefaultMaxRounds } from "./settings.js";
 import type { RunnerConfig } from "./config.js";
+import { mergeJobErrors } from "./job-error.js";
+import { resolveStageModelsForJob } from "./job-models.js";
+import type { CiStatusInfo } from "./types.js";
 
 export async function ensureDataDirs(dataDir: string): Promise<void> {
   await mkdir(jobsDir(dataDir), { recursive: true });
@@ -53,11 +57,54 @@ async function renameIfExists(from: string, to: string): Promise<void> {
   }
 }
 
+function ciCheckedAtMs(ci: CiStatusInfo | null | undefined): number {
+  if (!ci?.checkedAt) return 0;
+  const t = Date.parse(ci.checkedAt);
+  return Number.isNaN(t) ? 0 : t;
+}
+
+function mergeCiStatus(
+  onDisk: CiStatusInfo | null,
+  incoming: CiStatusInfo | null,
+): CiStatusInfo | null {
+  if (!incoming) return onDisk;
+  if (!onDisk) return incoming;
+  return ciCheckedAtMs(incoming) >= ciCheckedAtMs(onDisk) ? incoming : onDisk;
+}
+
 export async function saveJob(dataDir: string, job: JobRecord): Promise<void> {
+  const loadedAt = job.updatedAt;
   job.updatedAt = new Date().toISOString();
   // Stale in-memory copies (CI poll, worktree cleanup) must not resurrect an archived job.
   if (await fileExists(archivedJobFile(dataDir, job.id))) return;
-  await atomicWriteJson(jobFile(dataDir, job.id), job);
+  const livePath = jobFile(dataDir, job.id);
+  const onDisk = await readJobFile(livePath);
+  if (!onDisk) {
+    if (await fileExists(archivedJobFile(dataDir, job.id))) return;
+  } else {
+    job.ciStatus = mergeCiStatus(onDisk.ciStatus, job.ciStatus);
+    // Only a copy older than disk merges errors; an up-to-date writer may clear `error`.
+    if (onDisk.updatedAt > (loadedAt ?? "")) {
+      job.error = mergeJobErrors(onDisk.error, job.error);
+    }
+  }
+  await atomicWriteJson(livePath, job);
+}
+
+/**
+ * Side writers (CI poll, worktree cleanup) hold copies that may predate the job loop's latest
+ * save; re-read and apply only the fields they own so `stage` and loop state never roll back.
+ */
+export async function patchJob(
+  dataDir: string,
+  id: string,
+  mutate: (job: JobRecord) => void,
+): Promise<JobRecord | null> {
+  const fresh = await loadJob(dataDir, id);
+  if (!fresh) return null;
+  mutate(fresh);
+  await saveJob(dataDir, fresh);
+  return fresh;
 }
 
 export async function loadJob(dataDir: string, id: string): Promise<JobRecord | null> {
@@ -86,6 +133,9 @@ async function readJobFile(filePath: string): Promise<JobRecord | null> {
     if (job.readyPromotedAt === undefined) job.readyPromotedAt = null;
     if (job.title === undefined || job.title === null) {
       job.title = job.input?.branch?.trim() || job.id.slice(0, 8);
+    }
+    if (!job.stageModels && job.model) {
+      job.stageModels = { build: job.model, review: job.model, fix: job.model };
     }
     return job;
   } catch {
@@ -166,7 +216,11 @@ export async function jobsDashboardMeta(
 /** Move `jobs/<id>.json` and `logs/<id>.log` under `archived/`. Caller checks the stage. */
 export async function moveJobToArchive(dataDir: string, job: JobRecord): Promise<JobRecord> {
   const dest = archivedJobFile(dataDir, job.id);
-  if (await fileExists(dest)) throw new Error(`job is already archived: ${job.id}`);
+  if (await fileExists(dest)) {
+    const existing = await readJobFile(dest);
+    if (existing) return existing;
+    throw new Error(`job is already archived: ${job.id}`);
+  }
   await mkdir(archivedJobsDir(dataDir), { recursive: true });
   await mkdir(archivedLogsDir(dataDir), { recursive: true });
   await rename(jobFile(dataDir, job.id), dest);
@@ -199,6 +253,21 @@ export async function restoreJobFromArchive(
   return { ok: true, job };
 }
 
+/** Canonical `owner/name` for a job target; the queue matches same-branch jobs on this key. */
+export async function resolveJobRepoSlug(
+  target: Pick<Extract<ResolvedJobTarget, { ok: true }>, "repoPath" | "remote" | "repoSlug">,
+): Promise<string> {
+  const slug = target.repoSlug;
+  if (target.remote?.trim()) {
+    return repoOwnerNameFromRemoteUrl(target.remote) ?? repoSlugFromPath(target.remote) ?? slug;
+  }
+  if (target.repoPath?.trim()) {
+    const fromOrigin = await repoOwnerNameFromGitOrigin(target.repoPath);
+    return fromOrigin ?? (slug.includes("/") ? slug : repoSlugFromPath(target.repoPath));
+  }
+  return slug;
+}
+
 export async function createJob(
   dataDir: string,
   args: StartJobArgs,
@@ -206,7 +275,7 @@ export async function createJob(
     model: string;
     dryRun: boolean;
     driverId?: string;
-    config: Pick<RunnerConfig, "defaultCodeRepoPath">;
+    config: RunnerConfig;
   },
 ): Promise<JobRecord> {
   await ensureDataDirs(dataDir);
@@ -214,25 +283,19 @@ export async function createJob(
   const jobType = normalizeJobType(args);
   const target = resolveJobTarget(args, settings, defaults.config);
   if (!target.ok) {
-    throw new Error(target.error);
+    throw new ValidationError(target.error);
   }
   const id = randomUUID();
   const docsTemplate =
     args.docsTemplate && isDocsTemplateId(args.docsTemplate) ? args.docsTemplate : undefined;
   const promptFile = args.promptFile?.trim() || (jobType === "docs" ? "" : "");
   if (jobType === "code" && !promptFile) {
-    throw new Error("promptFile is required for code jobs");
+    throw new ValidationError("promptFile is required for code jobs");
   }
   if (jobType === "docs" && !promptFile && !docsTemplate) {
-    throw new Error("docs jobs need docsTemplate or promptFile");
+    throw new ValidationError("docs jobs need docsTemplate or promptFile");
   }
-  let slug = target.repoSlug;
-  if (target.remote?.trim()) {
-    slug = repoOwnerNameFromRemoteUrl(target.remote) ?? repoSlugFromPath(target.remote) ?? slug;
-  } else if (target.repoPath?.trim()) {
-    const fromOrigin = await repoOwnerNameFromGitOrigin(target.repoPath);
-    slug = fromOrigin ?? (slug.includes("/") ? slug : repoSlugFromPath(target.repoPath));
-  }
+  const slug = await resolveJobRepoSlug(target);
   const ticket = resolveJobTicket({
     branch: args.branch,
     ticketUrl: args.ticketUrl,
@@ -248,6 +311,22 @@ export async function createJob(
     })) ||
     args.branch.trim() ||
     id.slice(0, 8);
+  const driverId =
+    args.driver?.trim() || defaults.driverId?.trim() || resolveDefaultDriverId(settings);
+  const stageResolved = resolveStageModelsForJob(
+    defaults.config,
+    settings,
+    {
+      repoPath: target.repoPath,
+      branch: args.branch,
+      promptFile: promptFile || "",
+      model: args.model,
+      stageModels: args.stageModels,
+      driver: driverId,
+    } as JobInput,
+    driverId,
+  );
+
   const input: JobInput = {
     repoPath: target.repoPath,
     branch: args.branch,
@@ -256,7 +335,8 @@ export async function createJob(
     fixPromptFile: args.fixPromptFile,
     maxRounds: args.maxRounds,
     model: args.model,
-    driver: args.driver,
+    stageModels: args.stageModels,
+    driver: driverId,
     remote: target.remote ?? args.remote,
     ticketUrl: args.ticketUrl,
     linearIssue: args.linearIssue,
@@ -274,9 +354,33 @@ export async function createJob(
     input,
     stage: "building",
     reviewRound: 0,
-    maxRounds: args.maxRounds ?? 2,
-    model: args.model?.trim() || settings.defaultModel?.trim() || defaults.model,
-    driverId: args.driver?.trim() || defaults.driverId?.trim() || resolveDefaultDriverId(settings),
+    maxRounds: args.maxRounds ?? resolveDefaultMaxRounds(settings),
+    model: stageResolved.build,
+    stageModels: {
+      build: stageResolved.build,
+      review: stageResolved.review,
+      fix: stageResolved.fix,
+    },
+    effectiveSnapshot: {
+      maxRounds: args.maxRounds ?? resolveDefaultMaxRounds(settings),
+      stageModels: {
+        build: stageResolved.build,
+        review: stageResolved.review,
+        fix: stageResolved.fix,
+      },
+      baseRef: settings.defaultBaseBranch,
+      watchdogInactivityMs: settings.watchdog.inactivityMs,
+      watchdogStageCapMs: settings.watchdog.stageCapMs,
+      watchdogRecoveryAttempts: settings.watchdog.recoveryAttempts,
+    },
+    watchdog: {
+      lastActivityAt: null,
+      stageStartedAt: null,
+      recoveryAttemptsUsed: 0,
+      lastRecoveryAt: null,
+      lastStallReason: null,
+    },
+    driverId,
     worktreePath: null,
     repoSlug: slug,
     prUrl: null,

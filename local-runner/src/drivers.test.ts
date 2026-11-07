@@ -5,8 +5,23 @@ import os from "node:os";
 import path from "node:path";
 import { getAgentDriver, listBuiltInDriverIds } from "./drivers/built-in.js";
 import { AgentRunner } from "./agent.js";
+import type { RunnerConfig } from "./config.js";
 import { createJob } from "./store.js";
 import { loadSettings, findDriverEntry } from "./settings.js";
+
+function testConfig(dataDir: string): RunnerConfig {
+  return {
+    host: "127.0.0.1",
+    port: 9473,
+    token: "t",
+    dataDir,
+    notifyEmail: null,
+    resendApiKey: null,
+    defaultModel: "composer-2.5",
+    dryRun: true,
+    defaultCodeRepoPath: null,
+  };
+}
 
 describe("agent drivers", () => {
   it("lists built-in drivers with cursor-agent default id", () => {
@@ -23,14 +38,14 @@ describe("agent drivers", () => {
     const job = await createJob(
       dataDir,
       { repoPath: "/r", branch: "b", promptFile: "/p", driver: "local-model", dryRun: true },
-      { model: "m", dryRun: true, config: { defaultCodeRepoPath: null } },
+      { model: "m", dryRun: true, config: testConfig(dataDir) },
     );
     assert.equal(job.driverId, "local-model");
 
     const job2 = await createJob(
       dataDir,
       { repoPath: "/r", branch: "b2", promptFile: "/p", dryRun: true },
-      { model: "m", dryRun: true, config: { defaultCodeRepoPath: null } },
+      { model: "m", dryRun: true, config: testConfig(dataDir) },
     );
     assert.equal(job2.driverId, "claude-code");
   });

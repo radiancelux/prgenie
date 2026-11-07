@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import type { RunnerConfig } from "./config.js";
 import { loadSettings, maskSecret, saveSettings, toPublicSettings } from "./settings.js";
-import { notifySettingsFile } from "./paths.js";
+import { notifySettingsFile, runnerSettingsFile } from "./paths.js";
 
 function testConfig(dataDir: string): RunnerConfig {
   return {
@@ -28,6 +28,9 @@ describe("runner settings", () => {
     assert.equal(s.configured, false);
     assert.equal(s.defaultDriver, "cursor-agent");
     assert.equal(s.notify.enabled, false);
+    assert.equal(s.defaultMaxRounds, 3);
+    assert.equal(s.maxActiveJobs, 2);
+    assert.equal(s.stageModels.fix, "auto");
   });
 
   it("migrates legacy notify-settings.json", async () => {
@@ -74,6 +77,38 @@ describe("runner settings", () => {
     const s = await loadSettings(dataDir);
     assert.equal(s.defaultModel, "gpt-test");
     assert.equal(s.defaultDriver, "claude-code");
+  });
+
+  it("a bad on-disk value is clamped without resetting other settings", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-set-bad-"));
+    await writeFile(
+      runnerSettingsFile(dataDir),
+      JSON.stringify({
+        version: 2,
+        configured: true,
+        notify: { enabled: true, recipient: "me@example.com" },
+        defaultDriver: "claude-code",
+        maxActiveJobs: 12,
+        defaultMaxRounds: 0,
+      }),
+      "utf8",
+    );
+    const s = await loadSettings(dataDir);
+    assert.equal(s.configured, true);
+    assert.equal(s.notify.enabled, true);
+    assert.equal(s.notify.recipient, "me@example.com");
+    assert.equal(s.defaultDriver, "claude-code");
+    assert.equal(s.maxActiveJobs, 8);
+    assert.equal(s.defaultMaxRounds, 1);
+
+    const saved = await saveSettings(dataDir, { hostBindHint: "0.0.0.0" });
+    assert.equal(saved.notify.recipient, "me@example.com");
+    assert.equal(saved.maxActiveJobs, 8);
+  });
+
+  it("PATCH validation stays strict for out-of-range values", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-set-strict-"));
+    await assert.rejects(saveSettings(dataDir, { maxActiveJobs: 12 }), /maxActiveJobs/);
   });
 
   it("maskSecret short values", () => {

@@ -185,7 +185,7 @@ export function setupUiHtml(
     document.getElementById("save").onclick = async () => {
       const status = document.getElementById("status");
       status.textContent = "Saving…";
-      const drivers = [...document.querySelectorAll(".driver-card")].map((card) => {
+      const drivers = [...document.querySelectorAll("#drivers .driver-card")].map((card) => {
         const id = card.dataset.id;
         const keyEl = card.querySelector(".drv-key");
         const keyVal = keyEl.value.trim();

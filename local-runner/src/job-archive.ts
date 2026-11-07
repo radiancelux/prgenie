@@ -1,11 +1,18 @@
 import type { RunnerConfig } from "./config.js";
 import type { git } from "./github.js";
 import { isSafeJobId } from "./paths.js";
-import { listJobs, loadJob, moveJobToArchive, restoreJobFromArchive } from "./store.js";
+import {
+  listJobs,
+  loadArchivedJob,
+  loadJob,
+  moveJobToArchive,
+  restoreJobFromArchive,
+} from "./store.js";
+import { isJobSettling } from "./job-settling.js";
 import type { JobRecord, JobStage } from "./types.js";
 import { tryRemoveJobWorktree, type TryCleanupResult } from "./worktree-cleanup.js";
 
-/** Stages a job may be archived from; building/reviewing/fixing are still running. */
+/** Stages a job may be archived from; building/reviewing/fixing are running unless still queued. */
 export const ARCHIVABLE_STAGES: ReadonlySet<JobStage> = new Set<JobStage>([
   "failed",
   "stuck",
@@ -50,8 +57,12 @@ export type ClearFailedResult = {
 export type ArchiveDeps = {
   /** True while the engine still has a loop for this job (e.g. stop requested, not yet settled). */
   isRunning?: (jobId: string) => boolean;
+  isSettling?: (jobId: string) => Promise<boolean>;
+  dataDir?: string;
   gitImpl?: typeof git;
   log?: (msg: string) => void;
+  /** Defaults to the managed worktrees root; tests point it at a temp dir. */
+  worktreesRoot?: string;
 };
 
 function keptWorktreeWarning(worktreePath: string, res: TryCleanupResult): string {
@@ -62,7 +73,9 @@ function keptWorktreeWarning(worktreePath: string, res: TryCleanupResult): strin
         ? "it has uncommitted changes"
         : res.skipped === "unpushed"
           ? "the branch has commits that are not on origin"
-          : res.skipped;
+          : res.skipped === "outside_managed_root"
+            ? "it is outside the runner's managed worktrees directory"
+            : res.skipped;
   } else if ("reason" in res) {
     why = res.reason;
   } else {
@@ -83,9 +96,18 @@ async function releaseJobWorktree(
     reason: "archived",
     gitImpl: deps.gitImpl,
     log: deps.log,
+    worktreesRoot: deps.worktreesRoot,
   });
   if (res.removed) return { worktree: "removed" };
+  if ("skipped" in res && res.skipped === "repo_checkout") return { worktree: "none" };
   return { worktree: "kept", warning: keptWorktreeWarning(wt, res) };
+}
+
+async function jobStillRunning(id: string, deps: ArchiveDeps): Promise<boolean> {
+  if (deps.isRunning?.(id)) return true;
+  if (deps.isSettling) return deps.isSettling(id);
+  if (deps.dataDir) return isJobSettling(deps.dataDir, id);
+  return false;
 }
 
 export async function archiveJob(
@@ -94,9 +116,19 @@ export async function archiveJob(
   deps: ArchiveDeps = {},
 ): Promise<ArchiveJobResult> {
   if (!isSafeJobId(id)) return { ok: false, code: "invalid_id", error: "invalid job id" };
+  const archived = await loadArchivedJob(config.dataDir, id);
+  if (archived?.archivedAt) {
+    return {
+      ok: true,
+      id,
+      archivedAt: archived.archivedAt,
+      worktree: archived.worktreePath ? "kept" : "none",
+    };
+  }
   const job = await loadJob(config.dataDir, id);
   if (!job) return { ok: false, code: "not_found", error: "job not found" };
-  if (!ARCHIVABLE_STAGES.has(job.stage) || deps.isRunning?.(id)) {
+  const archivable = ARCHIVABLE_STAGES.has(job.stage) || Boolean(job.queueState?.queued);
+  if (!archivable || (await jobStillRunning(id, deps))) {
     return {
       ok: false,
       code: "running",
@@ -105,7 +137,20 @@ export async function archiveJob(
     };
   }
   const released = await releaseJobWorktree(config, job, deps);
-  await moveJobToArchive(config.dataDir, job);
+  try {
+    await moveJobToArchive(config.dataDir, job);
+  } catch (err) {
+    const again = await loadArchivedJob(config.dataDir, id);
+    if (again?.archivedAt) {
+      return {
+        ok: true,
+        id,
+        archivedAt: again.archivedAt,
+        worktree: again.worktreePath ? "kept" : "none",
+      };
+    }
+    throw err;
+  }
   return { ok: true, id, archivedAt: job.archivedAt ?? new Date().toISOString(), ...released };
 }
 

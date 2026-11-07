@@ -2,8 +2,8 @@
  * Loads the real dashboard (built Tailwind CSS, mocked API) in headless Chromium, expands an agent
  * whose transcript has long unbroken log lines, and fails if the page or the detail panel overflows
  * horizontally at any width from 320 to 1440px.
- * Requires: pnpm build && npx playwright install chromium (playwright resolvable via NODE_PATH or
- * node_modules). Run: timeout 180 node scripts/check-dashboard-overflow.mjs
+ * Requires: pnpm build && pnpm exec playwright install chromium (playwright resolvable via NODE_PATH or
+ * node_modules). Run: timeout 180 pnpm exec tsx scripts/check-dashboard-overflow.mjs
  */
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";

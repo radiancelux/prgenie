@@ -10,6 +10,12 @@ export type JobStage =
 
 export type JobProfile = "code" | "docs";
 
+export type JobStageModelKey = "build" | "review" | "fix";
+
+export type JobStageModels = Record<JobStageModelKey, string>;
+
+export type JobStageModelsInput = Partial<JobStageModels>;
+
 export interface JobInput {
   repoPath: string;
   branch: string;
@@ -17,7 +23,10 @@ export interface JobInput {
   reviewPromptFile?: string;
   fixPromptFile?: string;
   maxRounds?: number;
+  /** Legacy single-model override (all stages). */
   model?: string;
+  /** Per-stage model overrides at job creation. */
+  stageModels?: JobStageModelsInput;
   /** Agent driver id (cursor-agent, claude-code, local-model, …). */
   driver?: string;
   /** Clone URL instead of local repoPath when set. */
@@ -80,6 +89,29 @@ export interface CiStatusInfo {
 /** Generous cap for persisted doc lint findings (see local-runner README). */
 export const DOC_LINT_FINDINGS_CAP = 250;
 
+export type WatchdogState = {
+  lastActivityAt: string | null;
+  stageStartedAt: string | null;
+  recoveryAttemptsUsed: number;
+  lastRecoveryAt: string | null;
+  lastStallReason: string | null;
+};
+
+export type JobQueueState = {
+  queued: boolean;
+  position?: number;
+  since?: string;
+};
+
+export type JobEffectiveSnapshot = {
+  maxRounds: number;
+  stageModels: JobStageModels;
+  baseRef: string | null;
+  watchdogInactivityMs: number;
+  watchdogStageCapMs: number;
+  watchdogRecoveryAttempts: number;
+};
+
 export interface JobRecord {
   id: string;
   createdAt: string;
@@ -88,7 +120,15 @@ export interface JobRecord {
   stage: JobStage;
   reviewRound: number;
   maxRounds: number;
+  /** Legacy display field; build model at creation. */
   model: string;
+  /** Resolved per-stage models snapshot at job creation. */
+  stageModels?: JobStageModels;
+  /** Driver-reported or observed model id per stage (when known). */
+  stageModelActual?: Partial<JobStageModels>;
+  effectiveSnapshot?: JobEffectiveSnapshot;
+  watchdog?: WatchdogState;
+  queueState?: JobQueueState;
   driverId: string;
   worktreePath: string | null;
   repoSlug: string;
@@ -125,6 +165,7 @@ export interface StartJobArgs {
   fixPromptFile?: string;
   maxRounds?: number;
   model?: string;
+  stageModels?: JobStageModelsInput;
   driver?: string;
   dryRun?: boolean;
   ticketUrl?: string;

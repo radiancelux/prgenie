@@ -31,12 +31,20 @@ import { sumTokenUsageFromLog } from "./usage.js";
 import { cloneRepo, ensureWorktree, rebaseOntoBase } from "./worktree.js";
 import { cursorWorktreeDir } from "./paths.js";
 import { fetchPrViewInfo, readHeadSha } from "./draft-pr.js";
+import { runAgentWithWatchdog, type StageWatchdogOptions } from "./stage-watchdog.js";
+import { modelForActiveStage, recordActualModel } from "./job-models.js";
+import { setJobError } from "./job-error.js";
+import { parseWatchdogPolicy } from "./runner-policy.js";
 
 export type JobCallbacks = {
   onEvent?: (jobId: string, event: JobEvent) => void;
   onPrLinked?: (jobId: string) => void;
   fetchImpl?: FetchFn;
+  agentRunner?: AgentRunner;
+  watchdogTiming?: WatchdogTiming;
 };
+
+type WatchdogTiming = Pick<StageWatchdogOptions, "now" | "tickMs" | "childGraceMs">;
 
 async function readPromptFile(filePath: string, fallback: string): Promise<string> {
   if (!filePath?.trim()) return fallback;
@@ -47,15 +55,42 @@ async function readPromptFile(filePath: string, fallback: string): Promise<strin
   }
 }
 
+const NOTIFY_DEDUP_MAX = 500;
+/** Last notified event per job, oldest evicted first (Map keeps insertion order). */
+const notifyDedup = new Map<string, string>();
+
+function rememberNotified(jobId: string, eventKey: string): void {
+  notifyDedup.delete(jobId);
+  notifyDedup.set(jobId, eventKey);
+  while (notifyDedup.size > NOTIFY_DEDUP_MAX) {
+    const oldest = notifyDedup.keys().next().value;
+    if (oldest === undefined) break;
+    notifyDedup.delete(oldest);
+  }
+}
+
 async function notify(
   config: RunnerConfig,
   job: JobRecord,
   headline: string,
   fetchImpl?: FetchFn,
+  eventKey?: string,
 ): Promise<void> {
   const settings = await loadNotifySettings(config.dataDir);
+  const full = await loadSettings(config.dataDir);
   const to = resolveNotifyRecipient(config, settings);
   if (!to || !config.resendApiKey) return;
+  if (eventKey) {
+    const prev = notifyDedup.get(job.id);
+    if (prev === eventKey) return;
+    rememberNotified(job.id, eventKey);
+  }
+  const failureLike = /failed|stuck|watchdog/i.test(headline);
+  if (failureLike) {
+    if (/stuck/i.test(headline) && !full.notifyEvents.onStuck) return;
+    if (/failed/i.test(headline) && !full.notifyEvents.onFailed) return;
+    if (/watchdog/i.test(headline) && !full.notifyEvents.onWatchdogExhausted) return;
+  }
   const html = formatJobEmailHtml({
     headline,
     prUrl: job.prUrl,
@@ -69,8 +104,91 @@ async function notify(
     fetchImpl,
   );
   if (!result.ok) {
-    job.error = job.error ? `${job.error}; email: ${result.error}` : `email: ${result.error}`;
+    job.error = setJobError(job.error, `email: ${result.error}`);
   }
+}
+
+function watchdogPolicyForJob(job: JobRecord, settings: Awaited<ReturnType<typeof loadSettings>>) {
+  const snap = job.effectiveSnapshot;
+  if (snap) {
+    return parseWatchdogPolicy({
+      inactivityMs: snap.watchdogInactivityMs,
+      stageCapMs: snap.watchdogStageCapMs,
+      recoveryAttempts: snap.watchdogRecoveryAttempts,
+    });
+  }
+  return settings.watchdog;
+}
+
+/** In-flight jobs keep the base ref recorded at creation, not the live Setup value. */
+function baseRefSettingsForJob(
+  job: JobRecord,
+  settings: Awaited<ReturnType<typeof loadSettings>>,
+): Awaited<ReturnType<typeof loadSettings>> {
+  const snap = job.effectiveSnapshot;
+  if (!snap) return settings;
+  return { ...settings, defaultBaseBranch: snap.baseRef };
+}
+
+async function runAgentStage(
+  runner: AgentRunner,
+  config: RunnerConfig,
+  job: JobRecord,
+  control: JobControl,
+  settings: Awaited<ReturnType<typeof loadSettings>>,
+  stage: "building" | "reviewing" | "fixing",
+  opts: Parameters<AgentRunner["run"]>[0],
+  timing?: WatchdogTiming,
+): Promise<{ code: number; output: string } | null> {
+  const policy = watchdogPolicyForJob(job, settings);
+  job.watchdog = job.watchdog ?? {
+    lastActivityAt: null,
+    stageStartedAt: null,
+    recoveryAttemptsUsed: 0,
+    lastRecoveryAt: null,
+    lastStallReason: null,
+  };
+  job.watchdog.stageStartedAt = new Date().toISOString();
+  job.watchdog.lastActivityAt = job.watchdog.stageStartedAt;
+  const model = modelForActiveStage(job, stage);
+  recordActualModel(
+    job,
+    stage === "building" ? "build" : stage === "reviewing" ? "review" : "fix",
+    model,
+  );
+
+  const wd = await runAgentWithWatchdog(
+    {
+      ...timing,
+      policy,
+      killChild: () => runner.kill(),
+      onStall: (reason) => {
+        job.watchdog!.lastStallReason = reason;
+      },
+      onRecovery: () => {
+        job.watchdog!.recoveryAttemptsUsed += 1;
+        job.watchdog!.lastRecoveryAt = new Date().toISOString();
+      },
+    },
+    async (tap) => {
+      const onLine = (line: string) => {
+        tap(line);
+        job.watchdog!.lastActivityAt = new Date().toISOString();
+      };
+      runner.on("line", onLine);
+      try {
+        return await runner.run({ ...opts, model });
+      } finally {
+        runner.off("line", onLine);
+      }
+    },
+  );
+
+  if (!wd.ok) {
+    job.error = setJobError(job.error, `watchdog: ${wd.reason}`);
+    return null;
+  }
+  return wd.value;
 }
 
 function emit(cb: JobCallbacks | undefined, job: JobRecord, event: JobEvent): void {
@@ -121,7 +239,7 @@ export async function runJobLoop(
   control: JobControl,
   callbacks?: JobCallbacks,
 ): Promise<void> {
-  const runner = new AgentRunner();
+  const runner = callbacks?.agentRunner ?? new AgentRunner();
   control.registerKill(() => runner.kill());
   runner.on("line", (line: string) => {
     emit(callbacks, job, { type: "log", line });
@@ -139,6 +257,7 @@ export async function runJobLoop(
 
   try {
     const settings = await loadSettings(config.dataDir);
+    const baseSettings = baseRefSettingsForJob(job, settings);
     const driverEntry =
       findDriverEntry(settings, job.driverId) ?? findDriverEntry(settings, "cursor-agent");
     if (!driverEntry) {
@@ -146,7 +265,8 @@ export async function runJobLoop(
       await setStage(config, job, "failed", control, callbacks);
       return;
     }
-    const outputFormat = driverEntry.kind === "local-model" ? "text" : "stream-json";
+    const outputFormat: "stream-json" | "text" =
+      driverEntry.kind === "local-model" ? "text" : "stream-json";
 
     let repoRoot = job.input.repoPath;
     if (job.input.remote && !repoRoot) {
@@ -166,7 +286,7 @@ export async function runJobLoop(
       job.worktreePath = repoRoot;
       await persistJob(config, job, control);
     } else {
-      wt = await ensureWorktree(repoRoot, job.id, job.input.branch);
+      wt = await ensureWorktree(repoRoot, job.id, job.input.branch, baseSettings);
       job.worktreePath = wt;
       await persistJob(config, job, control);
     }
@@ -183,7 +303,7 @@ export async function runJobLoop(
       }
       const steer = control.drainSteer();
       const fullPrompt = steer ? `${prompt}\n\n--- steer ---\n${steer}` : prompt;
-      const result = await runner.run({
+      const baseRun = {
         cwd: wt,
         prompt: fullPrompt,
         model: job.model,
@@ -193,9 +313,30 @@ export async function runJobLoop(
         signal: control.signal,
         driverId: job.driverId,
         driverEntry,
-      });
+      };
+      const result = await runAgentStage(
+        runner,
+        config,
+        job,
+        control,
+        settings,
+        "building",
+        baseRun,
+        callbacks?.watchdogTiming,
+      );
       if (await checkStop()) return;
-      if (result.code !== 0) {
+      if (!result || result.code !== 0) {
+        if (!result) {
+          await setStage(config, job, "stuck", control, callbacks);
+          await notify(
+            config,
+            job,
+            `Watchdog exhausted: ${job.input.branch}`,
+            callbacks?.fetchImpl,
+            "watchdog",
+          );
+          return;
+        }
         job.error = `implementor exited ${result.code}`;
         await setStage(config, job, "failed", control, callbacks);
         return;
@@ -242,19 +383,39 @@ export async function runJobLoop(
         ? `${reviewPrompt}\n\nPR: ${job.prUrl}\n\n--- steer ---\n${reviewSteer}`
         : `${reviewPrompt}\n\nPR: ${job.prUrl}`;
 
-      const reviewRun = await runner.run({
-        cwd: wt,
-        prompt: reviewFull,
-        model: job.model,
-        logPath: job.logPath,
-        dryRun: job.dryRun,
-        outputFormat,
-        signal: control.signal,
-        driverId: job.driverId,
-        driverEntry,
-      });
+      const reviewRun = await runAgentStage(
+        runner,
+        config,
+        job,
+        control,
+        settings,
+        "reviewing",
+        {
+          cwd: wt,
+          prompt: reviewFull,
+          model: job.model,
+          logPath: job.logPath,
+          dryRun: job.dryRun,
+          outputFormat,
+          signal: control.signal,
+          driverId: job.driverId,
+          driverEntry,
+        },
+        callbacks?.watchdogTiming,
+      );
       if (await checkStop()) return;
-      if (reviewRun.code !== 0) {
+      if (!reviewRun || reviewRun.code !== 0) {
+        if (!reviewRun) {
+          await setStage(config, job, "stuck", control, callbacks);
+          await notify(
+            config,
+            job,
+            `Watchdog exhausted (review): ${job.input.branch}`,
+            callbacks?.fetchImpl,
+            "watchdog-review",
+          );
+          return;
+        }
         job.error = `reviewer exited ${reviewRun.code}`;
         await setStage(config, job, "failed", control, callbacks);
         return;
@@ -311,7 +472,7 @@ export async function runJobLoop(
 
       await setStage(config, job, "fixing", control, callbacks);
       if (!job.dryRun) {
-        await rebaseOntoBase(wt);
+        await rebaseOntoBase(wt, baseSettings);
       }
       const fixDefault = isDocsJob(job) ? resolveDocsFixPrompt() : DEFAULT_FIX_PROMPT;
       const fixPrompt = await readPromptFile(job.input.fixPromptFile ?? "", fixDefault);
@@ -320,19 +481,39 @@ export async function runJobLoop(
         ? `${fixPrompt}\n\nPR: ${job.prUrl}\n\n--- steer ---\n${fixSteer}`
         : `${fixPrompt}\n\nPR: ${job.prUrl}`;
 
-      const fixRun = await runner.run({
-        cwd: wt,
-        prompt: fixFull,
-        model: job.model,
-        logPath: job.logPath,
-        dryRun: job.dryRun,
-        outputFormat,
-        signal: control.signal,
-        driverId: job.driverId,
-        driverEntry,
-      });
+      const fixRun = await runAgentStage(
+        runner,
+        config,
+        job,
+        control,
+        settings,
+        "fixing",
+        {
+          cwd: wt,
+          prompt: fixFull,
+          model: job.model,
+          logPath: job.logPath,
+          dryRun: job.dryRun,
+          outputFormat,
+          signal: control.signal,
+          driverId: job.driverId,
+          driverEntry,
+        },
+        callbacks?.watchdogTiming,
+      );
       if (await checkStop()) return;
-      if (fixRun.code !== 0) {
+      if (!fixRun || fixRun.code !== 0) {
+        if (!fixRun) {
+          await setStage(config, job, "stuck", control, callbacks);
+          await notify(
+            config,
+            job,
+            `Watchdog exhausted (fix): ${job.input.branch}`,
+            callbacks?.fetchImpl,
+            "watchdog-fix",
+          );
+          return;
+        }
         job.error = `fixer exited ${fixRun.code}`;
         await setStage(config, job, "failed", control, callbacks);
         return;
@@ -349,8 +530,9 @@ export async function runJobLoop(
       // loop continues to next review round
     }
   } catch (err) {
-    job.error = err instanceof Error ? err.message : String(err);
+    job.error = setJobError(job.error, err instanceof Error ? err.message : String(err));
     await setStage(config, job, "failed", control, callbacks);
+    await notify(config, job, `Job failed: ${job.input.branch}`, callbacks?.fetchImpl, "failed");
   }
 }
 

@@ -116,7 +116,7 @@ export async function syncDraftReadyForJob(
   job: JobRecord,
   cwd: string | null,
   deps: PromoteDeps = {},
-): Promise<{ job: JobRecord; changed: boolean }> {
+): Promise<{ job: JobRecord; changed: boolean; errorNote?: string }> {
   if (!cwd?.trim() || (job.prNumber == null && !job.input.branch)) {
     return { job, changed: false };
   }
@@ -125,6 +125,7 @@ export async function syncDraftReadyForJob(
   const now = deps.now ?? (() => new Date().toISOString());
 
   let changed = false;
+  let errorNote: string | undefined;
   const view = await fetchPrViewInfo(
     cwd,
     { prNumber: job.prNumber, branch: job.input.branch, prUrl: job.prUrl },
@@ -165,11 +166,11 @@ export async function syncDraftReadyForJob(
       job.prIsDraft = false;
       changed = true;
     } else {
-      const note = `pr ready: ${result.error}`;
-      job.error = job.error ? `${job.error}; ${note}` : note;
+      errorNote = `pr ready: ${result.error}`;
+      job.error = job.error ? `${job.error}; ${errorNote}` : errorNote;
       changed = true;
     }
   }
 
-  return { job, changed };
+  return { job, changed, errorNote };
 }

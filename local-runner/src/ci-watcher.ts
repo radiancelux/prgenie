@@ -10,11 +10,18 @@ import {
 } from "./doc-checks.js";
 import { syncDraftReadyForJob } from "./draft-pr.js";
 import { resolveJobSpawnCwd } from "./job-cwd.js";
-import { listJobs, loadJob, saveJob } from "./store.js";
+import { setJobError } from "./job-error.js";
+import { listJobs, loadJob, patchJob } from "./store.js";
 import { loadSettings } from "./settings.js";
 import { maybeCleanupJobWorktree } from "./worktree-cleanup.js";
 
 const CI_POLL_MS = 45_000;
+
+export type CiWatcherDeps = {
+  fetchPrCiStatus?: typeof fetchPrCiStatus;
+  syncDraftReadyForJob?: typeof syncDraftReadyForJob;
+  cleanupWorktree?: typeof maybeCleanupJobWorktree;
+};
 
 export class CiWatcher {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -22,6 +29,7 @@ export class CiWatcher {
   constructor(
     private readonly config: RunnerConfig,
     private readonly engine: RunnerEngine,
+    private readonly deps: CiWatcherDeps = {},
   ) {}
 
   start(): void {
@@ -42,6 +50,9 @@ export class CiWatcher {
   }
 
   private async refreshJob(job: JobRecord): Promise<void> {
+    const fetchCi = this.deps.fetchPrCiStatus ?? fetchPrCiStatus;
+    const syncDraft = this.deps.syncDraftReadyForJob ?? syncDraftReadyForJob;
+    const cleanup = this.deps.cleanupWorktree ?? maybeCleanupJobWorktree;
     try {
       const cwd = resolveJobSpawnCwd(job);
       let changed = false;
@@ -53,7 +64,7 @@ export class CiWatcher {
         job.ciStatus = { ...next, checkedAt: new Date().toISOString() };
         changed = JSON.stringify(job.ciStatus) !== prev;
       } else {
-        const next = await fetchPrCiStatus(cwd, {
+        const next = await fetchCi(cwd, {
           prNumber: job.prNumber,
           branch: job.input.branch,
           repoSlug: job.repoSlug,
@@ -64,35 +75,41 @@ export class CiWatcher {
         changed = JSON.stringify(job.ciStatus) !== prev;
       }
 
-      const draft = await syncDraftReadyForJob(job, cwd);
+      const before = { prIsDraft: job.prIsDraft, readyPromotedAt: job.readyPromotedAt };
+      const draft = await syncDraft(job, cwd);
       if (draft.changed) {
         job = draft.job;
         changed = true;
       }
 
       if (changed) {
-        await saveJob(this.config.dataDir, job);
+        const { ciStatus, prIsDraft, readyPromotedAt } = job;
+        const fresh = await patchJob(this.config.dataDir, job.id, (live) => {
+          live.ciStatus = ciStatus;
+          if (prIsDraft !== before.prIsDraft) live.prIsDraft = prIsDraft;
+          if (readyPromotedAt !== before.readyPromotedAt) live.readyPromotedAt = readyPromotedAt;
+          if (draft.errorNote) live.error = setJobError(live.error, draft.errorNote);
+        });
+        if (!fresh) return;
+        job = fresh;
         this.engine.emit("event", job.id, { type: "ci" });
       }
 
-      await maybeCleanupJobWorktree(this.config, job, Date.now(), (msg) =>
-        console.warn(`[ci-watcher] ${msg}`),
-      );
+      await cleanup(this.config, job, Date.now(), (msg) => console.warn(`[ci-watcher] ${msg}`));
     } catch {
       // Never crash serve on CI poll failures.
     }
   }
 
   private async tick(): Promise<void> {
+    const cleanup = this.deps.cleanupWorktree ?? maybeCleanupJobWorktree;
     const jobs = await listJobs(this.config.dataDir);
     const nowMs = Date.now();
     for (const job of jobs) {
       if (shouldPollCi(job) || shouldPollDocChecks(job)) {
         await this.refreshJob(job);
       } else if (job.worktreePath) {
-        await maybeCleanupJobWorktree(this.config, job, nowMs, (msg) =>
-          console.warn(`[ci-watcher] ${msg}`),
-        );
+        await cleanup(this.config, job, nowMs, (msg) => console.warn(`[ci-watcher] ${msg}`));
       }
     }
   }

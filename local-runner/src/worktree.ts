@@ -2,6 +2,8 @@ import { mkdir, rm, access } from "node:fs/promises";
 import path from "node:path";
 import { cursorWorktreeDir, repoSlugFromPath } from "./paths.js";
 import { git } from "./github.js";
+import { baseRefProbeOrder, resolveWorktreeBaseRef } from "./repo-base.js";
+import type { RunnerSettings } from "./settings.js";
 
 export async function cloneRepo(remote: string, dest: string): Promise<void> {
   await mkdir(path.dirname(dest), { recursive: true });
@@ -17,6 +19,7 @@ export async function ensureWorktree(
   repoPath: string,
   jobId: string,
   branch: string,
+  settings?: RunnerSettings,
 ): Promise<string> {
   const slug = repoSlugFromPath(repoPath);
   const wt = cursorWorktreeDir(slug, jobId);
@@ -37,14 +40,22 @@ export async function ensureWorktree(
     await git(repoPath, ["worktree", "remove", "--force", wt]).catch(() => undefined);
     await rm(wt, { recursive: true, force: true }).catch(() => undefined);
   }
-  const add = await git(repoPath, ["worktree", "add", "-B", branch, wt, "origin/main"]);
-  if (add.code !== 0) {
-    const addMain = await git(repoPath, ["worktree", "add", "-B", branch, wt, "main"]);
-    if (addMain.code !== 0) {
-      throw new Error(`git worktree add failed: ${add.stderr.trim() || addMain.stderr.trim()}`);
-    }
+  const bases = settings ? baseRefProbeOrder(settings) : ["origin/main", "origin/master", "main"];
+  let lastErr = "";
+  for (const base of bases) {
+    const probe = await git(repoPath, ["rev-parse", "--verify", base]);
+    if (probe.code !== 0) continue;
+    const add = await git(repoPath, ["worktree", "add", "-B", branch, wt, base]);
+    if (add.code === 0) return wt;
+    lastErr = add.stderr.trim() || add.stdout.trim();
   }
-  return wt;
+  if (settings) {
+    const resolved = await resolveWorktreeBaseRef(repoPath, settings);
+    const add = await git(repoPath, ["worktree", "add", "-B", branch, wt, resolved.ref]);
+    if (add.code === 0) return wt;
+    lastErr = add.stderr.trim() || add.stdout.trim();
+  }
+  throw new Error(`git worktree add failed: ${lastErr || "no base ref found"}`);
 }
 
 export async function removeWorktree(repoPath: string, worktreePath: string): Promise<void> {
@@ -52,9 +63,10 @@ export async function removeWorktree(repoPath: string, worktreePath: string): Pr
   await rm(worktreePath, { recursive: true, force: true }).catch(() => undefined);
 }
 
-export async function rebaseOntoBase(worktree: string): Promise<void> {
+export async function rebaseOntoBase(worktree: string, settings?: RunnerSettings): Promise<void> {
   await git(worktree, ["fetch", "origin"]);
-  for (const base of ["origin/main", "origin/master", "main"]) {
+  const order = settings ? baseRefProbeOrder(settings) : ["origin/main", "origin/master", "main"];
+  for (const base of order) {
     const probe = await git(worktree, ["rev-parse", "--verify", base]);
     if (probe.code === 0) {
       const rb = await git(worktree, ["rebase", base]);
