@@ -152,7 +152,7 @@ describe("RunnerEngine queue", () => {
       await seedJob(dataDir, repo, "q2", true),
       await seedJob(dataDir, repo, "q3", true),
     ];
-    const engine = new RunnerEngine(testConfig(dataDir));
+    const engine = new RunnerEngine(testConfig(dataDir), { watchCi: false });
     try {
       await engine.init();
       const dequeued: string[] = [];
@@ -171,7 +171,6 @@ describe("RunnerEngine queue", () => {
         assert.equal(done?.stage, "approved", `${j.input.branch}: ${done?.error ?? ""}`);
       }
     } finally {
-      engine.ciWatcher.stop();
       await waitForIdle(
         engine,
         jobs.map((j) => j.id),

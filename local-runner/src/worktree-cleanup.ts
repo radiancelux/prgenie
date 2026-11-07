@@ -6,7 +6,8 @@ import { shouldHideMergedJob } from "./ci.js";
 import { fetchPrMerged, git, isBranchSyncedWithOrigin } from "./github.js";
 import { resolveJobSpawnCwd } from "./job-cwd.js";
 import { syncJobMergedStatus } from "./job-merge.js";
-import { saveJob } from "./store.js";
+import { setJobError } from "./job-error.js";
+import { patchJob } from "./store.js";
 import type { JobRecord } from "./types.js";
 import { removeWorktree } from "./worktree.js";
 
@@ -88,6 +89,20 @@ export function unremovableWorktreeReason(
   return null;
 }
 
+async function persistWorktreeCleared(config: RunnerConfig, job: JobRecord): Promise<void> {
+  job.worktreePath = null;
+  await patchJob(config.dataDir, job.id, (fresh) => {
+    fresh.worktreePath = null;
+  });
+}
+
+async function persistCleanupError(config: RunnerConfig, job: JobRecord, msg: string) {
+  job.error = setJobError(job.error, msg);
+  await patchJob(config.dataDir, job.id, (fresh) => {
+    fresh.error = setJobError(fresh.error, msg);
+  });
+}
+
 export async function tryRemoveJobWorktree(
   config: RunnerConfig,
   job: JobRecord,
@@ -107,8 +122,7 @@ export async function tryRemoveJobWorktree(
   const gitImpl = opts.gitImpl ?? git;
   const exists = await worktreePathExists(wt);
   if (!exists) {
-    job.worktreePath = null;
-    await saveJob(config.dataDir, job);
+    await persistWorktreeCleared(config, job);
     return { removed: true };
   }
 
@@ -125,8 +139,7 @@ export async function tryRemoveJobWorktree(
   if (await worktreeHasUncommittedChanges(wt, gitImpl)) {
     const msg = `worktree cleanup skipped (${opts.reason}): uncommitted changes in ${wt}`;
     opts.log?.(msg);
-    job.error = job.error ? `${job.error}; ${msg}` : msg;
-    await saveJob(config.dataDir, job);
+    await persistCleanupError(config, job, msg);
     return { removed: false, skipped: "dirty" };
   }
 
@@ -134,8 +147,7 @@ export async function tryRemoveJobWorktree(
   if (!sync.ok) {
     const msg = `worktree cleanup skipped (${opts.reason}): ${sync.reason}`;
     opts.log?.(msg);
-    job.error = job.error ? `${job.error}; ${msg}` : msg;
-    await saveJob(config.dataDir, job);
+    await persistCleanupError(config, job, msg);
     return { removed: false, skipped: "unpushed" };
   }
 
@@ -153,8 +165,7 @@ export async function tryRemoveJobWorktree(
   }
 
   await removeWorktree(repoRoot, wt);
-  job.worktreePath = null;
-  await saveJob(config.dataDir, job);
+  await persistWorktreeCleared(config, job);
   opts.log?.(`worktree removed (${opts.reason}): ${wt}`);
   return { removed: true };
 }

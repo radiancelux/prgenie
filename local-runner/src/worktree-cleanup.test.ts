@@ -11,7 +11,7 @@ import {
   worktreePathExists,
 } from "./worktree-cleanup.js";
 import type { JobRecord } from "./types.js";
-import { loadJob } from "./store.js";
+import { loadJob, saveJob } from "./store.js";
 
 function testConfig(dataDir: string): RunnerConfig {
   return {
@@ -87,6 +87,28 @@ describe("worktree cleanup", () => {
     assert.equal(j.worktreePath, null);
   });
 
+  it("a stale copy only clears worktreePath and never rolls stage back", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-wt-stale-"));
+    const config = testConfig(dataDir);
+    await saveJob(dataDir, job({ id: "stale-1", worktreePath: "/no/such/worktree/path" }));
+    const stale = job({
+      id: "stale-1",
+      stage: "building",
+      lastVerdict: null,
+      worktreePath: "/no/such/worktree/path",
+    });
+
+    const r = await tryRemoveJobWorktree(config, stale, {
+      reason: "merged_hidden",
+      worktreesRoot: os.tmpdir(),
+    });
+    assert.equal(r.removed, true);
+    const onDisk = await loadJob(dataDir, "stale-1");
+    assert.equal(onDisk?.stage, "approved");
+    assert.equal(onDisk?.lastVerdict, "APPROVE");
+    assert.equal(onDisk?.worktreePath, null);
+  });
+
   it("skips dirty worktree with warning", async () => {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-wt-dirty-"));
     const repo = await mkdtemp(path.join(os.tmpdir(), "lr-wt-repo-"));
@@ -157,7 +179,6 @@ describe("worktree cleanup", () => {
         source: "github",
       },
     });
-    const { saveJob } = await import("./store.js");
     await saveJob(dataDir, j);
 
     const gitImpl = async (_cwd: string, args: string[]) => {

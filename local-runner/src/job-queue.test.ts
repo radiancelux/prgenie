@@ -82,6 +82,17 @@ describe("job queue", () => {
     const jobs = [onBranch("feat/x", { id: "a", stopRequested: true })];
     assert.equal(decideJobStart(jobs, "feat/x", "o/r", 2).action, "run");
   });
+
+  it("a stop-requested job still unwinding keeps its branch and slot", () => {
+    const jobs = [onBranch("feat/x", { id: "a", stopRequested: true })];
+    const isRunning = (id: string) => id === "a";
+    assert.equal(decideJobStart(jobs, "feat/x", "o/r", 2, { isRunning }).action, "reject");
+    assert.equal(decideJobStart(jobs, "feat/y", "o/r", 1, { isRunning }).action, "queue");
+    assert.equal(
+      decideJobStart(jobs, "feat/x", "o/r", 2, { isRunning: () => false }).action,
+      "run",
+    );
+  });
 });
 
 describe("runnableQueuedJobs", () => {
@@ -112,6 +123,18 @@ describe("runnableQueuedJobs", () => {
     assert.deepEqual(
       runnableQueuedJobs(jobs, 3).map((j) => j.id),
       ["ok"],
+    );
+  });
+
+  it("does not hand a stop-requested job's slot out until its loop exits", () => {
+    const jobs = [
+      onBranch("busy", { id: "stopping", stopRequested: true }),
+      onBranch("q", { id: "q", queueState: queued }),
+    ];
+    assert.deepEqual(runnableQueuedJobs(jobs, 1, { isRunning: (id) => id === "stopping" }), []);
+    assert.deepEqual(
+      runnableQueuedJobs(jobs, 1, { isRunning: () => false }).map((j) => j.id),
+      ["q"],
     );
   });
 });

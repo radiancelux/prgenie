@@ -91,6 +91,22 @@ export async function saveJob(dataDir: string, job: JobRecord): Promise<void> {
   await atomicWriteJson(livePath, job);
 }
 
+/**
+ * Side writers (CI poll, worktree cleanup) hold copies that may predate the job loop's latest
+ * save; re-read and apply only the fields they own so `stage` and loop state never roll back.
+ */
+export async function patchJob(
+  dataDir: string,
+  id: string,
+  mutate: (job: JobRecord) => void,
+): Promise<JobRecord | null> {
+  const fresh = await loadJob(dataDir, id);
+  if (!fresh) return null;
+  mutate(fresh);
+  await saveJob(dataDir, fresh);
+  return fresh;
+}
+
 export async function loadJob(dataDir: string, id: string): Promise<JobRecord | null> {
   if (!isSafeJobId(id)) return null;
   return readJobFile(jobFile(dataDir, id));

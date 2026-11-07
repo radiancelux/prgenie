@@ -1,5 +1,5 @@
 import type { RunnerConfig } from "./config.js";
-import { CiWatcher } from "./ci-watcher.js";
+import { CiWatcher, type CiWatcherDeps } from "./ci-watcher.js";
 import { runJobLoop, jobSnapshot } from "./job-runner.js";
 import { JobControl } from "./job-control.js";
 import {
@@ -48,11 +48,18 @@ export class RunnerEngine extends EventEmitter {
   readonly ciWatcher: CiWatcher;
   /** Shared with in-flight runJobLoop — steer/stop must not reload and clobber the live JobRecord. */
   readonly jobControls = new Map<string, JobControl>();
+  private readonly watchCi: boolean;
 
-  constructor(readonly config: RunnerConfig) {
+  constructor(
+    readonly config: RunnerConfig,
+    opts: { watchCi?: boolean; ciWatcherDeps?: CiWatcherDeps } = {},
+  ) {
     super();
-    this.ciWatcher = new CiWatcher(config, this);
+    this.watchCi = opts.watchCi ?? true;
+    this.ciWatcher = new CiWatcher(config, this, opts.ciWatcherDeps);
   }
+
+  private readonly queueOptions = { isRunning: (id: string) => this.isRunning(id) };
 
   private controlFor(job: JobRecord): JobControl {
     let control = this.jobControls.get(job.id);
@@ -78,7 +85,7 @@ export class RunnerEngine extends EventEmitter {
       }
     }
     await this.drainQueue();
-    this.ciWatcher.start();
+    if (this.watchCi) this.ciWatcher.start();
   }
 
   async startJob(args: StartJobArgs): Promise<JobRecord> {
@@ -98,7 +105,13 @@ export class RunnerEngine extends EventEmitter {
     if (!target.ok) throw new ValidationError(target.error);
     const repoSlug = await resolveJobRepoSlug(target);
     const jobs = await listJobsForQueue(this.config.dataDir);
-    const decision = decideJobStart(jobs, args.branch, repoSlug, settings.maxActiveJobs);
+    const decision = decideJobStart(
+      jobs,
+      args.branch,
+      repoSlug,
+      settings.maxActiveJobs,
+      this.queueOptions,
+    );
     if (decision.action === "reject") {
       throw new BranchConflictError(decision.reason);
     }
@@ -123,7 +136,7 @@ export class RunnerEngine extends EventEmitter {
     const started = await this.withQueueLock(async () => {
       const settings = await loadSettings(this.config.dataDir);
       const jobs = await listJobsForQueue(this.config.dataDir);
-      const next = runnableQueuedJobs(jobs, settings.maxActiveJobs);
+      const next = runnableQueuedJobs(jobs, settings.maxActiveJobs, this.queueOptions);
       for (const job of next) {
         job.queueState = undefined;
         await saveJob(this.config.dataDir, job);
@@ -159,7 +172,9 @@ export class RunnerEngine extends EventEmitter {
     try {
       await runJobLoop(this.config, job, control, {
         onEvent: (id, event) => this.emit("event", id, event),
-        onPrLinked: (id) => void this.ciWatcher.refreshJobById(id),
+        onPrLinked: (id) => {
+          if (this.watchCi) void this.ciWatcher.refreshJobById(id);
+        },
       });
     } finally {
       await clearJobSettling(this.config.dataDir, jobId);
@@ -229,15 +244,18 @@ export class RunnerEngine extends EventEmitter {
     }
     const control = this.jobControls.get(jobId);
     control?.pushSteer(trimmed);
-    const job = await loadJob(this.config.dataDir, jobId);
-    if (!job) return null;
-    if (control) {
-      JobControl.syncSteerQueueForPersist(job, control);
-    } else {
-      job.steerQueue.push(trimmed);
-    }
-    await saveJob(this.config.dataDir, job);
-    return job;
+    // Under the queue lock so a drain cannot dequeue between this load and save.
+    return this.withQueueLock(async () => {
+      const job = await loadJob(this.config.dataDir, jobId);
+      if (!job) return null;
+      if (control) {
+        JobControl.syncSteerQueueForPersist(job, control);
+      } else {
+        job.steerQueue.push(trimmed);
+      }
+      await saveJob(this.config.dataDir, job);
+      return job;
+    });
   }
 
   async stop(jobId: string): Promise<JobRecord | null> {
