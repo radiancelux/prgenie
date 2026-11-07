@@ -3,6 +3,7 @@
  * Requires: pnpm build && npx playwright install chromium
  */
 import { execFileSync } from "node:child_process";
+import { setTimeout } from "node:timers/promises";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -97,7 +98,7 @@ const script = [...dom.window.document.querySelectorAll("script")]
   .map((s) => s.textContent)
   .join("\n");
 dom.window.eval(script);
-await new Promise((r) => setTimeout(r, 200));
+await setTimeout(200);
 
 const snapPath = path.join(outDir, "fixture-snapshot.html");
 writeFileSync(snapPath, dom.serialize());
