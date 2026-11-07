@@ -321,11 +321,74 @@ export function runnerUiHtml(
       return '<span title="' + detail + '">' + compact + "</span>";
     }
 
-    function fmtTicket(j) {
-      if (j.ticketUrl && j.linearIssue) return '<a href="' + j.ticketUrl + '" target="_blank" rel="noopener">' + j.linearIssue + "</a>";
-      if (j.ticketUrl) return '<a href="' + j.ticketUrl + '" target="_blank" rel="noopener">ticket</a>';
-      return "—";
+    function ticketAnchorAttrs(t) {
+      return 'href="' + escapeAttr(t.url) + '" target="_blank" rel="noopener noreferrer"';
     }
+
+    function fmtTicket(j) {
+      const links = dashFmt.jobTicketLinks(j);
+      if (!links.length) return j.linearIssue ? escapeAttr(j.linearIssue) : "—";
+      return links
+        .map((t) => '<a class="text-sky-400" ' + ticketAnchorAttrs(t) + ' aria-label="Open ticket ' + escapeAttr(t.label) + '">' + escapeAttr(t.label) + "</a>")
+        .join(", ");
+    }
+
+    const TICKET_ICON =
+      '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" class="size-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16v4a2 2 0 0 0 0 4v4H4v-4a2 2 0 0 0 0-4z"/><path d="M14 7v2M14 11v2M14 15v2"/></svg>';
+    const TICKET_BTN_CLASS =
+      "job-ticket inline-flex size-11 shrink-0 items-center justify-center gap-0.5 rounded-md border border-zinc-700 text-sky-300 hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500";
+
+    /** Card header: one ticket links directly; several open a list spanning the card header. */
+    function fmtCardTickets(j) {
+      const links = dashFmt.jobTicketLinks(j);
+      if (!links.length) return "";
+      if (links.length === 1) {
+        const name = "Open ticket " + escapeAttr(links[0].label);
+        return '<a class="' + TICKET_BTN_CLASS + '" ' + ticketAnchorAttrs(links[0]) + ' aria-label="' + name + '" title="' + name + '">' + TICKET_ICON + "</a>";
+      }
+      const listId = "job-tickets-" + escapeAttr(j.id);
+      const names = links.map((t) => escapeAttr(t.label)).join(", ");
+      const items = links
+        .map((t) => '<li><a class="flex min-h-11 flex-col justify-center rounded-md px-3 py-1 text-sky-300 hover:bg-zinc-800 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-500" ' + ticketAnchorAttrs(t) + '><span class="font-medium">Open ticket ' + escapeAttr(t.label) + '</span><span class="text-xs text-zinc-400 wrap-anywhere">' + escapeAttr(t.url) + "</span></a></li>")
+        .join("");
+      return '<button type="button" data-ticket-menu class="' + TICKET_BTN_CLASS + '" aria-expanded="false" aria-controls="' + listId + '" aria-label="Show tickets ' + names + '" title="Tickets ' + names + '">' + TICKET_ICON + '<span aria-hidden="true" class="text-xs">' + links.length + "</span></button>" +
+        '<ul id="' + listId + '" class="job-ticket-list absolute inset-x-0 top-full z-20 mt-1 grid gap-1 rounded-lg border border-zinc-700 bg-zinc-900 p-1 shadow-lg" hidden>' + items + "</ul>";
+    }
+
+    function setTicketMenu(btn, open) {
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      const list = document.getElementById(btn.getAttribute("aria-controls"));
+      if (list) list.hidden = !open;
+    }
+
+    function closeTicketMenus(except) {
+      for (const btn of document.querySelectorAll('[data-ticket-menu][aria-expanded="true"]')) {
+        if (btn !== except) setTicketMenu(btn, false);
+      }
+    }
+
+    function onTicketsClick(e) {
+      const btn = e.target.closest("[data-ticket-menu]");
+      if (!btn) {
+        if (e.target.closest("a")) closeTicketMenus();
+        return;
+      }
+      const open = btn.getAttribute("aria-expanded") !== "true";
+      closeTicketMenus(btn);
+      setTicketMenu(btn, open);
+    }
+
+    function onTicketsKeydown(e) {
+      if (e.key !== "Escape") return;
+      const btn = e.currentTarget.querySelector('[data-ticket-menu][aria-expanded="true"]');
+      if (!btn) return;
+      setTicketMenu(btn, false);
+      btn.focus();
+    }
+
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest || !e.target.closest(".job-card-tickets")) closeTicketMenus();
+    });
 
     let rawLogTail = "";
 
@@ -362,6 +425,16 @@ export function runnerUiHtml(
       let html = '<span class="agent-label inline-block max-w-[min(16rem,42vw)] truncate align-top lg:max-w-36 xl:max-w-64" title="' + tip + '">' + label + '</span>';
       if (dashFmt.isDocsJobRecord(j) && j.input && j.input.docsTemplate) {
         html += '<br><span class="meta">' + String(j.input.docsTemplate).replace(/</g, "&lt;") + '</span>';
+      }
+      return html;
+    }
+
+    /** Card title takes the full header width: two lines, then an ellipsis. */
+    function fmtCardTitle(j) {
+      const d = dashFmt.jobAgentDisplayLabel(j);
+      let html = '<span class="job-card-title line-clamp-2 font-medium leading-snug wrap-anywhere" title="' + escapeAttr(d.tooltip) + '">' + escapeAttr(d.label) + "</span>";
+      if (dashFmt.isDocsJobRecord(j) && j.input && j.input.docsTemplate) {
+        html += '<span class="meta block text-sm">' + escapeAttr(j.input.docsTemplate) + "</span>";
       }
       return html;
     }
@@ -455,7 +528,7 @@ export function runnerUiHtml(
     }
 
     const TOGGLE_CLASS =
-      "job-toggle group flex min-h-11 w-full items-start gap-2 rounded-md text-left text-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500";
+      "job-toggle group flex min-h-11 w-full min-w-0 items-start gap-2 rounded-md text-left text-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500";
     const TOGGLE_INNER =
       '<span aria-hidden="true" class="job-chevron mt-0.5 inline-block w-3 shrink-0 text-zinc-500 transition-transform group-aria-expanded:rotate-90 group-aria-expanded:text-sky-400">▸</span><span class="job-toggle-label min-w-0 flex-1"></span>';
     const CELL_LABELS = ["Agent", "Repo", "Stage", "Round", "Ticket", "PR", "Ready", "Status", "Model", "Tokens", "Updated", "Actions"];
@@ -504,14 +577,17 @@ export function runnerUiHtml(
       card.setAttribute("role", "listitem");
       card.dataset.id = id;
       card.innerHTML =
-        '<div class="flex items-start gap-2"><button type="button" class="' + TOGGLE_CLASS + '">' + TOGGLE_INNER + '</button><div class="job-card-actions shrink-0"></div></div>' +
+        '<div class="job-card-header relative flex items-start gap-2"><button type="button" class="' + TOGGLE_CLASS + '">' + TOGGLE_INNER + '</button><div class="job-card-tickets flex shrink-0 empty:hidden"></div><div class="job-card-actions shrink-0 empty:hidden"></div></div>' +
         '<details class="job-card-more mt-2 text-sm text-zinc-300"><summary class="cursor-pointer text-zinc-500">More</summary><div class="job-card-meta mt-2 grid gap-1"></div></details>';
       const toggles = [tr.querySelector(".job-toggle"), card.querySelector(".job-toggle")];
       toggles.forEach((b) => b.addEventListener("click", () => toggleJob(id)));
       const cells = [...tr.children];
       const cardActions = card.querySelector(".job-card-actions");
+      const cardTickets = card.querySelector(".job-card-tickets");
       cells[ACTIONS_CELL].addEventListener("click", (e) => onActionClick(e, id));
       cardActions.addEventListener("click", (e) => onActionClick(e, id));
+      cardTickets.addEventListener("click", onTicketsClick);
+      cardTickets.addEventListener("keydown", onTicketsKeydown);
       return {
         tr,
         cells,
@@ -520,6 +596,7 @@ export function runnerUiHtml(
         cardLabel: card.querySelector(".job-toggle-label"),
         cardMeta: card.querySelector(".job-card-meta"),
         cardActions,
+        cardTickets,
       };
     }
 
@@ -551,9 +628,10 @@ export function runnerUiHtml(
       els.cells[7].dataset.label = dashFmt.isDocsJobRecord(j) ? "Doc checks" : "Status";
       setHtml(
         els.cardLabel,
-        '<span class="block font-medium leading-snug">' + values[0] + '</span><span class="meta mt-1 block text-sm text-zinc-400">' + values[1] + " · " + stageLabel + "</span>",
+        fmtCardTitle(j) + '<span class="meta mt-1 block text-sm text-zinc-400 wrap-anywhere">' + values[1] + " · " + stageLabel + archivedBadge + "</span>",
       );
-      setHtml(els.cardMeta, values[4] + " · " + pr + " · " + values[6] + " · " + values[7]);
+      setHtml(els.cardTickets, fmtCardTickets(j));
+      setHtml(els.cardMeta, pr + " · " + values[6] + " · " + values[7]);
     }
 
     function syncSelectionUi() {

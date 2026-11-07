@@ -83,6 +83,24 @@ function optionalEnum<T extends string>(
   return v as T;
 }
 
+export const MAX_TICKET_URLS = 10;
+
+/** Extra tickets for one job; only http(s) links, since the dashboard renders them as hrefs. */
+export function validateTicketUrls(raw: unknown): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw) || raw.some((u) => typeof u !== "string")) {
+    throw new ValidationError("ticketUrls must be an array of strings");
+  }
+  const urls = [...new Set((raw as string[]).map((u) => u.trim()).filter(Boolean))];
+  if (urls.length > MAX_TICKET_URLS) {
+    throw new ValidationError(`ticketUrls allows at most ${MAX_TICKET_URLS} entries`);
+  }
+  if (urls.some((u) => !/^https?:\/\/\S+$/i.test(u))) {
+    throw new ValidationError("ticketUrls entries must be http(s) URLs");
+  }
+  return urls.length ? urls : undefined;
+}
+
 export function validateMaxRounds(n: unknown): number | undefined {
   if (n === undefined || n === null) return undefined;
   return validateBoundedInt(n, "maxRounds", MAX_ROUNDS_MIN, MAX_ROUNDS_MAX);
@@ -177,6 +195,7 @@ export function normalizeStartJobArgs(raw: Record<string, unknown>): StartJobArg
   const fixPromptFile = optionalString(raw, "fixPromptFile");
   const modelRaw = optionalString(raw, "model");
   const ticketUrl = optionalString(raw, "ticketUrl");
+  const ticketUrls = validateTicketUrls(raw.ticketUrls);
   const linearIssue = optionalString(raw, "linearIssue");
   const title = optionalString(raw, "title");
   const dryRun = optionalBoolean(raw, "dryRun");
@@ -232,6 +251,7 @@ export function normalizeStartJobArgs(raw: Record<string, unknown>): StartJobArg
   if (jobType) args.jobType = jobType;
   if (profile) args.profile = profile;
   if (docsTemplate) args.docsTemplate = docsTemplate;
+  if (ticketUrls) args.ticketUrls = ticketUrls;
   return args;
 }
 
