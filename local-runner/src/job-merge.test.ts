@@ -5,7 +5,22 @@ import os from "node:os";
 import path from "node:path";
 import { MERGED_HIDE_AFTER_MS, shouldHideMergedJob } from "./ci.js";
 import { syncJobMergedStatus } from "./job-merge.js";
+import type { RunnerConfig } from "./config.js";
 import { createJob, listJobsForDisplay, loadJob } from "./store.js";
+
+function testConfig(dataDir: string): RunnerConfig {
+  return {
+    host: "127.0.0.1",
+    port: 9473,
+    token: "t",
+    dataDir,
+    notifyEmail: null,
+    resendApiKey: null,
+    defaultModel: "composer-2.5",
+    dryRun: true,
+    defaultCodeRepoPath: null,
+  };
+}
 
 describe("syncJobMergedStatus", () => {
   it("sets ciStatus merged and keeps job on dashboard until hide window", async () => {
@@ -13,7 +28,7 @@ describe("syncJobMergedStatus", () => {
     const job = await createJob(
       dataDir,
       { repoPath: "/tmp/repo", branch: "feat/x", promptFile: "/p", dryRun: true },
-      { model: "m", dryRun: true, config: { defaultCodeRepoPath: null } },
+      { model: "m", dryRun: true, config: testConfig(dataDir) },
     );
     job.prNumber = 99;
     job.prUrl = "https://github.com/o/r/pull/99";

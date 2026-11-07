@@ -312,6 +312,30 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
               ? null
               : String(payload.hostBindHint).trim();
         }
+        if (payload.defaultMaxRounds !== undefined) {
+          patch.defaultMaxRounds = Number(payload.defaultMaxRounds);
+        }
+        if (payload.maxActiveJobs !== undefined) {
+          patch.maxActiveJobs = Number(payload.maxActiveJobs);
+        }
+        if (payload.defaultBaseBranch !== undefined) {
+          patch.defaultBaseBranch =
+            payload.defaultBaseBranch === null || payload.defaultBaseBranch === ""
+              ? null
+              : String(payload.defaultBaseBranch).trim();
+        }
+        if (payload.expectedRevision !== undefined) {
+          patch.expectedRevision = Number(payload.expectedRevision);
+        }
+        if (payload.stageModels !== undefined && typeof payload.stageModels === "object") {
+          patch.stageModels = payload.stageModels as SettingsPatch["stageModels"];
+        }
+        if (payload.watchdog !== undefined && typeof payload.watchdog === "object") {
+          patch.watchdog = payload.watchdog as SettingsPatch["watchdog"];
+        }
+        if (payload.notifyEvents !== undefined && typeof payload.notifyEvents === "object") {
+          patch.notifyEvents = payload.notifyEvents as SettingsPatch["notifyEvents"];
+        }
         if (payload.notify) {
           patch.notify = {};
           if (payload.notify.enabled !== undefined) {

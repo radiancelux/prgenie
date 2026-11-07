@@ -3,13 +3,28 @@ import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { RunnerConfig } from "./config.js";
 import { createJob, listJobs, loadJob } from "./store.js";
 
-const createDefaults = {
+function testConfig(dataDir: string): RunnerConfig {
+  return {
+    host: "127.0.0.1",
+    port: 9473,
+    token: "t",
+    dataDir,
+    notifyEmail: null,
+    resendApiKey: null,
+    defaultModel: "composer-2.5",
+    dryRun: true,
+    defaultCodeRepoPath: null,
+  };
+}
+
+const createDefaults = (dataDir: string) => ({
   model: "composer-2.5",
   dryRun: true,
-  config: { defaultCodeRepoPath: null },
-};
+  config: testConfig(dataDir),
+});
 
 describe("job store", () => {
   it("persists jobs across reload", async () => {
@@ -23,7 +38,7 @@ describe("job store", () => {
         maxRounds: 2,
         dryRun: true,
       },
-      { model: "composer-2.5", dryRun: false, config: { defaultCodeRepoPath: null } },
+      { model: "composer-2.5", dryRun: false, config: testConfig(dataDir) },
     );
     assert.equal(job.stage, "building");
     const again = await loadJob(dataDir, job.id);
@@ -43,7 +58,7 @@ describe("job store", () => {
         promptFile: "/tmp/prompt.md",
         dryRun: true,
       },
-      createDefaults,
+      createDefaults(dataDir),
     );
     assert.equal(job.linearIssue, "ISSUE-320");
     assert.equal(job.ticketUrl, null);
@@ -61,7 +76,7 @@ describe("job store", () => {
         title: "My agent",
         dryRun: true,
       },
-      { model: "composer-2.5", dryRun: true, config: { defaultCodeRepoPath: null } },
+      createDefaults(dataDir),
     );
     assert.equal(explicit.title, "My agent");
 
@@ -75,7 +90,7 @@ describe("job store", () => {
         ticketUrl: "https://example.com/issue/ISSUE-327/dashboard-script-parse",
         dryRun: true,
       },
-      { model: "composer-2.5", dryRun: true, config: { defaultCodeRepoPath: null } },
+      createDefaults(dataDir2),
     );
     assert.equal(fromSlug.title, "dashboard script parse");
   });
@@ -106,7 +121,7 @@ describe("job store", () => {
         docsTemplate: "policy",
         dryRun: true,
       },
-      createDefaults,
+      createDefaults(dataDir),
     );
     assert.equal(job.input.repoPath, "/data/business-repo");
     assert.equal(job.input.jobType, "docs");
@@ -129,7 +144,7 @@ describe("job store", () => {
         repoPath: "/override/path",
         dryRun: true,
       },
-      createDefaults,
+      createDefaults(dataDir),
     );
     assert.equal(job.input.repoPath, "/override/path");
   });

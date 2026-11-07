@@ -45,9 +45,9 @@ describe("start_job validation", () => {
       repoPath: undefined,
       remote: undefined,
       jobType: "docs",
-      profile: undefined,
       docsTemplate: "policy",
       title: undefined,
+      stageModels: undefined,
     });
   });
 });

@@ -254,7 +254,8 @@ describe("job archive over HTTP and MCP", () => {
       assert.match(detail.body, /log job-1/);
 
       const again = await httpRequest(s.port, "POST", "/api/jobs/job-1/archive", { token: TOKEN });
-      assert.equal(again.status, 404);
+      assert.equal(again.status, 200, "re-archive is idempotent");
+      assert.equal((JSON.parse(again.body) as { ok: boolean }).ok, true);
 
       const restored = await httpRequest(s.port, "POST", "/api/jobs/job-1/restore", {
         token: TOKEN,

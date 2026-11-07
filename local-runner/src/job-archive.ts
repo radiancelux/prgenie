@@ -1,7 +1,14 @@
 import type { RunnerConfig } from "./config.js";
 import type { git } from "./github.js";
 import { isSafeJobId } from "./paths.js";
-import { listJobs, loadJob, moveJobToArchive, restoreJobFromArchive } from "./store.js";
+import {
+  listJobs,
+  loadArchivedJob,
+  loadJob,
+  moveJobToArchive,
+  restoreJobFromArchive,
+} from "./store.js";
+import { isJobSettling } from "./job-settling.js";
 import type { JobRecord, JobStage } from "./types.js";
 import { tryRemoveJobWorktree, type TryCleanupResult } from "./worktree-cleanup.js";
 
@@ -50,6 +57,8 @@ export type ClearFailedResult = {
 export type ArchiveDeps = {
   /** True while the engine still has a loop for this job (e.g. stop requested, not yet settled). */
   isRunning?: (jobId: string) => boolean;
+  isSettling?: (jobId: string) => Promise<boolean>;
+  dataDir?: string;
   gitImpl?: typeof git;
   log?: (msg: string) => void;
 };
@@ -88,15 +97,31 @@ async function releaseJobWorktree(
   return { worktree: "kept", warning: keptWorktreeWarning(wt, res) };
 }
 
+async function jobStillRunning(id: string, deps: ArchiveDeps): Promise<boolean> {
+  if (deps.isRunning?.(id)) return true;
+  if (deps.isSettling) return deps.isSettling(id);
+  if (deps.dataDir) return isJobSettling(deps.dataDir, id);
+  return false;
+}
+
 export async function archiveJob(
   config: RunnerConfig,
   id: string,
   deps: ArchiveDeps = {},
 ): Promise<ArchiveJobResult> {
   if (!isSafeJobId(id)) return { ok: false, code: "invalid_id", error: "invalid job id" };
+  const archived = await loadArchivedJob(config.dataDir, id);
+  if (archived?.archivedAt) {
+    return {
+      ok: true,
+      id,
+      archivedAt: archived.archivedAt,
+      worktree: archived.worktreePath ? "kept" : "none",
+    };
+  }
   const job = await loadJob(config.dataDir, id);
   if (!job) return { ok: false, code: "not_found", error: "job not found" };
-  if (!ARCHIVABLE_STAGES.has(job.stage) || deps.isRunning?.(id)) {
+  if (!ARCHIVABLE_STAGES.has(job.stage) || (await jobStillRunning(id, deps))) {
     return {
       ok: false,
       code: "running",
@@ -105,7 +130,20 @@ export async function archiveJob(
     };
   }
   const released = await releaseJobWorktree(config, job, deps);
-  await moveJobToArchive(config.dataDir, job);
+  try {
+    await moveJobToArchive(config.dataDir, job);
+  } catch (err) {
+    const again = await loadArchivedJob(config.dataDir, id);
+    if (again?.archivedAt) {
+      return {
+        ok: true,
+        id,
+        archivedAt: again.archivedAt,
+        worktree: again.worktreePath ? "kept" : "none",
+      };
+    }
+    throw err;
+  }
   return { ok: true, id, archivedAt: job.archivedAt ?? new Date().toISOString(), ...released };
 }
 

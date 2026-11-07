@@ -28,6 +28,9 @@ describe("runner settings", () => {
     assert.equal(s.configured, false);
     assert.equal(s.defaultDriver, "cursor-agent");
     assert.equal(s.notify.enabled, false);
+    assert.equal(s.defaultMaxRounds, 3);
+    assert.equal(s.maxActiveJobs, 2);
+    assert.equal(s.stageModels.fix, "auto");
   });
 
   it("migrates legacy notify-settings.json", async () => {

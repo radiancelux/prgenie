@@ -1,6 +1,5 @@
-import { isDocsTemplateId } from "./docs-prompts.js";
 import type { RunnerEngine } from "./engine.js";
-import type { StartJobArgs } from "./types.js";
+import { normalizeStartJobArgs } from "./settings-validation.js";
 
 type Json = Record<string, unknown>;
 
@@ -125,41 +124,8 @@ export async function handleRunnerTool(
 ): Promise<unknown> {
   switch (name) {
     case "start_job": {
-      const input: StartJobArgs = {
-        repoPath: typeof args.repoPath === "string" ? args.repoPath : undefined,
-        remote: typeof args.remote === "string" ? args.remote : undefined,
-        branch: String(args.branch ?? ""),
-        promptFile: typeof args.promptFile === "string" ? args.promptFile : undefined,
-        reviewPromptFile:
-          typeof args.reviewPromptFile === "string" ? args.reviewPromptFile : undefined,
-        fixPromptFile: typeof args.fixPromptFile === "string" ? args.fixPromptFile : undefined,
-        maxRounds: typeof args.maxRounds === "number" ? args.maxRounds : undefined,
-        model: typeof args.model === "string" ? args.model : undefined,
-        driver: typeof args.driver === "string" ? args.driver : undefined,
-        dryRun: typeof args.dryRun === "boolean" ? args.dryRun : undefined,
-        ticketUrl: typeof args.ticketUrl === "string" ? args.ticketUrl : undefined,
-        linearIssue: typeof args.linearIssue === "string" ? args.linearIssue : undefined,
-        docsTemplate:
-          typeof args.docsTemplate === "string" && isDocsTemplateId(args.docsTemplate)
-            ? args.docsTemplate
-            : undefined,
-        jobType:
-          args.jobType === "docs" || args.jobType === "code"
-            ? args.jobType
-            : args.profile === "docs" || args.profile === "code"
-              ? args.profile
-              : undefined,
-        profile: args.profile === "docs" || args.profile === "code" ? args.profile : undefined,
-        title: typeof args.title === "string" ? args.title : undefined,
-      };
-      if (!input.branch) {
-        throw new Error("branch is required");
-      }
-      const isDocs =
-        input.jobType === "docs" ||
-        input.profile === "docs" ||
-        args.profile === "docs" ||
-        args.jobType === "docs";
+      const input = normalizeStartJobArgs(args);
+      const isDocs = input.jobType === "docs" || input.profile === "docs";
       if (!isDocs && !input.promptFile?.trim()) {
         throw new Error("promptFile is required for code jobs");
       }

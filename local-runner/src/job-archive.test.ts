@@ -129,6 +129,17 @@ describe("job archive round-trip", () => {
     assert.equal(await readFile(jobLogFile(dataDir, "job-1"), "utf8"), "log for job-1\n");
   });
 
+  it("concurrent archive is idempotent", async () => {
+    const dataDir = await tmpDataDir();
+    const config = testConfig(dataDir);
+    await seed(dataDir);
+    const a = await archiveJob(config, "job-1");
+    const b = await archiveJob(config, "job-1");
+    assert.ok(a.ok);
+    assert.ok(b.ok);
+    assert.equal(await exists(jobFile(dataDir, "job-1")), false);
+  });
+
   it("a stale save after archiving does not resurrect the live job", async () => {
     const dataDir = await tmpDataDir();
     const stale = await seed(dataDir);
