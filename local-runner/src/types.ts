@@ -52,6 +52,14 @@ export type CiRollupStatus =
   | "merge_conflict"
   | "closed";
 
+export interface DocLintFinding {
+  file: string;
+  line: number;
+  column?: number;
+  rule: string;
+  message: string;
+}
+
 export interface CiStatusInfo {
   status: CiRollupStatus;
   summary?: string;
@@ -63,7 +71,14 @@ export interface CiStatusInfo {
   reason?: string;
   /** Origin `origin pr checks` when reachable; otherwise GitHub Actions rollup via `gh`. */
   source: "origin" | "github" | "doc-checks";
+  /** Structured markdownlint findings (docs jobs / doc-checks source). */
+  findings?: DocLintFinding[];
+  /** True when more than {@link DOC_LINT_FINDINGS_CAP} findings were emitted by the linter. */
+  findingsTruncated?: boolean;
 }
+
+/** Generous cap for persisted doc lint findings (see local-runner README). */
+export const DOC_LINT_FINDINGS_CAP = 250;
 
 export interface JobRecord {
   id: string;

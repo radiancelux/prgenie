@@ -1,4 +1,5 @@
 import { runnerListenUrls } from "./listen-urls.js";
+import { dashboardStylesheet } from "./dashboard-styles.js";
 
 export function setupUiHtml(
   port: number,
@@ -11,34 +12,14 @@ export function setupUiHtml(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Runner Setup · PR Genie</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; margin: 1rem 1.25rem 2rem; background: #0f1115; color: #e6e8ec; max-width: 28rem; }
-    h1 { font-size: 1.25rem; margin: 0 0 0.35rem; }
-    h2 { font-size: 1rem; margin: 1.25rem 0 0.5rem; font-weight: 600; }
-    .meta { color: #9aa3b2; font-size: 0.85rem; line-height: 1.45; }
-    a { color: #7eb8ff; }
-    .panel { margin: 1rem 0; padding: 0.75rem; background: #141820; border: 1px solid #2a2f3a; border-radius: 0.5rem; }
-    label { display: block; font-size: 0.85rem; color: #9aa3b2; margin-top: 0.5rem; }
-    input, select, textarea {
-      width: 100%; margin-top: 0.25rem; padding: 0.55rem 0.65rem; font-size: 1rem;
-      border-radius: 0.35rem; border: 1px solid #333; background: #1a1d24; color: #e6e8ec;
-    }
-    .toggle-row { display: flex; align-items: center; gap: 0.45rem; min-height: 2.75rem; color: #e6e8ec; cursor: pointer; }
-    .toggle-row input { width: 1.1rem; height: 1.1rem; margin: 0; }
-    button { margin-top: 0.75rem; padding: 0.55rem 0.85rem; font-size: 0.95rem; border-radius: 0.35rem; border: 1px solid #444; background: #3d5a8a; color: #e6e8ec; cursor: pointer; min-height: 2.75rem; width: 100%; }
-    .empty-cta { padding: 1rem 0; line-height: 1.55; }
-    .empty-cta strong { color: #e6e8ec; }
-    #status { min-height: 1.25rem; margin-top: 0.5rem; font-size: 0.85rem; color: #9aa3b2; }
-    .driver-card { border: 1px solid #2a2f3a; border-radius: 0.35rem; padding: 0.5rem; margin-top: 0.5rem; font-size: 0.85rem; }
-    .nav { margin: 0.5rem 0 1rem; font-size: 0.9rem; }
-  </style>
+  ${dashboardStylesheet()}
 </head>
-<body>
-  <p class="nav"><a href="/">← Dashboard</a></p>
-  <h1>Runner setup</h1>
-  <p class="meta">${reachability}</p>
-  <div class="panel">
+<body class="min-h-screen bg-zinc-950 text-zinc-100 antialiased">
+  <main class="mx-auto max-w-lg px-4 py-6">
+  <p class="nav mb-3 text-sm"><a class="text-sky-400 hover:underline" href="/">← Dashboard</a></p>
+  <h1 class="text-xl font-semibold">Runner setup</h1>
+  <p class="meta text-sm text-zinc-400">${reachability}</p>
+  <div class="panel mt-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
     <label>Bearer token (stored in this browser only)
       <input type="password" id="token" placeholder="PRGENIE_RUNNER_TOKEN" autocomplete="off" />
     </label>
@@ -92,8 +73,9 @@ export function setupUiHtml(
     <h2 style="margin-top:0;">MCP / shared runner</h2>
     <p class="meta">Bearer token is per runner install. MCP <code>start_job</code> on the host runner uses his workstation, Cursor CLI login, and <code>gh</code> identity. Do not paste tokens into tickets or job logs.</p>
   </div>
-  <button type="button" id="save">Save settings</button>
-  <div id="status"></div>
+  <button type="button" id="save" class="mt-4 min-h-11 w-full rounded-md border border-sky-700 bg-sky-900/50 px-4 py-2 font-medium text-sky-100">Save settings</button>
+  <div id="status" class="mt-2 min-h-5 text-sm text-zinc-400" role="status"></div>
+  </main>
   <script>
     const tokenKey = "prgenie_runner_token";
     const tokenEl = document.getElementById("token");

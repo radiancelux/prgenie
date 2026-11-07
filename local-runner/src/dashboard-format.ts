@@ -1,4 +1,4 @@
-import type { JobRecord } from "./types.js";
+import type { CiRollupStatus, DocLintFinding, JobRecord } from "./types.js";
 import {
   humanizeKebabSlug,
   jobAgentDisplayLabel,
@@ -18,7 +18,7 @@ export function isDocsJobRecord(job: JobRecord): boolean {
   return job.input.jobType === "docs" || job.input.profile === "docs";
 }
 
-const DOCS_STAGE_LABELS: Record<string, string> = {
+export const DOCS_STAGE_LABELS: Record<string, string> = {
   building: "Writing",
   reviewing: "Review",
   fixing: "Revising",
@@ -43,17 +43,70 @@ export function dashboardChecksColumnHeader(job: JobRecord): string {
   return isDocsJobRecord(job) ? "Doc checks" : "Status";
 }
 
+/** Tailwind badge classes — literal map (no runtime concatenation beyond lookup). */
+export const CI_STATUS_BADGE_CLASS: Record<CiRollupStatus, string> = {
+  success:
+    "inline-flex min-h-11 items-center rounded-full border border-emerald-400/35 bg-emerald-900/25 px-2 py-0.5 text-xs font-medium text-emerald-300",
+  failure:
+    "inline-flex min-h-11 items-center rounded-full border border-red-400/35 bg-red-900/30 px-2 py-0.5 text-xs font-medium text-red-300",
+  pending:
+    "inline-flex min-h-11 items-center rounded-full border border-amber-400/40 bg-amber-900/30 px-2 py-0.5 text-xs font-medium text-amber-200",
+  neutral:
+    "inline-flex min-h-11 items-center rounded-full border border-zinc-500/40 bg-zinc-700/35 px-2 py-0.5 text-xs font-medium text-zinc-300",
+  unknown:
+    "inline-flex min-h-11 items-center rounded-full border border-zinc-500/40 bg-zinc-700/35 px-2 py-0.5 text-xs font-medium text-zinc-300",
+  merged:
+    "inline-flex min-h-11 items-center rounded-full border border-sky-400/40 bg-sky-900/35 px-2 py-0.5 text-xs font-medium text-sky-200",
+  merge_conflict:
+    "inline-flex min-h-11 items-center rounded-full border border-orange-400/40 bg-orange-900/30 px-2 py-0.5 text-xs font-medium text-orange-200",
+  closed:
+    "inline-flex min-h-11 items-center rounded-full border border-violet-400/35 bg-violet-900/30 px-2 py-0.5 text-xs font-medium text-violet-200",
+};
+
+export const PR_DRAFT_BADGE_CLASS = {
+  draft:
+    "inline-flex min-h-11 items-center rounded-full border border-slate-400/35 bg-slate-800/50 px-2 py-0.5 text-xs font-medium text-slate-200",
+  ready:
+    "inline-flex min-h-11 items-center rounded-full border border-emerald-400/35 bg-emerald-900/25 px-2 py-0.5 text-xs font-medium text-emerald-300",
+} as const;
+
 export function dashboardChecksStatusLabel(job: JobRecord, ci: JobRecord["ciStatus"]): string {
   if (!ci) return "—";
   if (isDocsJobRecord(job)) {
     if (ci.status === "unknown") return ci.summary || "Doc checks unknown";
     if (ci.status === "success") return ci.summary || "ok";
     if (ci.status === "failure") return ci.summary || "failed";
+    if (ci.status === "neutral") return ci.summary || "warning (non-blocking)";
     return ci.summary || ci.status || "—";
   }
   if (ci.status === "unknown") return "CI unknown";
   if (ci.status === "success") return ci.summary || "green";
   return ci.summary || ci.status || "—";
+}
+
+export function ciStatusBadgeClass(status: CiRollupStatus | undefined): string {
+  if (!status) return CI_STATUS_BADGE_CLASS.unknown;
+  return CI_STATUS_BADGE_CLASS[status] ?? CI_STATUS_BADGE_CLASS.unknown;
+}
+
+export function formatDocLintFindingsHtml(
+  findings: DocLintFinding[] | undefined,
+  truncated?: boolean,
+): string {
+  if (!findings?.length) return "";
+  const rows = findings
+    .map((f) => {
+      const loc = f.column != null ? `${f.line}:${f.column}` : String(f.line);
+      const file = f.file.replace(/</g, "&lt;");
+      const rule = f.rule.replace(/</g, "&lt;");
+      const msg = f.message.replace(/</g, "&lt;");
+      return `<li class="text-sm text-zinc-300"><span class="font-mono text-xs text-sky-300">${file}:${loc}</span> <span class="text-zinc-500">${rule}</span> — ${msg}</li>`;
+    })
+    .join("");
+  const note = truncated
+    ? `<p class="mt-1 text-xs text-zinc-500">Additional findings omitted (cap).</p>`
+    : "";
+  return `<ul class="mt-2 max-h-64 list-disc space-y-1 overflow-y-auto pl-5" role="list">${rows}</ul>${note}`;
 }
 
 export function shouldHideStaleJob(job: JobRecord, nowMs = Date.now()): boolean {
@@ -108,10 +161,14 @@ const MINUTE_MS = ${MINUTE_MS};
 const HOUR_MS = ${HOUR_MS};
 const DAY_MS = ${DAY_MS};
 const DOCS_STAGE_LABELS = ${JSON.stringify(DOCS_STAGE_LABELS)};
+const CI_STATUS_BADGE_CLASS = ${JSON.stringify(CI_STATUS_BADGE_CLASS)};
+const PR_DRAFT_BADGE_CLASS = ${JSON.stringify(PR_DRAFT_BADGE_CLASS)};
 ${isDocsJobRecord.toString()}
 ${dashboardStageLabel.toString()}
 ${dashboardChecksColumnHeader.toString()}
 ${dashboardChecksStatusLabel.toString()}
+${ciStatusBadgeClass.toString()}
+${formatDocLintFindingsHtml.toString()}
 ${shouldHideStaleJob.toString()}
 ${formatRelativeTime.toString()}
 ${repoOwnerNameFromRemoteUrl.toString()}
@@ -121,6 +178,6 @@ ${jobRepoDisplayLabel.toString()}
 ${humanizeKebabSlug.toString()}
 ${linearSlugTitleFromTicketUrl.toString()}
 ${jobAgentDisplayLabel.toString()}
-return { isDocsJobRecord, dashboardStageLabel, dashboardChecksColumnHeader, dashboardChecksStatusLabel, shouldHideStaleJob, formatRelativeTime, jobRepoDisplayLabel, jobAgentDisplayLabel };
+return { isDocsJobRecord, dashboardStageLabel, dashboardChecksColumnHeader, dashboardChecksStatusLabel, ciStatusBadgeClass, formatDocLintFindingsHtml, shouldHideStaleJob, formatRelativeTime, jobRepoDisplayLabel, jobAgentDisplayLabel, CI_STATUS_BADGE_CLASS, PR_DRAFT_BADGE_CLASS };
 })()`;
 }

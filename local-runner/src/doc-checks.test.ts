@@ -61,6 +61,15 @@ describe("doc check rollup", () => {
       { enabled: true, failHard: false },
     );
     assert.equal(r.status, "neutral");
+    assert.match(r.summary, /warning \(non-blocking\)/);
+  });
+
+  it("fail hard stays failure", () => {
+    const r = rollupDocCheckResult(
+      { ok: false, skipped: false, summary: "lint failed", detail: "x" },
+      { enabled: true, failHard: true },
+    );
+    assert.equal(r.status, "failure");
   });
 
   it("disabled checks are N/A success", () => {

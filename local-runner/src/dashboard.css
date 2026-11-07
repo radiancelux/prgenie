@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+@source "./ui-html.ts";
+@source "./setup-ui-html.ts";
+@source "./stream-json-log.ts";
+@source "./dashboard-format.ts";
+
+/* stream-json / agent transcript (class names scanned above; kept explicit for tooling) */
+.agent-turn {
+  @apply mb-4 border-b border-zinc-700/80 pb-3 last:mb-0 last:border-b-0;
+}
+.agent-banner {
+  @apply mb-2 font-mono text-xs text-zinc-500;
+}
+.agent-meta {
+  @apply my-1 text-sm text-zinc-400;
+}
+.agent-thinking-collapse {
+  @apply my-2 text-sm text-zinc-400;
+}
+.agent-thinking-collapse summary {
+  @apply cursor-pointer text-xs uppercase tracking-wide text-zinc-500 select-none;
+}
+.agent-thinking-body {
+  @apply mt-1 leading-relaxed whitespace-pre-wrap break-words;
+}
+.agent-chat-row {
+  @apply my-2 flex justify-start;
+}
+.agent-bubble {
+  @apply max-w-2xl rounded-2xl rounded-bl-sm border border-zinc-600/60 bg-zinc-800 px-3 py-2 leading-relaxed text-zinc-100 break-words;
+}
+.agent-prose p {
+  @apply my-1;
+}
+.agent-tool-step {
+  @apply my-2 rounded-md border border-zinc-700/80 bg-zinc-950/80 p-2;
+}
+.agent-tool-step summary {
+  @apply flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 text-sm text-zinc-300 select-none;
+}
+.agent-tool-step summary::-webkit-details-marker {
+  display: none;
+}
+.agent-tool-step-label {
+  @apply font-mono text-xs font-semibold uppercase tracking-wide text-sky-300/90;
+}
+.agent-tool-summary {
+  @apply text-sm text-zinc-400;
+}
+.agent-tool-body {
+  @apply mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-xs whitespace-pre-wrap break-words text-zinc-300;
+}
+.agent-tool-result {
+  @apply mt-1 max-h-48 overflow-x-auto rounded bg-black/30 p-2 font-mono text-xs whitespace-pre-wrap break-words text-zinc-400;
+}
+.agent-tool-failed {
+  @apply border-red-500/50;
+}
+.agent-tool-error {
+  @apply mt-1 text-sm text-red-300;
+}
+.agent-error {
+  @apply my-2 text-red-300;
+}
+.agent-plain {
+  @apply my-1 font-mono text-sm text-zinc-400;
+}
+.agent-pass-through {
+  @apply m-0 max-h-none bg-transparent p-0;
+}
+body.show-raw #logSteps {
+  display: none;
+}
+body.show-raw #logRaw {
+  @apply block;
+}
+#logRaw {
+  @apply hidden;
+}
+.show-raw-panels #logSteps {
+  display: none;
+}

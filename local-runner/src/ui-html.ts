@@ -1,4 +1,5 @@
 import { dashboardFormatBrowserScript } from "./dashboard-format.js";
+import { dashboardStylesheet } from "./dashboard-styles.js";
 import { streamJsonLogBrowserScript } from "./stream-json-log.js";
 
 export function runnerUiHtml(
@@ -14,317 +15,97 @@ export function runnerUiHtml(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PR Genie Local Runner</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; margin: 1rem 1.25rem 2rem; background: #0f1115; color: #e6e8ec; max-width: 72rem; }
-    h1 { font-size: 1.25rem; margin: 0 0 0.35rem; }
-    h2 { font-size: 1rem; margin: 1.25rem 0 0.5rem; font-weight: 600; }
-    table { border-collapse: collapse; width: 100%; margin-top: 0.75rem; }
-    th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #333; font-size: 0.85rem; vertical-align: top; }
-    tr.job-row { cursor: pointer; }
-    tr.job-row.selected { background: #1e2430; }
-    tr.job-row:hover { background: #181c24; }
-    .badge { font-size: 0.75rem; padding: 0.2rem 0.45rem; border-radius: 999px; display: inline-block; font-weight: 500; border: 1px solid transparent; }
-    .badge.success { color: #6fdc8c; background: rgba(46, 125, 70, 0.22); border-color: rgba(111, 220, 140, 0.35); }
-    .badge.failure { color: #ff8a8a; background: rgba(140, 50, 50, 0.25); border-color: rgba(255, 138, 138, 0.35); }
-    .badge.pending { color: #e8d878; background: rgba(120, 100, 30, 0.28); border-color: rgba(201, 180, 88, 0.4); }
-    .badge.neutral, .badge.unknown { color: #b0b8c4; background: rgba(80, 88, 100, 0.35); border-color: rgba(154, 163, 178, 0.35); }
-    .badge.merged { color: #c4e4ff; background: rgba(60, 100, 140, 0.35); border-color: rgba(154, 208, 255, 0.4); }
-    .badge.merge_conflict { color: #ffb86c; background: rgba(120, 70, 30, 0.3); border-color: rgba(255, 184, 108, 0.4); }
-    .badge.closed { color: #c8b8e8; background: rgba(80, 60, 110, 0.35); border-color: rgba(180, 160, 220, 0.35); }
-    .badge.draft { color: #c9d4e8; background: rgba(70, 85, 110, 0.35); border-color: rgba(160, 180, 220, 0.35); }
-    .badge.ready { color: #8fd4a8; background: rgba(40, 90, 60, 0.3); border-color: rgba(120, 200, 150, 0.35); }
-    .jobs-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-top: 0.75rem; font-size: 0.85rem; }
-    .jobs-toolbar .toggle-row { min-height: auto; }
-    .empty-state { color: #9aa3b2; font-size: 0.9rem; padding: 1rem 0.5rem; line-height: 1.5; }
-    .empty-state strong { color: #e6e8ec; font-weight: 600; }
-    .log-placeholder { color: #9aa3b2; font-size: 0.9rem; margin: 0.5rem 0 1rem; line-height: 1.5; }
-    a { color: #7eb8ff; }
-    pre { background: #1a1d24; padding: 0.75rem; overflow: auto; max-height: 24rem; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; margin: 0; border-radius: 0.35rem; }
-    .log-panel { margin-top: 0.35rem; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-    .detail-chat { display: flex; flex-direction: column; margin-top: 0.5rem; min-height: 0; }
-    .chat-composer { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #2a2f3a; }
-    .chat-composer.steer-panel { margin: 0; background: transparent; border: none; border-radius: 0; padding: 0.75rem 0 0; }
-    .log-toolbar { display: flex; align-items: center; gap: 0.75rem; margin: 0.35rem 0; font-size: 0.85rem; flex-wrap: wrap; }
-    .log-toolbar label { color: #9aa3b2; cursor: pointer; user-select: none; }
-    #logSteps {
-      display: block;
-      background: #1a1d24;
-      padding: 0.75rem;
-      overflow: auto;
-      max-height: min(32rem, 52vh);
-      font-size: 0.85rem;
-      border-radius: 0.35rem;
-      border: 1px solid #2a2f3a;
-      flex: 1 1 auto;
-      min-height: 8rem;
-    }
-    #logRaw { display: none; }
-    body.show-raw #logSteps { display: none; }
-    body.show-raw #logRaw { display: block; }
-    .meta { color: #9aa3b2; font-size: 0.85rem; line-height: 1.45; }
-    .token-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.75rem 0; }
-    .token-row input[type=password] { flex: 1 1 12rem; min-width: 0; max-width: 24rem; padding: 0.55rem 0.65rem; font-size: 1rem; border-radius: 0.35rem; border: 1px solid #333; background: #1a1d24; color: #e6e8ec; }
-    button, .btn {
-      padding: 0.55rem 0.85rem;
-      font-size: 0.95rem;
-      border-radius: 0.35rem;
-      border: 1px solid #444;
-      background: #2a2f3a;
-      color: #e6e8ec;
-      cursor: pointer;
-      min-height: 2.75rem;
-    }
-    button:disabled { opacity: 0.45; cursor: not-allowed; }
-    button.primary { background: #3d5a8a; border-color: #5a7ab0; }
-    button.danger { background: #5a3030; border-color: #884444; }
-    .steer-panel { margin: 1rem 0; padding: 0.75rem; background: #141820; border: 1px solid #2a2f3a; border-radius: 0.5rem; }
-    .settings-panel { margin: 1rem 0; padding: 0.75rem; background: #141820; border: 1px solid #2a2f3a; border-radius: 0.5rem; }
-    .settings-panel h2 { margin: 0 0 0.35rem; font-size: 1rem; }
-    .settings-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; margin-top: 0.5rem; }
-    .settings-row label { font-size: 0.85rem; color: #9aa3b2; }
-    .toggle-row { display: flex; align-items: center; gap: 0.45rem; min-height: 2.75rem; color: #e6e8ec; cursor: pointer; user-select: none; }
-    .toggle-row input { width: 1.1rem; height: 1.1rem; }
-    #notifyRecipient {
-      display: block;
-      width: 100%;
-      min-width: 12rem;
-      max-width: 24rem;
-      margin-top: 0.25rem;
-      padding: 0.55rem 0.65rem;
-      font-size: 1rem;
-      border-radius: 0.35rem;
-      border: 1px solid #333;
-      background: #1a1d24;
-      color: #e6e8ec;
-    }
-    #notifyStatus { margin-top: 0.35rem; min-height: 1.2rem; }
-    .steer-panel label { display: block; font-size: 0.85rem; color: #9aa3b2; margin-bottom: 0.35rem; }
-    .steer-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; }
-    #steerPrompt {
-      flex: 1 1 100%;
-      min-height: 3.5rem;
-      padding: 0.55rem 0.65rem;
-      font-size: 1rem;
-      border-radius: 0.35rem;
-      border: 1px solid #333;
-      background: #1a1d24;
-      color: #e6e8ec;
-      resize: vertical;
-      font-family: inherit;
-    }
-    #steerStatus { font-size: 0.85rem; color: #9aa3b2; margin-top: 0.35rem; min-height: 1.2rem; }
-    .agent-turn { margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #2a2f3a; }
-    .agent-turn:last-child { border-bottom: none; margin-bottom: 0; }
-    .agent-banner { font-size: 0.75rem; color: #7a8494; margin-bottom: 0.5rem; font-family: ui-monospace, monospace; }
-    .agent-meta { font-size: 0.8rem; color: #9aa3b2; margin: 0.35rem 0; }
-    .agent-thinking { font-size: 0.8rem; color: #8a939f; font-style: italic; margin: 0.5rem 0; line-height: 1.4; }
-    .agent-thinking-label { font-style: normal; text-transform: uppercase; font-size: 0.65rem; letter-spacing: 0.04em; color: #6a7380; margin-right: 0.35rem; }
-    .agent-prose { line-height: 1.5; margin: 0.6rem 0; color: #e6e8ec; }
-    .agent-prose p { margin: 0.35rem 0; }
-    .agent-chat-row { display: flex; justify-content: flex-start; margin: 0.5rem 0; }
-    .agent-bubble {
-      max-width: min(42rem, 100%);
-      padding: 0.55rem 0.75rem;
-      background: #232833;
-      border: 1px solid #343b48;
-      border-radius: 0.65rem 0.65rem 0.65rem 0.2rem;
-      line-height: 1.5;
-      color: #e6e8ec;
-      word-break: break-word;
-    }
-    .agent-bubble p { margin: 0.25rem 0; }
-    .agent-thinking-collapse { margin: 0.45rem 0; font-size: 0.82rem; color: #8a939f; }
-    .agent-thinking-collapse summary {
-      cursor: pointer;
-      color: #7a8494;
-      font-size: 0.72rem;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      user-select: none;
-    }
-    .agent-thinking-body { margin-top: 0.35rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
-    .agent-tool-step {
-      margin: 0.45rem 0;
-      padding: 0.35rem 0.5rem;
-      background: #12151c;
-      border: 1px solid #2a3140;
-      border-radius: 0.35rem;
-    }
-    .agent-tool-step summary {
-      cursor: pointer;
-      list-style: none;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 0.35rem 0.5rem;
-      font-size: 0.82rem;
-      color: #c5cdd8;
-      user-select: none;
-    }
-    .agent-tool-step summary::-webkit-details-marker { display: none; }
-    .agent-tool-step-label {
-      font-size: 0.72rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-      color: #9ab0c8;
-      font-family: ui-monospace, monospace;
-    }
-    .agent-tool-summary { font-size: 0.8rem; color: #9aa3b2; }
-    .agent-tool-body {
-      margin: 0.35rem 0 0;
-      padding: 0.45rem 0.55rem;
-      font-size: 0.78rem;
-      background: #0d0f14;
-      border-radius: 0.25rem;
-      overflow-x: auto;
-      white-space: pre-wrap;
-      word-break: break-word;
-      font-family: ui-monospace, monospace;
-      color: #c5cdd8;
-    }
-    .agent-tool-result {
-      margin: 0.35rem 0 0;
-      padding: 0.45rem 0.55rem;
-      font-size: 0.75rem;
-      background: #0a0c10;
-      border-radius: 0.25rem;
-      overflow-x: auto;
-      max-height: 12rem;
-      white-space: pre-wrap;
-      word-break: break-word;
-      font-family: ui-monospace, monospace;
-      color: #a8b4c4;
-    }
-    .agent-tool-failed { border-color: rgba(196, 68, 68, 0.55); }
-    .agent-tool-error { font-size: 0.8rem; color: #ff9a9a; margin-top: 0.35rem; }
-    .agent-error { color: #ff9a9a; margin: 0.5rem 0; }
-    .agent-plain { font-family: ui-monospace, monospace; font-size: 0.8rem; color: #b0b8c4; margin: 0.35rem 0; }
-    .agent-label {
-      display: inline-block;
-      max-width: min(16rem, 42vw);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      vertical-align: top;
-    }
-    .agent-pass-through { margin: 0; background: transparent; padding: 0; max-height: none; }
-    @media (max-width: 720px) {
-      body { margin: 0.75rem; }
-      thead { display: none; }
-      #jobs { display: block; }
-      #jobs tr.job-row {
-        display: block;
-        border: 1px solid #333;
-        border-radius: 0.5rem;
-        margin-bottom: 0.65rem;
-        padding: 0.5rem 0.65rem;
-      }
-      #jobs tr.job-row td {
-        display: flex;
-        justify-content: space-between;
-        gap: 0.75rem;
-        border: none;
-        padding: 0.3rem 0;
-        font-size: 0.9rem;
-      }
-      #jobs tr.job-row td::before {
-        content: attr(data-label);
-        color: #9aa3b2;
-        font-size: 0.75rem;
-        flex-shrink: 0;
-      }
-      #jobs tr.job-row td:first-child { font-weight: 600; }
-      .agent-label { max-width: min(14rem, calc(100vw - 7rem)); }
-      #logSteps { max-height: min(24rem, 45vh); }
-      .steer-row button { flex: 1 1 calc(50% - 0.25rem); }
-      .agent-bubble { max-width: 100%; }
-    }
-  </style>
+  ${dashboardStylesheet()}
 </head>
-<body>
-  <h1>PR Genie Local Runner</h1>
-  <p class="meta">Runner dashboard · ${reachability} · <a href="/setup">Setup</a></p>
-  <div class="token-row">
-    <label style="flex:1 1 100%; font-size:0.85rem; color:#9aa3b2;">Bearer token
-      <input type="password" id="token" placeholder="PRGENIE_RUNNER_TOKEN" autocomplete="off" />
+<body class="min-h-screen bg-zinc-950 text-zinc-100 antialiased">
+  <a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-sky-800 focus:px-3 focus:py-2">Skip to content</a>
+  <main id="main" class="mx-auto max-w-6xl px-3 py-4 pb-10 sm:px-5">
+  <h1 class="text-xl font-semibold tracking-tight">PR Genie Local Runner</h1>
+  <p class="meta text-sm leading-relaxed text-zinc-400">Runner dashboard · ${reachability} · <a class="text-sky-400 underline-offset-2 hover:underline" href="/setup">Setup</a></p>
+  <div class="my-3 flex w-full flex-wrap items-end gap-2">
+    <label class="block w-full text-sm text-zinc-400 sm:flex-1">Bearer token
+      <input type="password" id="token" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base text-zinc-100" placeholder="PRGENIE_RUNNER_TOKEN" autocomplete="off" />
     </label>
-    <button type="button" id="saveToken">Save token</button>
+    <button type="button" id="saveToken" class="min-h-11 w-full rounded-md border border-zinc-600 bg-zinc-800 px-4 py-2 text-zinc-100 sm:w-auto">Save token</button>
   </div>
-  <div class="settings-panel">
-    <h2>Email notifications</h2>
-    <p class="meta">Resend API key is server-side only (env). Choose whether to send agent notify emails and the recipient.</p>
-    <div class="settings-row">
-      <label class="toggle-row"><input type="checkbox" id="notifyEnabled" /> Send notify emails</label>
-      <label style="flex:1 1 14rem;">Recipient
-        <input type="email" id="notifyRecipient" placeholder="you@example.com" autocomplete="email" inputmode="email" />
+  <details class="settings-panel mb-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3" open>
+    <summary class="cursor-pointer text-sm font-medium text-zinc-200 select-none">Email notifications</summary>
+    <p class="meta mt-2 text-sm text-zinc-400">Resend API key is server-side only (env). Choose whether to send agent notify emails and the recipient.</p>
+    <div class="mt-2 flex flex-wrap items-end gap-3">
+      <label class="toggle-row flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" id="notifyEnabled" class="h-4 w-4" /> Send notify emails</label>
+      <label class="block w-full flex-1 text-sm text-zinc-400 sm:min-w-[14rem]">Recipient
+        <input type="email" id="notifyRecipient" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base" placeholder="you@example.com" autocomplete="email" inputmode="email" />
       </label>
-      <button type="button" id="saveNotify">Save</button>
+      <button type="button" id="saveNotify" class="min-h-11 w-full rounded-md border border-zinc-600 bg-zinc-800 px-4 py-2 sm:w-auto">Save</button>
     </div>
-    <div id="notifyStatus"></div>
-  </div>
-  <div class="settings-panel">
-    <h2>New agent</h2>
-    <p class="meta">Start a code or docs writing agent on this runner. Docs agents use Setup defaults unless you override the repo path.</p>
-    <div class="settings-row">
-      <label style="flex:1 1 8rem;">Type
-        <select id="newJobType" style="display:block; width:100%; margin-top:0.25rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem;">
+    <div id="notifyStatus" class="mt-1 min-h-5 text-sm text-zinc-400" role="status" aria-live="polite"></div>
+  </details>
+  <section class="settings-panel mb-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
+    <h2 class="text-base font-semibold">New agent</h2>
+    <p class="meta mt-1 text-sm text-zinc-400">Start a code or docs writing agent on this runner. Docs agents use Setup defaults unless you override the repo path.</p>
+    <div class="mt-2 flex flex-wrap gap-3">
+      <label class="block w-full text-sm text-zinc-400 sm:w-32">Type
+        <select id="newJobType" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-zinc-100">
           <option value="code">Code (default)</option>
           <option value="docs">Docs / policy / marketing</option>
         </select>
       </label>
-      <label style="flex:2 1 12rem;">Branch
-        <input id="newJobBranch" placeholder="docs/policy-xyz" style="display:block; width:100%; margin-top:0.25rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem;" />
+      <label class="block min-w-0 flex-1 text-sm text-zinc-400">Branch
+        <input id="newJobBranch" placeholder="docs/policy-xyz" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2" />
       </label>
     </div>
-    <div class="settings-row" id="newJobDocsRow" style="display:none;">
-      <label style="flex:1 1 12rem;">Doc template
-        <select id="newJobTemplate" style="display:block; width:100%; margin-top:0.25rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem;">
+    <div class="mt-2 hidden flex-wrap gap-3" id="newJobDocsRow">
+      <label class="block w-full text-sm text-zinc-400">Doc template
+        <select id="newJobTemplate" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2">
           <option value="marketing">Marketing copy</option>
           <option value="policy">Policy doc</option>
           <option value="research">Research brief</option>
         </select>
       </label>
     </div>
-    <label>Repo path override (optional)
-      <input id="newJobRepo" placeholder="Local clone path on this machine" style="display:block; width:100%; margin-top:0.25rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem;" />
+    <label class="mt-2 block text-sm text-zinc-400">Repo path override (optional)
+      <input id="newJobRepo" placeholder="Local clone path on this machine" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2" />
     </label>
-    <label id="newJobPromptLabel">Prompt file (code jobs)
-      <input id="newJobPrompt" placeholder="/path/to/prompt.md" style="display:block; width:100%; margin-top:0.25rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem;" />
+    <label id="newJobPromptLabel" class="mt-2 block text-sm text-zinc-400">Prompt file (code jobs)
+      <input id="newJobPrompt" placeholder="/path/to/prompt.md" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2" />
     </label>
-    <textarea id="newJobInline" rows="3" placeholder="Optional extra task text (appended via prompt file content if you paste a one-off prompt path)" style="display:none; width:100%; margin-top:0.5rem; padding:0.55rem; background:#1a1d24; color:#e6e8ec; border:1px solid #333; border-radius:0.35rem; font-family:inherit;"></textarea>
-    <button type="button" class="primary" id="startJobBtn" style="margin-top:0.75rem;">Start agent</button>
-    <div id="newJobStatus" class="meta" style="min-height:1.2rem; margin-top:0.35rem;"></div>
+    <button type="button" id="startJobBtn" class="primary mt-3 min-h-11 w-full rounded-md border border-sky-700 bg-sky-900/50 px-4 py-2 font-medium text-sky-100 sm:w-auto">Start agent</button>
+    <div id="newJobStatus" class="meta mt-1 min-h-5 text-sm text-zinc-400" role="status" aria-live="polite"></div>
+  </section>
+  <div class="jobs-toolbar mb-2 flex flex-wrap items-center gap-3 text-sm">
+    <label class="toggle-row flex min-h-11 items-center gap-2"><input type="checkbox" id="showAllJobs" class="h-4 w-4" /> Show finished</label>
+    <span class="meta text-zinc-500" id="jobsHiddenHint"></span>
   </div>
-  <div class="jobs-toolbar">
-    <label class="toggle-row"><input type="checkbox" id="showAllJobs" /> Show finished</label>
-    <span class="meta" id="jobsHiddenHint"></span>
-  </div>
-  <table>
-    <thead><tr><th>Agent</th><th>Repo</th><th>Stage</th><th>Round</th><th>Ticket</th><th>PR</th><th>Ready</th><th>Status</th><th>Model</th><th>Tokens</th><th>Updated</th></tr></thead>
+  <div id="jobCards" class="flex flex-col gap-3 md:hidden" role="list" aria-label="Agents"></div>
+  <div class="hidden overflow-x-auto md:block">
+  <table class="w-full border-collapse text-sm">
+    <thead class="text-left text-zinc-400"><tr class="border-b border-zinc-800"><th class="p-2">Agent</th><th class="p-2">Repo</th><th class="p-2">Stage</th><th class="p-2">Round</th><th class="p-2">Ticket</th><th class="p-2">PR</th><th class="p-2">Ready</th><th class="p-2">Status</th><th class="p-2">Model</th><th class="p-2">Tokens</th><th class="p-2">Updated</th></tr></thead>
     <tbody id="jobs"></tbody>
   </table>
-  <h2 id="detailTitle">Agent log</h2>
-  <p class="log-placeholder" id="logPlaceholder">Select an agent from the table to view its transcript.</p>
-  <div class="detail-chat" id="detailChat" style="display:none;">
-    <div class="log-toolbar">
-      <label><input type="checkbox" id="showRaw" /> Raw</label>
+  </div>
+  <h2 id="detailTitle" class="mt-6 text-base font-semibold">Agent log</h2>
+  <p class="log-placeholder text-sm text-zinc-400" id="logPlaceholder">Select an agent to view its transcript.</p>
+  <div class="detail-chat mt-2 flex flex-col" id="detailChat" style="display:none;">
+    <div id="docFindings" class="doc-findings mb-3 hidden rounded-lg border border-zinc-800 bg-zinc-900/50 p-3" aria-live="polite"></div>
+    <div class="log-toolbar flex flex-wrap items-center gap-3 text-sm text-zinc-400">
+      <label class="flex min-h-11 items-center gap-2"><input type="checkbox" id="showRaw" class="h-4 w-4" /> Raw log</label>
+      <label class="flex min-h-11 items-center gap-2"><input type="checkbox" id="followLive" class="h-4 w-4" checked /> Follow live</label>
     </div>
-    <div class="log-panel">
-      <div id="logSteps"></div>
-      <pre id="logRaw"></pre>
+    <div class="log-panel flex min-h-0 flex-1 flex-col">
+      <div id="logSteps" class="max-h-[min(32rem,52vh)] min-h-32 flex-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-sm md:max-h-[min(24rem,45vh)]"></div>
+      <pre id="logRaw" class="max-h-96 overflow-auto rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-xs whitespace-pre-wrap break-words"></pre>
     </div>
-    <div class="chat-composer steer-panel">
-      <label for="steerPrompt">Steer (queued for next agent step)</label>
-      <div class="steer-row">
-        <textarea id="steerPrompt" rows="2" placeholder="Add guidance… Enter to send, Shift+Enter for newline"></textarea>
-        <button type="button" class="primary" id="steerBtn">Steer</button>
-        <button type="button" class="danger" id="stopBtn">Stop</button>
+    <div class="chat-composer steer-panel mt-3 border-t border-zinc-800 pt-3">
+      <label for="steerPrompt" class="mb-1 block text-sm text-zinc-400">Steer (queued for next agent step)</label>
+      <div class="steer-row flex flex-wrap gap-2">
+        <textarea id="steerPrompt" rows="2" class="min-h-14 w-full flex-[1_1_100%] rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base" placeholder="Add guidance… Enter to send, Shift+Enter for newline"></textarea>
+        <button type="button" class="primary min-h-11 flex-1 rounded-md border border-sky-700 bg-sky-900/50 px-4 py-2 sm:flex-none" id="steerBtn">Steer</button>
+        <button type="button" class="danger min-h-11 flex-1 rounded-md border border-red-800 bg-red-950/60 px-4 py-2 sm:flex-none" id="stopBtn">Stop</button>
       </div>
-      <div id="steerStatus"></div>
+      <div id="steerStatus" class="mt-1 min-h-5 text-sm text-zinc-400" role="status" aria-live="polite"></div>
     </div>
   </div>
+  </main>
   <script>
     const logParser = ${logParserInit};
     const dashFmt = ${dashFmtInit};
@@ -388,6 +169,12 @@ export function runnerUiHtml(
       document.body.classList.toggle("show-raw", showRawEl.checked);
     };
     document.body.classList.toggle("show-raw", showRawEl.checked);
+    const followLiveEl = document.getElementById("followLive");
+    const followLiveKey = "prgenie_runner_follow_live";
+    if (localStorage.getItem(followLiveKey) === "0") followLiveEl.checked = false;
+    followLiveEl.onchange = () => {
+      localStorage.setItem(followLiveKey, followLiveEl.checked ? "1" : "0");
+    };
 
     const showAllJobsEl = document.getElementById("showAllJobs");
     const jobsHiddenHint = document.getElementById("jobsHiddenHint");
@@ -431,20 +218,34 @@ export function runnerUiHtml(
     function fmtChecks(job, ci) {
       if (!ci) return "—";
       const label = statusLabel(job, ci);
-      const cls = "badge " + (ci.status === "success" ? "success" : ci.status || "neutral");
+      const cls = dashFmt.ciStatusBadgeClass(ci.status);
       const tip = ci.reason ? ' title="' + String(ci.reason).replace(/"/g, "&quot;") + '"' : "";
       const colLabel = dashFmt.isDocsJobRecord(job) ? "Doc checks" : "Status";
+      const aria = ' role="status"';
       if (ci.checksUrl && !dashFmt.isDocsJobRecord(job)) {
-        return '<a class="' + cls + '" href="' + ci.checksUrl + '" target="_blank" rel="noopener"' + tip + ">" + label + "</a>";
+        return '<a class="' + cls + '" href="' + ci.checksUrl + '" target="_blank" rel="noopener"' + tip + aria + ">" + label + "</a>";
       }
-      return '<span class="' + cls + '"' + tip + ' data-label="' + colLabel + '">' + label + '</span>';
+      return '<span class="' + cls + '"' + tip + aria + ' data-label="' + colLabel + '">' + label + '</span>';
     }
 
     function fmtPrDraft(j) {
       if (!j.prUrl) return "—";
-      if (j.prIsDraft === true) return '<span class="badge draft">Draft</span>';
-      if (j.prIsDraft === false) return '<span class="badge ready">Ready</span>';
+      if (j.prIsDraft === true) return '<span class="' + dashFmt.PR_DRAFT_BADGE_CLASS.draft + '">Draft</span>';
+      if (j.prIsDraft === false) return '<span class="' + dashFmt.PR_DRAFT_BADGE_CLASS.ready + '">Ready</span>';
       return "—";
+    }
+
+    function renderDocFindings(job) {
+      const el = document.getElementById("docFindings");
+      if (!job || !dashFmt.isDocsJobRecord(job) || !job.ciStatus?.findings?.length) {
+        el.classList.add("hidden");
+        el.innerHTML = "";
+        return;
+      }
+      el.classList.remove("hidden");
+      el.innerHTML =
+        '<h3 class="text-sm font-medium text-zinc-200">Doc lint findings</h3>' +
+        dashFmt.formatDocLintFindingsHtml(job.ciStatus.findings, job.ciStatus.findingsTruncated);
     }
 
     function fmtStatus(job, ci) {
@@ -493,7 +294,7 @@ export function runnerUiHtml(
 
     function renderLogTail(raw) {
       const stepsEl = document.getElementById("logSteps");
-      const stick = stickScrollIfNearBottom(stepsEl);
+      const stick = followLiveEl.checked && stickScrollIfNearBottom(stepsEl);
       rawLogTail = raw || "";
       document.getElementById("logRaw").textContent = rawLogTail;
       const html = logParser.formatAgentLogTailHtml(rawLogTail);
@@ -515,7 +316,7 @@ export function runnerUiHtml(
       const d = dashFmt.jobAgentDisplayLabel(j);
       const tip = d.tooltip.replace(/"/g, "&quot;");
       const label = d.label.replace(/</g, "&lt;");
-      let html = '<span class="agent-label" title="' + tip + '">' + label + '</span>';
+      let html = '<span class="agent-label inline-block max-w-[min(16rem,42vw)] truncate align-top" title="' + tip + '">' + label + '</span>';
       if (dashFmt.isDocsJobRecord(j) && j.input && j.input.docsTemplate) {
         html += '<br><span class="meta">' + String(j.input.docsTemplate).replace(/</g, "&lt;") + '</span>';
       }
@@ -538,7 +339,9 @@ export function runnerUiHtml(
       if (staleHidden > 0) hintParts.push("(" + staleHidden + " stale hidden)");
       jobsHiddenHint.textContent = hintParts.join(" ");
       const tbody = document.getElementById("jobs");
+      const cardsEl = document.getElementById("jobCards");
       if (!visible.length) {
+        cardsEl.innerHTML = "";
         let msg;
         if (jobs.length === 0 && lastJobsMeta.totalOnDisk === 0) {
           msg = "<strong>No agents yet.</strong> Start an agent below or from MCP.";
@@ -554,30 +357,54 @@ export function runnerUiHtml(
         tbody.innerHTML = '<tr><td colspan="11" class="empty-state">' + msg + "</td></tr>";
         return;
       }
+      function bindJobRow(el, id) {
+        el.dataset.id = id;
+        el.classList.add("job-row");
+        el.tabIndex = 0;
+        el.setAttribute("role", "button");
+        el.onclick = () => selectJob(id);
+        el.onkeydown = (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            selectJob(id);
+          }
+        };
+      }
       tbody.innerHTML = visible.map(j => {
         const stageLabel = dashFmt.dashboardStageLabel(j);
-        const sel = j.id === selected ? " selected" : "";
+        const sel = j.id === selected ? " bg-zinc-800/80 ring-1 ring-sky-600/40" : " hover:bg-zinc-900/80";
         const checksLabel = dashFmt.isDocsJobRecord(j) ? "Doc checks" : "Status";
-        return \`<tr class="job-row\${sel}" data-id="\${j.id}">
-        <td data-label="Agent">\${fmtAgent(j)}</td>
-        <td data-label="Repo" class="meta">\${fmtRepo(j)}</td>
-        <td data-label="Stage">\${stageLabel}</td>
-        <td data-label="Round">\${j.reviewRound}/\${j.maxRounds}</td>
-        <td data-label="Ticket">\${fmtTicket(j)}</td>
-        <td data-label="PR">\${j.prUrl ? '<a href="'+j.prUrl+'" target="_blank" rel="noopener">PR</a>' : "—"}</td>
-        <td data-label="Ready">\${fmtPrDraft(j)}</td>
-        <td data-label="\${checksLabel}">\${fmtStatus(j, j.ciStatus)}</td>
-        <td data-label="Model">\${j.model || "—"}</td>
-        <td data-label="Tokens">\${fmtTokens(j.tokenUsage)}</td>
-        <td data-label="Updated">\${fmtUpdated(j.updatedAt)}</td>
+        return \`<tr class="job-row cursor-pointer border-b border-zinc-800\${sel}" data-id="\${j.id}" tabindex="0" role="button">
+        <td class="p-2" data-label="Agent">\${fmtAgent(j)}</td>
+        <td class="meta p-2 text-zinc-400" data-label="Repo">\${fmtRepo(j)}</td>
+        <td class="p-2" data-label="Stage">\${stageLabel}</td>
+        <td class="p-2" data-label="Round">\${j.reviewRound}/\${j.maxRounds}</td>
+        <td class="p-2" data-label="Ticket">\${fmtTicket(j)}</td>
+        <td class="p-2" data-label="PR">\${j.prUrl ? '<a class="text-sky-400" href="'+j.prUrl+'" target="_blank" rel="noopener">PR</a>' : "—"}</td>
+        <td class="p-2" data-label="Ready">\${fmtPrDraft(j)}</td>
+        <td class="p-2" data-label="\${checksLabel}">\${fmtStatus(j, j.ciStatus)}</td>
+        <td class="p-2" data-label="Model">\${j.model || "—"}</td>
+        <td class="p-2" data-label="Tokens">\${fmtTokens(j.tokenUsage)}</td>
+        <td class="p-2" data-label="Updated">\${fmtUpdated(j.updatedAt)}</td>
       </tr>\`;
       }).join("");
-      tbody.querySelectorAll("tr.job-row").forEach(tr => tr.onclick = () => selectJob(tr.dataset.id));
+      cardsEl.innerHTML = visible.map(j => {
+        const stageLabel = dashFmt.dashboardStageLabel(j);
+        const sel = j.id === selected ? " ring-2 ring-sky-600/50" : "";
+        return \`<article class="job-row rounded-xl border border-zinc-800 bg-zinc-900/50 p-3\${sel}">
+          <div class="font-medium leading-snug">\${fmtAgent(j)}</div>
+          <div class="meta mt-1 text-sm text-zinc-400">\${fmtRepo(j)} · \${stageLabel}</div>
+          <details class="mt-2 text-sm text-zinc-300"><summary class="cursor-pointer text-zinc-500">More</summary>
+            <div class="mt-2 grid gap-1">\${fmtTicket(j)} · \${fmtPrDraft(j)} · \${fmtStatus(j, j.ciStatus)}</div>
+          </details>
+        </article>\`;
+      }).join("");
+      tbody.querySelectorAll("tr.job-row").forEach(tr => bindJobRow(tr, tr.dataset.id));
+      cardsEl.querySelectorAll(".job-row").forEach(card => bindJobRow(card, card.dataset.id));
       if (selected) {
         const row = tbody.querySelector('tr[data-id="' + selected + '"]');
         if (row) {
           selectedJobStage = jobs.find(j => j.id === selected)?.stage ?? selectedJobStage;
-          row.classList.add("selected");
         } else if (!visible.some(j => j.id === selected)) {
           selected = null;
           selectedJobStage = null;
@@ -616,8 +443,15 @@ export function runnerUiHtml(
       const picked = lastJobs.find((j) => j.id === id);
       document.getElementById("detailTitle").textContent = detailTitleForJob(picked);
       updateDetailVisibility();
-      document.querySelectorAll("tr.job-row").forEach(tr => {
-        tr.classList.toggle("selected", tr.dataset.id === id);
+      document.querySelectorAll(".job-row").forEach(el => {
+        const on = el.dataset.id === id;
+        if (el.tagName === "TR") {
+          el.classList.toggle("bg-zinc-800/80", on);
+          el.classList.toggle("ring-1", on);
+        } else {
+          el.classList.toggle("ring-2", on);
+          el.classList.toggle("ring-sky-600/50", on);
+        }
       });
       if (es) es.close();
       const t = tokenEl.value || localStorage.getItem(tokenKey);
@@ -636,6 +470,7 @@ export function runnerUiHtml(
         updateSteerUi();
         document.getElementById("detailTitle").textContent = detailTitleForJob(j);
         renderLogTail(j.logTail || "");
+        renderDocFindings(j);
       });
     }
 
@@ -690,6 +525,7 @@ export function runnerUiHtml(
     function syncNewJobForm() {
       const docs = newJobTypeEl.value === "docs";
       newJobDocsRow.style.display = docs ? "flex" : "none";
+      newJobDocsRow.classList.toggle("hidden", !docs);
       newJobPromptLabel.textContent = docs ? "Prompt file (optional — uses template if empty)" : "Prompt file (code jobs)";
       newJobPromptEl.required = !docs;
     }

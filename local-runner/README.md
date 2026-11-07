@@ -28,6 +28,10 @@ pnpm install
 pnpm build
 ```
 
+`pnpm build` runs Tailwind v4 (`@tailwindcss/cli`) on `local-runner/src/dashboard.css`, writes minified CSS to `local-runner/dist/dashboard.min.css` (gitignored), and embeds it in the single `local-runner/dist/runner.cjs` bundle (no CDN or runtime compiler).
+
+Doc lint findings (docs jobs) are stored on `ciStatus.findings` (cap **250** per poll). When the worktree has no markdownlint config, the runner uses bundled prose-friendly defaults (`local-runner/markdownlint-prose-defaults.jsonc`); repository configs take precedence.
+
 Binary: `pnpm local-runner --help` (or `node local-runner/dist/runner.cjs`).
 
 ## Config

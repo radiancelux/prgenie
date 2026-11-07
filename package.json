@@ -28,7 +28,8 @@
     "link-extension": "powershell -ExecutionPolicy Bypass -File scripts/link-extension.ps1",
     "check-versions": "node scripts/check-versions.mjs",
     "pack:extension": "node scripts/pack-extension.mjs",
-    "local-runner": "node local-runner/dist/runner.cjs"
+    "local-runner": "node local-runner/dist/runner.cjs",
+    "build:test": "node scripts/build-test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -42,7 +43,9 @@
     "prettier": "^3.9.6",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
-    "typescript-eslint": "^8.70.0"
+    "typescript-eslint": "^8.70.0",
+    "@tailwindcss/cli": "4.1.11",
+    "tailwindcss": "4.1.11"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
