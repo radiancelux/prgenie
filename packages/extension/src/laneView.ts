@@ -88,6 +88,7 @@ import {
   statusPanelIdleBody,
 } from "./statusPanel.js";
 import { RENDER_CI_CARD_BODY } from "./ciProgressView.js";
+import { ROUND_STATE_BODY } from "./roundState.js";
 
 type Surface = "lane" | "panel";
 
@@ -2474,28 +2475,33 @@ function panelHtml(webview: vscode.Webview): string {
         el.ontoggle = () => {
           const round = el.getAttribute("data-round");
           if (!round) return;
-          setRoundCollapsed(selected.id, round, !el.open);
+          setRoundCollapsed(selected.id, round, !el.open, el.hasAttribute("data-last"));
         };
       }
     }
+    ${ROUND_STATE_BODY}
     function roundCollapsedMap(prId) {
       const state = vscode.getState() || {};
       const all = state.roundCollapsed || {};
       return all[prId] || {};
     }
-    function setRoundCollapsed(prId, round, collapsed) {
+    function setRoundCollapsed(prId, round, collapsed, isLast) {
       const state = vscode.getState() || {};
       const all = Object.assign({}, state.roundCollapsed || {});
-      const forPr = Object.assign({}, all[prId] || {});
-      forPr[String(round)] = !!collapsed;
-      all[prId] = forPr;
+      all[prId] = roundCollapsedAfterToggle(all[prId], round, collapsed, isLast);
       vscode.setState(Object.assign({}, state, { roundCollapsed: all }));
     }
+    function pruneRoundState(prId, rounds) {
+      const state = vscode.getState() || {};
+      const all = Object.assign({}, state.roundCollapsed || {});
+      const latestAll = Object.assign({}, state.roundLatest || {});
+      const next = pruneRoundCollapsed(all[prId], rounds, latestAll[prId]);
+      all[prId] = next.collapsed;
+      if (next.latest !== undefined) latestAll[prId] = next.latest;
+      vscode.setState(Object.assign({}, state, { roundCollapsed: all, roundLatest: latestAll }));
+    }
     function isRoundExpanded(prId, round, isLast) {
-      const map = roundCollapsedMap(prId);
-      const key = String(round);
-      if (Object.prototype.hasOwnProperty.call(map, key)) return !map[key];
-      return !!isLast;
+      return isRoundExpandedIn(roundCollapsedMap(prId), round, isLast);
     }
     function renderThread(t, archivedView) {
       const c = t.root;
@@ -2509,7 +2515,7 @@ function panelHtml(webview: vscode.Webview): string {
       const action = archivedView
         ? ""
         : st === "open" && (c.role === "human" || c.role === "reviewer")
-          ? '<button type="button" class="address success" data-cid="' + esc(c.id) + '" title="Implementor: mark work addressed">Mark addressed</button>'
+          ? '<button type="button" class="address success" data-cid="' + esc(c.id) + '" title="Implementor: reply with the fix and resolve (reviewer confirms)">Reply &amp; resolve</button>'
           : st === "addressed"
             ? '<button type="button" class="resolve resolve-btn" data-cid="' + esc(c.id) + '" title="Reviewer: resolve finding">Resolve</button>'
             : "";
@@ -2745,18 +2751,7 @@ function panelHtml(webview: vscode.Webview): string {
         return r.round + "/" + r.openCount + "/" + r.resolvedCount;
       }).join("|");
       if (roundSignature !== lastRoundSignature) {
-        const state = vscode.getState() || {};
-        const all = Object.assign({}, state.roundCollapsed || {});
-        const prev = all[selected.id];
-        if (prev && rounds.length) {
-          const next = {};
-          for (const r of rounds) {
-            const key = String(r.round);
-            if (Object.prototype.hasOwnProperty.call(prev, key)) next[key] = prev[key];
-          }
-          all[selected.id] = next;
-          vscode.setState(Object.assign({}, state, { roundCollapsed: all }));
-        }
+        pruneRoundState(selected.id, rounds);
         lastRoundSignature = roundSignature;
       }
       const where = selected.worktreePath ? "worktree" : "head";
@@ -2771,7 +2766,7 @@ function panelHtml(webview: vscode.Webview): string {
             const isLast = i === rounds.length - 1;
             const expanded = isRoundExpanded(selected.id, round.round, isLast);
             const threadsHtml = (round.threads || []).map((t) => renderThread(t, archivedView)).join("");
-            return '<details class="round" data-round="' + esc(String(round.round)) + '"' + (expanded ? " open" : "") + ">" +
+            return '<details class="round" data-round="' + esc(String(round.round)) + '"' + (isLast ? " data-last" : "") + (expanded ? " open" : "") + ">" +
               '<summary><span class="round-label">Round ' + esc(String(round.round)) + "</span>" +
               "<span>" + esc(String(round.openCount)) + " open</span>" +
               "<span>" + esc(String(round.resolvedCount)) + " resolved</span></summary>" +
@@ -2779,7 +2774,6 @@ function panelHtml(webview: vscode.Webview): string {
           }).join("")
         : '<p class="muted empty">No comments yet</p>';
       if (!reuse) {
-        if (layoutId !== selected.id) lastRoundSignature = "";
         paintedFiles = "";
         paintedComments = "";
         root.innerHTML = [

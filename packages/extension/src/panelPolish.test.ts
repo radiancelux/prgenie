@@ -29,10 +29,30 @@ describe("loop panel polish (#129)", () => {
     assert.equal(/\.summary\s*\{[^}]*overflow:\s*auto/.test(laneSrc), false);
   });
 
-  it("groups thread Edit/Delete/Resolve in thread-actions", () => {
+  it("groups thread Edit/Delete/Resolve in thread-actions with Resolve wording", () => {
     assert.match(laneSrc, /thread-actions/);
-    assert.match(laneSrc, /Mark addressed/);
-    assert.match(laneSrc, /Reviewer: resolve finding/);
+    assert.match(
+      laneSrc,
+      /class="address success"[^>]*title="Implementor: [^"]*resolve[^"]*">Reply &amp; resolve</,
+    );
+    assert.match(
+      laneSrc,
+      /class="resolve resolve-btn"[^>]*title="Reviewer: resolve finding">Resolve</,
+    );
+    assert.doesNotMatch(laneSrc, /Mark addressed/);
+    assert.doesNotMatch(laneSrc, />Addressed</);
+    // Behavior unchanged: the open-finding button still posts the human-gated "address" action.
+    assert.match(laneSrc, /type: "address",/);
+  });
+
+  it("injects round collapse state and prunes it on round signature changes", () => {
+    assert.match(laneSrc, /\$\{ROUND_STATE_BODY\}/);
+    assert.match(
+      laneSrc,
+      /roundSignature !== lastRoundSignature\) \{\s*pruneRoundState\(selected\.id, rounds\)/,
+    );
+    assert.match(laneSrc, /data-last/);
+    assert.match(laneSrc, /roundCollapsedAfterToggle\(/);
   });
 
   it("injects CI card view-model render and gate busy reason", () => {

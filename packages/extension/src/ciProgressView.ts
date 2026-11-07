@@ -32,6 +32,8 @@ export type CiCardCheckRow = {
   name: string;
   displayName: string;
   state: string;
+  /** Original runner value when `state` is "unknown" (shown as a tooltip). */
+  rawState?: string;
   elapsedMs?: number;
   message?: string;
   logPath?: string;
@@ -44,18 +46,69 @@ export type CiCardModel = {
   reason: string;
   cwd: string;
   summaryLine: string;
+  /** "N of M checks done" only — the polite live region text (no ticking elapsed). */
+  countLine: string;
+  elapsedLabel: string;
   slotQueueLine?: string;
   rows: CiCardCheckRow[];
 };
 
-const TERMINAL_STATES = new Set(["pass", "fail", "skip", "skipped", "cached", "cancelled"]);
+/** Runner / snapshot / persisted-gate state values → sidebar display state. */
+export const CI_KNOWN_STATES: Readonly<Record<string, string>> = {
+  queued: "queued",
+  pending: "pending",
+  start: "running",
+  started: "running",
+  running: "running",
+  in_progress: "running",
+  waiting: "waiting",
+  pass: "pass",
+  passed: "pass",
+  success: "pass",
+  fail: "fail",
+  failed: "fail",
+  failure: "fail",
+  error: "fail",
+  skip: "skipped",
+  skipped: "skipped",
+  cancelled: "cancelled",
+  canceled: "cancelled",
+  cached: "cached",
+};
 
-/** Map runner progress states to sidebar labels. */
+const TERMINAL_STATES = new Set(["pass", "fail", "skipped", "cached", "cancelled"]);
+
+export type CiDisplayState = { state: string; rawState?: string };
+
+/** Map a runner state to a known display state; unrecognized values become "unknown". */
+export function resolveCiDisplayState(
+  state: string | undefined,
+  cancelled?: boolean,
+): CiDisplayState {
+  const raw = (state ?? "").trim();
+  const key = raw.toLowerCase();
+  const known = key
+    ? Object.prototype.hasOwnProperty.call(CI_KNOWN_STATES, key)
+      ? CI_KNOWN_STATES[key]
+      : undefined
+    : "queued";
+  if (cancelled && (known === "queued" || known === "pending" || known === "running")) {
+    return { state: "cancelled" };
+  }
+  if (known) return { state: known };
+  return { state: "unknown", rawState: raw };
+}
+
 export function normalizeCiDisplayState(state: string | undefined, cancelled?: boolean): string {
-  if (cancelled && (!state || state === "start" || state === "queued")) return "cancelled";
-  if (!state || state === "queued") return "queued";
-  if (state === "start") return "running";
-  return state;
+  return resolveCiDisplayState(state, cancelled).state;
+}
+
+/** Tooltip for a check's state pill; unknown states keep the raw runner value visible. */
+export function ciStateTitle(row: Pick<CiCardCheckRow, "state" | "rawState">): string {
+  if (row.state === "unknown") {
+    return row.rawState ? `Unknown runner state: ${row.rawState}` : "Unknown runner state";
+  }
+  return row.state;
 }
 
 export function isCiCheckDone(state: string): boolean {
@@ -74,18 +127,12 @@ export function planSelectionReason(plan: CiCardBuildInput["plan"]): string {
   return Array.isArray(plan.reason) ? plan.reason.join("; ") : plan.reason;
 }
 
-function mergeStoredRow(row: CiCardCheckInput): CiCardCheckRow {
-  const state = row.skipped
-    ? "skipped"
-    : row.passed === true
-      ? "pass"
-      : row.passed === false
-        ? "fail"
-        : normalizeCiDisplayState(row.state);
+function toRow(row: CiCardCheckInput, resolved: CiDisplayState): CiCardCheckRow {
   return {
     name: row.name,
     displayName: shortCheckName(row.name),
-    state,
+    state: resolved.state,
+    ...(resolved.rawState !== undefined ? { rawState: resolved.rawState } : {}),
     elapsedMs: row.elapsedMs,
     message: row.message,
     logPath: row.logPath,
@@ -94,21 +141,33 @@ function mergeStoredRow(row: CiCardCheckInput): CiCardCheckRow {
   };
 }
 
+function mergeStoredRow(row: CiCardCheckInput): CiCardCheckRow {
+  const resolved: CiDisplayState = row.skipped
+    ? { state: "skipped" }
+    : row.passed === true
+      ? { state: "pass" }
+      : row.passed === false
+        ? { state: "fail" }
+        : resolveCiDisplayState(row.state);
+  return toRow(row, resolved);
+}
+
 function mergeLiveRow(row: CiCardCheckInput, cancelled?: boolean): CiCardCheckRow {
-  const state = normalizeCiDisplayState(
-    row.state,
-    cancelled && row.state !== "pass" && row.state !== "fail",
-  );
-  return {
-    name: row.name,
-    displayName: shortCheckName(row.name),
-    state,
-    elapsedMs: row.elapsedMs,
-    message: row.message,
-    logPath: row.logPath,
-    command: row.command,
-    reason: row.reason,
-  };
+  return toRow(row, resolveCiDisplayState(row.state, cancelled));
+}
+
+/** Plan order first, then any reported checks the plan did not list. */
+function orderedCheckNames(...lists: (readonly string[] | undefined)[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const list of lists) {
+    for (const name of list ?? []) {
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      out.push(name);
+    }
+  }
+  return out;
 }
 
 export function summarizeCiRun(
@@ -133,13 +192,18 @@ export function summarizeCiRun(
   return { done, total, overallElapsedMs: wall, slotWait };
 }
 
+export function formatCiProgressCountLine(done: number, total: number): string {
+  if (total <= 0) return "";
+  return `${done} of ${total} check${total === 1 ? "" : "s"} done`;
+}
+
 export function formatCiProgressSummaryLine(
   done: number,
   total: number,
   overallElapsedMs: number,
 ): string {
-  if (total <= 0) return "";
-  const count = `${done} of ${total} check${total === 1 ? "" : "s"} done`;
+  const count = formatCiProgressCountLine(done, total);
+  if (!count) return "";
   const elapsed = overallElapsedMs > 0 ? ` · ${formatElapsed(overallElapsedMs)}` : "";
   return count + elapsed;
 }
@@ -161,9 +225,8 @@ export function formatExportGateBusyReason(input: {
   if (!model.show || model.rows.length === 0) {
     return `Open on GitHub unavailable — ${step}`;
   }
-  const summary = model.summaryLine.replace(/^/, "");
-  if (summary) {
-    return `Open on GitHub unavailable — ${step} (${summary})`;
+  if (model.summaryLine) {
+    return `Open on GitHub unavailable — ${step} (${model.summaryLine})`;
   }
   return `Open on GitHub unavailable — ${step}`;
 }
@@ -175,68 +238,104 @@ export function buildCiCardModel(input: CiCardBuildInput): CiCardModel {
   const reason = (progress?.selectionReason || planReason || "").trim();
   const cwdLine = (progress?.cwd || input.storedCwd || "").trim();
   const live = progress?.checks ?? [];
-  const names =
-    (live.length ? live.map((c) => c.name) : undefined) ??
-    input.plan?.checks ??
-    input.stored?.map((c) => c.name) ??
-    [];
+  // Persisted results belong to the previous gate run; during a live run an
+  // unreported planned check is queued, not last run's pass/fail.
+  const stored = progress ? [] : (input.stored ?? []);
+  const names = orderedCheckNames(
+    input.plan?.checks,
+    live.map((c) => c.name),
+    stored.map((c) => c.name),
+  );
   const hasLiveCi =
     progress &&
     (progress.phase === "ci" ||
       progress.state === "start" ||
       (progress.checks && progress.checks.length > 0));
   if (!names.length && !reason && !cwdLine && !hasLiveCi) {
-    return { show: false, reason: "", cwd: "", summaryLine: "", rows: [] };
+    return {
+      show: false,
+      reason: "",
+      cwd: "",
+      summaryLine: "",
+      countLine: "",
+      elapsedLabel: "",
+      rows: [],
+    };
   }
   const byName = new Map<string, CiCardCheckRow>();
   for (const row of live) {
     byName.set(row.name, mergeLiveRow(row, progress?.cancelled));
   }
-  for (const row of input.stored ?? []) {
+  for (const row of stored) {
     if (!byName.has(row.name)) byName.set(row.name, mergeStoredRow(row));
   }
+  const unreported = progress ? (progress.cancelled ? "cancelled" : "queued") : "pending";
   const rows: CiCardCheckRow[] = (names.length ? names : ["(waiting)"]).map((name) => {
     const existing = byName.get(name);
     if (existing) return existing;
-    return {
-      name,
-      displayName: shortCheckName(name),
-      state: progress && !progress.cancelled ? "queued" : "unknown",
-    };
+    return { name, displayName: shortCheckName(name), state: unreported };
   });
   const timing = summarizeCiRun(rows, {
     nowMs,
     startedAtMs: progress?.startedAtMs,
   });
-  const summaryLine = formatCiProgressSummaryLine(
-    timing.done,
-    timing.total,
-    timing.overallElapsedMs,
-  );
   return {
     show: true,
     reason: reason || "CI checks",
     cwd: cwdLine,
-    summaryLine,
+    summaryLine: formatCiProgressSummaryLine(timing.done, timing.total, timing.overallElapsedMs),
+    countLine: formatCiProgressCountLine(timing.done, timing.total),
+    elapsedLabel: timing.overallElapsedMs > 0 ? formatElapsed(timing.overallElapsedMs) : "",
     slotQueueLine: timing.slotWait,
     rows,
   };
 }
 
+/**
+ * Persistent CI card skeleton. The count span is the polite live region and is
+ * only rewritten when its text changes, so ticking elapsed time is not announced.
+ */
+export const CI_CARD_SHELL_HTML =
+  '<div class="ci-card-head"></div>' +
+  '<div class="ci-card-summary">' +
+  '<span class="ci-card-count" role="status" aria-live="polite" aria-atomic="true"></span>' +
+  '<span class="ci-card-elapsed muted"></span>' +
+  "</div>" +
+  '<div class="ci-card-rest"></div>';
+
 /** Self-contained render for webview injection (no module imports in the browser). */
 export const RENDER_CI_CARD_BODY = `
+  var CI_KNOWN_STATES = ${JSON.stringify(CI_KNOWN_STATES)};
+  var CI_CARD_SHELL_HTML = ${JSON.stringify(CI_CARD_SHELL_HTML)};
+  function resolveCiDisplayState(state, cancelled) {
+    var raw = String(state == null ? "" : state).trim();
+    var key = raw.toLowerCase();
+    var known = key ? (Object.prototype.hasOwnProperty.call(CI_KNOWN_STATES, key) ? CI_KNOWN_STATES[key] : undefined) : "queued";
+    if (cancelled && (known === "queued" || known === "pending" || known === "running")) {
+      return { state: "cancelled" };
+    }
+    if (known) return { state: known };
+    return { state: "unknown", rawState: raw };
+  }
   function normalizeCiDisplayState(state, cancelled) {
-    if (cancelled && (!state || state === "start" || state === "queued")) return "cancelled";
-    if (!state || state === "queued") return "queued";
-    if (state === "start") return "running";
-    return state;
+    return resolveCiDisplayState(state, cancelled).state;
+  }
+  function ciStateTitle(row) {
+    if (row.state === "unknown") {
+      return row.rawState ? "Unknown runner state: " + row.rawState : "Unknown runner state";
+    }
+    return row.state;
   }
   function isCiCheckDone(state) {
-    return state === "pass" || state === "fail" || state === "skip" || state === "skipped" || state === "cached" || state === "cancelled";
+    return state === "pass" || state === "fail" || state === "skipped" || state === "cached" || state === "cancelled";
+  }
+  function formatCiProgressCountLine(done, total) {
+    if (total <= 0) return "";
+    return done + " of " + total + " check" + (total === 1 ? "" : "s") + " done";
   }
   function formatCiProgressSummaryLine(done, total, overallElapsedMs) {
-    if (total <= 0) return "";
-    var count = done + " of " + total + " check" + (total === 1 ? "" : "s") + " done";
+    var count = formatCiProgressCountLine(done, total);
+    if (!count) return "";
     var elapsed = overallElapsedMs > 0 ? " · " + formatElapsed(overallElapsedMs) : "";
     return count + elapsed;
   }
@@ -246,57 +345,56 @@ export const RENDER_CI_CARD_BODY = `
     if (!/heavy-test slot/i.test(trimmed)) return undefined;
     return trimmed;
   }
+  function ciCheckRow(row, resolved) {
+    var out = {
+      name: row.name,
+      displayName: row.name === "format:check" ? "format" : row.name,
+      state: resolved.state,
+      elapsedMs: row.elapsedMs,
+      message: row.message,
+      logPath: row.logPath,
+      command: row.command,
+      reason: row.reason,
+    };
+    if (resolved.rawState !== undefined) out.rawState = resolved.rawState;
+    return out;
+  }
   function buildCiCardModel(progress, plan, stored, storedCwd, nowMs) {
     nowMs = nowMs != null ? nowMs : Date.now();
     var planReason = plan && plan.reason ? (Array.isArray(plan.reason) ? plan.reason.join("; ") : plan.reason) : "";
     var reason = ((progress && progress.selectionReason) || planReason || "").trim();
     var cwdLine = ((progress && progress.cwd) || storedCwd || "").trim();
     var live = (progress && progress.checks) || [];
-    var names = (live.length ? live.map(function (c) { return c.name; }) : null)
-      || (plan && plan.checks)
-      || (stored && stored.map(function (c) { return c.name; }))
-      || [];
+    var past = progress ? [] : (stored || []);
+    var names = [];
+    var seen = {};
+    var lists = [(plan && plan.checks) || [], live.map(function (c) { return c.name; }), past.map(function (c) { return c.name; })];
+    for (var li = 0; li < lists.length; li++) {
+      for (var ni = 0; ni < lists[li].length; ni++) {
+        var nm = lists[li][ni];
+        if (!nm || seen[nm]) continue;
+        seen[nm] = true;
+        names.push(nm);
+      }
+    }
     var hasLiveCi = progress && (progress.phase === "ci" || progress.state === "start" || (progress.checks && progress.checks.length));
     if (!names.length && !reason && !cwdLine && !hasLiveCi) {
-      return { show: false, reason: "", cwd: "", summaryLine: "", rows: [] };
+      return { show: false, reason: "", cwd: "", summaryLine: "", countLine: "", elapsedLabel: "", rows: [] };
     }
     var byName = {};
     for (var i = 0; i < live.length; i++) {
-      var row = live[i];
-      var st = normalizeCiDisplayState(row.state, progress && progress.cancelled && row.state !== "pass" && row.state !== "fail");
-      byName[row.name] = {
-        name: row.name,
-        displayName: row.name === "format:check" ? "format" : row.name,
-        state: st,
-        elapsedMs: row.elapsedMs,
-        message: row.message,
-        logPath: row.logPath,
-        command: row.command,
-        reason: row.reason,
-      };
+      byName[live[i].name] = ciCheckRow(live[i], resolveCiDisplayState(live[i].state, progress && progress.cancelled));
     }
-    for (var j = 0; j < (stored || []).length; j++) {
-      var srow = stored[j];
+    for (var j = 0; j < past.length; j++) {
+      var srow = past[j];
       if (byName[srow.name]) continue;
-      var sst = srow.skipped ? "skipped" : (srow.passed ? "pass" : (srow.passed === false ? "fail" : normalizeCiDisplayState(srow.state)));
-      byName[srow.name] = {
-        name: srow.name,
-        displayName: srow.name === "format:check" ? "format" : srow.name,
-        state: sst,
-        elapsedMs: srow.elapsedMs,
-        message: srow.message,
-        logPath: srow.logPath,
-        command: srow.command,
-        reason: srow.reason,
-      };
+      var resolved = srow.skipped ? { state: "skipped" } : (srow.passed === true ? { state: "pass" } : (srow.passed === false ? { state: "fail" } : resolveCiDisplayState(srow.state)));
+      byName[srow.name] = ciCheckRow(srow, resolved);
     }
+    var unreported = progress ? (progress.cancelled ? "cancelled" : "queued") : "pending";
     var rows = (names.length ? names : ["(waiting)"]).map(function (name) {
       if (byName[name]) return byName[name];
-      return {
-        name: name,
-        displayName: name === "format:check" ? "format" : name,
-        state: progress && !progress.cancelled ? "queued" : "unknown",
-      };
+      return { name: name, displayName: name === "format:check" ? "format" : name, state: unreported };
     });
     var done = 0;
     var sumElapsed = 0;
@@ -308,8 +406,16 @@ export const RENDER_CI_CARD_BODY = `
       if (r.state === "waiting") slotWait = parseHeavySlotWaitMessage(r.message) || r.message;
     }
     var wall = progress && progress.startedAtMs ? Math.max(0, nowMs - progress.startedAtMs) : sumElapsed;
-    var summaryLine = formatCiProgressSummaryLine(done, rows.length, wall);
-    return { show: true, reason: reason || "CI checks", cwd: cwdLine, summaryLine: summaryLine, slotQueueLine: slotWait, rows: rows };
+    return {
+      show: true,
+      reason: reason || "CI checks",
+      cwd: cwdLine,
+      summaryLine: formatCiProgressSummaryLine(done, rows.length, wall),
+      countLine: formatCiProgressCountLine(done, rows.length),
+      elapsedLabel: wall > 0 ? formatElapsed(wall) : "",
+      slotQueueLine: slotWait,
+      rows: rows,
+    };
   }
   function renderCiCard(host, progress, plan, stored, storedCwd) {
     if (!host) return;
@@ -320,13 +426,16 @@ export const RENDER_CI_CARD_BODY = `
       return;
     }
     host.hidden = false;
-    var html = '<div class="ci-card-why">' + escapeHtml(model.reason) + "</div>";
+    if (!host.querySelector(".ci-card-count[role='status']")) host.innerHTML = CI_CARD_SHELL_HTML;
+    var head = '<div class="ci-card-why">' + escapeHtml(model.reason) + "</div>";
     if (model.cwd) {
-      html += '<div class="ci-card-cwd muted">Cwd: ' + escapeHtml(model.cwd) + "</div>";
+      head += '<div class="ci-card-cwd muted">Cwd: ' + escapeHtml(model.cwd) + "</div>";
     }
-    if (model.summaryLine) {
-      html += '<div class="ci-card-summary">' + escapeHtml(model.summaryLine) + "</div>";
-    }
+    host.querySelector(".ci-card-head").innerHTML = head;
+    var count = host.querySelector(".ci-card-count");
+    if (count.textContent !== model.countLine) count.textContent = model.countLine;
+    host.querySelector(".ci-card-elapsed").textContent = model.elapsedLabel ? " · " + model.elapsedLabel : "";
+    var html = "";
     if (model.slotQueueLine) {
       html += '<div class="ci-card-slot muted">' + escapeHtml(model.slotQueueLine) + "</div>";
     }
@@ -335,11 +444,13 @@ export const RENDER_CI_CARD_BODY = `
       var row = model.rows[i];
       var elapsed = row.elapsedMs != null ? " · " + formatElapsed(row.elapsedMs) : "";
       var logHint = row.logPath ? " · log" : "";
-      html += '<li><button type="button" class="ci-check ' + escapeHtml(row.state) + '" data-check="' + escapeHtml(row.name) + '" data-state="' + escapeHtml(row.state) + '" data-excerpt="' + escapeHtml(row.message || "") + '" data-log="' + escapeHtml(row.logPath || "") + '" data-elapsed="' + (row.elapsedMs != null ? row.elapsedMs : "") + '" data-reason="' + escapeHtml(row.reason || model.reason || "") + '" data-command="' + escapeHtml(row.command || "") + '"><span class="st">' + escapeHtml(row.state) + '</span><span class="name">' + escapeHtml(row.displayName) + "</span><span class='muted'>" + elapsed + logHint + "</span></button></li>";
+      html += '<li><button type="button" class="ci-check ' + escapeHtml(row.state) + '" data-check="' + escapeHtml(row.name) + '" data-state="' + escapeHtml(row.state) + '" data-excerpt="' + escapeHtml(row.message || "") + '" data-log="' + escapeHtml(row.logPath || "") + '" data-elapsed="' + (row.elapsedMs != null ? row.elapsedMs : "") + '" data-reason="' + escapeHtml(row.reason || model.reason || "") + '" data-command="' + escapeHtml(row.command || "") + '"><span class="st" title="' + escapeHtml(ciStateTitle(row)) + '">' + escapeHtml(row.state) + '</span><span class="name">' + escapeHtml(row.displayName) + "</span><span class='muted'>" + elapsed + logHint + "</span></button></li>";
     }
     html += "</ul>";
-    host.innerHTML = html;
-    for (var bi = 0; bi < host.querySelectorAll(".ci-check[data-check]").length; bi++) {
+    var rest = host.querySelector(".ci-card-rest");
+    rest.innerHTML = html;
+    var buttons = rest.querySelectorAll(".ci-check[data-check]");
+    for (var bi = 0; bi < buttons.length; bi++) {
       (function (btn) {
         btn.onclick = function () {
           vscode.postMessage({
@@ -353,7 +464,7 @@ export const RENDER_CI_CARD_BODY = `
             reason: btn.getAttribute("data-reason") || undefined,
           });
         };
-      })(host.querySelectorAll(".ci-check[data-check]")[bi]);
+      })(buttons[bi]);
     }
   }
   function formatExportGateBusyReason(input) {
@@ -363,9 +474,8 @@ export const RENDER_CI_CARD_BODY = `
     if (!model.show || model.rows.length === 0) {
       return "Open on GitHub unavailable — " + step;
     }
-    var summary = model.summaryLine || "";
-    if (summary) {
-      return "Open on GitHub unavailable — " + step + " (" + summary + ")";
+    if (model.summaryLine) {
+      return "Open on GitHub unavailable — " + step + " (" + model.summaryLine + ")";
     }
     return "Open on GitHub unavailable — " + step;
   }
