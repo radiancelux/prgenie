@@ -760,6 +760,8 @@ function inferCommentStatus(comment: LocalPrComment, role: CommentRole): Comment
   if (comment.status && COMMENT_STATUSES.includes(comment.status)) return comment.status;
   if (comment.resolvedAt) return "resolved";
   if (comment.replyTo || role === "agent") return "resolved";
+  if ((role === "reviewer" || role === "human") && isVerdictOnlyBody(comment.body))
+    return "resolved";
   return "open";
 }
 
@@ -781,6 +783,19 @@ export function isFindingComment(comment: LocalPrComment): boolean {
   if (c.role !== "human" && c.role !== "reviewer") return false;
   if (c.replyTo) return false;
   return true;
+}
+
+/** Review verdict / complete_review copy — not an actionable finding in the panel. */
+export function isVerdictOnlyBody(body: string): boolean {
+  const trimmed = body.trim();
+  if (/^VERDICT:\s*CLEAN\b/i.test(trimmed)) return true;
+  if (/^Review cleared\./i.test(trimmed)) return true;
+  if (/^Review complete\./i.test(trimmed)) return true;
+  return false;
+}
+
+export function isActionableFindingComment(comment: LocalPrComment): boolean {
+  return isFindingComment(comment) && !isVerdictOnlyBody(comment.body);
 }
 
 export function pendingReviewComments(pr: LocalPr): LocalPrComment[] {
@@ -835,7 +850,7 @@ function roundFindingCounts(threads: CommentThread[]): {
   let openCount = 0;
   let resolvedCount = 0;
   for (const t of threads) {
-    if (!isFindingComment(t.root)) continue;
+    if (!isActionableFindingComment(t.root)) continue;
     const st = normalizeComment(t.root).status;
     if (st === "resolved") resolvedCount += 1;
     else openCount += 1;
