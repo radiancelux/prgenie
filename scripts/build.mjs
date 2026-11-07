@@ -87,6 +87,17 @@ await esbuild.build({
   },
 });
 
+const npmRunnerDir = path.join(root, "packages/npm-prgenie");
+mkdirSync(npmRunnerDir, { recursive: true });
+copyFileSync(
+  path.join(root, "local-runner/dist/runner.cjs"),
+  path.join(npmRunnerDir, "runner.cjs"),
+);
+copyFileSync(
+  path.join(root, "local-runner/dist/markdownlint-prose-defaults.jsonc"),
+  path.join(npmRunnerDir, "markdownlint-prose-defaults.jsonc"),
+);
+
 console.log("PR Genie build complete.");
 await esbuild.stop();
 process.exit(0);

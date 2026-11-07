@@ -26,6 +26,7 @@ import type { RunnerConfig } from "./config.js";
 import { mergeJobErrors } from "./job-error.js";
 import { resolveStageModelsForJob } from "./job-models.js";
 import type { CiStatusInfo } from "./types.js";
+import { withStoreLock } from "./store-lock.js";
 
 export async function ensureDataDirs(dataDir: string): Promise<void> {
   await mkdir(jobsDir(dataDir), { recursive: true });
@@ -73,22 +74,24 @@ function mergeCiStatus(
 }
 
 export async function saveJob(dataDir: string, job: JobRecord): Promise<void> {
-  const loadedAt = job.updatedAt;
-  job.updatedAt = new Date().toISOString();
-  // Stale in-memory copies (CI poll, worktree cleanup) must not resurrect an archived job.
-  if (await fileExists(archivedJobFile(dataDir, job.id))) return;
-  const livePath = jobFile(dataDir, job.id);
-  const onDisk = await readJobFile(livePath);
-  if (!onDisk) {
+  return withStoreLock(dataDir, async () => {
+    const loadedAt = job.updatedAt;
+    job.updatedAt = new Date().toISOString();
+    // Stale in-memory copies (CI poll, worktree cleanup) must not resurrect an archived job.
     if (await fileExists(archivedJobFile(dataDir, job.id))) return;
-  } else {
-    job.ciStatus = mergeCiStatus(onDisk.ciStatus, job.ciStatus);
-    // Only a copy older than disk merges errors; an up-to-date writer may clear `error`.
-    if (onDisk.updatedAt > (loadedAt ?? "")) {
-      job.error = mergeJobErrors(onDisk.error, job.error);
+    const livePath = jobFile(dataDir, job.id);
+    const onDisk = await readJobFile(livePath);
+    if (!onDisk) {
+      if (await fileExists(archivedJobFile(dataDir, job.id))) return;
+    } else {
+      job.ciStatus = mergeCiStatus(onDisk.ciStatus, job.ciStatus);
+      // Only a copy older than disk merges errors; an up-to-date writer may clear `error`.
+      if (onDisk.updatedAt > (loadedAt ?? "")) {
+        job.error = mergeJobErrors(onDisk.error, job.error);
+      }
     }
-  }
-  await atomicWriteJson(livePath, job);
+    await atomicWriteJson(livePath, job);
+  });
 }
 
 /**
@@ -215,6 +218,10 @@ export async function jobsDashboardMeta(
 
 /** Move `jobs/<id>.json` and `logs/<id>.log` under `archived/`. Caller checks the stage. */
 export async function moveJobToArchive(dataDir: string, job: JobRecord): Promise<JobRecord> {
+  return withStoreLock(dataDir, async () => moveJobToArchiveUnlocked(dataDir, job));
+}
+
+async function moveJobToArchiveUnlocked(dataDir: string, job: JobRecord): Promise<JobRecord> {
   const dest = archivedJobFile(dataDir, job.id);
   if (await fileExists(dest)) {
     const existing = await readJobFile(dest);
@@ -236,6 +243,13 @@ export type RestoreJobFilesResult =
 
 /** Move an archived job back under `jobs/` and `logs/`; never overwrites a live job. */
 export async function restoreJobFromArchive(
+  dataDir: string,
+  id: string,
+): Promise<RestoreJobFilesResult> {
+  return withStoreLock(dataDir, async () => restoreJobFromArchiveUnlocked(dataDir, id));
+}
+
+async function restoreJobFromArchiveUnlocked(
   dataDir: string,
   id: string,
 ): Promise<RestoreJobFilesResult> {

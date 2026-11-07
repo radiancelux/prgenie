@@ -1,0 +1,37 @@
+{
+  "name": "prgenie",
+  "version": "0.1.2",
+  "description": "PR Genie local runner — MCP stdio job loop (implement → PR → review → fix)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/radiancelux/prgenie.git",
+    "directory": "packages/npm-prgenie"
+  },
+  "bugs": "https://github.com/radiancelux/prgenie/issues",
+  "homepage": "https://github.com/radiancelux/prgenie/tree/main/packages/npm-prgenie#readme",
+  "author": "PR Genie contributors",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "prgenie": "./runner.cjs"
+  },
+  "files": [
+    "runner.cjs",
+    "markdownlint-prose-defaults.jsonc",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "keywords": [
+    "mcp",
+    "cursor",
+    "local-runner",
+    "pull-request"
+  ]
+}

@@ -1,5 +1,6 @@
 import type { RunnerEngine } from "./engine.js";
-import { normalizeStartJobArgs } from "./settings-validation.js";
+import { loadSettings, saveSettings, toPublicSettings } from "./settings.js";
+import { normalizeStartJobArgs, parseSettingsPatch } from "./settings-validation.js";
 
 type Json = Record<string, unknown>;
 
@@ -115,52 +116,80 @@ export const RUNNER_MCP_TOOLS = [
       required: ["id"],
     },
   },
+  {
+    name: "settings",
+    description:
+      "Read runner settings (no arguments) or patch defaults/drivers/watchdog (same fields as PATCH /api/settings).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        patch: { type: "object", description: "Optional nested patch object" },
+        expectedRevision: { type: "number" },
+      },
+    },
+  },
 ] as const;
+
+export const RUNNER_MCP_TOOL_NAMES = RUNNER_MCP_TOOLS.map((t) => t.name);
+
+type ToolHandler = (engine: RunnerEngine, args: Json) => Promise<unknown>;
+
+const RUNNER_TOOL_HANDLERS: Record<string, ToolHandler> = {
+  start_job: (engine, args) => engine.startJob(normalizeStartJobArgs(args)),
+  list_jobs: (engine, args) => engine.list({ includeArchived: args.includeArchived === true }),
+  get_job: async (engine, args) => {
+    const id = String(args.id ?? "");
+    const job = await engine.get(id);
+    if (!job) throw new Error(`job not found: ${id}`);
+    return job;
+  },
+  steer_job: async (engine, args) => {
+    const id = String(args.id ?? "");
+    const prompt = String(args.prompt ?? "");
+    const job = await engine.steer(id, prompt);
+    if (!job) throw new Error(`job not found: ${id}`);
+    return job;
+  },
+  stop_job: async (engine, args) => {
+    const id = String(args.id ?? "");
+    const job = await engine.stop(id);
+    if (!job) throw new Error(`job not found: ${id}`);
+    return job;
+  },
+  archive_job: async (engine, args) => {
+    const id = String(args.id ?? "");
+    const result = await engine.archive(id);
+    if (!result.ok) throw new Error(`${result.error}: ${id}`);
+    return result;
+  },
+  restore_job: async (engine, args) => {
+    const id = String(args.id ?? "");
+    const result = await engine.restore(id);
+    if (!result.ok) throw new Error(`${result.error}: ${id}`);
+    return { ok: true, id: result.id, stage: result.job.stage };
+  },
+  settings: async (engine, args) => {
+    const dataDir = engine.config.dataDir;
+    const hasPatch =
+      args.patch !== undefined && args.patch !== null && typeof args.patch === "object";
+    const topLevelKeys = Object.keys(args).filter((k) => k !== "patch");
+    if (!hasPatch && topLevelKeys.length === 0) {
+      return toPublicSettings(engine.config, await loadSettings(dataDir));
+    }
+    const patch = parseSettingsPatch((hasPatch ? (args.patch as Json) : args) as Json);
+    const saved = await saveSettings(dataDir, patch);
+    return toPublicSettings(engine.config, saved);
+  },
+};
 
 export async function handleRunnerTool(
   engine: RunnerEngine,
   name: string,
   args: Json,
 ): Promise<unknown> {
-  switch (name) {
-    case "start_job":
-      return engine.startJob(normalizeStartJobArgs(args));
-    case "list_jobs":
-      return engine.list({ includeArchived: args.includeArchived === true });
-    case "get_job": {
-      const id = String(args.id ?? "");
-      const job = await engine.get(id);
-      if (!job) throw new Error(`job not found: ${id}`);
-      return job;
-    }
-    case "steer_job": {
-      const id = String(args.id ?? "");
-      const prompt = String(args.prompt ?? "");
-      const job = await engine.steer(id, prompt);
-      if (!job) throw new Error(`job not found: ${id}`);
-      return job;
-    }
-    case "stop_job": {
-      const id = String(args.id ?? "");
-      const job = await engine.stop(id);
-      if (!job) throw new Error(`job not found: ${id}`);
-      return job;
-    }
-    case "archive_job": {
-      const id = String(args.id ?? "");
-      const result = await engine.archive(id);
-      if (!result.ok) throw new Error(`${result.error}: ${id}`);
-      return result;
-    }
-    case "restore_job": {
-      const id = String(args.id ?? "");
-      const result = await engine.restore(id);
-      if (!result.ok) throw new Error(`${result.error}: ${id}`);
-      return { ok: true, id: result.id, stage: result.job.stage };
-    }
-    default:
-      throw new Error(`unknown tool: ${name}`);
-  }
+  const handler = RUNNER_TOOL_HANDLERS[name];
+  if (!handler) throw new Error(`unknown tool: ${name}`);
+  return handler(engine, args);
 }
 
 export async function handleMcpJsonRpc(
@@ -174,7 +203,7 @@ export async function handleMcpJsonRpc(
       result: {
         protocolVersion: "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "prgenie-local-runner", version: "0.1.0" },
+        serverInfo: { name: "prgenie", version: "0.1.2" },
       },
     };
   }

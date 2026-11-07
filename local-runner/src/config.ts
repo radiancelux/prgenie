@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { defaultRunnerHost } from "./listen-urls.js";
 
+export type RunnerCommand = "serve" | "mcp" | "init" | "doctor" | "prune-worktrees" | "config";
+
 export interface RunnerConfig {
   host: string;
   port: number;
@@ -18,11 +20,35 @@ export interface RunnerConfig {
 
 const DEFAULT_PORT = 9473;
 
+/** Internal placeholder when stdio MCP runs without a bearer secret. */
+export const STDIO_PLACEHOLDER_TOKEN = "stdio-local";
+
 export function defaultDataDir(): string {
   return path.join(os.homedir(), ".prgenie", "local-runner");
 }
 
-export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<RunnerConfig> {
+export function runnerTokenFile(dataDir: string): string {
+  return path.join(dataDir, "runner.token");
+}
+
+export async function resolveRunnerToken(
+  env: NodeJS.ProcessEnv,
+  dataDir: string,
+): Promise<string | null> {
+  const fromEnv = env.PRGENIE_RUNNER_TOKEN?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const fromFile = (await readFile(runnerTokenFile(dataDir), "utf8")).trim();
+    return fromFile || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function loadConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  options?: { command?: RunnerCommand },
+): Promise<RunnerConfig> {
   const dataDir = env.PRGENIE_RUNNER_DATA_DIR?.trim() || defaultDataDir();
   let resendApiKey = env.RESEND_API_KEY?.trim() || null;
   const secretFile = env.PRGENIE_RUNNER_RESEND_KEY_FILE?.trim();
@@ -34,9 +60,15 @@ export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<
     }
   }
 
-  const token = env.PRGENIE_RUNNER_TOKEN?.trim();
+  const needsBearer = options?.command === "serve";
+  let token = await resolveRunnerToken(env, dataDir);
+  if (!token && needsBearer) {
+    throw new Error(
+      "PRGENIE_RUNNER_TOKEN is required for serve (HTTP dashboard + bearer MCP). Run `prgenie init` and export the token file, or set PRGENIE_RUNNER_TOKEN.",
+    );
+  }
   if (!token) {
-    throw new Error("PRGENIE_RUNNER_TOKEN is required (shared bearer for localhost MCP + UI API).");
+    token = STDIO_PLACEHOLDER_TOKEN;
   }
 
   return {

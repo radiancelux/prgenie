@@ -1,3 +1,6 @@
+/** Stderr ready line hosts grep for smoke tests (stdout is MCP-only). */
+export const MCP_STDIO_READY = "[prgenie] mcp stdio ready";
+
 /** NDJSON MCP framing (matches PR Genie CLI host expectations). */
 
 export function encodeMcpFrame(msg: unknown): Buffer {

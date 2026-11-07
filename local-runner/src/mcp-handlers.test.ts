@@ -14,6 +14,10 @@ describe("start_job MCP schema", () => {
     assert.ok(props.docsTemplate);
     assert.ok(props.title);
   });
+
+  it("lists settings tool for maintainable registry", () => {
+    assert.ok(RUNNER_MCP_TOOLS.some((t) => t.name === "settings"));
+  });
 });
 
 describe("start_job validation", () => {

@@ -29,7 +29,8 @@
     "check-versions": "node scripts/check-versions.mjs",
     "pack:extension": "node scripts/pack-extension.mjs",
     "local-runner": "node local-runner/dist/runner.cjs",
-    "build:test": "node scripts/build-test.mjs"
+    "build:test": "node scripts/build-test.mjs",
+    "pack:runner": "node scripts/pack-runner.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
