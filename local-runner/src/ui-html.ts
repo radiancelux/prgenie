@@ -116,6 +116,14 @@ export function runnerUiHtml(
       </div>
       <div id="steerStatus" class="mt-1 min-h-5 text-sm text-zinc-400" role="status" aria-live="polite"></div>
     </div>
+    <div class="continue-panel mt-3 border-t border-zinc-800 pt-3" id="continuePanel" hidden>
+      <label for="continuePrompt" class="mb-1 block text-sm text-zinc-400">Run another round (fix → review)</label>
+      <div class="flex flex-wrap gap-2">
+        <textarea id="continuePrompt" rows="3" class="min-h-[4.5rem] w-full min-w-0 flex-[1_1_100%] rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base" placeholder="Extra instructions for the fix step… Enter to run, Shift+Enter for newline" aria-describedby="continueStatus"></textarea>
+        <button type="button" class="primary min-h-11 flex-1 rounded-md border border-emerald-800 bg-emerald-950/50 px-4 py-2 sm:flex-none" id="continueBtn">Run another round</button>
+      </div>
+      <div id="continueStatus" class="mt-1 min-h-5 text-sm text-zinc-400" role="status" aria-live="polite"></div>
+    </div>
   </section>
   </div>
   </main>
@@ -211,6 +219,10 @@ export function runnerUiHtml(
     // Mirrors the server: Remove (archive) is only offered for these; building/reviewing/fixing never.
     const TERMINAL_STAGES = new Set(["approved", "failed", "stopped", "changes_remaining", "stuck"]);
     const steerEl = document.getElementById("steerPrompt");
+    const continuePanel = document.getElementById("continuePanel");
+    const continueEl = document.getElementById("continuePrompt");
+    const continueBtn = document.getElementById("continueBtn");
+    const continueStatus = document.getElementById("continueStatus");
     const steerBtn = document.getElementById("steerBtn");
     const stopBtn = document.getElementById("stopBtn");
     const archiveBtn = document.getElementById("archiveBtn");
@@ -288,6 +300,16 @@ export function runnerUiHtml(
       archiveBtn.hidden = !selected || (!archived && !TERMINAL_STAGES.has(selectedJobStage || ""));
       archiveBtn.dataset.action = archived ? "restore" : "archive";
       archiveBtn.textContent = archived ? "Restore" : "Remove";
+      const terminal = Boolean(selected && picked && TERMINAL_STAGES.has(picked.stage) && !archived);
+      continuePanel.hidden = !terminal;
+      const canContinue = terminal && Boolean(picked.prUrl);
+      continueEl.disabled = !canContinue;
+      continueBtn.disabled = !canContinue;
+      if (terminal && !canContinue) {
+        continueStatus.textContent = "This job has no PR yet — start a new job instead.";
+      } else if (!terminal) {
+        continueStatus.textContent = "";
+      }
     }
 
     function fmtTokens(u) {
@@ -891,8 +913,38 @@ export function runnerUiHtml(
       };
     }
 
+    async function continueJobUi() {
+      const prompt = continueEl.value.trim();
+      if (!selected || continueBtn.disabled) return;
+      continueStatus.textContent = "Starting another round…";
+      try {
+        const body = prompt ? { prompt } : {};
+        const res = await fetch("/api/jobs/" + encodeURIComponent(selected) + "/continue", {
+          method: "POST",
+          headers: authHeaders(true),
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          continueStatus.textContent =
+            "Continue failed (" + res.status + "): " + (data.error || "unknown error");
+          return;
+        }
+        continueEl.value = "";
+        continueStatus.textContent = data.queued
+          ? "Queued — another round will run when a slot opens."
+          : "Another round started.";
+        selectedJobStage = data.stage || "fixing";
+        updateSteerUi();
+        void refresh();
+      } catch {
+        continueStatus.textContent = "Continue failed (network).";
+      }
+    }
+
     steerBtn.onclick = () => void steerJob();
     stopBtn.onclick = () => void stopJob();
+    continueBtn.onclick = () => void continueJobUi();
     archiveBtn.onclick = () => {
       if (!selected) return;
       if (archiveBtn.dataset.action === "restore") void restoreJobUi(selected);
@@ -903,6 +955,12 @@ export function runnerUiHtml(
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         void steerJob();
+      }
+    });
+    continueEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        void continueJobUi();
       }
     });
 

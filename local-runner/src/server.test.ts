@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import type { RunnerConfig } from "./config.js";
 import { RunnerEngine } from "./engine.js";
-import { handleStartJobRequest, startHttpServer } from "./server.js";
+import { handleContinueJobRequest, handleStartJobRequest, startHttpServer } from "./server.js";
 import { handleMcpJsonRpc, handleRunnerTool } from "./mcp-handlers.js";
 import { ValidationError } from "./settings-validation.js";
 import { BranchConflictError } from "./job-queue.js";
@@ -150,22 +150,28 @@ async function startTestServer(): Promise<{
   };
 }
 
-async function seedJob(dataDir: string, id: string, stage: JobStage): Promise<void> {
+async function seedJob(
+  dataDir: string,
+  id: string,
+  stage: JobStage,
+  opts: { prUrl?: string; branch?: string } = {},
+): Promise<void> {
   await mkdir(path.join(dataDir, "logs"), { recursive: true });
   await writeFile(jobLogFile(dataDir, id), `log ${id}\n`, "utf8");
   await saveJob(dataDir, {
     id,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    input: { repoPath: "/repo", branch: `b-${id}`, promptFile: "/p" },
+    input: { repoPath: "/repo", branch: opts.branch ?? `b-${id}`, promptFile: "/p" },
     stage,
-    reviewRound: 0,
-    maxRounds: 2,
+    reviewRound: 2,
+    maxRounds: 3,
     model: "m",
     driverId: "cursor-agent",
     worktreePath: null,
     repoSlug: "o/r",
-    prUrl: null,
+    prUrl:
+      opts.prUrl ?? (stage === "building" ? null : "https://github.com/example/example/pull/1"),
     prNumber: null,
     prIsDraft: null,
     approveHeadSha: null,
@@ -693,5 +699,144 @@ describe("start job validation parity (HTTP POST /api/jobs vs MCP start_job)", (
       engine.startJob({ ...base, maxRounds: 0 }),
       (err: Error) => err instanceof ValidationError && /between 1 and 10/.test(err.message),
     );
+  });
+});
+
+describe("continue job over HTTP and MCP", () => {
+  const TOKEN = "test-runner-token";
+
+  it("requires bearer auth like steer/stop", async () => {
+    const s = await startTestServer();
+    try {
+      await seedJob(s.dataDir, "job-1", "approved");
+      const res = await httpRequest(s.port, "POST", "/api/jobs/job-1/continue");
+      assert.equal(res.status, 401);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("continues each allowed terminal stage and refuses running/archived", async () => {
+    const s = await startTestServer();
+    try {
+      for (const stage of [
+        "approved",
+        "changes_remaining",
+        "stuck",
+        "stopped",
+        "failed",
+      ] as const) {
+        const id = `job-${stage}`;
+        await seedJob(s.dataDir, id, stage);
+        const res = await httpRequest(s.port, "POST", `/api/jobs/${id}/continue`, {
+          token: TOKEN,
+          body: JSON.stringify({ prompt: "more work", extraRounds: 1 }),
+        });
+        assert.equal(res.status, 200, stage);
+        const body = JSON.parse(res.body) as { ok: boolean; maxRounds: number; stage: string };
+        assert.equal(body.ok, true);
+        assert.equal(body.maxRounds, 4);
+        assert.equal(body.stage, "fixing");
+      }
+
+      await seedJob(s.dataDir, "job-running", "building");
+      const running = await httpRequest(s.port, "POST", "/api/jobs/job-running/continue", {
+        token: TOKEN,
+        body: "{}",
+      });
+      assert.equal(running.status, 409);
+
+      await seedJob(s.dataDir, "job-arch", "approved");
+      await httpRequest(s.port, "POST", "/api/jobs/job-arch/archive", { token: TOKEN });
+      const archived = await httpRequest(s.port, "POST", "/api/jobs/job-arch/continue", {
+        token: TOKEN,
+        body: "{}",
+      });
+      assert.equal(archived.status, 409);
+      assert.match(archived.body, /archived/i);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("rejects branch conflict with 409", async () => {
+    const s = await startTestServer();
+    try {
+      const branch = "feat/shared";
+      await seedJob(s.dataDir, "job-done", "approved", { branch });
+      await seedJob(s.dataDir, "job-active", "fixing", { branch });
+      const res = await httpRequest(s.port, "POST", "/api/jobs/job-done/continue", {
+        token: TOKEN,
+        body: "{}",
+      });
+      assert.equal(res.status, 409);
+      assert.match(res.body, /another active job/i);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("returns the same validation errors over HTTP and MCP", async () => {
+    const s = await startTestServer();
+    try {
+      await seedJob(s.dataDir, "job-1", "approved");
+      const badCases: Array<{ payload: Record<string, unknown>; message: string }> = [
+        { payload: { extraRounds: 0 }, message: "extraRounds must be between 1 and 10" },
+        { payload: { extraRounds: 11 }, message: "extraRounds must be between 1 and 10" },
+        { payload: { extraRounds: 9 }, message: "maxRounds would exceed 10 (3 + 9)" },
+      ];
+      for (const { payload, message } of badCases) {
+        const body = JSON.stringify(payload);
+        const http = await httpRequest(s.port, "POST", "/api/jobs/job-1/continue", {
+          token: TOKEN,
+          body,
+        });
+        assert.equal(http.status, 400, message);
+        assert.deepEqual(JSON.parse(http.body), { error: message });
+        const mcp = await mcpCall(s.port, "continue_job", { id: "job-1", ...payload });
+        assert.match(
+          mcp.error?.message ?? "",
+          new RegExp(message.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+        );
+      }
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("MCP continue_job mirrors HTTP success payload", async () => {
+    const s = await startTestServer();
+    try {
+      await seedJob(s.dataDir, "job-1", "approved");
+      const mcp = await mcpCall(s.port, "continue_job", {
+        id: "job-1",
+        prompt: "fix CI",
+        extraRounds: 1,
+      });
+      assert.equal(mcp.result?.structuredContent.ok, true);
+      assert.equal((mcp.result?.structuredContent as { maxRounds: number }).maxRounds, 4);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("handleContinueJobRequest normalizes id from URL", async () => {
+    const captured: unknown[] = [];
+    const engine = {
+      continueJob: async (args: unknown) => {
+        captured.push(args);
+        return {
+          ok: true,
+          id: "job-1",
+          stage: "fixing",
+          maxRounds: 4,
+          reviewRound: 3,
+          worktree: "none",
+          queued: false,
+        };
+      },
+    } as unknown as RunnerEngine;
+    await handleContinueJobRequest(engine, "job-1", { prompt: "x" });
+    assert.deepEqual(captured[0], { prompt: "x", id: "job-1" });
   });
 });

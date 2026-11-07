@@ -88,6 +88,7 @@ On startup the runner prints reachable URLs (loopback plus a best-effort LAN IP 
 - `stop_job`
 - `archive_job` — `id`; removes a finished job from the dashboard (see [Removing jobs](#removing-jobs-archive)). Errors while the job is running.
 - `restore_job` — `id`; moves an archived job back. Errors if a live job already uses that id.
+- `continue_job` — `id`, optional `prompt` / `promptFile`, `extraRounds` (default 1), optional `model` (fix stage). Runs additional fix→review round(s) on a **terminal** job (`approved`, `changes_remaining`, `stuck`, `stopped`, `failed`). Refuses archived jobs (restore first) and branches held by another active job.
 
 ### Job stages
 
@@ -133,15 +134,16 @@ Restore moves both files back and clears `archivedAt`. It refuses (`409`) if a l
 
 Worktrees: archiving removes the job's git worktree only when it is **clean and pushed**, so the branch is free for a new job. A worktree with uncommitted changes or unpushed commits is **kept** and never force-removed. The response then includes a `warning` (shown on the dashboard) with the path to clean up by hand.
 
-| Route                             | Body                               | Result                                                                                       |
-| --------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------- |
-| `POST /api/jobs/:id/archive`      | —                                  | `200 { ok, id, archivedAt, worktree: "removed" \| "kept" \| "none", warning? }`              |
-|                                   |                                    | `409` while running (`{ error, stage }`), `404` unknown id, `400` invalid id                 |
-| `POST /api/jobs/:id/restore`      | —                                  | `200 { ok, id, stage }`; `409` on id collision, `404` not archived                           |
-| `POST /api/jobs/clear-failed`     | `{ "includeStuckStopped"?: bool }` | `200 { ok, stages, archived: [ids], warnings: [{ id, warning }], skipped: [{ id, error }] }` |
-| `GET /api/jobs?includeArchived=1` | —                                  | Live jobs plus archived ones                                                                 |
-| `GET /api/jobs/meta`              | —                                  | `{ totalOnDisk, mergedHidden, archived }`                                                    |
-| `GET /api/events?token=…`         | —                                  | SSE: `data: {"type":"jobs"}` whenever a job is started, archived, or restored                |
+| Route                             | Body                                             | Result                                                                                                                                              |
+| --------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/jobs/:id/archive`      | —                                                | `200 { ok, id, archivedAt, worktree: "removed" \| "kept" \| "none", warning? }`                                                                     |
+|                                   |                                                  | `409` while running (`{ error, stage }`), `404` unknown id, `400` invalid id                                                                        |
+| `POST /api/jobs/:id/restore`      | —                                                | `200 { ok, id, stage }`; `409` on id collision, `404` not archived                                                                                  |
+| `POST /api/jobs/:id/continue`     | `{ prompt?, promptFile?, extraRounds?, model? }` | `200 { ok, id, stage, maxRounds, reviewRound, worktree, queued }`; `409` running/archived/branch; `400` validation (parity with MCP `continue_job`) |
+| `POST /api/jobs/clear-failed`     | `{ "includeStuckStopped"?: bool }`               | `200 { ok, stages, archived: [ids], warnings: [{ id, warning }], skipped: [{ id, error }] }`                                                        |
+| `GET /api/jobs?includeArchived=1` | —                                                | Live jobs plus archived ones                                                                                                                        |
+| `GET /api/jobs/meta`              | —                                                | `{ totalOnDisk, mergedHidden, archived }`                                                                                                           |
+| `GET /api/events?token=…`         | —                                                | SSE: `data: {"type":"jobs"}` whenever a job is started, archived, or restored                                                                       |
 
 The dashboard subscribes to `/api/events`, so other open dashboards drop or re-add rows without a reload. The 8s poll still covers changes made through a separate `mcp` stdio process.
 
