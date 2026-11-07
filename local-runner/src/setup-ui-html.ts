@@ -90,7 +90,7 @@ export function setupUiHtml(
   </div>
   <div class="panel">
     <h2 style="margin-top:0;">MCP / shared runner</h2>
-    <p class="meta">Bearer token is per runner install. MCP <code>start_job</code> on Brett's runner uses his workstation, Cursor CLI login, and <code>gh</code> identity. Do not paste tokens into tickets or job logs.</p>
+    <p class="meta">Bearer token is per runner install. MCP <code>start_job</code> on the host runner uses his workstation, Cursor CLI login, and <code>gh</code> identity. Do not paste tokens into tickets or job logs.</p>
   </div>
   <button type="button" id="save">Save settings</button>
   <div id="status"></div>

@@ -6,7 +6,7 @@ export interface ResendSendInput {
 
 export type FetchFn = typeof fetch;
 
-const DEFAULT_FROM = "PR Genie Local Runner <runner@radiancelux.tech>";
+const DEFAULT_FROM = "PR Genie Local Runner <runner@example.com>";
 
 /** Resend `from` address; override with PRGENIE_RUNNER_FROM_EMAIL (full `Name <addr>` or bare addr). */
 export function resolveResendFromEmail(): string {

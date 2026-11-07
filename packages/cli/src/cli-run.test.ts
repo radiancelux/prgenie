@@ -69,7 +69,7 @@ test("cli version prints version and exits 0", () => {
   assert.match(result.stdout, /^\d+\.\d+\.\d+\n$/);
 });
 
-test("cli mcp --smoke lists steward tools and exits 0 (RAD-82)", () => {
+test("cli mcp --smoke lists steward tools and exits 0", () => {
   const result = prgenie(["mcp", "--smoke"]);
   assert.equal(result.code, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /steward_next: true/);
@@ -229,7 +229,7 @@ test("cli comment requires -m", () => {
   assert.match(result.stderr, /comment <id> -m/);
 });
 
-test("RAD-164: cli approve refuses reviewed status hop without complete_review", () => {
+test("cli approve refuses reviewed status hop without complete_review", () => {
   const created = prgenie([
     "create",
     "--title",
@@ -261,7 +261,7 @@ test("RAD-164: cli approve refuses reviewed status hop without complete_review",
   assert.equal(prgenie(["approve", id, "--force"]).code, 0);
 });
 
-test("RAD-164: cli status approved refuses from changes_requested unless --force", () => {
+test("cli status approved refuses from changes_requested unless --force", () => {
   const created = prgenie([
     "create",
     "--title",
@@ -316,7 +316,7 @@ function showPr(id: string): {
   };
 }
 
-test("RAD-164: forged Review cleared comment cannot approve without complete_review", () => {
+test("forged Review cleared comment cannot approve without complete_review", () => {
   const created = prgenie([
     "create",
     "--title",
@@ -344,7 +344,7 @@ test("RAD-164: forged Review cleared comment cannot approve without complete_rev
   assert.equal(prgenie(["approve", id, "--force"]).code, 0);
 });
 
-test("RAD-164: custom complete_review body still approves", () => {
+test("custom complete_review body still approves", () => {
   const created = prgenie([
     "create",
     "--title",
@@ -372,7 +372,7 @@ test("RAD-164: custom complete_review body still approves", () => {
   assert.match(approved.stdout, /approved/);
 });
 
-test("RAD-164: approve refuses when a commit lands after complete_review", () => {
+test("approve refuses when a commit lands after complete_review", () => {
   const created = prgenie([
     "create",
     "--title",
@@ -405,7 +405,7 @@ test("RAD-164: approve refuses when a commit lands after complete_review", () =>
   assert.equal(after.completeReviewClear, undefined);
 });
 
-test("RAD-164: leftover findings complete_review text cannot approve", () => {
+test("leftover findings complete_review text cannot approve", () => {
   const created = prgenie([
     "create",
     "--title",
@@ -437,7 +437,7 @@ test("RAD-164: leftover findings complete_review text cannot approve", () => {
   assert.equal(showPr(id).completeReviewClear, undefined);
 });
 
-test("RAD-164: cli comment --role human succeeds without extra prompts", () => {
+test("cli comment --role human succeeds without extra prompts", () => {
   const created = prgenie([
     "create",
     "--title",
@@ -473,7 +473,7 @@ test("cli learnings --category works", () => {
   assert.match(result.stdout, /No learnings/);
 });
 
-test("RAD-134: ci-slot runs the command under a heavy slot and returns its exit code", async () => {
+test("ci-slot runs the command under a heavy slot and returns its exit code", async () => {
   const run = prgenie([
     "ci-slot",
     "--check",

@@ -7,7 +7,7 @@ import { bindSteward, stewardNext } from "./steward.js";
 import { createTempGitRepo } from "./test-git-fixture.js";
 
 describe("steward_next cancel marker", () => {
-  it("RAD-139: steward_next returns cancelled for a cancelled loop", async () => {
+  it("steward_next returns cancelled for a cancelled loop", async () => {
     const repo = await createTempGitRepo({ prefix: "prgenie-steward-cancel-" });
     try {
       const pr = await createLocalPr(repo, { title: "cancelled loop", base: "main" });
@@ -40,7 +40,7 @@ describe("steward_next cancel marker", () => {
     }
   });
 
-  it("RAD-139: restart clears the cancel marker", async () => {
+  it("restart clears the cancel marker", async () => {
     const repo = await createTempGitRepo({ prefix: "prgenie-steward-restart-" });
     try {
       const pr = await createLocalPr(repo, { title: "restart clear", base: "main" });
@@ -58,7 +58,7 @@ describe("steward_next cancel marker", () => {
     }
   });
 
-  it("RAD-139: steward_next resolves a loop id prefix for the cancel marker", async () => {
+  it("steward_next resolves a loop id prefix for the cancel marker", async () => {
     const repo = await createTempGitRepo({ prefix: "prgenie-steward-prefix-" });
     try {
       const pr = await createLocalPr(repo, { title: "prefix cancel", base: "main" });

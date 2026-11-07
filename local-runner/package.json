@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/radiancelux/prgenie.git",
+    "directory": "local-runner"
+  },
+  "bugs": "https://github.com/radiancelux/prgenie/issues",
+  "homepage": "https://github.com/radiancelux/prgenie#readme",
+  "author": "PR Genie contributors",
   "type": "module",
   "bin": {
     "prgenie-local-runner": "./dist/runner.cjs"

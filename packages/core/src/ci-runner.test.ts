@@ -82,7 +82,7 @@ describe("resolvePrettierFromCwd", () => {
 });
 
 describe("runCiChecks", () => {
-  it("empty plan without skipped:true refuses silent pass (RAD-119)", async () => {
+  it("empty plan without skipped:true refuses silent pass", async () => {
     const repo = await initTestRepo();
     try {
       const result = await runCiChecks(repo, {
@@ -285,9 +285,9 @@ describe("runCiChecks", () => {
     }
   });
 
-  // RAD-36: format:check must ignore untracked junk (match clean-checkout remote CI)
+  // : format:check must ignore untracked junk (match clean-checkout remote CI)
   // Note: This test uses workspace-level prettier installation
-  it("RAD-36: format:check ignores untracked files", async () => {
+  it("format:check ignores untracked files", async () => {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-rad36-"));
     try {
       // Init git repo
@@ -357,7 +357,7 @@ describe("runCiChecks", () => {
     }
   });
 
-  it("RAD-36: format:check still fails on tracked format violations", async () => {
+  it("format:check still fails on tracked format violations", async () => {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-rad36-fail-"));
     try {
       // Init git repo
@@ -431,8 +431,8 @@ describe("runCiChecks", () => {
     }
   });
 
-  // RAD-46: format:check must pass on Windows autocrlf when git blob (LF) is clean
-  it("RAD-46: format:check passes when working tree is CRLF but blob is LF", async () => {
+  // : format:check must pass on Windows autocrlf when git blob (LF) is clean
+  it("format:check passes when working tree is CRLF but blob is LF", async () => {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-rad46-crlf-"));
     try {
       // Init git repo with autocrlf enabled (simulates Windows)
@@ -518,7 +518,7 @@ describe("runCiChecks", () => {
     }
   });
 
-  // RAD-117: scoped format:check only blob-checks changed prettier paths
+  // : scoped format:check only blob-checks changed prettier paths
   async function initFormatScopeRepo(): Promise<string> {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-rad117-"));
     await execAsync("git init", { cwd: repo });
@@ -562,7 +562,7 @@ describe("runCiChecks", () => {
     return repo;
   }
 
-  it("RAD-117: core-only change formats N changed files, not the whole repo", async () => {
+  it("core-only change formats N changed files, not the whole repo", async () => {
     const repo = await initFormatScopeRepo();
     try {
       const full = await resolveFormatCheckFiles(repo, { formatScoped: false });
@@ -610,7 +610,7 @@ describe("runCiChecks", () => {
     }
   });
 
-  it("RAD-117: docs-only formats changed markdown only", async () => {
+  it("docs-only formats changed markdown only", async () => {
     const repo = await initFormatScopeRepo();
     try {
       await writeFile(join(repo, "docs", "guide.md"), "# Guide updated\n");
@@ -643,7 +643,7 @@ describe("runCiChecks", () => {
     }
   });
 
-  it("RAD-117: skip/config plans do not scope format; caller full-tree format still works", async () => {
+  it("skip/config plans do not scope format; caller full-tree format still works", async () => {
     const repo = await initFormatScopeRepo();
     try {
       const full = await resolveFormatCheckFiles(repo, { formatScoped: false });
@@ -689,7 +689,7 @@ describe("runCiChecks", () => {
     }
   });
 
-  it("RAD-117: scoped format does not pass when ls-files fails with non-empty candidates", async () => {
+  it("scoped format does not pass when ls-files fails with non-empty candidates", async () => {
     // Non-git cwd: scoped candidates are non-empty, but argv git ls-files fails.
     // Must not treat that as "scoped 0 files" success (fail-open greenwash).
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-rad117-lsfail-"));
@@ -745,7 +745,7 @@ describe("runCiChecks", () => {
   // Cross-platform delay for package.json scripts (Windows has no `sleep`).
   const nodeSleep = (ms: number) => `node -e "setTimeout(() => process.exit(0), ${ms})"`;
 
-  it("RAD-133: package test checks use a longer default timeout than lint", () => {
+  it("package test checks use a longer default timeout than lint", () => {
     assert.equal(resolveCiCheckTimeout("format:check"), CI_CHECK_TIMEOUT_MS);
     assert.equal(resolveCiCheckTimeout("lint:core"), CI_CHECK_TIMEOUT_MS);
     assert.equal(resolveCiCheckTimeout("test"), CI_PACKAGE_TEST_TIMEOUT_MS);
@@ -753,8 +753,8 @@ describe("runCiChecks", () => {
     assert.equal(resolveCiCheckTimeout("test:core", 5000), 5000);
   });
 
-  // RAD-46: Verify timeout configuration works
-  it("RAD-46: timeout configuration is respected", async () => {
+  // : Verify timeout configuration works
+  it("timeout configuration is respected", async () => {
     const repo = await initTestRepo();
     try {
       // Override test script to sleep longer than timeout
@@ -784,8 +784,8 @@ describe("runCiChecks", () => {
     }
   });
 
-  // RAD-46: Verify default timeout is sufficient for long test suites
-  it("RAD-46: default timeout allows for long test runs", async () => {
+  // : Verify default timeout is sufficient for long test suites
+  it("default timeout allows for long test runs", async () => {
     const repo = await initTestRepo();
     try {
       // Override test script to simulate a test that takes 2 seconds
@@ -814,8 +814,8 @@ describe("runCiChecks", () => {
     }
   });
 
-  // RAD-35: Cache hit skips check execution
-  it("RAD-35: cache hit skips check execution and returns cached pass", async () => {
+  // : Cache hit skips check execution
+  it("cache hit skips check execution and returns cached pass", async () => {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-cache-hit-"));
     try {
       // Init git repo
@@ -874,15 +874,15 @@ describe("runCiChecks", () => {
       assert.equal(
         result3.allPassed,
         false,
-        "Dirty script change in scope should miss cache and re-run lint (RAD-118)",
+        "Dirty script change in scope should miss cache and re-run lint",
       );
     } finally {
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
-  // RAD-35: Cache miss when file content changes
-  it("RAD-35: cache invalidates when tracked files change", async () => {
+  // : Cache miss when file content changes
+  it("cache invalidates when tracked files change", async () => {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-cache-invalidate-"));
     try {
       // Init git repo
@@ -934,8 +934,8 @@ describe("runCiChecks", () => {
     }
   });
 
-  // RAD-35: skipCache option forces check execution
-  it("RAD-35: skipCache option bypasses cache", async () => {
+  // : skipCache option forces check execution
+  it("skipCache option bypasses cache", async () => {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-skip-cache-"));
     try {
       // Init git repo
@@ -1025,8 +1025,8 @@ describe("runCiChecks", () => {
     }
   });
 
-  // RAD-35: Multiple checks can be cached independently
-  it("RAD-35: maintains independent cache for each check", async () => {
+  // : Multiple checks can be cached independently
+  it("maintains independent cache for each check", async () => {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-multi-cache-"));
     try {
       // Init git repo
@@ -1069,8 +1069,8 @@ describe("runCiChecks", () => {
     }
   });
 
-  // RAD-35: Cache-write failure does not fail the check or create duplicate results
-  it("RAD-35: cache-write failure does not mark check failed or duplicate results", async () => {
+  // : Cache-write failure does not fail the check or create duplicate results
+  it("cache-write failure does not mark check failed or duplicate results", async () => {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-cache-write-fail-"));
     try {
       // Init git repo
@@ -1180,7 +1180,7 @@ describe("runCiChecks", () => {
     }
   });
 
-  it("RAD-74: excerpt prefers the first failing test name and writes a log", async () => {
+  it("excerpt prefers the first failing test name and writes a log", async () => {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-excerpt-"));
     try {
       await execAsync("git init", { cwd: repo });
@@ -1227,7 +1227,7 @@ describe("runCiChecks", () => {
     }
   });
 
-  it("RAD-74: lint/typecheck/build failures keep a truncated excerpt, not only Command failed", async () => {
+  it("lint/typecheck/build failures keep a truncated excerpt, not only Command failed", async () => {
     const repo = await initTestRepo();
     try {
       await writeFile(
@@ -1340,7 +1340,7 @@ describe("runCiChecks", () => {
     }
   });
 
-  it("RAD-77: fail-fast skips remaining checks after the first failure", async () => {
+  it("fail-fast skips remaining checks after the first failure", async () => {
     const repo = await initTestRepo();
     try {
       await writeFile(
@@ -1370,7 +1370,7 @@ describe("runCiChecks", () => {
     }
   });
 
-  it("RAD-77: parallel runs independent checks", async () => {
+  it("parallel runs independent checks", async () => {
     const repo = await initTestRepo();
     try {
       const started: string[] = [];
@@ -1391,7 +1391,7 @@ describe("runCiChecks", () => {
     }
   });
 
-  it("host-repo eslint . runs path-scoped and progress shows changed paths (RAD-120)", async () => {
+  it("host-repo eslint . runs path-scoped and progress shows changed paths", async () => {
     const repo = await initTestRepo();
     try {
       await mkdir(join(repo, "apps", "mobile", "src"), { recursive: true });
@@ -1441,7 +1441,7 @@ describe("runCiChecks", () => {
     }
   });
 
-  it("host-repo config change fail-closes to full pnpm lint (RAD-120)", async () => {
+  it("host-repo config change fail-closes to full pnpm lint", async () => {
     const repo = await initTestRepo();
     try {
       // package.json script exits 0; packageScripts still reports monorepo-wide eslint .
@@ -1532,7 +1532,7 @@ describe("runLoopCi", () => {
     }
   });
 
-  it("CI-resume failingChecks still run on a skip plan (RAD-119)", async () => {
+  it("CI-resume failingChecks still run on a skip plan", async () => {
     const repo = await initGitRepo();
     try {
       await git(repo, ["checkout", "-b", "feature"]);
@@ -1621,7 +1621,7 @@ describe("runLoopCi", () => {
     }
   });
 
-  it("runs CI in the loop worktree and returns that cwd (RAD-112)", async () => {
+  it("runs CI in the loop worktree and returns that cwd", async () => {
     const repo = await initGitRepo();
     try {
       await git(repo, ["checkout", "-b", "feature"]);
@@ -1649,7 +1649,7 @@ describe("runLoopCi", () => {
   });
 });
 
-describe("runCiChecks file-scoped test:core (RAD-127)", () => {
+describe("runCiChecks file-scoped test:core", () => {
   async function initFileScopeRepo(): Promise<string> {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-filescope-"));
     await writeFile(
@@ -1781,7 +1781,7 @@ describe("runCiChecks file-scoped test:core (RAD-127)", () => {
   });
 });
 
-describe("RAD-134 heavy-test slots in ci-runner", () => {
+describe("heavy-test slots in ci-runner", () => {
   const slotTiming = { pollMs: 20, maxWaitMs: 5000, noticeMs: 50 };
 
   async function heavyRunnerRepo(): Promise<string> {
@@ -1834,7 +1834,7 @@ describe("RAD-134 heavy-test slots in ci-runner", () => {
     }
   }
 
-  it("RAD-134: heavyConcurrency option overrides the env", async () => {
+  it("heavyConcurrency option overrides the env", async () => {
     const repo = await initTestRepo();
     try {
       await execAsync("git init", { cwd: repo });
@@ -1873,7 +1873,7 @@ describe("RAD-134 heavy-test slots in ci-runner", () => {
     }
   });
 
-  it("RAD-134: only heavy test runs take a slot", async () => {
+  it("only heavy test runs take a slot", async () => {
     const repo = await heavyRunnerRepo();
     try {
       await writeFile(
@@ -1972,7 +1972,7 @@ describe("RAD-134 heavy-test slots in ci-runner", () => {
     }
   });
 
-  it("RAD-134: queued check emits waiting progress with holders before start", async () => {
+  it("queued check emits waiting progress with holders before start", async () => {
     const repo = await heavyRunnerRepo();
     try {
       const { acquireHeavyTestSlot } = await import("./ci-heavy-slot.js");
@@ -2011,7 +2011,7 @@ describe("RAD-134 heavy-test slots in ci-runner", () => {
     }
   });
 
-  it("RAD-134: waiting time does not count against the check timeout", async () => {
+  it("waiting time does not count against the check timeout", async () => {
     const repo = await heavyRunnerRepo();
     try {
       const { acquireHeavyTestSlot } = await import("./ci-heavy-slot.js");
@@ -2043,7 +2043,7 @@ describe("RAD-134 heavy-test slots in ci-runner", () => {
     }
   });
 
-  it("RAD-134: slot is released after pass, fail, timeout and cancel", async () => {
+  it("slot is released after pass, fail, timeout and cancel", async () => {
     const repo = await heavyRunnerRepo();
     try {
       const dir = await heavySlotDir(repo);
@@ -2101,7 +2101,7 @@ describe("RAD-134 heavy-test slots in ci-runner", () => {
     }
   });
 
-  it("RAD-134: cancel while waiting stops within one poll and leaves no slot", async () => {
+  it("cancel while waiting stops within one poll and leaves no slot", async () => {
     const repo = await heavyRunnerRepo();
     try {
       const dir = await heavySlotDir(repo);
@@ -2136,7 +2136,7 @@ describe("RAD-134 heavy-test slots in ci-runner", () => {
     }
   });
 
-  it("RAD-134: max wait fails the check without running it", async () => {
+  it("max wait fails the check without running it", async () => {
     const repo = await heavyRunnerRepo();
     try {
       const { acquireHeavyTestSlot } = await import("./ci-heavy-slot.js");
@@ -2164,7 +2164,7 @@ describe("RAD-134 heavy-test slots in ci-runner", () => {
     }
   });
 
-  it("RAD-134: runs without a slot outside a git repo", async () => {
+  it("runs without a slot outside a git repo", async () => {
     const repo = await initTestRepo();
     try {
       const result = await runCiChecks(repo, {
@@ -2181,7 +2181,7 @@ describe("RAD-134 heavy-test slots in ci-runner", () => {
     }
   });
 
-  it("RAD-134: nested run under a held slot does not acquire again", async () => {
+  it("nested run under a held slot does not acquire again", async () => {
     const repo = await heavyRunnerRepo();
     try {
       const { acquireHeavyTestSlot } = await import("./ci-heavy-slot.js");
@@ -2213,7 +2213,7 @@ describe("RAD-134 heavy-test slots in ci-runner", () => {
     }
   });
 
-  it("RAD-134: slot record names the resolved loop id", async () => {
+  it("slot record names the resolved loop id", async () => {
     const repo = await createTempGitRepo({ prefix: "prgenie-slot-loop-", template: "loop-ci" });
     try {
       await git(repo, ["checkout", "-b", "feature"]);

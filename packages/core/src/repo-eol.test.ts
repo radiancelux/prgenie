@@ -7,7 +7,7 @@ import { test } from "node:test";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
-test("RAD-156: .gitattributes starts with * text=auto eol=lf", () => {
+test(".gitattributes starts with * text=auto eol=lf", () => {
   const lines = readFileSync(path.join(repoRoot, ".gitattributes"), "utf8")
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -15,7 +15,7 @@ test("RAD-156: .gitattributes starts with * text=auto eol=lf", () => {
   assert.equal(lines[0], "* text=auto eol=lf");
 });
 
-test("RAD-156: git index has no CRLF text files", () => {
+test("git index has no CRLF text files", () => {
   const out = execFileSync("git", ["ls-files", "--eol"], {
     cwd: repoRoot,
     encoding: "utf8",

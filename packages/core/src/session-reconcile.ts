@@ -15,7 +15,7 @@ export interface SessionReconcileRow {
 }
 
 /**
- * Reconcile live loop status vs steward Task ids (RAD-97 / RAD-88 stuck-Task slice).
+ * Reconcile live loop status vs steward Task ids .
  * One digest for session reconnect — not a full token-budget redesign.
  */
 export async function reconcileSessionLoops(cwd: string): Promise<SessionReconcileRow[]> {

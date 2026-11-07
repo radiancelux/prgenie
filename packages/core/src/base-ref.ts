@@ -6,7 +6,7 @@ export function looksLikeCommitSha(ref: string): boolean {
   return /^[0-9a-f]{7,40}$/i.test(ref.trim());
 }
 
-/** Canonical short branch name for storage, display, and duplicate checks (RAD-145 / RAD-149). */
+/** Canonical short branch name for storage, display, and duplicate checks (/ ). */
 export function normalizeStoredBaseRef(baseRef: string): string {
   return localBaseRef(baseRef);
 }
@@ -122,7 +122,7 @@ export function formatBaseRefNotBranchError(
   return `${prefix}\`${ref}\` is not a branch name (use a local branch or \`origin/<branch>\`).`;
 }
 
-/** Refuse commit SHAs and other non-branch refs at create / ready / CI / export (RAD-145). */
+/** Refuse commit SHAs and other non-branch refs at create / ready / CI / export (). */
 export async function assertBaseRefIsBranch(
   cwd: string,
   baseRef: string,
@@ -161,7 +161,7 @@ export type DeclaredBaseMisalignment = {
   message: string;
   mergeBase: string | null;
   baseTip: string | null;
-  /** Intermediate branch tip that makes ahead-of-base look stacked (RAD-94 policy). */
+  /** Intermediate branch tip that makes ahead-of-base look stacked (policy). */
   stackedOn: string | null;
 };
 
@@ -175,7 +175,7 @@ export function exportUpstreamRef(headRef: string): string {
 /**
  * Args for the export push. Source is the recorded SHA (not cwd HEAD).
  * Upstream is set separately via {@link ensureExportUpstream} so `-u` cannot
- * attach the current checkout to the declared base by mistake (RAD-94).
+ * attach the current checkout to the declared base by mistake .
  */
 export function exportPushArgs(pr: { headSha: string; headRef: string }): string[] {
   return ["push", "origin", `${pr.headSha}:refs/heads/${localBaseRef(pr.headRef)}`];
@@ -217,14 +217,14 @@ async function listLocalHeadBranches(cwd: string): Promise<string[]> {
 }
 
 /**
- * Candidate names for stacked-parent detection (RAD-94).
+ * Candidate names for stacked-parent detection .
  *
  * Only other **live local-PR headRefs** and `lp-*` loop tips. A WIP bookmark /
  * `git branch` at HEAD~1 on the same first-parent walk has the same ancestry
  * topology as a true linear stack — scanning every local tip false-positives
  * correctly based loops. Arbitrary named feature parents without a live local
  * PR are not flagged (set baseRef correctly, or open a loop for the parent;
- * RAD-87 dependsOn will model explicit stacks).
+ *  dependsOn will model explicit stacks).
  */
 export async function stackedParentCandidateNames(
   cwd: string,
@@ -254,13 +254,13 @@ export async function stackedParentCandidateNames(
 }
 
 /**
- * Policy (RAD-94): ahead-of-base must not include commits that only exist because
+ * Policy : ahead-of-base must not include commits that only exist because
  * this head is stacked on another **loop / live local-PR** tip (strict ancestor
  * of head, not an ancestor of the declared base tip). See
  * {@link stackedParentCandidateNames} for why plain intermediate bookmarks are
  * ignored.
  *
- * RAD-87 seam: when that parent looks like another loop head (`lp-*`), the error
+ *  seam: when that parent looks like another loop head (`lp-*`), the error
  * points at dependsOn / base = other loop head — full dependsOn UX is out of scope.
  */
 export async function findStackedParentBranch(
@@ -288,7 +288,7 @@ export async function findStackedParentBranch(
 
 /**
  * Verify the loop head is based on the tip of the declared `baseRef`, and that
- * ahead-of-base does not include unrelated stacked commits (RAD-94).
+ * ahead-of-base does not include unrelated stacked commits .
  */
 export async function checkDeclaredBaseAlignment(
   cwd: string,
@@ -346,8 +346,8 @@ export async function checkDeclaredBaseAlignment(
   if (stackedOn) {
     const loopParent = /^lp-[0-9a-f]{8}$/i.test(localBaseRef(stackedOn));
     const rad87 = loopParent
-      ? ` This looks like another loop head — RAD-87 dependsOn / base = other loop head will model that; until then set baseRef to ${stackedOn} or rebase onto ${base}.`
-      : ` Set baseRef to ${stackedOn} (or rebase onto ${base}). Stacked bases are coordinated with RAD-87 dependsOn (not implemented here).`;
+      ? ` This looks like another loop head — dependsOn / base = other loop head will model that; until then set baseRef to ${stackedOn} or rebase onto ${base}.`
+      : ` Set baseRef to ${stackedOn} (or rebase onto ${base}). Stacked bases are coordinated with dependsOn (not implemented here).`;
     return {
       ok: false,
       message:

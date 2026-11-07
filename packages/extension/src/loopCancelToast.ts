@@ -11,7 +11,7 @@ export function resumeToastCopy(title: string): string {
   return `Loop ${title} resumed. The steward can continue.`;
 }
 
-/** Panel Cancel: abort token first, then persistent cancel marker (RAD-139). */
+/** Panel Cancel: abort token first, then persistent cancel marker (). */
 export async function cancelLoop(deps: {
   abort: () => Promise<unknown>;
   writeMarker: () => Promise<void>;

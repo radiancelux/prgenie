@@ -23,7 +23,7 @@ PR Genie discovers guidance in this order:
 
 ## Token hygiene
 
-Steward Task prompts should **point** at `/review` + `process-bar.md` and paste the `reviewerGuidanceBrief` excerpt when present. Do not paste the full bar, full `review.md`, or external review skills into every Task (RAD-88).
+Steward Task prompts should **point** at `/review` + `process-bar.md` and paste the `reviewerGuidanceBrief` excerpt when present. Do not paste the full bar, full `review.md`, or external review skills into every Task.
 
 ## Implementor context
 

@@ -1,17 +1,17 @@
 export type LocalPrStatus =
   "draft" | "ready" | "review_interrupted" | "changes_requested" | "reviewed" | "approved";
 
-/** Last implementor CI result for soft-blocking ready (RAD-97 / RAD-162). */
+/** Last implementor CI result for soft-blocking ready (/ ). */
 export type ReadyCiOutcome = "passed" | "skipped" | "failed" | "incomplete";
 
-/** Per-check result stored on readyCi (RAD-162-R4). */
+/** Per-check result stored on readyCi (-R4). */
 export interface ReadyCiCheckResult {
   name: string;
   outcome: "passed" | "failed" | "skipped";
   reason?: string | null;
 }
 
-/** Per-check skip recorded at ready (RAD-144). */
+/** Per-check skip recorded at ready (). */
 export interface ReadyCiCheckSkip {
   name: string;
   reason: string;
@@ -24,7 +24,7 @@ export interface ReadyCiRecord {
   /** Present when outcome is skipped — body form is "CI skipped: <reason>". */
   skipReason?: string | null;
   checks?: string[];
-  /** Every planned check with its result when readyCi was recorded (RAD-162-R4). */
+  /** Every planned check with its result when readyCi was recorded (-R4). */
   checkResults?: ReadyCiCheckResult[];
   /** Planned check names when readyCi was recorded — export gate scope must match to carry skips. */
   skipScope?: string[];
@@ -32,7 +32,7 @@ export interface ReadyCiRecord {
   checkSkips?: ReadyCiCheckSkip[];
 }
 
-/** Explicit human override when export gate is blocked (RAD-144). */
+/** Explicit human override when export gate is blocked (). */
 export interface ExportGateOverride {
   who: string;
   why: string;
@@ -59,7 +59,7 @@ export interface LocalPrComment {
   replyTo?: string;
   resolvedAt?: string;
   resolvedBy?: string;
-  /** HEAD sha this review-request root was upserted for (RAD-97 dedupe). */
+  /** HEAD sha this review-request root was upserted for (dedupe). */
   forSha?: string;
 }
 
@@ -68,7 +68,7 @@ export interface CommentThread {
   replies: LocalPrComment[];
 }
 
-/** One implement↔review cycle in the loop-detail COMMENTS column (RAD-114). */
+/** One implement↔review cycle in the loop-detail COMMENTS column (). */
 export interface CommentRound {
   /** 1-based round number in chronological order. */
   round: number;
@@ -86,7 +86,7 @@ export interface LocalPrSource {
   task?: string;
 }
 
-/** cheap = default implementor; strong = explicit `tier: strong` marker or two reviewer rejections (RAD-89). */
+/** cheap = default implementor; strong = explicit `tier: strong` marker or two reviewer rejections (). */
 export type ImplementorTier = "cheap" | "strong";
 
 export interface LocalPr {
@@ -109,19 +109,19 @@ export interface LocalPr {
   reviewerNotifiedSha: string | null;
   /**
    * Written only by completeLocalPrReview when it clears review (status reviewed).
-   * Not inferred from comment text. Any other status write removes it (RAD-164).
+   * Not inferred from comment text. Any other status write removes it .
    */
   completeReviewClear?: {
     at: string;
     headSha: string;
   };
   /**
-   * Last implementor `run_ci` / explicit skip for this tip (RAD-97).
+   * Last implementor `run_ci` / explicit skip for this tip .
    * Soft-blocks `set_status ready` until passed or skipped for current headSha.
    */
   readyCi?: ReadyCiRecord | null;
   /**
-   * Recorded override allowing export while the gate is blocked (RAD-144).
+   * Recorded override allowing export while the gate is blocked .
    * Must also appear in the loop body (who, why, skipped checks).
    */
   exportGateOverride?: ExportGateOverride | null;
@@ -130,25 +130,25 @@ export interface LocalPr {
    * Human-exportable UI is fail-closed: missing/stale/pending is not exportable.
    */
   exportGate?: ExportGateSnapshot | null;
-  /** Last implementor spawn tier (RAD-89 measurement). */
+  /** Last implementor spawn tier (measurement). */
   implementorTier?: ImplementorTier | null;
   /** Model slug read from plugin agent frontmatter at last implementor spawn. */
   implementorModel?: string | null;
-  /** Completed implement↔review rounds (RAD-114 grouping). */
+  /** Completed implement↔review rounds (grouping). */
   reviewRoundCount?: number;
   /** New implementor Task spawns (not resumes) for this loop. */
   implementorRoundCount?: number;
-  /** Reviewer rejections (complete_review → changes_requested) for tier bump (RAD-89). */
+  /** Reviewer rejections (complete_review → changes_requested) for tier bump (). */
   failedAcRoundCount?: number;
   /** Logged when strong tier was chosen on spawn. */
   lastTierBumpReason?: string | null;
-  /** Repo-local review guidance snapshot (RAD-102). */
+  /** Repo-local review guidance snapshot (). */
   reviewGuidance?: ReviewGuidanceSnapshot | null;
-  /** Repo-local implementor context paths (RAD-102). */
+  /** Repo-local implementor context paths (). */
   repoContext?: RepoContextSnapshot | null;
 }
 
-/** Truncated repo review guidance recorded on the loop packet (RAD-102). */
+/** Truncated repo review guidance recorded on the loop packet (). */
 export interface ReviewGuidanceSnapshot {
   sourcePath: string | null;
   sourceKind: "canonical" | "cursor-rule" | "claude-md" | null;
@@ -159,7 +159,7 @@ export interface ReviewGuidanceSnapshot {
   stackCategories: string[];
 }
 
-/** Repo-local context paths for implementor (RAD-102). */
+/** Repo-local context paths for implementor (). */
 export interface RepoContextSnapshot {
   sourcePath: string | null;
   contentHash: string | null;
@@ -190,7 +190,7 @@ export interface ExportGateCiCheck {
 
 export interface ExportGateCiPlan {
   checks: string[];
-  /** Selection reasons (RAD-105); may be a legacy single string when read from disk. */
+  /** Selection reasons (); may be a legacy single string when read from disk. */
   reason: string[];
   uncertain?: boolean;
 }
@@ -203,11 +203,11 @@ export interface ExportGateSnapshot {
   evaluatedAt: string | null;
   /** Smart-CI selection shown in the panel + chat card. */
   ciPlan?: ExportGateCiPlan | null;
-  /** Per-check results for the breakout modal (RAD-74 excerpt/log). */
+  /** Per-check results for the breakout modal (excerpt/log). */
   ciChecks?: ExportGateCiCheck[] | null;
-  /** Path local CI ran in (RAD-112). */
+  /** Path local CI ran in (). */
   ciCwd?: string | null;
-  /** Soft CI env/toolchain problem (RAD-92 / RAD-95) — first-class, not skipValidation-only. */
+  /** Soft CI env/toolchain problem (/ ) — first-class, not skipValidation-only. */
   ciEnvUnhealthy?: { message: string; fixSteps?: string[] } | null;
 }
 

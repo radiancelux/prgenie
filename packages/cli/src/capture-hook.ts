@@ -44,7 +44,7 @@ export async function main(): Promise<void> {
     });
   }
 
-  // RAD-108: no silent ambient create unless the host opts in.
+  // : no silent ambient create unless the host opts in.
   if (!captureSubagentEnabled()) {
     silent();
     return;

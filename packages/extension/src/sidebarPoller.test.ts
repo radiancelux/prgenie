@@ -16,7 +16,7 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-test("RAD-110: cheap shepherd targets reviewed loops only", () => {
+test("cheap shepherd targets reviewed loops only", () => {
   assert.equal(cheapShepherdTargetId({ id: "lp-a", status: "reviewed" }), "lp-a");
   assert.equal(cheapShepherdTargetId({ id: "lp-b", status: "draft" }), undefined);
   assert.equal(cheapShepherdTargetId(null), undefined);
@@ -304,7 +304,7 @@ test("laneView Push to origin / export CTA use humanExport, not bare reviewed st
   );
 });
 
-test("laneView export surfaces partialFailure as warning (RAD-95)", () => {
+test("laneView export surfaces partialFailure as warning", () => {
   const src = readFileSync(
     path.join(path.dirname(fileURLToPath(import.meta.url)), "laneView.ts"),
     "utf8",
@@ -364,7 +364,7 @@ test("laneView STATUS quiet until reviewed; idle clear; no vertical reason layou
   );
 });
 
-test("laneView COMMENTS wider + review rounds (RAD-114)", () => {
+test("laneView COMMENTS wider + review rounds", () => {
   const src = readFileSync(
     path.join(path.dirname(fileURLToPath(import.meta.url)), "laneView.ts"),
     "utf8",

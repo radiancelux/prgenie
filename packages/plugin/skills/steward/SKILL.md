@@ -34,7 +34,7 @@ If a live loop already exists on this branch, use it. One steward per loop.
 
 ### EARS packet template (requirements must be loop-safe)
 
-When you write **Requirements (EARS)** for implementors, **never** ask them to create or delete GitHub repos, orgs, or other remote resources outside the working repo. Loop agents cannot run `gh repo create`, account-wide `gh api` admin calls, or similar — the github-gate hook denies them (**RAD-163**). **RAD-138 R1/R4** is the counterexample: it required `gh repo create` and created `radiancelux/rad138-utf8-scratch`.
+When you write **Requirements (EARS)** for implementors, **never** ask them to create or delete GitHub repos, orgs, or other remote resources outside the working repo. Loop agents cannot run `gh repo create`, account-wide `gh api` admin calls, or similar — the github-gate hook denies them. A past counterexample required `gh repo create` for an external scratch org repo — do not repeat that pattern.
 
 - Repro or scratch checks → **local temp repos** (`git init` in a temp dir) or a **recorder shim**, not GitHub.
 - Verification rows must not depend on remote repo creation; use unit tests against the hook/doctor/skills instead.
@@ -47,7 +47,7 @@ Call `steward_next` / `bind_steward` **before** awaiting any Task so ownership i
 1. MCP `steward_next` `{ id }` (or `prgenie steward <id>`). Optional: pass Task ids to persist them. Read `decision.kind`.
 2. Do **exactly** that action. Then `steward_next` again. Repeat until `handoff_human` or the user stops you.
 
-## Model tiers (RAD-89)
+## Model tiers ()
 
 Default spend is asymmetric: **cheap implementor** (`prgenie-implementor`), **strong reviewer** (`prgenie-reviewer`). Vendor model ids live only in `packages/plugin/agents/*.md` (copied by `link-plugin`).
 
@@ -65,8 +65,8 @@ Task **`prgenie-implementor`** or **`prgenie-implementor-strong`** per `steward_
 - implement this loop only; `/local-pr` rules; do not review yourself; do not push
 - commit on the loop branch; refresh `body`
 - **Base:** branch name only (`main`) — never a pinned SHA; do not write `Base: main @ <sha>` in packet bodies
-- **Before** `set_status ready` / Review requested: run MCP `run_ci` `{ id }` or `prgenie ci <id>` (path-scoped from changed paths — `docs/ci-checks.md`). Instruct the implementor to **print** `{ checks, reason }`, and **not** run whole-repo `pnpm test` when mapping is confident. If mapping **skips**, do not escalate to full suite — skip reason or touched-package tests only (RAD-119). Fail-fast: stop after first package suite fail. Prefer fix-before-ready over discover-via-gate.
-- **On red CI (RAD-121):** instruct the implementor to open the failing log, fix the named assertion/file, and re-run **only that file** (or that one check name) once per edit — **not** relaunch the multi-check scoped plan, and **not** overlap `run_ci` copies. Still format edited files. See `docs/ci-checks.md` (Red CI retry).
+- **Before** `set_status ready` / Review requested: run MCP `run_ci` `{ id }` or `prgenie ci <id>` (path-scoped from changed paths — `docs/ci-checks.md`). Instruct the implementor to **print** `{ checks, reason }`, and **not** run whole-repo `pnpm test` when mapping is confident. If mapping **skips**, do not escalate to full suite — skip reason or touched-package tests only (). Fail-fast: stop after first package suite fail. Prefer fix-before-ready over discover-via-gate.
+- **On red CI ():** instruct the implementor to open the failing log, fix the named assertion/file, and re-run **only that file** (or that one check name) once per edit — **not** relaunch the multi-check scoped plan, and **not** overlap `run_ci` copies. Still format edited files. See `docs/ci-checks.md` (Red CI retry).
 - Skip CI only if the toolchain cannot run (say so in the comment). Do not skip a red check.
 - then `set_status ready` + `add_comment` role=agent **Review requested.**
 - Include the loop id, title, and body.
@@ -78,7 +78,7 @@ Persist the Task id as soon as you have it (at spawn, not after it finishes):
 
 Await this Task. You own the lifecycle. Do not let the implementor spawn a reviewer. Do not treat “implementor finished” as gate-ready without a green `run_ci` / export-gate result.
 
-**Parallelism (soft):** prefer at most **2** concurrent implementor Tasks across loops in this chat. Hard concurrency / batching is RAD-84 — do not invent a local guard or queue here.
+**Parallelism (soft):** prefer at most **2** concurrent implementor Tasks across loops in this chat. Hard concurrency / batching is — do not invent a local guard or queue here.
 
 ### `resume_implementor`
 
@@ -89,7 +89,7 @@ Resume unless `steward_next` already said spawn (missing/failed/restart). If the
 Prompt on resume:
 
 - `changes_requested` — `pendingComments` is the brief. Address each (`address_comment`). Last open finding sets `ready` only after `run_ci` is green.
-- Export-gate blocked (CI-resume) — `decision.failingCheck` is the brief. Re-run **at least those failing checks** (`prgenie ci <id> --failing <names>` / MCP `run_ci` `failingChecks`) — not a fresh full scoped plan (RAD-121). Open the log, fix the named file/assertion, retry that unit once per edit. Fix in-worktree. **Only return when they pass locally.** Steward will `evaluate_export_gate` again. Do **not** expect Push to origin. Do **not** spawn or resume a reviewer just because CI failed.
+- Export-gate blocked (CI-resume) — `decision.failingCheck` is the brief. Re-run **at least those failing checks** (`prgenie ci <id> --failing <names>` / MCP `run_ci` `failingChecks`) — not a fresh full scoped plan (). Open the log, fix the named file/assertion, retry that unit once per edit. Fix in-worktree. **Only return when they pass locally.** Steward will `evaluate_export_gate` again. Do **not** expect Push to origin. Do **not** spawn or resume a reviewer just because CI failed.
 
 ### `spawn_reviewer` / `resume_reviewer`
 
@@ -97,13 +97,13 @@ Task **`prgenie-reviewer`** (`/review` leaf — never `generalPurpose`). One id 
 
 On **auth / host failure** before complete: MCP `mark_review_interrupted` / `prgenie review-interrupted` (status `review_interrupted`). Resume with Task `resume` on the **same** `reviewerTaskId` (or `resume_review` / `prgenie review-resume` then resume) — **no re-brief**. `steward_next` on `review_interrupted` returns `resume_reviewer` when the Task id is still bound.
 
-On session reconnect: MCP `reconcile_session` / `prgenie reconcile` for a one-shot Task↔loop digest (RAD-97 / RAD-88 stuck-Task slice — not a full token-budget redesign).
+On session reconnect: MCP `reconcile_session` / `prgenie reconcile` for a one-shot Task↔loop digest ( / stuck-Task slice — not a full token-budget redesign).
 
 On `changes_requested` after complete, `steward_next` will resume the **same** implementor Task.
 
 ### `evaluate_export_gate`
 
-Reviewer cleared. Run the full export gate (RAD-71): MCP `steward_next` (default evaluates) or `shepherd_status` / `prgenie shepherd <id>`. **Surface the CI progress card** from the tool output in this chat (check names + running/pass/fail, why they were selected, elapsed). Cancel (panel or `abort_ci`) is the skip half — abort token + `stewardAction`; if a Task is bound, stop/interrupt it immediately. Do not start a second gate. Do **not** tell the human it is their turn yet. Copy is **review cleared / running export gate**, not ready-for-human.
+Reviewer cleared. Run the full export gate (): MCP `steward_next` (default evaluates) or `shepherd_status` / `prgenie shepherd <id>`. **Surface the CI progress card** from the tool output in this chat (check names + running/pass/fail, why they were selected, elapsed). Cancel (panel or `abort_ci`) is the skip half — abort token + `stewardAction`; if a Task is bound, stop/interrupt it immediately. Do not start a second gate. Do **not** tell the human it is their turn yet. Copy is **review cleared / running export gate**, not ready-for-human.
 
 ### `handoff_human`
 
@@ -126,11 +126,11 @@ If the user asks to restart the implementor, `steward_next` `{ restart: true }` 
 
 If the user says stop, stop Tasking and say so. There is no listen halt. `/export` is still the only publish step.
 
-## Panel cancel marker (RAD-139)
+## Panel cancel marker ()
 
-When `steward_next` returns **`kind: "cancelled"`**, the human cancelled the loop from the STATUS panel and the cancel marker is still on disk. **Stop** the bound implementor Task (`implementorTaskId`) if it is still running. **Do not** spawn or resume implementor or reviewer Tasks. Report to the human and wait. Only resume steward work after the human clears the marker with **Resume loop** in the panel. Agents get `deny` on MCP `clear_loop_cancel` (RAD-190); do not retry it or use `steward_next` `restart: true` to clear a human cancel.
+When `steward_next` returns **`kind: "cancelled"`**, the human cancelled the loop from the STATUS panel and the cancel marker is still on disk. **Stop** the bound implementor Task (`implementorTaskId`) if it is still running. **Do not** spawn or resume implementor or reviewer Tasks. Report to the human and wait. Only resume steward work after the human clears the marker with **Resume loop** in the panel. Agents get `deny` on MCP `clear_loop_cancel` (); do not retry it or use `steward_next` `restart: true` to clear a human cancel.
 
-## Human / steward CI skip (RAD-112 / RAD-115)
+## Human / steward CI skip ( / )
 
 When the human tells you to skip CI, or hits loop panel **Cancel** (toolchain broken, known stale-plugin false red, etc.):
 

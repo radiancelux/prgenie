@@ -68,7 +68,7 @@ export interface StewardDecision {
   failingCheck: string | null;
   gateStatus: ExportGateStatus | null;
   reason: string;
-  /** cheap | strong hint when kind is spawn_implementor (RAD-89). */
+  /** cheap | strong hint when kind is spawn_implementor (). */
   implementorTier?: ImplementorTier | null;
   implementorTierBumpReason?: string | null;
   implementorSubagentType?: string | null;
@@ -104,9 +104,9 @@ export interface StewardNextResult {
   reviewRoundCount: number;
   implementorRoundCount: number;
   implementorModel: string | null;
-  /** Truncated repo review guidance for reviewer Task brief (RAD-102). */
+  /** Truncated repo review guidance for reviewer Task brief (). */
   reviewerGuidanceBrief: string | null;
-  /** Repo context paths for implementor Task brief (RAD-102). */
+  /** Repo context paths for implementor Task brief (). */
   implementorContextBrief: string | null;
   reviewGuidance: ReviewGuidanceSnapshot | null;
   repoContext: RepoContextSnapshot | null;
@@ -641,9 +641,9 @@ export async function stewardNext(
       };
     }
   }
-  // RAD-125: refresh packet headSha from worktree/branch tip BEFORE reading
+  // : refresh packet headSha from worktree/branch tip BEFORE reading
   // exportGate / blocked-check labels (stale HEAD matched the wrong gate).
-  // RAD-126: refresh also invalidates reviewed → ready when tip moved.
+  // : refresh also invalidates reviewed → ready when tip moved.
   let pr = await refreshLocalPrHead(root, id);
   syncReviewRoundCount(pr);
   // Persist ownership on first next-action so the legacy stop hook stays silent

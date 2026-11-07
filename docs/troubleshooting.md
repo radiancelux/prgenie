@@ -27,8 +27,8 @@ Start with `prgenie doctor` from any worktree of the repo. It reports the checks
 Example FAIL line:
 
 ```text
-FAIL  plugin-stale — Installed MCP server (…) differs from repo build (…).
-    fix: pnpm build && pnpm link-plugin, then Customize → Plugins → disable/enable PR Genie
+FAIL plugin-stale — Installed MCP server (…) differs from repo build (…).
+ fix: pnpm build && pnpm link-plugin, then Customize → Plugins → disable/enable PR Genie
 ```
 
 ## Stale MCP / plugin
@@ -74,11 +74,11 @@ When the plugin is off, Connected MCPs can still list **two** disabled servers b
 1. Tag **Plugin** — `~/.cursor/plugins/local/prgenie` (`mcp.json` → server id `prgenie`)
 2. Tag **pr-genie** (or your folder name) — workspace `.cursor/mcp.json` that also used server id `prgenie`
 
-Same server id, two sources. Enabling both (or leaving a stale workspace `prgenie` while the plugin is on) is enough to confuse Configure → Local. **Dogfood canonical path is the plugin.** This repo no longer ships `.cursor/mcp.json`. Delete any leftover workspace file, or rename that server to something other than `prgenie`, then enable **only** the Plugin row.
+Same server id, two sources. Enabling both (or leaving a stale workspace `prgenie` while the plugin is on) is enough to confuse Configure → Local. **local development canonical path is the plugin.** This repo no longer ships `.cursor/mcp.json`. Delete any leftover workspace file, or rename that server to something other than `prgenie`, then enable **only** the Plugin row.
 
 A single Plugin row can still hang — dual registration is necessary to clean up, not sufficient as the only cause.
 
-**What we verified (RAD-82):**
+**What we verified:**
 
 1. **Stdio framing.** Official MCP stdio is **newline-delimited JSON**. This server used to reply with LSP `Content-Length` and **no trailing newline**. Cursor's Windows host never saw a complete `initialize` → Connecting… / 0 tools. Replies are NDJSON + `fs.writeSync(1, …)` so piped stdout is not block-buffered. Incoming initialize without a newline is also accepted.
 2. **`${PLUGIN_ROOT}` is not expanded** in Cursor. Use `${CURSOR_PLUGIN_ROOT}`. `link-plugin` pins an absolute `server.cjs`.
@@ -161,7 +161,7 @@ Doctor `corrupt-prs` lists unparsable files under `.git/agent-console/prs/`. Cor
 
 **Loop worktrees:** Each existing loop worktree (`../<repo>.loops/<id>`) has its own index and working tree. Run the four steps above inside each live, clean loop worktree that was created before `.gitattributes` landed. Loop worktrees created from a base that already contains `.gitattributes` need no refresh.
 
-**`git add --renormalize .`:** Rewrites only the index (not working-tree files). Use it when the index still holds CRLF text entries — not the case on a fresh `main` checkout after this change (see R3/R4 in RAD-156). It does not replace the working-tree refresh above.
+**`git add --renormalize .`:** Rewrites only the index (not working-tree files). Use it when the index still holds CRLF text entries — not the case on a fresh `main` checkout after this change (see R3/R4 in ). It does not replace the working-tree refresh above.
 
 **Interim workaround (no `.gitattributes` yet, or not refreshed):**
 
@@ -169,7 +169,7 @@ Doctor `corrupt-prs` lists unparsable files under `.git/agent-console/prs/`. Cor
 pnpm exec prettier --check --end-of-line auto .
 ```
 
-## Windows: GitHub title or body garbled, or %VAR% expanded (RAD-138 / RAD-142)
+## Windows: GitHub title or body garbled, or %VAR% expanded
 
 **Symptoms:** After **Push to origin** / export, the GitHub PR title shows mojibake (for example em dashes or emoji wrong), or `%USERNAME%`-style text in the title was replaced with your Windows account name.
 
@@ -189,36 +189,36 @@ Prefer the directory that lists **`gh.exe`** first. If only `gh.cmd` appears, up
 
 **Symptoms:** `run_ci` / shepherd in a `.loops/<id>` worktree fails with `eslint` / `tsc` / `tsx` “not recognized”, `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL`, or “Missing toolchain in worktree”.
 
-**Cause:** Exclusive loop worktrees do not copy `node_modules`. RAD-112 correctly runs CI **in** the worktree; without deps, bins are missing.
+**Cause:** Exclusive loop worktrees do not copy `node_modules`. correctly runs CI **in** the worktree; without deps, bins are missing.
 
-**Happy path (RAD-92):** Before checks, PR Genie **junctions** primary `node_modules` into the worktree on Windows (`mklink /J` equivalent via `fs.symlink(..., "junction")` — no admin). On macOS/Linux it uses a directory symlink. Prefer this over a full install per loop.
+**Happy path:** Before checks, PR Genie **junctions** primary `node_modules` into the worktree on Windows (`mklink /J` equivalent via `fs.symlink(..., "junction")` — no admin). On macOS/Linux it uses a directory symlink. Prefer this over a full install per loop.
 
 **Fix:**
 
 1. In the **primary** checkout: `pnpm install` (once).
 2. Re-run `prgenie ci <id>` / MCP `run_ci` — junction is created automatically.
 3. If junction is impossible (rare cross-device / permission): `cd ../<repo>.loops/<id> && pnpm install`.
-4. Product lint/test failures still hard-block export. A pure **CI environment unhealthy** setup error is soft-surfaced and does **not** hard-block export by default (see [ci-checks.md](ci-checks.md#worktree-deps-rad-92)).
+4. Product lint/test failures still hard-block export. A pure **CI environment unhealthy** setup error is soft-surfaced and does **not** hard-block export by default (see [ci-checks.md](ci-checks.md#worktree-deps-)).
 
 - Worktree collisions: two windows on the same branch, or a leftover `.loops/<other-id>` while coding a different loop — Switch to the correct loop id or remove the stale tree.
 - Bundled MCP/hook `.cjs` outputs are **gitignored** and produced by `pnpm build` / `link-plugin` / CI — not committed. Doctor `plugin-bundles` fails when they are missing or older than sources.
 - Dirty **tracked** plugin bundles on primary (pre-migration branch still tracking `packages/plugin/hooks|mcp/*.cjs`): doctor `plugin-dirt` / `create_local_pr` refuse until stash or `git restore`. Peel would otherwise carry that dirt into the new loop worktree. On current `main`, those paths should not appear in `git status` after a rebuild.
 
-## MCP timeouts / progress (RAD-100)
+## MCP timeouts / progress
 
 **Symptoms:** `list_local_prs` / `get_local_pr` / `run_ci` / `export_local_pr` / `gh_status` (and CI siblings) fail with JSON-RPC `-32001 Request timed out`. Output → MCP Logs stays quiet during long git/CI work.
 
 **Fix (already in product after rebuild + `pnpm link-plugin`):**
 
 1. Installed `mcp.json` pins `timeout: 4200` (seconds) for hosts that honor it (40m package test + 30m max heavy-slot wait).
-2. Heavy tools stream `notifications/message` heartbeats so the session does not look dead. `notifications/progress` is **off by default** (RAD-128) — set `PRGENIE_MCP_PROGRESS=1` only if a host is known to honor the token.
-3. MCP refuses a stale root full-suite `pnpm lint` / `test` / turbo plan (RAD-119) instead of blocking without progress.
+2. Heavy tools stream `notifications/message` heartbeats so the session does not look dead. `notifications/progress` is **off by default** — set `PRGENIE_MCP_PROGRESS=1` only if a host is known to honor the token.
+3. MCP refuses a stale root full-suite `pnpm lint` / `test` / turbo plan instead of blocking without progress.
 
-Default cwd stays with RAD-86 — pass `cwd` when the host lands in the wrong repo; do not re-solve cwd here.
+Default cwd stays with — pass `cwd` when the host lands in the wrong repo; do not re-solve cwd here.
 
-## MCP unknown progress token disconnect (RAD-128)
+## MCP unknown progress token disconnect
 
-**Symptoms:** Output → MCP Logs shows `Received a progress notification for an unknown token` then `connection:transport_error` / `conn=failed`. Later `createClient` stays `connected=false`. Often seen on heavy-tool `done` ticks or mid-`run_ci` after RAD-100.
+**Symptoms:** Output → MCP Logs shows `Received a progress notification for an unknown token` then `connection:transport_error` / `conn=failed`. Later `createClient` stays `connected=false`. Often seen on heavy-tool `done` ticks or mid-`run_ci` after .
 
 **Cause:** Cursor Shared MCP treats an unknown `progressToken` on `notifications/progress` as fatal (not ignore-and-continue). Message-channel heartbeats are fine; progress is not.
 
@@ -228,7 +228,7 @@ Default cwd stays with RAD-86 — pass `cwd` when the host lands in the wrong re
 2. Rebuild + `pnpm link-plugin`, then Customize → Plugins → PR Genie **off/on** (or reload the window) so the MCP process picks up the new server.
 3. Do **not** set `PRGENIE_MCP_PROGRESS=1` unless you have confirmed the host accepts the tokens.
 
-## CI shows "waiting for heavy-test slot" (RAD-134)
+## CI shows "waiting for heavy-test slot"
 
 **Symptoms:** Progress / sidebar shows `[ci:test:core] waiting — waiting for heavy-test slot (2/2 busy: …)`. The check has **not** started yet; elapsed time on the check does not advance.
 
@@ -247,7 +247,7 @@ Default cwd stays with RAD-86 — pass `cwd` when the host lands in the wrong re
 - `pnpm cli <args>` from the monorepo root, or
 - `node C:\path\to\pr-genie\packages\cli\dist\prgenie.cjs <args>` (absolute path)
 
-Prefer MCP tools when the leaf has PR Genie MCP. Soft max **2** concurrent implementor Tasks; hard concurrency is RAD-84.
+Prefer MCP tools when the leaf has PR Genie MCP. Soft max **2** concurrent implementor Tasks; hard concurrency is .
 
 ## Git missing from PATH (MCP / CLI spawn)
 
@@ -285,4 +285,4 @@ If `packages/plugin/hooks/push-gate.mjs` exists, doctor fails `legacy-push-gate`
 - [Architecture](architecture.md) — packages, storage, lifecycle, worktrees
 - [Root README](../README.md) — install notes and flywheel
 - [Plugin README](../packages/plugin/README.md) — link-plugin / MCP refresh
-- [Windows dogfood stability RCA](rca-windows-dogfood-stability.md) — watch-listen fan-out, empty Local PRs sidebar, shepherd "hang", Windows tests (analysis; fix slices not shipped)
+- [Windows local development stability RCA](rca-windows-local development-stability.md) — watch-listen fan-out, empty Local PRs sidebar, shepherd "hang", Windows tests (analysis; fix slices not shipped)

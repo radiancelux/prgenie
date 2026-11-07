@@ -25,14 +25,14 @@ github.com
   - Active account: true
   - Git operations protocol: https
 
-  ✓ Logged in to github.com account ccc-radiancelux (keyring)
+  ✓ Logged in to github.com account example-alt (keyring)
   - Active account: false
 `;
   const accounts = parseGhAuthStatus(text);
   assert.equal(accounts.length, 2);
   assert.equal(accounts[0].login, "radiancelux");
   assert.equal(accounts[0].active, true);
-  assert.equal(accounts[1].login, "ccc-radiancelux");
+  assert.equal(accounts[1].login, "example-alt");
   assert.equal(accounts[1].active, false);
 });
 
@@ -56,21 +56,21 @@ test("githubPrViewArgs uses the branch positionally, not --head", () => {
   ]);
 });
 
-test("quoteWindowsShellArg keeps titles with spaces as one argv (RAD-95)", () => {
+test("quoteWindowsShellArg keeps titles with spaces as one argv", () => {
   assert.equal(quoteWindowsShellArg("simple"), "simple");
   assert.equal(
-    quoteWindowsShellArg("RAD-95 — Export reliability: early bind"),
-    `"RAD-95 — Export reliability: early bind"`,
+    quoteWindowsShellArg("— Export reliability: early bind"),
+    `"— Export reliability: early bind"`,
   );
   assert.equal(quoteWindowsShellArg(`say "hi"`), `"say ""hi"""`);
   assert.equal(quoteWindowsShellArg(""), `""`);
 });
 
 test("quoteGhArgsForSpawn quotes --title values with spaces on win32 only", () => {
-  const args = ["pr", "create", "--title", "RAD-95 Foo Bar", "--body", "ok"];
+  const args = ["pr", "create", "--title", "Foo Bar", "--body", "ok"];
   const quoted = quoteGhArgsForSpawn(args);
   if (process.platform === "win32") {
-    assert.equal(quoted[3], `"RAD-95 Foo Bar"`);
+    assert.equal(quoted[3], `"Foo Bar"`);
     assert.equal(quoted[0], "pr");
     assert.equal(quoted[2], "--title");
   } else {

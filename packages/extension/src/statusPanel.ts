@@ -1,5 +1,5 @@
 /**
- * RAD-110: Local PRs STATUS panel (formerly EXPORT) — idle clear + per-phase copy.
+ * : Local PRs STATUS panel (formerly EXPORT) — idle clear + per-phase copy.
  * Strings are injected into the webview; keep this the single source of truth.
  */
 
@@ -90,7 +90,7 @@ export function statusPanelGuidanceForLoop(
   }
 }
 
-/** Disabled Open on GitHub helper while export/gate is busy (RAD-124). */
+/** Disabled Open on GitHub helper while export/gate is busy (). */
 export function exportBusyHelper(step: string | undefined): string {
   const label = (step && step.trim()) || "export in progress";
   return `Open on GitHub unavailable — ${label}`;
@@ -274,7 +274,7 @@ const DECIDE_STATUS_PANEL_PAINT_BODY = `
 `;
 
 /**
- * Single paint decision for STATUS (RAD-110). Self-contained for webview injection via .toString().
+ * Single paint decision for STATUS . Self-contained for webview injection via .toString().
  */
 export const decideStatusPanelPaint = new Function("input", DECIDE_STATUS_PANEL_PAINT_BODY) as (
   input: StatusPanelPaintInput,

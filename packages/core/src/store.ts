@@ -55,7 +55,7 @@ export type WriteJsonFileTestHooks = {
 
 let writeJsonFileTestHooks: WriteJsonFileTestHooks | undefined;
 
-/** Test seam for rename backoff and temp-path isolation (RAD-173). */
+/** Test seam for rename backoff and temp-path isolation (). */
 export function setWriteJsonFileTestHooks(hooks: WriteJsonFileTestHooks | undefined): void {
   writeJsonFileTestHooks = hooks;
 }

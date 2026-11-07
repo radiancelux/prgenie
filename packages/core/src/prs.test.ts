@@ -222,7 +222,7 @@ test("reviewer comments stay on ready until complete_review", async () => {
   );
 });
 
-test("groupThreadsByRound splits on Review requested roots (RAD-114)", () => {
+test("groupThreadsByRound splits on Review requested roots", () => {
   const mk = (
     id: string,
     body: string,
@@ -421,7 +421,7 @@ test("complete_review with findings hands the loop to the implementor", async ()
   assert.match(done.comments.at(-1)?.body ?? "", /implementor/);
 });
 
-test("RAD-89: human resolve of last finding clears failedAcRoundCount on reviewed", async () => {
+test("human resolve of last finding clears failedAcRoundCount on reviewed", async () => {
   const pr = await createLocalPr(repo, { title: "Resolve reset", base: "main" });
   await setLocalPrStatus(repo, pr.id, "ready", { ciSkipReason: "test" });
   const filed = await addLocalPrComment(repo, pr.id, "Fix this.", { role: "reviewer" });
@@ -634,7 +634,7 @@ test("pruneArchivedLoopWorktree removes a sibling .loops checkout", async () => 
   assert.equal(still.id, pr.id);
 });
 
-test("prune clears orphan leftover directory after git link is gone (RAD-95)", async () => {
+test("prune clears orphan leftover directory after git link is gone", async () => {
   git(["checkout", "main"]);
   const pr = await createLocalPr(repo, {
     title: "Orphan leftover",
@@ -642,7 +642,7 @@ test("prune clears orphan leftover directory after git link is gone (RAD-95)", a
     head: "feat/widget",
   });
   assert.ok(pr.worktreePath);
-  // Simulate dogfood: git unregisters the worktree but leaves the folder.
+  // Simulate local development: git unregisters the worktree but leaves the folder.
   git(["worktree", "remove", "--force", "--", pr.worktreePath]);
   await mkdir(pr.worktreePath, { recursive: true });
   await writeFile(path.join(pr.worktreePath, "leftover.txt"), "still here\n");
@@ -653,7 +653,7 @@ test("prune clears orphan leftover directory after git link is gone (RAD-95)", a
   assert.equal(existsSync(pr.worktreePath), false);
 });
 
-test("requireGithubBindForReviewed refuses unbound repos (RAD-95)", async () => {
+test("requireGithubBindForReviewed refuses unbound repos", async () => {
   git(["checkout", "main"]);
   const { requireGithubBindForReviewed } = await import("./github-ops.js");
   await assert.rejects(() => requireGithubBindForReviewed(repo), /unbound|gh use/i);
@@ -689,7 +689,7 @@ test("releaseArchivedLoop checks the main workspace off the loop branch", async 
   git(["checkout", "feat/widget"]);
   const released = await releaseArchivedLoop(repo, { ...pr, worktreePath: repo });
   assert.equal(released.checkedOutBase, true);
-  // Worktree already force-removed — end state is pruned (RAD-95).
+  // Worktree already force-removed — end state is pruned .
   assert.equal(released.prunedWorktree, true);
   assert.equal(released.reopen, false);
   assert.equal(git(["branch", "--show-current"]), "main");
@@ -1075,7 +1075,7 @@ test("listCorruptLocalPrFiles names unparsable packets", async () => {
   await rm(bad, { force: true });
 });
 
-test("RAD-173 R4: locked packet read rejects truncated JSON with file path", async () => {
+test("R4: locked packet read rejects truncated JSON with file path", async () => {
   git(["checkout", "main"]);
   const pr = await createLocalPr(repo, { title: "Trunc locked read", base: "main" });
   const file = prFile(await prsDir(repo), pr.id);
@@ -1106,7 +1106,7 @@ test("RAD-173 R4: locked packet read rejects truncated JSON with file path", asy
   await rm(file, { force: true });
 });
 
-test("RAD-173 R4: listCorruptLocalPrFiles flags torn and truncated packets", async () => {
+test("R4: listCorruptLocalPrFiles flags torn and truncated packets", async () => {
   const dir = await prsDir(repo);
   const tornPath = path.join(dir, "lp-r173-torn.json");
   const truncPath = path.join(dir, "lp-r173-trunc.json");
@@ -1132,7 +1132,7 @@ test("reopen and delete local PR", async () => {
   await assert.rejects(() => getLocalPr(repo, pr.id), /not found/i);
 });
 
-test("archiveLocalPr prunes worktree and deletes local loop branch (RAD-130)", async () => {
+test("archiveLocalPr prunes worktree and deletes local loop branch", async () => {
   git(["checkout", "main"]);
   const pr = await createLocalPr(repo, { title: "Archive cleanup", base: "main" });
   assert.ok(pr.worktreePath);
@@ -1163,7 +1163,7 @@ test("archiveLocalPr prunes worktree and deletes local loop branch (RAD-130)", a
   assert.match(reopened.worktreePath.replace(/\\/g, "/"), /\.loops\//);
 });
 
-test("archived refresh keeps frozen head; reopen restores loop branch (RAD-130)", async () => {
+test("archived refresh keeps frozen head; reopen restores loop branch", async () => {
   const { refreshLocalPrHead } = await import("./prs.js");
   git(["checkout", "main"]);
   await writeFile(path.join(repo, "freeze-arch.txt"), "loop tip\n");
@@ -1209,7 +1209,7 @@ test("archived refresh keeps frozen head; reopen restores loop branch (RAD-130)"
   });
 });
 
-test("clear archived after refresh does not try to delete main (RAD-130)", async () => {
+test("clear archived after refresh does not try to delete main", async () => {
   const { refreshLocalPrHead } = await import("./prs.js");
   git(["checkout", "main"]);
   git(["checkout", "-b", "feat/clear-after-refresh"]);
@@ -1235,7 +1235,7 @@ test("clear archived after refresh does not try to delete main (RAD-130)", async
   );
 });
 
-test("clearArchivedLocalPrs removes packets worktrees and local branches (RAD-130)", async () => {
+test("clearArchivedLocalPrs removes packets worktrees and local branches", async () => {
   git(["checkout", "main"]);
   const a = await createLocalPr(repo, { title: "Clear A", base: "main" });
   const b = await createLocalPr(repo, { title: "Clear B", base: "main" });
@@ -1251,7 +1251,7 @@ test("clearArchivedLocalPrs removes packets worktrees and local branches (RAD-13
   assert.equal(archivedLeft.length, 0);
 });
 
-test("clearArchivedDiskFailure fails closed when flags are false without error strings (RAD-130)", () => {
+test("clearArchivedDiskFailure fails closed when flags are false without error strings", () => {
   const both = clearArchivedDiskFailure(
     {
       prunedWorktree: false,
@@ -1424,13 +1424,13 @@ test("pruneLoopWorktrees clears leftover .loops between cases", async () => {
   assert.equal(trees.filter((t) => loopWorktreeIdentity(t.path)).length, 0);
 });
 
-test("RAD-125: updateLocalPr / getLocalPr refresh headSha after commit", async () => {
+test("updateLocalPr / getLocalPr refresh headSha after commit", async () => {
   git(["checkout", "main"]);
-  git(["checkout", "-b", "feat/rad-125-update"]);
+  git(["checkout", "-b", "feat/issue-125-update"]);
   await writeFile(path.join(repo, "upd125.txt"), "1\n");
   git(["add", "."]);
   git(["commit", "-m", "upd125 one"]);
-  const pr = await createLocalPr(repo, { title: "RAD-125 update", base: "main" });
+  const pr = await createLocalPr(repo, { title: "update", base: "main" });
   const oldSha = pr.headSha;
 
   const tipCwd = pr.worktreePath ?? repo;
@@ -1448,14 +1448,14 @@ test("RAD-125: updateLocalPr / getLocalPr refresh headSha after commit", async (
   assert.equal(shown.headSha, newSha);
 });
 
-test("RAD-126: refreshLocalPrHead invalidates reviewed when tip moves", async () => {
+test("refreshLocalPrHead invalidates reviewed when tip moves", async () => {
   const { refreshLocalPrHead, setLocalPrExportGate } = await import("./prs.js");
   git(["checkout", "main"]);
-  git(["checkout", "-b", "feat/rad-126-invalidate"]);
+  git(["checkout", "-b", "feat/issue-126-invalidate"]);
   await writeFile(path.join(repo, "inv126.txt"), "1\n");
   git(["add", "."]);
   git(["commit", "-m", "inv126 one"]);
-  const pr = await createLocalPr(repo, { title: "RAD-126 invalidate", base: "main" });
+  const pr = await createLocalPr(repo, { title: "invalidate", base: "main" });
   await setLocalPrStatus(repo, pr.id, "reviewed");
   await setLocalPrExportGate(repo, pr.id, {
     status: "ready",
@@ -1478,14 +1478,14 @@ test("RAD-126: refreshLocalPrHead invalidates reviewed when tip moves", async ()
   assert.equal(refreshed.reviewerNotifiedSha, null);
 });
 
-test("RAD-125: refreshLocalPrHead falls through when packet worktreePath is pruned", async () => {
+test("refreshLocalPrHead falls through when packet worktreePath is pruned", async () => {
   const { refreshLocalPrHead } = await import("./prs.js");
   git(["checkout", "main"]);
-  git(["checkout", "-b", "feat/rad-125-stale-wt"]);
+  git(["checkout", "-b", "feat/issue-125-stale-wt"]);
   await writeFile(path.join(repo, "stale-wt.txt"), "1\n");
   git(["add", "."]);
   git(["commit", "-m", "stale-wt one"]);
-  const pr = await createLocalPr(repo, { title: "RAD-125 stale wt", base: "main" });
+  const pr = await createLocalPr(repo, { title: "stale wt", base: "main" });
   assert.ok(pr.worktreePath);
   const tipSha = pr.headSha;
   const stalePath = pr.worktreePath;
@@ -1566,7 +1566,7 @@ async function writeStubLocalPr(
   return pr;
 }
 
-test("RAD-168: ambiguous loop id prefix lists matches", async () => {
+test("ambiguous loop id prefix lists matches", async () => {
   await writeStubLocalPr(repo, { id: "lp-aaa11111", title: "A" });
   await writeStubLocalPr(repo, { id: "lp-aaa22222", title: "B" });
   await assert.rejects(
@@ -1577,7 +1577,7 @@ test("RAD-168: ambiguous loop id prefix lists matches", async () => {
   assert.equal(matches.length, 2);
 });
 
-test("RAD-168: short prefix refused for delete", async () => {
+test("short prefix refused for delete", async () => {
   git(["checkout", "main"]);
   const pr = await createLocalPr(repo, { title: "Short prefix delete", base: "main" });
   await setLocalPrStatus(repo, pr.id, "approved");
@@ -1595,7 +1595,7 @@ test("RAD-168: short prefix refused for delete", async () => {
   assert.equal(deleted.id, pr.id);
 });
 
-test("RAD-168: resolveLocalPrFromList exact id and unique long prefix", () => {
+test("resolveLocalPrFromList exact id and unique long prefix", () => {
   const prs: LocalPr[] = [
     {
       id: "lp-deadbeef",

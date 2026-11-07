@@ -40,7 +40,7 @@ before(async () => {
   await writeFile(path.join(repo, "tool.txt"), "v1\n");
   git(["add", "."]);
   git(["commit", "-m", "add tool"]);
-  // RAD-95: MCP complete_review ? reviewed requires a repo bind file.
+  // : MCP complete_review ? reviewed requires a repo bind file.
   const bindDir = await consoleDir(repo);
   await mkdir(bindDir, { recursive: true });
   await writeFile(
@@ -85,7 +85,7 @@ test("tools catalog exposes core flywheel tools", () => {
   assert.ok(tools.every((t) => t.inputSchema && typeof t.inputSchema === "object"));
 });
 
-test("handleTool list_local_prs without cwd uses workspace env (RAD-86)", async () => {
+test("handleTool list_local_prs without cwd uses workspace env", async () => {
   delete process.env.WORKSPACE_FOLDER_PATHS;
   delete process.env.CURSOR_PLUGIN_ROOT;
   process.env.CURSOR_PROJECT_DIR = repo;
@@ -264,7 +264,7 @@ test("handleTool bind_steward + steward_next resume same implementor", async () 
   );
 });
 
-test("RAD-164: record_export_gate_override persists OS username, not agent who", async () => {
+test("record_export_gate_override persists OS username, not agent who", async () => {
   const osUser = os.userInfo().username;
   const blockedMessage = "CI check failed: test:core — timeout";
   const created = (await handleTool("create_local_pr", {
@@ -329,7 +329,7 @@ function cli(...args: string[]): Promise<number> {
   return run(["node", "prgenie", ...args]);
 }
 
-test("RAD-168: MCP and CLI refuse ambiguous loop id prefix", async () => {
+test("MCP and CLI refuse ambiguous loop id prefix", async () => {
   await writeStubPacket("lp-ccc11111");
   await writeStubPacket("lp-ccc22222");
   const ambiguous = /Ambiguous loop id lp-ccc: matches lp-ccc11111, lp-ccc22222/;
@@ -339,7 +339,7 @@ test("RAD-168: MCP and CLI refuse ambiguous loop id prefix", async () => {
   await assert.rejects(() => cli("export", "lp-ccc"), ambiguous);
 });
 
-test("RAD-168: MCP and CLI refuse short prefix for delete/export; exact id works", async () => {
+test("MCP and CLI refuse short prefix for delete/export; exact id works", async () => {
   await writeStubPacket("lp-ddd33333");
   await writeStubPacket("lp-eee44444");
   const tooShort = /too short for delete, archive, or export/;

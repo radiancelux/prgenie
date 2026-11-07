@@ -20,7 +20,7 @@ test("resolveImplementorTierHint defaults to cheap", () => {
 
 test("resolveImplementorTierHint bumps to strong for own-line tier marker", () => {
   const hint = resolveImplementorTierHint({
-    body: "RAD-1: rewrite the packet store.\ntier: strong",
+    body: "Ticket: rewrite the packet store.\ntier: strong",
     status: "draft",
     failedAcRoundCount: 0,
   });
@@ -31,7 +31,7 @@ test("resolveImplementorTierHint bumps to strong for own-line tier marker", () =
 
 test("resolveImplementorTierHint stays cheap when tier marker is inline", () => {
   const hint = resolveImplementorTierHint({
-    body: "RAD-1: tier: strong rewrite for the steward flywheel.",
+    body: "Ticket: tier: strong rewrite for the steward flywheel.",
     status: "draft",
     failedAcRoundCount: 0,
   });
@@ -45,7 +45,7 @@ test("resolveImplementorTierHint stays cheap for docs edit, race condition, and 
     "Docs: update architecture.md for the steward flywheel.",
     "Fix race condition when two stewards bind the same loop.",
     "Typo in the export gate error message.",
-    "RAD-1: design-heavy API rewrite for the steward flywheel.",
+    "Ticket: design-heavy API rewrite for the steward flywheel.",
   ]) {
     const hint = resolveImplementorTierHint({
       body,
@@ -69,7 +69,7 @@ test("resolveImplementorTierHint bumps after two failed AC rounds with open AC",
 test("resolveImplementorTierHint CI-resume spawn stays cheap", () => {
   const hint = resolveImplementorTierHint(
     {
-      body: "tier: strong\nRAD-1: architecture rewrite.",
+      body: "tier: strong\nTicket: architecture rewrite.",
       status: "reviewed",
       failedAcRoundCount: 0,
     },
@@ -84,7 +84,7 @@ test("hasStrongTierMarkerLine detects own-line tier marker only", () => {
   assert.equal(hasStrongTierMarkerLine("Needs architecture for the new module"), false);
   assert.equal(hasStrongTierMarkerLine("Fix race condition in bind_steward"), false);
   assert.equal(hasStrongTierMarkerLine("This AC is design-heavy"), false);
-  assert.equal(hasStrongTierMarkerLine("RAD-1: tier: strong rewrite"), false);
+  assert.equal(hasStrongTierMarkerLine("Ticket: tier: strong rewrite"), false);
   assert.equal(hasStrongTierMarkerLine("tier: strong"), true);
   assert.equal(hasStrongTierMarkerLine("Tier: STRONG"), true);
   assert.equal(hasStrongTierMarkerLine("Brief intro.\ntier: strong\nMore detail."), true);

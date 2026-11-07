@@ -23,7 +23,7 @@ export interface ExportValidationResult {
   /** Empty when ok, otherwise reasons export is blocked. */
   issues: string[];
   /**
-   * Soft env/toolchain problem from shepherd (RAD-92 / RAD-95).
+   * Soft env/toolchain problem from shepherd .
    * Surfaced even when export is otherwise ready so skipValidation is not required to see it.
    */
   ciEnvUnhealthy?: {
@@ -58,7 +58,7 @@ function snapshotIsAdoptable(
   snap: ExportGateSnapshot | null | undefined,
   headSha: string,
 ): boolean {
-  // RAD-123: never peer-replay / validate-from-store a stale root full-suite plan.
+  // : never peer-replay / validate-from-store a stale root full-suite plan.
   return exportGateSnapshotIsAdoptable(snap, headSha);
 }
 
@@ -91,7 +91,7 @@ function shepherdFromSnapshot(snap: ExportGateSnapshot): ShepherdResult {
 
 /**
  * Run the same shepherd aggregator export uses, then persist the snapshot
- * so sidebar/CLI human-export UI shares the gate (RAD-71).
+ * so sidebar/CLI human-export UI shares the gate .
  *
  * Concurrent callers for the same cwd+id+HEAD share one CI run and fan out
  * progress. Abort cancels that shared run and does not persist ready/blocked.
@@ -124,10 +124,10 @@ export async function evaluateAndStoreExportGate(
     throwIfAborted(controller.signal);
     // Refresh HEAD before keying the flight / storing the gate — otherwise a
     // commit made just before shepherd leaves exportGate.headSha stale while
-    // changedPathsForCi already sees the new tip (RAD-117 CI-resume).
+    // changedPathsForCi already sees the new tip .
     const pr = await refreshLocalPrHead(cwd, id);
     throwIfAborted(controller.signal);
-    // RAD-145 / RAD-94: branch-only baseRef, then declared-base alignment.
+    //  / : branch-only baseRef, then declared-base alignment.
     const { assertDeclaredBaseAligned, assertStoredBaseRefIsBranch } =
       await import("./base-ref.js");
     await assertStoredBaseRefIsBranch(cwd, pr);
@@ -185,7 +185,7 @@ export async function evaluateAndStoreExportGate(
           if (peerSnap && snapshotIsAdoptable(peerSnap, pr.headSha)) {
             return shepherdFromSnapshot(peerSnap);
           }
-          // Peer wrote a stale full-suite plan (or incomplete gate) — invalidate and re-run (RAD-123).
+          // Peer wrote a stale full-suite plan (or incomplete gate) — invalidate and re-run .
           const peerPlan = peerSnap?.ciPlan ?? null;
           if (
             peerSnap != null &&
@@ -200,7 +200,7 @@ export async function evaluateAndStoreExportGate(
               phase: "ci",
               state: "fail",
               message:
-                "RAD-123: refusing peer snapshot with stale full-suite CI plan — re-running with worktree selectCiChecks",
+                "refusing peer snapshot with stale full-suite CI plan — re-running with worktree selectCiChecks",
             });
             await setLocalPrExportGate(cwd, id, pendingExportGate(pr.headSha));
           }
@@ -234,7 +234,7 @@ export async function evaluateAndStoreExportGate(
             ],
           };
         }
-        // Never persist a stale root full-suite plan for peer replay (RAD-123).
+        // Never persist a stale root full-suite plan for peer replay .
         if (result.ciPlan && looksLikeStaleFullSuitePlan(result.ciPlan) && !options.selection) {
           result = {
             status: "blocked",
@@ -242,7 +242,7 @@ export async function evaluateAndStoreExportGate(
               {
                 check: "ci",
                 message:
-                  `Refusing stale full-suite CI plan (RAD-123): checks=${JSON.stringify(result.ciPlan.checks)} ` +
+                  `Refusing stale full-suite CI plan: checks=${JSON.stringify(result.ciPlan.checks)} ` +
                   `reason=${JSON.stringify(result.ciPlan.reason)}. Export gate must use worktree selectCiChecks ` +
                   `(scoped core/cli — never root pnpm test). Rebuild/relink the plugin from the loop worktree.`,
               },
@@ -326,7 +326,7 @@ export type AbortCiStewardAction = "stop_implementor_and_abort_ci" | "abort_ci_o
 
 export interface AbortCiResult {
   aborted: boolean;
-  /** Bound implementor Task id when a steward owns this loop (RAD-112). */
+  /** Bound implementor Task id when a steward owns this loop (). */
   implementorTaskId: string | null;
   /**
    * Human/steward CI skip must stop the implementor Task and abort CI together.
@@ -402,13 +402,13 @@ export async function validateExport(
   id: string,
   options: ExportValidationOptions = {},
 ): Promise<ExportValidationResult> {
-  // Prefer a complete stored gate for this HEAD (RAD-71 / RAD-119). Re-running
+  // Prefer a complete stored gate for this HEAD . Re-running
   // selectCiChecks can intentionally skip local CI while a prior blocked plan
   // still names the failing check — do not greenwash or drop those reasons.
-  // RAD-123: never adopt a stale full-suite snapshot (forces re-evaluate).
+  // : never adopt a stale full-suite snapshot (forces re-evaluate).
   const resolved = await getLocalPr(cwd, id, { destructive: true });
   const pr = await refreshLocalPrHead(cwd, resolved.id);
-  // RAD-145: legacy SHA baseRef packets fail before gh pr create.
+  // : legacy SHA baseRef packets fail before gh pr create.
   const { assertDeclaredBaseAligned, assertStoredBaseRefIsBranch } = await import("./base-ref.js");
   try {
     await assertStoredBaseRefIsBranch(cwd, pr);

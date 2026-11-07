@@ -107,7 +107,7 @@ function fileScopedCore(): CheckInputScopeOptions {
   return { changedPaths: [...testFiles], testFiles };
 }
 
-describe("RAD-118 worktree CI cache", () => {
+describe("worktree CI cache", () => {
   it("cache hit after unrelated dirty edit outside check scope", async () => {
     const repo = await initPackageRepo();
     try {

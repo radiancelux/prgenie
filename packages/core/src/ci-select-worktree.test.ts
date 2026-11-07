@@ -94,7 +94,7 @@ async function writeFakeWorktreeSelect(root: string, body: string): Promise<void
   await writeFile(path.join(dir, "ci-select.ts"), body, "utf8");
 }
 
-describe("ci-select-worktree (RAD-123)", () => {
+describe("ci-select-worktree", () => {
   it("detects ci-select / ci-runner source paths", () => {
     assert.equal(isCiSelectionSourcePath("packages/core/src/ci-select.ts"), true);
     assert.equal(isCiSelectionSourcePath("packages/core/src/ci-runner.ts"), true);
@@ -153,7 +153,7 @@ describe("ci-select-worktree (RAD-123)", () => {
     reason: [
       "packages/core/** → per-package format + lint + typecheck + unit tests",
       "confident mapping — not full monorepo pnpm test",
-      "worktree stub for RAD-123",
+      "worktree stub for ",
     ],
     mapping: [],
     uncertain: false,
@@ -196,7 +196,7 @@ describe("ci-select-worktree (RAD-123)", () => {
         "typecheck:core",
         "test:core",
       ]);
-      assert.ok(result.selection.reason.some((r) => /RAD-167-R1/.test(r)));
+      assert.ok(result.selection.reason.some((r) => /-R1/.test(r)));
     } finally {
       clearWorktreeCiSelectCache();
       await rm(wt, { recursive: true, force: true });
@@ -266,13 +266,13 @@ describe("ci-select-worktree (RAD-123)", () => {
     }
   });
 
-  it("RAD-154: hard-config full plan is not a stale full suite", () => {
+  it("hard-config full plan is not a stale full suite", () => {
     const plan = selectCiChecks(["package.json"]);
     assert.deepEqual(plan.checks, [...DEFAULT_CI_CHECKS]);
     assert.equal(looksLikeStaleFullSuitePlan(plan), false);
     const stamped = {
       ...plan,
-      reason: [...plan.reason, "RAD-123: using worktree ci-select"],
+      reason: [...plan.reason, "using worktree ci-select"],
     };
     assert.equal(looksLikeStaleFullSuitePlan(stamped), false);
     assert.equal(
@@ -284,7 +284,7 @@ describe("ci-select-worktree (RAD-123)", () => {
     );
   });
 
-  it("RAD-154: missing worktree module still returns the installed full plan for package.json", async () => {
+  it("missing worktree module still returns the installed full plan for package.json", async () => {
     const result = await resolveCiSelection({
       changedPaths: ["package.json"],
       worktreePath: path.join(tmpdir(), "prgenie-rad154-missing-wt"),
@@ -332,7 +332,7 @@ describe("ci-select-worktree (RAD-123)", () => {
       assert.equal(result.source, "base");
       assert.equal(result.diverged, false);
       assert.deepEqual(result.selection.checks, installed.checks);
-      assert.ok(result.selection.reason.some((r) => /RAD-167-R1/.test(r)));
+      assert.ok(result.selection.reason.some((r) => /-R1/.test(r)));
     } finally {
       clearWorktreeCiSelectCache();
       await rm(parent, { recursive: true, force: true });
@@ -448,7 +448,7 @@ describe("ci-select-worktree (RAD-123)", () => {
       assert.equal(result.source, "base");
       assert.equal(result.diverged, false);
       assert.deepEqual(result.selection.checks, installed.checks);
-      assert.ok(result.selection.reason.some((r) => /RAD-167-R1/.test(r)));
+      assert.ok(result.selection.reason.some((r) => /-R1/.test(r)));
     } finally {
       clearWorktreeCiSelectCache();
       await rm(parent, { recursive: true, force: true });
@@ -634,12 +634,12 @@ describe("ci-select-worktree (RAD-123)", () => {
       assert.doesNotMatch(
         result.warning,
         /base gate/,
-        "installed plan must not be described as the base gate (RAD-167-R1)",
+        "installed plan must not be described as the base gate (-R1)",
       );
       assert.match(result.warning, /installed gate/);
-      assert.match(result.warning, /RAD-167-R1/);
+      assert.match(result.warning, /-R1/);
       assert.ok(
-        !result.selection.reason.some((r) => /RAD-167-R1: export gate uses base-commit/i.test(r)),
+        !result.selection.reason.some((r) => /-R1: export gate uses base-commit/i.test(r)),
         "must not claim base selector when base load failed",
       );
     } finally {
@@ -705,7 +705,7 @@ describe("ci-select-worktree (RAD-123)", () => {
       assert.doesNotMatch(
         listed.stdout ?? "",
         /prgenie-base-wt/,
-        "base checkout must be gone after the plan is computed (RAD-167-R1)",
+        "base checkout must be gone after the plan is computed (-R1)",
       );
     } finally {
       clearWorktreeCiSelectCache();

@@ -28,7 +28,7 @@ after(async () => {
 });
 
 describe("MCP run_ci vs loop cancel", () => {
-  it("RAD-139: run_ci refuses a cancelled loop", async () => {
+  it("run_ci refuses a cancelled loop", async () => {
     const pr = (await handleTool("create_local_pr", {
       cwd: repo,
       title: "mcp cancel",
@@ -46,7 +46,7 @@ describe("MCP run_ci vs loop cancel", () => {
     );
   });
 
-  it("RAD-139: clear_loop_cancel lets run_ci run again", async () => {
+  it("clear_loop_cancel lets run_ci run again", async () => {
     const pr = (await handleTool("create_local_pr", {
       cwd: repo,
       title: "mcp clear",
@@ -76,7 +76,7 @@ describe("MCP run_ci vs loop cancel", () => {
     assert.ok(result.selection !== undefined);
   });
 
-  it("RAD-139: run_ci and clear_loop_cancel resolve a loop id prefix", async () => {
+  it("run_ci and clear_loop_cancel resolve a loop id prefix", async () => {
     const pr = (await handleTool("create_local_pr", {
       cwd: repo,
       title: "mcp prefix",
@@ -102,7 +102,7 @@ describe("MCP run_ci vs loop cancel", () => {
     assert.equal(readLoopCancel(repo, pr.id), null);
   });
 
-  it("RAD-139: clear_loop_cancel errors for an id that matches no loop", async () => {
+  it("clear_loop_cancel errors for an id that matches no loop", async () => {
     await assert.rejects(
       () => handleTool("clear_loop_cancel", { cwd: repo, id: "lp-nomatch" }),
       /Local PR not found/,

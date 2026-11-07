@@ -75,7 +75,7 @@ export function exportPushRefspec(pr: { headSha: string; headRef: string }): str
   return `${pr.headSha}:refs/heads/${localBaseRef(pr.headRef)}`;
 }
 
-/** Structured report when GitHub PR opened but local release/prune did not finish (RAD-95 / RAD-130). */
+/** Structured report when GitHub PR opened but local release/prune did not finish (/ ). */
 export type ExportPartialFailure = {
   kind: "partial_failure";
   message: string;
@@ -89,7 +89,7 @@ export type ExportPartialFailure = {
   branchError: string | null;
   reopen: boolean;
   pruneError: string | null;
-  /** GitHub PR body/title update failed after push (RAD-150). */
+  /** GitHub PR body/title update failed after push (). */
   bodyUpdated?: boolean;
   bodyUpdateError?: string | null;
 };
@@ -101,7 +101,7 @@ export function formatExportPartialFailure(partial: ExportPartialFailure): strin
 /**
  * Build the export partial-failure payload from a finalize/release result.
  * Shared by `exportLocalPr` so the contract is unit-testable without push/gh.
- * Full success requires both worktree prune and local loop branch delete (RAD-130).
+ * Full success requires both worktree prune and local loop branch delete .
  */
 export function exportPartialFailureFromRelease(
   url: string,
@@ -189,7 +189,7 @@ export async function exportLocalPr(
   const onProgress = options.onProgress;
   const signal = options.signal;
 
-  // RAD-95: fail unbound before expensive shepherd CI — not only after validation.
+  // : fail unbound before expensive shepherd CI — not only after validation.
   // File bind only (same as requireGithubBindForReviewed) so we do not hang on gh CLI.
   throwIfAborted(signal);
   const earlyBind = await describeRepoGithubBind(cwd);
@@ -232,7 +232,7 @@ export async function exportLocalPr(
 
   await haltWatch(cwd, "export", pr.id);
   try {
-    // RAD-94: push recorded SHA, then set upstream to origin/<headRef> (never the base).
+    // : push recorded SHA, then set upstream to origin/<headRef> (never the base).
     const pushArgv = exportPushArgs(pr);
     const pushCmd = `git ${pushArgv.join(" ")}`;
     onProgress?.({ phase: "push", state: "start", command: pushCmd });
@@ -305,7 +305,7 @@ export async function exportLocalPr(
           state: "pass",
           command: editCmd,
           elapsedMs: Date.now() - editStarted,
-          message: "Updated GitHub PR title and body from loop packet (RAD-150)",
+          message: "Updated GitHub PR title and body from loop packet",
         });
       }
     } else {

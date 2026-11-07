@@ -170,7 +170,7 @@ function reviewClearedByCompleteReview(pr: LocalPr): boolean {
   );
 }
 
-/** RAD-164: CLI-only guard before approved — real reviewed state, not a status hop. */
+/** CLI-only guard before approved — real reviewed state, not a status hop. */
 async function refuseApprovedUnlessReviewComplete(
   repo: string,
   id: string,
@@ -178,7 +178,7 @@ async function refuseApprovedUnlessReviewComplete(
 ): Promise<void> {
   if (force) return;
   // Same tip refresh as `prgenie show`. A commit after complete_review must drop
-  // reviewed (RAD-126) before this guard compares the clear marker to HEAD.
+  // reviewed  before this guard compares the clear marker to HEAD.
   const pr = await refreshLocalPrHead(repo, id);
   if (pr.status !== "reviewed") {
     throw new Error(

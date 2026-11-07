@@ -18,7 +18,7 @@ export interface CiProgressSnapshot {
   selectedChecks: string[];
   selectionReason: string;
   checks: CiCheckProgress[];
-  /** Path CI ran / is running in (RAD-112). */
+  /** Path CI ran / is running in (). */
   cwd?: string;
 }
 
@@ -30,14 +30,14 @@ export interface ProgressEvent {
   elapsedMs?: number;
   /** User-facing command, e.g. `pnpm test` or `git push`. */
   command?: string;
-  /** Short failure excerpt (RAD-74). */
+  /** Short failure excerpt (). */
   message?: string;
   /** Capped full log path when a CI check failed. */
   logPath?: string;
-  /** Smart-CI plan (RAD-77) — which checks and why. */
+  /** Smart-CI plan () — which checks and why. */
   selectedChecks?: string[];
   selectionReason?: string;
-  /** Path CI is running in (RAD-112). */
+  /** Path CI is running in (). */
   cwd?: string;
 }
 
@@ -54,7 +54,7 @@ export interface RunProgressOptions {
  * Host-repo monorepo-wide scripts (`eslint .`) are rewritten by
  * `resolveCiCheckCommand` in `ci-host-scope.ts` so the progress card can show
  * `eslint path1 path2` instead of bare `pnpm lint`.
- * RAD-127: pass `testFiles` for file-scoped `test:<pkg>` (not the package glob).
+ * : pass `testFiles` for file-scoped `test:<pkg>` (not the package glob).
  */
 export function ciCheckCommand(check: string, testFiles?: readonly string[]): string {
   const scoped = check.match(/^(lint|typecheck|test|build):(core|cli|extension)$/);
@@ -64,7 +64,7 @@ export function ciCheckCommand(check: string, testFiles?: readonly string[]): st
     if (kind === "lint") return `pnpm exec eslint ${dir}/src`;
     if (kind === "typecheck") return `pnpm exec tsc -p ${dir} --noEmit`;
     // Flat src/*.test.ts — cmd.exe expands `*` (directory form breaks under tsx on Windows).
-    // File-scoped lists replace the glob so agents see the real command (RAD-127).
+    // File-scoped lists replace the glob so agents see the real command .
     if (kind === "test") {
       if (testFiles && testFiles.length > 0) {
         return `pnpm exec tsx --test ${testFiles.join(" ")}`;
@@ -139,7 +139,7 @@ export function formatProgressLine(event: ProgressEvent): string {
 /**
  * Sidebar step labels.
  * Gate = "CI checks → test". Export distinguishes re-gate CI vs push vs create PR
- * (RAD-124 — do not leave the step on bare "CI" for the whole push).
+ * .
  */
 export function formatProgressStep(event: ProgressEvent, kind: ProgressKind = "gate"): string {
   if (kind === "export") {

@@ -23,7 +23,7 @@ import {
 } from "./ci-select.js";
 import { loopWorktreeIdentity } from "./worktrees.js";
 
-/** Paths whose edits change CI selection / runner behavior (RAD-123). */
+/** Paths whose edits change CI selection / runner behavior (). */
 const CI_SELECTION_SOURCE_SUFFIXES = [
   "/packages/core/src/ci-select.ts",
   "/packages/core/src/ci-select.test.ts",
@@ -48,8 +48,8 @@ export function worktreeCiSelectModulePath(worktreePath: string): string {
 
 export function ciSelectionPlansEqual(a: CiCheckSelection, b: CiCheckSelection): boolean {
   // Flag drift (skipped / uncertain / packageScoped) changes runner behavior even when
-  // checks + reason text match — treat as divergence so worktree wins (RAD-123).
-  // RAD-127: testFiles drift changes which unit files run.
+  // checks + reason text match — treat as divergence so worktree wins .
+  // : testFiles drift changes which unit files run.
   return (
     JSON.stringify(a.checks) === JSON.stringify(b.checks) &&
     JSON.stringify([...a.reason].sort()) === JSON.stringify([...b.reason].sort()) &&
@@ -67,11 +67,11 @@ export type CiSelectFn = (
 
 export type ResolveCiSelectionResult = {
   selection: CiCheckSelection;
-  /** Where the gating plan came from (RAD-167-R1). */
+  /** Where the gating plan came from (-R1). */
   source: "installed" | "worktree" | "base";
-  /** True when gating plan and loop worktree selector disagree (RAD-167-R2). */
+  /** True when gating plan and loop worktree selector disagree (-R2). */
   diverged: boolean;
-  /** Loud dogfood warning when plans diverge (also mirrored on stderr). */
+  /** Loud local development warning when plans diverge (also mirrored on stderr). */
   warning?: string;
   /** Worktree selector plan when it differs from the gate (advisory only). */
   advisorySelection?: CiCheckSelection;
@@ -91,7 +91,7 @@ export type ResolveCiSelectionOptions = {
   refuseStaleOnTouch?: boolean;
   /** Primary checkout override for resolving `tsx` (tests). */
   primaryPath?: string | null;
-  /** Loop base branch ref for gating selector (RAD-167-R1). */
+  /** Loop base branch ref for gating selector (-R1). */
   baseRef?: string | null;
   /** Injectable loader for base-ref selectCiChecks (tests). */
   loadBaseRefSelect?: (
@@ -101,7 +101,7 @@ export type ResolveCiSelectionOptions = {
   ) => Promise<CiSelectFn | null>;
 };
 
-/** True when the repo root package.json names PR Genie (RAD-167-R3). */
+/** True when the repo root package.json names PR Genie (-R3). */
 export function isPrGenieRepo(cwd: string): boolean {
   try {
     const pkgPath = path.join(path.resolve(cwd), "package.json");
@@ -117,7 +117,7 @@ type CacheEntry = { mtimeMs: number; select: CiSelectFn };
 const worktreeSelectCache = new Map<string, CacheEntry>();
 type BaseSelectCacheEntry = { select: CiSelectFn; tempWt: string; gitRoot: string };
 const baseSelectCache = new Map<string, BaseSelectCacheEntry>();
-/** Detached checkouts created for base ci-select and not yet released (RAD-167-R1). */
+/** Detached checkouts created for base ci-select and not yet released (-R1). */
 const baseWorktreesInUse = new Set<string>();
 const BASE_WT_DIR_PREFIX = "prgenie-base-wt-";
 
@@ -137,7 +137,7 @@ function unmarkBaseWorktreeInUse(tempWt: string): void {
 
 function realPathOrResolve(filePath: string): string {
   try {
-    // native expands Windows 8.3 names (`BRETTH~1` → `BrettHumphreys`).
+    // native expands Windows 8.3 names (`USER~1` → `Contributor`).
     return realpathSync.native(filePath);
   } catch {
     try {
@@ -151,7 +151,7 @@ function realPathOrResolve(filePath: string): string {
 /** True for this process's temp base checkouts (`prgenie-base-wt-*` under tmpdir). */
 function isTempBaseWorktreePath(worktreePath: string): boolean {
   if (!path.basename(worktreePath).startsWith(BASE_WT_DIR_PREFIX)) return false;
-  // tmpdir() may be an 8.3 path (`BRETTH~1`) while git lists the long path.
+  // tmpdir() may be an 8.3 path (`USER~1`) while git lists the long path.
   const rel = path.relative(realPathOrResolve(tmpdir()), realPathOrResolve(worktreePath));
   return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 }
@@ -178,7 +178,7 @@ function dropBaseSelectCacheEntry(cacheKey: string): void {
 }
 
 /**
- * Drop stale temp base checkouts for this repo before adding another (RAD-167-R1).
+ * Drop stale temp base checkouts for this repo before adding another .
  * `git worktree prune` clears admin entries whose directories are already gone.
  * Live `prgenie-base-wt-*` dirs under tmpdir that this process is not using are removed.
  */
@@ -233,7 +233,7 @@ function warnLoud(message: string): void {
   }
 }
 
-/** Short branch name for `main`-style loop bases (RAD-167-R1). */
+/** Short branch name for `main`-style loop bases (-R1). */
 function ciGateBaseShortName(baseRef: string): string {
   const trimmed = baseRef.trim();
   if (trimmed.startsWith("refs/remotes/origin/")) {
@@ -249,7 +249,7 @@ function ciGateBaseShortName(baseRef: string): string {
 }
 
 /**
- * Resolve the loop base for ci-select gating (RAD-167-R1).
+ * Resolve the loop base for ci-select gating .
  * Order: `<baseRef>`, `origin/<short>`, `refs/remotes/origin/<short>`.
  */
 export async function resolveCiGateBaseRef(
@@ -278,7 +278,7 @@ export async function resolveCiGateBaseRef(
 
 export function formatCiGateBaseRefResolutionFailure(baseRef: string, tried: string[]): string {
   return (
-    `RAD-167-R1: could not resolve loop base ref "${baseRef.trim()}" ` +
+    `-R1: could not resolve loop base ref "${baseRef.trim()}" ` +
     `(tried, in order: ${tried.join(", ")}). ` +
     `Export/run_ci must evaluate selectCiChecks from the loop base; refusing silent installed fallback.`
   );
@@ -416,7 +416,7 @@ export type LoadWorktreeSelectOptions = {
   tsImport?: (specifier: string, parent: string) => Promise<Record<string, unknown>>;
   /**
    * Skip in-process tsImport and eval via the tsx CLI. Used for the detached
-   * base checkout so the parent does not lock those files (RAD-167-R1).
+   * base checkout so the parent does not lock those files .
    */
   cliOnly?: boolean;
 };
@@ -474,7 +474,7 @@ export async function loadWorktreeSelectCiChecks(
       // Do not cache the failure (mtime cache only stores successful selects).
       const detail = err instanceof Error ? err.message : String(err);
       warnLoud(
-        `RAD-123: in-process tsImport failed (${detail}); falling back to tsx CLI for worktree ci-select`,
+        `in-process tsImport failed (${detail}); falling back to tsx CLI for worktree ci-select`,
       );
     }
   }
@@ -538,19 +538,19 @@ function withBaseGateProvenance(
   advisory?: CiCheckSelection,
 ): CiCheckSelection {
   const stamp = diverged
-    ? "RAD-167-R1: export gate uses base-commit ci-select (worktree differs — advisory below)"
-    : "RAD-167-R1: export gate uses base-commit ci-select";
+    ? "-R1: export gate uses base-commit ci-select (worktree differs — advisory below)"
+    : "-R1: export gate uses base-commit ci-select";
   const reason = selection.reason.includes(stamp) ? selection.reason : [stamp, ...selection.reason];
   if (diverged && advisory) {
     reason.push(
-      `RAD-167-R2 advisory worktree plan: checks=${JSON.stringify(advisory.checks)} reason=${JSON.stringify(advisory.reason)}`,
+      `-R2 advisory worktree plan: checks=${JSON.stringify(advisory.checks)} reason=${JSON.stringify(advisory.reason)}`,
     );
   }
   return { ...selection, reason };
 }
 
 /**
- * Load selectCiChecks from the loop base branch via a short-lived detached worktree (RAD-167-R1).
+ * Load selectCiChecks from the loop base branch via a short-lived detached worktree .
  */
 export async function loadBaseRefSelectCiChecks(
   gitRoot: string,
@@ -571,7 +571,7 @@ export async function loadBaseRefSelectCiChecks(
   const cached = baseSelectCache.get(cacheKey);
   if (cached) return cached.select;
 
-  // RAD-167-R1: reap leaked prgenie-base-wt-* checkouts before adding another.
+  // : reap leaked prgenie-base-wt-* checkouts before adding another.
   pruneOrphanBaseWorktrees(gitRoot);
 
   const tempWt = mkdtempSync(path.join(tmpdir(), BASE_WT_DIR_PREFIX));
@@ -607,8 +607,8 @@ export async function loadBaseRefSelectCiChecks(
 }
 
 /**
- * True when a plan looks like the pre-RAD-119 / stale-plugin root suite that
- * dogfood must never run or peer-replay locally.
+ * True when a plan looks like the pre- / stale-plugin root suite that
+ * local development must never run or peer-replay locally.
  *
  * Matches the classic reason string and/or exact `DEFAULT_CI_CHECKS` without a
  * modern scoped/skip/fixture stamp. Does **not** flag caller-forced test
@@ -630,10 +630,10 @@ export function looksLikeStaleFullSuitePlan(
     checks.length === DEFAULT_CI_CHECKS.length &&
     DEFAULT_CI_CHECKS.every((c, i) => checks[i] === c);
   if (!isDefaultSuite) return false;
-  // Exact default suite, but stamped as fixture / RAD-119 skip / worktree — not dogfood stale.
+  // Exact default suite, but stamped as fixture /  skip / worktree — not local development stale.
   if (
     reasons.some((r) =>
-      /fixture|RAD-123|RAD-154|worktree ci-select|per-package|confident mapping|skip local CI|caller-forced/i.test(
+      /fixture|worktree ci-select|per-package|confident mapping|skip local CI|caller-forced|hard config\/CI changed/i.test(
         r,
       ),
     )
@@ -644,9 +644,9 @@ export function looksLikeStaleFullSuitePlan(
 }
 
 /**
- * Resolve the CI plan for a loop (RAD-123 / RAD-167).
- * PR Genie dogfood: gate on base-commit ci-select; worktree selector is advisory only.
- * Other repos: installed plugin only — never execute a repo-local ci-select.ts (RAD-167-R3).
+ * Resolve the CI plan for a loop .
+ * PR Genie local development: gate on base-commit ci-select; worktree selector is advisory only.
+ * Other repos: installed plugin only — never execute a repo-local ci-select.ts .
  */
 export async function resolveCiSelection(
   options: ResolveCiSelectionOptions,
@@ -713,7 +713,7 @@ export async function resolveCiSelection(
       if (baseCacheKey) dropBaseSelectCacheEntry(baseCacheKey);
       throw err;
     }
-    // RAD-167-R1: the plan is plain data. CLI fallback already read ci-select.ts
+    // : the plan is plain data. CLI fallback already read ci-select.ts
     // during baseSelectFn, so the detached checkout is no longer needed.
     if (baseCacheKey) dropBaseSelectCacheEntry(baseCacheKey);
   } else {
@@ -734,7 +734,7 @@ export async function resolveCiSelection(
       }
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      warnLoud(`RAD-167-R2: advisory worktree ci-select load failed (${detail})`);
+      warnLoud(`-R2: advisory worktree ci-select load failed (${detail})`);
     }
   }
 
@@ -749,7 +749,7 @@ export async function resolveCiSelection(
     if (!baseSelectFn) {
       throw new Error(
         `Refusing stale installed CI selection: could not load base-commit ci-select from ${gitRoot}@${baseRef}. ` +
-          `Export/run_ci must evaluate selectCiChecks from the loop base (RAD-167-R1).` +
+          `Export/run_ci must evaluate selectCiChecks from the loop base (-R1).` +
           (installedLooksStale
             ? ` Installed plan looks like a full suite: checks=${JSON.stringify(installed.checks)}`
             : ""),
@@ -761,7 +761,7 @@ export async function resolveCiSelection(
   ) {
     throw new Error(
       `Refusing stale installed CI selection: could not load base-commit ci-select from ${gitRoot}@${baseRef}. ` +
-        `Export/run_ci must evaluate selectCiChecks from the loop base (RAD-167-R1).` +
+        `Export/run_ci must evaluate selectCiChecks from the loop base (-R1).` +
         (installedLooksStale
           ? ` Installed plan looks like a full suite: checks=${JSON.stringify(installed.checks)}`
           : ""),
@@ -774,14 +774,14 @@ export async function resolveCiSelection(
       : gatePlan;
 
   if (diverged && advisorySelection) {
-    // RAD-167-R1: "base gate" only when base-commit ci-select actually loaded.
+    // : "base gate" only when base-commit ci-select actually loaded.
     const gateLabel = gateSource === "base" ? "base gate" : "installed gate";
     const installedProvenance =
       gateSource === "installed"
-        ? "RAD-167-R1: base-commit ci-select did not load; export gate uses the installed plugin. "
+        ? "-R1: base-commit ci-select did not load; export gate uses the installed plugin. "
         : "";
     const warning =
-      `CI selection DIVERGED (RAD-167-R2): ${gateLabel} vs loop worktree (advisory). ` +
+      `CI selection DIVERGED (-R2): ${gateLabel} vs loop worktree (advisory). ` +
       installedProvenance +
       `gate={checks:${JSON.stringify(gatePlan.checks)},reason:${JSON.stringify(gatePlan.reason)}} ` +
       `worktree={checks:${JSON.stringify(advisorySelection.checks)},reason:${JSON.stringify(advisorySelection.reason)}}`;

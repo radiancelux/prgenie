@@ -185,7 +185,7 @@ test("built github-gate.cjs allows non-publish commands", () => {
   assert.equal(parsed.permission, "allow");
 });
 
-test("RAD-190 R5/R6: mcpHumanConfirmationGate never asks (former asks are allow or deny)", () => {
+test("R5/R6: mcpHumanConfirmationGate never asks (former asks are allow or deny)", () => {
   assert.equal(mcpHumanConfirmationGate("export_local_pr", {}), "deny");
   assert.equal(mcpHumanConfirmationGate("record_export_gate_override", {}), "deny");
   assert.equal(mcpHumanConfirmationGate("gh_use", {}), "deny");
@@ -227,7 +227,7 @@ test("RAD-190 R5/R6: mcpHumanConfirmationGate never asks (former asks are allow 
   assert.equal(mcpHumanConfirmationGate("", {}), "deny");
 });
 
-test("RAD-164 R2: every MCP tool is allowlisted, gated, or agent-denied", () => {
+test("R2: every MCP tool is allowlisted, gated, or agent-denied", () => {
   const known = new Set<string>([
     ...PRGENIE_MCP_AGENT_TOOLS,
     ...PRGENIE_MCP_AGENT_DENY_TOOLS,
@@ -239,7 +239,7 @@ test("RAD-164 R2: every MCP tool is allowlisted, gated, or agent-denied", () => 
   assert.equal(known.size, mcpRegisteredTools.length);
 });
 
-test("RAD-164 R4: before-mcp log keeps only keys and server identifiers", () => {
+test("R4: before-mcp log keeps only keys and server identifiers", () => {
   const payload = sanitizeBeforeMcpLogPayload({
     tool_name: "get_local_pr",
     mcp_server_name: "PR Genie",
@@ -276,7 +276,7 @@ test("RAD-164 R4: before-mcp log keeps only keys and server identifiers", () => 
   ]);
 });
 
-test("RAD-164: normalizeBareMcpToolName strips plugin server prefixes", () => {
+test("normalizeBareMcpToolName strips plugin server prefixes", () => {
   assert.equal(
     normalizeBareMcpToolName({
       tool_name: "plugin-prgenie-prgenie-export_local_pr",
@@ -287,7 +287,7 @@ test("RAD-164: normalizeBareMcpToolName strips plugin server prefixes", () => {
   );
 });
 
-test("RAD-164: isPrgenieMcpContext matches prgenie server names only", () => {
+test("isPrgenieMcpContext matches prgenie server names only", () => {
   assert.equal(isPrgenieMcpContext({ mcp_server_name: "plugin-prgenie-prgenie" }), true);
   assert.equal(isPrgenieMcpContext({ mcp_server_name: "user-figma" }), false);
   assert.equal(isPrgenieMcpContext({ command: "node packages/plugin/mcp/server.cjs" }), true);
@@ -304,20 +304,20 @@ test("RAD-164: isPrgenieMcpContext matches prgenie server names only", () => {
   );
 });
 
-test("RAD-188 R1: Cursor Je.execute stdin export_local_pr denies with panel/CLI guidance", () => {
+test("R1: Cursor Je.execute stdin export_local_pr denies with panel/CLI guidance", () => {
   const parsed = runGate({ ...CURSOR_JE_EXECUTE_FIXTURE });
   assert.equal(parsed.permission, "deny");
   assert.match(String(parsed.user_message ?? ""), /Open on GitHub|prgenie export/i);
   assert.match(String(parsed.agent_message ?? ""), /Do not retry|work around/i);
 });
 
-test("RAD-188 R1: UTF-8 BOM stdin export_local_pr denies (not fail-open allow)", () => {
+test("R1: UTF-8 BOM stdin export_local_pr denies (not fail-open allow)", () => {
   const parsed = runGate({ ...CURSOR_JE_EXECUTE_FIXTURE }, { bom: true });
   assert.equal(parsed.permission, "deny");
   assert.match(String(parsed.agent_message ?? ""), /Human-only MCP|Do not retry/i);
 });
 
-test("RAD-185: BOM stdin get_local_pr allows", () => {
+test("BOM stdin get_local_pr allows", () => {
   const parsed = runGate(
     {
       mcp_server_name: "PR Genie",
@@ -329,24 +329,24 @@ test("RAD-185: BOM stdin get_local_pr allows", () => {
   assert.equal(parsed.permission, "allow");
 });
 
-test("RAD-188 R4: empty stdin fails closed with deny", () => {
+test("R4: empty stdin fails closed with deny", () => {
   const parsed = runGate(null);
   assert.equal(parsed.permission, "deny");
   assert.match(String(parsed.agent_message ?? ""), /no input|Do not retry/i);
 });
 
-test("RAD-188 R4: truncated JSON stdin fails closed with deny", () => {
+test("R4: truncated JSON stdin fails closed with deny", () => {
   const parsed = runGate(null, { raw: '{"tool_name":' });
   assert.equal(parsed.permission, "deny");
   assert.match(String(parsed.agent_message ?? ""), /unparseable|no input/i);
 });
 
-test("RAD-188 R4: BOM-only stdin fails closed with deny", () => {
+test("R4: BOM-only stdin fails closed with deny", () => {
   const parsed = runGate(null, { raw: Buffer.from([0xef, 0xbb, 0xbf]) });
   assert.equal(parsed.permission, "deny");
 });
 
-test("RAD-185 R3: before-mcp log uses /c:/ workspace root in temp repo", async () => {
+test("R3: before-mcp log uses /c:/ workspace root in temp repo", async () => {
   const repo = await mkdtemp(path.join(tmpdir(), "prgenie-gate-mcp-log-"));
   try {
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
@@ -406,7 +406,7 @@ function primaryBeforeMcpLogPath(): string | null {
   }
 }
 
-test("RAD-185 R3: github-hook tests do not touch primary before-mcp-execution.jsonl", () => {
+test("R3: github-hook tests do not touch primary before-mcp-execution.jsonl", () => {
   const primaryLog = primaryBeforeMcpLogPath();
   if (!primaryLog) return;
   const existedBefore = existsSync(primaryLog);
@@ -432,13 +432,13 @@ test("RAD-185 R3: github-hook tests do not touch primary before-mcp-execution.js
   }
 });
 
-test("RAD-188 R1: transcript-shaped prefixed export_local_pr denies", () => {
+test("R1: transcript-shaped prefixed export_local_pr denies", () => {
   const parsed = runGate({ ...TRANSCRIPT_SHAPED_FIXTURE });
   assert.equal(parsed.permission, "deny");
   assert.match(String(parsed.agent_message ?? ""), /Human-only MCP|Do not retry/i);
 });
 
-test("RAD-188 R1: gated tool with no server/command/url denies (not allow)", () => {
+test("R1: gated tool with no server/command/url denies (not allow)", () => {
   const parsed = runGate({
     tool_name: "export_local_pr",
     tool_input: { id: "lp-deadbeef" },
@@ -447,7 +447,7 @@ test("RAD-188 R1: gated tool with no server/command/url denies (not allow)", () 
   assert.match(String(parsed.user_message ?? ""), /Open on GitHub|prgenie export/i);
 });
 
-test("RAD-164 follow-up: colliding add_comment on another server stays allow", () => {
+test("follow-up: colliding add_comment on another server stays allow", () => {
   assert.equal(
     runGate({
       mcp_server_name: "user-linear-linear",
@@ -458,7 +458,7 @@ test("RAD-164 follow-up: colliding add_comment on another server stays allow", (
   );
 });
 
-test("RAD-190 R5: unrecognized PR Genie MCP tool denies (was ask)", () => {
+test("R5: unrecognized PR Genie MCP tool denies (was ask)", () => {
   const parsed = runGate({
     mcp_server_name: "plugin-prgenie-prgenie",
     tool_name: "plugin-prgenie-prgenie-totally_unknown_tool",
@@ -468,7 +468,7 @@ test("RAD-190 R5: unrecognized PR Genie MCP tool denies (was ask)", () => {
   assert.match(String(parsed.agent_message ?? ""), /Do not retry/i);
 });
 
-test("RAD-188 R1: built github-gate.cjs denies agent-only MCP tools on PR Genie", () => {
+test("R1: built github-gate.cjs denies agent-only MCP tools on PR Genie", () => {
   for (const [tool_name, tool_input] of [
     ["export_local_pr", { id: "lp-deadbeef" }],
     ["record_export_gate_override", { id: "lp-deadbeef", who: "agent", why: "x" }],
@@ -485,7 +485,7 @@ test("RAD-188 R1: built github-gate.cjs denies agent-only MCP tools on PR Genie"
   }
 });
 
-test("RAD-190 R5: built github-gate.cjs denies the former-ask gated MCP calls on PR Genie", () => {
+test("R5: built github-gate.cjs denies the former-ask gated MCP calls on PR Genie", () => {
   for (const [tool_name, tool_input] of [
     ["set_status", { id: "lp-deadbeef", status: "approved" }],
     ["set_status", { id: "lp-deadbeef", status: "reviewed" }],
@@ -504,7 +504,7 @@ test("RAD-190 R5: built github-gate.cjs denies the former-ask gated MCP calls on
   }
 });
 
-test("RAD-190 R5: CI-skip set_status / add_comment are a deliberate allow", () => {
+test("R5: CI-skip set_status / add_comment are a deliberate allow", () => {
   for (const [tool_name, tool_input] of [
     ["set_status", { id: "lp-deadbeef", status: "ready", ciSkipReason: "skip" }],
     ["set_status", { id: "lp-deadbeef", status: "ready", skipPreflight: true }],
@@ -516,7 +516,7 @@ test("RAD-190 R5: CI-skip set_status / add_comment are a deliberate allow", () =
   }
 });
 
-test("RAD-190 R6: clear_loop_cancel denies for agents with panel Resume guidance", () => {
+test("R6: clear_loop_cancel denies for agents with panel Resume guidance", () => {
   for (const input of [
     { mcp_server_name: "plugin-prgenie-prgenie", tool_name: "clear_loop_cancel" },
     {
@@ -532,7 +532,7 @@ test("RAD-190 R6: clear_loop_cancel denies for agents with panel Resume guidance
   }
 });
 
-test("RAD-164: built github-gate.cjs allows ungated MCP tools", () => {
+test("built github-gate.cjs allows ungated MCP tools", () => {
   assert.equal(
     runGate({
       mcp_server_name: "plugin-prgenie-prgenie",
@@ -579,7 +579,7 @@ test("RAD-164: built github-gate.cjs allows ungated MCP tools", () => {
   );
 });
 
-test("RAD-190 R5: built github-gate.cjs denies when MCP tool_input JSON is invalid (was ask)", () => {
+test("R5: built github-gate.cjs denies when MCP tool_input JSON is invalid (was ask)", () => {
   const parsed = runGate({
     mcp_server_name: "plugin-prgenie-prgenie",
     tool_name: "set_status",
@@ -588,7 +588,7 @@ test("RAD-190 R5: built github-gate.cjs denies when MCP tool_input JSON is inval
   assert.equal(parsed.permission, "deny");
 });
 
-test("RAD-163: loop agent gh repo create / delete / api POST /user/repos are denied", () => {
+test("loop agent gh repo create / delete / api POST /user/repos are denied", () => {
   const loopCwd = loopFixtureCwd;
   for (const command of [
     "gh repo create scratch --private",
@@ -606,7 +606,7 @@ test("RAD-163: loop agent gh repo create / delete / api POST /user/repos are den
   assert.equal(ghApiRepoLifecycleMutation("gh api repos/o/r/pulls"), false);
 });
 
-test("RAD-163 R1 follow-up: gh api implicit POST and bypass forms are denied", () => {
+test("R1 follow-up: gh api implicit POST and bypass forms are denied", () => {
   const loopCwd = loopFixtureCwd;
   for (const command of [
     "gh api user/repos -f name=x",
@@ -622,7 +622,7 @@ test("RAD-163 R1 follow-up: gh api implicit POST and bypass forms are denied", (
   }
 });
 
-test("RAD-163 R1 follow-up: chained gh commands are denied", () => {
+test("R1 follow-up: chained gh commands are denied", () => {
   const loopCwd = loopFixtureCwd;
   assert.deepEqual(shellSimpleCommands("gh pr view 1 && gh repo create scratch").slice(0, 2), [
     ["gh", "pr", "view", "1"],
@@ -642,12 +642,12 @@ test("RAD-163 R1 follow-up: chained gh commands are denied", () => {
   assert.equal(chained.permission, "deny");
 });
 
-test("RAD-163: loop worktree cwd gates without subagent_type in payload", () => {
+test("loop worktree cwd gates without subagent_type in payload", () => {
   const parsed = runGate({ command: "gh repo create scratch", cwd: loopFixtureCwd });
   assert.equal(parsed.permission, "deny");
 });
 
-test("RAD-188 R2: gh pr create and git push deny from a loop; reads allow", () => {
+test("R2: gh pr create and git push deny from a loop; reads allow", () => {
   const loopCwd = loopFixtureCwd;
   for (const command of ["gh pr view 1", "gh auth status", "git status", "git fetch origin"]) {
     const parsed = runGate({ command, cwd: loopCwd, subagent_type: "prgenie-reviewer" });
@@ -664,7 +664,7 @@ test("RAD-188 R2: gh pr create and git push deny from a loop; reads allow", () =
   }
 });
 
-test("RAD-163: force-push to default branch is denied from a loop", () => {
+test("force-push to default branch is denied from a loop", () => {
   const loopCwd = loopFixtureCwd;
   assert.equal(forcePushTargetsDefaultBranch("git push --force origin main", "main"), true);
   assert.equal(
@@ -698,7 +698,7 @@ function loopGate(command: string): string {
   return runGate({ command, cwd: loopFixtureCwd, subagent_type: "prgenie-implementor" }).permission;
 }
 
-test("RAD-163 R1 round 3: attached gh api body/method flags imply a mutating call", () => {
+test("R1 round 3: attached gh api body/method flags imply a mutating call", () => {
   for (const command of [
     "gh api user/repos -fname=x",
     "gh api user/repos -Fname=x",
@@ -724,7 +724,7 @@ test("RAD-163 R1 round 3: attached gh api body/method flags imply a mutating cal
   }
 });
 
-test("RAD-163 R1 round 3: substitutions, subshells, groups and nested shells are denied", () => {
+test("R1 round 3: substitutions, subshells, groups and nested shells are denied", () => {
   for (const command of [
     "echo $(gh repo delete o/r --yes)",
     "(gh repo create scratch)",
@@ -743,7 +743,7 @@ test("RAD-163 R1 round 3: substitutions, subshells, groups and nested shells are
   }
 });
 
-test("RAD-163 R1 round 3: gh alias/extension writes and token reveals are denied", () => {
+test("R1 round 3: gh alias/extension writes and token reveals are denied", () => {
   for (const command of [
     "gh alias set mk 'repo create'",
     "gh alias import aliases.yml",
@@ -759,7 +759,7 @@ test("RAD-163 R1 round 3: gh alias/extension writes and token reveals are denied
   }
 });
 
-test("RAD-163 R1 round 3: read-only gh and plain commands keep their old permission", () => {
+test("R1 round 3: read-only gh and plain commands keep their old permission", () => {
   for (const command of [
     "gh pr view 1",
     "gh auth status",
@@ -778,11 +778,11 @@ test("RAD-163 R1 round 3: read-only gh and plain commands keep their old permiss
   assert.equal(loopGate("echo hi && gh pr create --title t"), "deny");
 });
 
-test("RAD-163 R2 round 3: force-push whose destination is the default branch is denied", () => {
+test("R2 round 3: force-push whose destination is the default branch is denied", () => {
   for (const command of [
     "git push -f origin feat:main",
     "git push -f origin HEAD~0:main",
-    "git push --force-with-lease origin rad-163:main",
+    "git push --force-with-lease origin issue-163:main",
     "git push origin +feat:refs/heads/main",
     "git push --force-with-lease=main:abc123 origin feat",
     "git -C . push -f origin x:main",
@@ -803,7 +803,7 @@ test("RAD-163 R2 round 3: force-push whose destination is the default branch is 
   );
 });
 
-test("RAD-188 R2: non-default force-push and plain pushes deny for loop agents", () => {
+test("R2: non-default force-push and plain pushes deny for loop agents", () => {
   for (const command of [
     "git push -f origin feat/main-fix",
     "git push -f origin main:feat/x",
@@ -816,7 +816,7 @@ test("RAD-188 R2: non-default force-push and plain pushes deny for loop agents",
   }
 });
 
-test("RAD-163 R1 round 4: flags before the gh subcommand do not hide it", () => {
+test("R1 round 4: flags before the gh subcommand do not hide it", () => {
   for (const command of [
     "gh auth --hostname github.com token",
     "gh auth --hostname=github.com token",
@@ -851,7 +851,7 @@ test("RAD-163 R1 round 4: flags before the gh subcommand do not hide it", () => 
   assert.equal(loopGate("gh pr --repo o/r create --title t"), "deny");
 });
 
-test("RAD-163 round 4: heredoc and here-string bodies are data, not commands", () => {
+test("round 4: heredoc and here-string bodies are data, not commands", () => {
   const commitHeredoc = [
     "git commit -m \"$(cat <<'EOF'",
     "fix: note that gh repo create is denied",
@@ -880,7 +880,7 @@ test("RAD-163 round 4: heredoc and here-string bodies are data, not commands", (
 
 const RUN_TIME_SCRIPT = /running a script that is not in the command text/;
 
-test("RAD-163 R1 round 7: runners behind prefixes and launchers are checked", () => {
+test("R1 round 7: runners behind prefixes and launchers are checked", () => {
   const body = "gh repo delete o/r --yes";
   for (const command of [
     'timeout 60 bash -c "$CMD"',
@@ -996,7 +996,7 @@ test("RAD-163 R1 round 7: runners behind prefixes and launchers are checked", ()
   }
 });
 
-test("RAD-163 R1 round 6: run-time script arguments, process substitution and encodings fail closed", () => {
+test("R1 round 6: run-time script arguments, process substitution and encodings fail closed", () => {
   const body = "gh repo delete o/r --yes";
   for (const command of [
     'bash -c "$CMD"',
@@ -1086,7 +1086,7 @@ test("RAD-163 R1 round 6: run-time script arguments, process substitution and en
   }
 });
 
-test("RAD-163 R1 round 5: scripts fed to a shell or evaluator on stdin are checked", () => {
+test("R1 round 5: scripts fed to a shell or evaluator on stdin are checked", () => {
   const body = "gh repo delete o/r --yes";
   for (const command of [
     ["bash <<'EOF'", body, "EOF"].join("\n"),
@@ -1153,7 +1153,7 @@ test("RAD-163 R1 round 5: scripts fed to a shell or evaluator on stdin are check
   }
 });
 
-test("RAD-163 R1 round 4: run-time gh groups, subcommands and launchers fail closed", () => {
+test("R1 round 4: run-time gh groups, subcommands and launchers fail closed", () => {
   for (const command of [
     "gh $(echo repo) delete o/r --yes",
     "gh re${x}po delete o/r --yes",
@@ -1189,7 +1189,7 @@ test("RAD-163 R1 round 4: run-time gh groups, subcommands and launchers fail clo
   }
 });
 
-test("RAD-163: path containment ignores drive-letter case on win32 only", () => {
+test("path containment ignores drive-letter case on win32 only", () => {
   assert.equal(isPathInsideOrEqual("c:\\Users\\X\\repo", "C:/Users/X/repo/", "win32"), true);
   assert.equal(isPathInsideOrEqual("c:\\users\\x\\repo\\sub", "C:\\Users\\X\\repo", "win32"), true);
   assert.equal(isPathInsideOrEqual("c:\\users\\x\\repo2", "C:\\Users\\X\\repo", "win32"), false);
@@ -1197,7 +1197,7 @@ test("RAD-163: path containment ignores drive-letter case on win32 only", () => 
   assert.equal(isPathInsideOrEqual("/a/repo/sub/", "/a/repo", "linux"), true);
 });
 
-test("RAD-188 R3: human export paths do not import github-gate", () => {
+test("R3: human export paths do not import github-gate", () => {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
   const exportSrc = readFileSync(path.join(repoRoot, "packages/core/src/export.ts"), "utf8");
   const laneSrc = readFileSync(path.join(repoRoot, "packages/extension/src/laneView.ts"), "utf8");
@@ -1214,7 +1214,7 @@ test("RAD-188 R3: human export paths do not import github-gate", () => {
   assert.match(cliSrc, /exportLocalPr/);
 });
 
-test("RAD-188 R5: flag off gives deny; flag on gives ask", () => {
+test("R5: flag off gives deny; flag on gives ask", () => {
   assert.equal(
     runGate(
       { command: "git push origin HEAD", cwd: loopFixtureCwd },
@@ -1241,7 +1241,7 @@ test("RAD-188 R5: flag off gives deny; flag on gives ask", () => {
   assert.equal(JSON.parse(exportMcp.stdout).permission, "ask");
 });
 
-test("RAD-188 R5: agents cannot set PRGENIE_GITHUB_GATE_ASK via shell", () => {
+test("R5: agents cannot set PRGENIE_GITHUB_GATE_ASK via shell", () => {
   for (const command of [
     "setx PRGENIE_GITHUB_GATE_ASK 1",
     "setx.exe prgenie_github_gate_ask 1",
@@ -1286,7 +1286,7 @@ test("RAD-188 R5: agents cannot set PRGENIE_GITHUB_GATE_ASK via shell", () => {
   }
 });
 
-test("RAD-188 R5: reading PRGENIE_GITHUB_GATE_ASK stays allowed", () => {
+test("R5: reading PRGENIE_GITHUB_GATE_ASK stays allowed", () => {
   for (const command of [
     "rg PRGENIE_GITHUB_GATE_ASK",
     "rg -n prgenie_github_gate_ask packages docs",
@@ -1301,13 +1301,13 @@ test("RAD-188 R5: reading PRGENIE_GITHUB_GATE_ASK stays allowed", () => {
   }
 });
 
-test("RAD-188 R5: MCP server does not reference PRGENIE_GITHUB_GATE_ASK", () => {
+test("R5: MCP server does not reference PRGENIE_GITHUB_GATE_ASK", () => {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
   const mcpSrc = readFileSync(path.join(repoRoot, "packages/cli/src/mcp.ts"), "utf8");
   assert.equal(mcpSrc.includes("PRGENIE_GITHUB_GATE_ASK"), false);
 });
 
-test("RAD-188 R2 / RAD-190 loop-only scope: a loop agent's publish denies before bound-repo account-switch ask", async () => {
+test("R2 / loop-only scope: a loop agent's publish denies before bound-repo account-switch ask", async () => {
   const repo = await mkdtemp(path.join(tmpdir(), "prgenie-gate-bind-push-"));
   try {
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
@@ -1353,7 +1353,7 @@ test("RAD-188 R2 / RAD-190 loop-only scope: a loop agent's publish denies before
   }
 });
 
-test("RAD-163: steward-bound primary gates a lowercase-drive cwd", async () => {
+test("steward-bound primary gates a lowercase-drive cwd", async () => {
   const repo = await mkdtemp(path.join(tmpdir(), "prgenie-gate-steward-"));
   try {
     execFileSync("git", ["init", "-b", "main"], { cwd: repo });
@@ -1408,7 +1408,7 @@ test("RAD-163: steward-bound primary gates a lowercase-drive cwd", async () => {
   }
 });
 
-// RAD-190 R1: every wrapper form an agent shell could use to reach the human-only CLI.
+//  R1: every wrapper form an agent shell could use to reach the human-only CLI.
 const PRGENIE_CLI_WRAPPERS: readonly ((cli: string) => string)[] = [
   (c) => `prgenie ${c}`,
   (c) => `prgenie.cmd ${c}`,
@@ -1482,10 +1482,10 @@ const PRGENIE_HUMAN_ONLY_CLI = [
   ["export lp-deadbeef --verbose", "export"],
   ["gh use alice", "gh use"],
   ["github use alice", "gh use"],
-  ["export-gate-override lp-deadbeef --who brett --why flaky", "export-gate-override"],
+  ["export-gate-override lp-deadbeef --who contributor --why flaky", "export-gate-override"],
 ] as const;
 
-test("RAD-190 R1: prgenieCliHumanOnlyCommand sees every wrapper form", () => {
+test("R1: prgenieCliHumanOnlyCommand sees every wrapper form", () => {
   for (const wrap of PRGENIE_CLI_WRAPPERS) {
     for (const [cli, sub] of PRGENIE_HUMAN_ONLY_CLI) {
       const command = wrap(cli);
@@ -1525,7 +1525,7 @@ test("RAD-190 R1: prgenieCliHumanOnlyCommand sees every wrapper form", () => {
   }
 });
 
-test("RAD-190 R1: built gate denies each wrapper form of prgenie export / gh use / export-gate-override", () => {
+test("R1: built gate denies each wrapper form of prgenie export / gh use / export-gate-override", () => {
   for (const wrap of PRGENIE_CLI_WRAPPERS) {
     for (const [cli, sub] of PRGENIE_HUMAN_ONLY_CLI.filter((_, k) => k !== 1 && k !== 3)) {
       const command = wrap(cli);
@@ -1552,7 +1552,7 @@ test("RAD-190 R1: built gate denies each wrapper form of prgenie export / gh use
   }
 });
 
-test("RAD-190 R2: read-only prgenie CLI subcommands stay allow", () => {
+test("R2: read-only prgenie CLI subcommands stay allow", () => {
   for (const command of [
     "prgenie ci lp-x",
     "prgenie doctor",
@@ -1574,7 +1574,7 @@ test("RAD-190 R2: read-only prgenie CLI subcommands stay allow", () => {
   }
 });
 
-test("RAD-190 R3: git push --help / -h are allow; real pushes still deny", () => {
+test("R3: git push --help / -h are allow; real pushes still deny", () => {
   for (const command of ["git push --help", "git push -h", "git.exe push --help"]) {
     assert.equal(isPublish(command), false, command);
     for (const cwd of [tmpdir(), loopFixtureCwd]) {
@@ -1626,7 +1626,7 @@ const MCP_INPUT_VARIANTS: readonly unknown[] = [
   null,
 ];
 
-test("RAD-190 R5: with the flag off, no MCP gate path returns ask", () => {
+test("R5: with the flag off, no MCP gate path returns ask", () => {
   const saved = process.env.PRGENIE_GITHUB_GATE_ASK;
   delete process.env.PRGENIE_GITHUB_GATE_ASK;
   try {
@@ -1664,7 +1664,7 @@ test("RAD-190 R5: with the flag off, no MCP gate path returns ask", () => {
   }
 });
 
-test("RAD-190 R5: with the flag off, no shell / stdin gate path returns ask", async () => {
+test("R5: with the flag off, no shell / stdin gate path returns ask", async () => {
   const shellCases: { command: string; cwd: string }[] = [];
   for (const cwd of [tmpdir(), loopFixtureCwd]) {
     for (const command of [
@@ -1705,7 +1705,7 @@ test("RAD-190 R5: with the flag off, no shell / stdin gate path returns ask", as
   });
 });
 
-test("RAD-190 R5: the human-set flag still restores ask for the new denies", async () => {
+test("R5: the human-set flag still restores ask for the new denies", async () => {
   const ask = { PRGENIE_GITHUB_GATE_ASK: "1" };
   const mcp = (tool_name: string, tool_input: unknown) =>
     runGate({ mcp_server_name: "PR Genie", tool_name, tool_input }, { env: ask }).permission;
@@ -1726,7 +1726,7 @@ test("RAD-190 R5: the human-set flag still restores ask for the new denies", asy
   });
 });
 
-test("RAD-190 R1 round 2: a run-time prgenie subcommand denies and says so", () => {
+test("R1 round 2: a run-time prgenie subcommand denies and says so", () => {
   for (const command of [
     "prgenie $SUB lp-1",
     'pnpm prgenie "$SUB" lp-1',
@@ -1739,7 +1739,7 @@ test("RAD-190 R1 round 2: a run-time prgenie subcommand denies and says so", () 
   }
 });
 
-test("RAD-190 R5/R6 round 2: record_export_gate_override deny names the human CLI", () => {
+test("R5/R6 round 2: record_export_gate_override deny names the human CLI", () => {
   const parsed = runGate({
     mcp_server_name: "PR Genie",
     tool_name: "record_export_gate_override",
@@ -1752,7 +1752,7 @@ test("RAD-190 R5/R6 round 2: record_export_gate_override deny names the human CL
   );
 });
 
-test("RAD-190 R3 round 2: a -h flag value is not help, so those pushes deny", () => {
+test("R3 round 2: a -h flag value is not help, so those pushes deny", () => {
   for (const command of [
     "git push -o -h origin main",
     "git push --push-option -h origin feat/x",
@@ -1764,13 +1764,13 @@ test("RAD-190 R3 round 2: a -h flag value is not help, so those pushes deny", ()
     "git push origin --help",
   ]) {
     assert.equal(isPublish(command), true, command);
-    // RAD-190 loop-only scope: the push deny is loop-only, so only the loop worktree denies.
+    //  loop-only scope: the push deny is loop-only, so only the loop worktree denies.
     const cwd = loopFixtureCwd;
     assert.equal(runGate({ command, cwd }, { cwd }).permission, "deny", `${command} @ ${cwd}`);
   }
 });
 
-test("RAD-190 R5 round 2: gate crashes fail closed (deny), ask only with the flag", () => {
+test("R5 round 2: gate crashes fail closed (deny), ask only with the flag", () => {
   const throwing = {
     mcp_server_name: "PR Genie",
     tool_name: "set_status",
@@ -1801,7 +1801,7 @@ test("RAD-190 R5 round 2: gate crashes fail closed (deny), ask only with the fla
   );
 });
 
-test("RAD-190 R6 round 2: every agent-denied MCP tool is gated with no server name", () => {
+test("R6 round 2: every agent-denied MCP tool is gated with no server name", () => {
   for (const name of PRGENIE_MCP_AGENT_DENY_TOOLS) {
     assert.ok(PRGENIE_MCP_GATED_TOOL_NAMES.has(name), name);
   }
@@ -1814,7 +1814,7 @@ test("RAD-190 R6 round 2: every agent-denied MCP tool is gated with no server na
   }
 });
 
-test("RAD-190 R1 round 3: built gate answers 200KB adversarial commands with deny in under 2s", () => {
+test("R1 round 3: built gate answers 200KB adversarial commands with deny in under 2s", () => {
   for (const unit of ["prgenie x ", "npx ", "pnpm ", "Start-Process ", "echo prgenie "]) {
     const command = `true ${unit.repeat(Math.ceil(200_000 / unit.length))}; git push origin main`;
     const started = Date.now();
@@ -1843,7 +1843,7 @@ const START_PROCESS_LAUNCHES = [
   `pwsh -c "Start-Process prgenie -ArgumentList 'export lp-1' -Wait"`,
 ];
 
-test("RAD-190 R1/R4 round 3: Start-Process -ArgumentList launches are parsed and denied", () => {
+test("R1/R4 round 3: Start-Process -ArgumentList launches are parsed and denied", () => {
   for (const command of START_PROCESS_LAUNCHES) {
     assert.equal(prgenieCliHumanOnlyCommand(command), "export", command);
     assert.equal(
@@ -1864,7 +1864,7 @@ test("RAD-190 R1/R4 round 3: Start-Process -ArgumentList launches are parsed and
   }
 });
 
-test("RAD-190 R1 round 3: a data word that is not the program does not hide a launch", () => {
+test("R1 round 3: a data word that is not the program does not hide a launch", () => {
   for (const command of [
     "sudo -u cat prgenie export lp-1",
     "flock /tmp/cat prgenie export lp-1",
@@ -1897,7 +1897,7 @@ test("RAD-190 R1 round 3: a data word that is not the program does not hide a la
   assert.equal(prgenieCliHumanOnlyCommand("prgenie gh --verbose use alice"), null);
 });
 
-test("RAD-190 R5 round 3: add_comment with a non-string body denies", () => {
+test("R5 round 3: add_comment with a non-string body denies", () => {
   assert.equal(mcpHumanConfirmationGate("add_comment", { role: "agent", body: {} }), "invalid");
   assert.equal(mcpHumanConfirmationGate("add_comment", { role: "reviewer", body: 5 }), "invalid");
   assert.equal(mcpHumanConfirmationGate("add_comment", { role: "agent", body: "ok" }), "allow");
@@ -1933,7 +1933,7 @@ const START_PROCESS_UNCAPPED = [
   `Start-Process -Wait -NoNewWindow -Environment @{A='1';B='2'} prgenie -ArgumentList 'export lp-1'`,
 ];
 
-test("RAD-190 R1 round 4: Start-Process is read uncapped and its launch gets the full scan", () => {
+test("R1 round 4: Start-Process is read uncapped and its launch gets the full scan", () => {
   for (const command of START_PROCESS_UNCAPPED) {
     assert.equal(prgenieCliHumanOnlyCommand(command), "export", command.slice(0, 120));
     assert.equal(
@@ -1969,7 +1969,7 @@ test("RAD-190 R1 round 4: Start-Process is read uncapped and its launch gets the
   }
 });
 
-test("RAD-190 R1 round 4: built gate answers 200KB Start-Process commands in under 2s", () => {
+test("R1 round 4: built gate answers 200KB Start-Process commands in under 2s", () => {
   const cases: [string, string][] = [
     ["deny", `Start-Process -Wait -ArgumentList 'export', 'lp-1', ${xs(33_000)} -FilePath prgenie`],
     [
@@ -2000,7 +2000,7 @@ test("RAD-190 R1 round 4: built gate answers 200KB Start-Process commands in und
   }
 });
 
-test("RAD-190 R1 round 4: xargs and plain watch with echo as the program are mentions", () => {
+test("R1 round 4: xargs and plain watch with echo as the program are mentions", () => {
   for (const command of [
     "xargs echo prgenie export",
     "watch echo prgenie export",
@@ -2035,7 +2035,7 @@ const gateAllows = (command: string): void => {
   );
 };
 
-test("RAD-190 R1 round 5: plain watch runs its joined arguments with sh -c; watch -x is a prefix", () => {
+test("R1 round 5: plain watch runs its joined arguments with sh -c; watch -x is a prefix", () => {
   for (const command of [
     "watch -n1 echo x ';' prgenie export lp-1",
     "watch -n 1 echo x '&&' prgenie export lp-1",
@@ -2066,7 +2066,7 @@ test("RAD-190 R1 round 5: plain watch runs its joined arguments with sh -c; watc
   }
 });
 
-test("RAD-190 R1 round 5: Start-Process parameter aliases bind as in PowerShell 7.6", () => {
+test("R1 round 5: Start-Process parameter aliases bind as in PowerShell 7.6", () => {
   for (const command of [
     "Start-Process -RSO o.txt $exe 'export lp-1'",
     "Start-Process -RSE e.txt $exe 'export lp-1'",
@@ -2103,7 +2103,7 @@ test("RAD-190 R1 round 5: Start-Process parameter aliases bind as in PowerShell 
   }
 });
 
-test("RAD-190 R1 round 5: array argument lists and bracketed programs are read", () => {
+test("R1 round 5: array argument lists and bracketed programs are read", () => {
   for (const command of [
     "Start-Process $exe -ArgumentList @('export','lp-1')",
     'Start-Process $exe -ArgumentList @("export";"lp-1")',
@@ -2137,7 +2137,7 @@ test("RAD-190 R1 round 5: array argument lists and bracketed programs are read",
   }
 });
 
-test("RAD-190 R1 round 5: xargs prgenie with no literal subcommand is decided at run time", () => {
+test("R1 round 5: xargs prgenie with no literal subcommand is decided at run time", () => {
   for (const command of [
     "echo export lp-1 | xargs prgenie",
     "xargs -a args.txt prgenie",
@@ -2153,7 +2153,7 @@ test("RAD-190 R1 round 5: xargs prgenie with no literal subcommand is decided at
   }
 });
 
-test("RAD-190 R1 round 5: quoted script args in Start-Process stay under 2s at 200KB", () => {
+test("R1 round 5: quoted script args in Start-Process stay under 2s at 200KB", () => {
   const cases: [string, string][] = [
     ["allow", "Start-Process pwsh -ArgumentList '-c','(a).b; echo x' ".repeat(3_700)],
     [
@@ -2178,7 +2178,7 @@ test("RAD-190 R1 round 5: quoted script args in Start-Process stay under 2s at 2
   }
 });
 
-test("RAD-190 R1 round 5: a check that runs out of budget denies as too complex", () => {
+test("R1 round 5: a check that runs out of budget denies as too complex", () => {
   // The work-unit limit decides, with a generous clock (only a backstop): deterministic.
   const restore = setPrgenieCliBudgetForTests(60_000, 50);
   try {
@@ -2214,7 +2214,7 @@ test("RAD-190 R1 round 5: a check that runs out of budget denies as too complex"
   assert.doesNotMatch(ask.agent_message + ask.user_message, /panel|Open on GitHub/i);
 });
 
-test("RAD-190 R1 round 6: scoped package filters are not splats, so filter builds allow", () => {
+test("R1 round 6: scoped package filters are not splats, so filter builds allow", () => {
   for (const command of [
     "pnpm --filter @prgenie/cli --filter @prgenie/core build",
     "pnpm -F @prgenie/cli -F @prgenie/core test",
@@ -2245,7 +2245,7 @@ test("RAD-190 R1 round 6: scoped package filters are not splats, so filter build
   }
 });
 
-// RAD-190 loop-only scope: git push / gh publish denies are loop-only; PR Genie denies stay global.
+//  loop-only scope: git push / gh publish denies are loop-only; PR Genie denies stay global.
 const RUN_TIME_TARGET_PUBLISHES = [
   "cd $LOOP && git push origin main",
   "git -C $(pwd) push",
@@ -2306,7 +2306,7 @@ function stewardRepoFixture(): string {
   return repo;
 }
 
-test("RAD-190 loop-only scope: a normal agent (not a loop or steward) may git push and publish with gh", () => {
+test("loop-only scope: a normal agent (not a loop or steward) may git push and publish with gh", () => {
   const normal = mkdtempSync(path.join(tmpdir(), "prgenie-loop-only-normal-"));
   try {
     for (const command of LOOP_ONLY_PUBLISH_COMMANDS) {
@@ -2318,7 +2318,7 @@ test("RAD-190 loop-only scope: a normal agent (not a loop or steward) may git pu
   }
 });
 
-test("RAD-190 loop-only scope: loop worktree and active steward still deny git push and gh publish", () => {
+test("loop-only scope: loop worktree and active steward still deny git push and gh publish", () => {
   const steward = stewardRepoFixture();
   try {
     for (const command of LOOP_ONLY_PUBLISH_COMMANDS) {
@@ -2340,7 +2340,7 @@ test("RAD-190 loop-only scope: loop worktree and active steward still deny git p
   }
 });
 
-test("RAD-190 loop-only scope: commands that target a loop from outside it are still loop agents", () => {
+test("loop-only scope: commands that target a loop from outside it are still loop agents", () => {
   const steward = stewardRepoFixture();
   const normal = mkdtempSync(path.join(tmpdir(), "prgenie-loop-only-normal-"));
   try {
@@ -2388,7 +2388,7 @@ test("RAD-190 loop-only scope: commands that target a loop from outside it are s
   }
 });
 
-test("RAD-190 loop-only scope: prgenie export and the other PR Genie denies deny in both contexts", () => {
+test("loop-only scope: prgenie export and the other PR Genie denies deny in both contexts", () => {
   const normal = mkdtempSync(path.join(tmpdir(), "prgenie-loop-only-normal-"));
   try {
     for (const cwd of [normal, loopFixtureCwd]) {
@@ -2417,7 +2417,7 @@ test("RAD-190 loop-only scope: prgenie export and the other PR Genie denies deny
   }
 });
 
-test("RAD-190 loop-only scope: shellCommandPathTargets finds cd and git -C targets", () => {
+test("loop-only scope: shellCommandPathTargets finds cd and git -C targets", () => {
   assert.deepEqual(shellCommandPathTargets("git -C /a push", "/w"), [path.resolve("/a")]);
   const chained = shellCommandPathTargets("cd b && git -C c push", "/w");
   assert.ok(Array.isArray(chained));
@@ -2480,7 +2480,7 @@ function scanTargetForms(dir: string, parent: string, id: string): string[] {
   ];
 }
 
-test("RAD-190 loop-target scan: quoted, escaped, chained and wrapped loop targets deny", () => {
+test("loop-target scan: quoted, escaped, chained and wrapped loop targets deny", () => {
   const forms = [
     ...scanTargetForms(scanLoop, path.dirname(scanLoop), "lp-abcdef12"),
     `git --git-dir=${scanPrimary}/.git/worktrees/lp-abcdef12 push`,
@@ -2509,7 +2509,7 @@ test("RAD-190 loop-target scan: quoted, escaped, chained and wrapped loop target
   }
 });
 
-test("RAD-190 loop-target scan: the same forms aimed at a normal repo allow", () => {
+test("loop-target scan: the same forms aimed at a normal repo allow", () => {
   for (const cwd of [scanPlain, scanPrimary]) {
     for (const command of [
       ...scanTargetForms(scanOther, scanBase, "other"),
@@ -2521,7 +2521,7 @@ test("RAD-190 loop-target scan: the same forms aimed at a normal repo allow", ()
   }
 });
 
-test("RAD-190 loop-target scan: worktreeForGitAdminDir maps .git/worktrees/<id> to the worktree", () => {
+test("loop-target scan: worktreeForGitAdminDir maps .git/worktrees/<id> to the worktree", () => {
   // Windows: the temp dir may be an 8.3 short path while git's gitdir file holds the long one.
   const mapped = worktreeForGitAdminDir(path.join(scanPrimary, ".git", "worktrees", "lp-abcdef12"));
   assert.ok(mapped);
@@ -2541,7 +2541,7 @@ test("RAD-190 loop-target scan: worktreeForGitAdminDir maps .git/worktrees/<id> 
   );
 });
 
-test("RAD-190 loop-target scan: long cd chains answer the global export deny in under 2s", () => {
+test("loop-target scan: long cd chains answer the global export deny in under 2s", () => {
   let chain200k = "";
   for (let i = 0; chain200k.length < 200_000; i++) chain200k += `cd d${i} && `;
   const chain8000 = Array.from({ length: 8000 }, (_, i) => `cd d${i} && `).join("");
@@ -2568,7 +2568,7 @@ test("RAD-190 loop-target scan: long cd chains answer the global export deny in 
   assert.match(String(exportDeny.user_message), /prgenie export/);
 });
 
-test("RAD-190 loop-target scan: symlinks to a loop or its .loops folder deny", () => {
+test("loop-target scan: symlinks to a loop or its .loops folder deny", () => {
   const link = path.join(scanBase, "link");
   const loopsdir = path.join(scanBase, "loopsdir");
   for (const cwd of [scanPlain, scanPrimary]) {
@@ -2592,7 +2592,7 @@ test("RAD-190 loop-target scan: symlinks to a loop or its .loops folder deny", (
   assert.equal(runGate({ command: "git push", cwd: link }, { cwd: link }).permission, "deny");
 });
 
-test("RAD-190 loop-target scan: a cd in a subshell, loop body or scriptblock does not carry", () => {
+test("loop-target scan: a cd in a subshell, loop body or scriptblock does not carry", () => {
   const allows = [
     "for d in packages/*; do (cd $d && pnpm build); done; git push",
     "for d in packages/*; do cd $d && pnpm build; done; git push",
@@ -2621,7 +2621,7 @@ test("RAD-190 loop-target scan: a cd in a subshell, loop body or scriptblock doe
   }
 });
 
-test("RAD-190 loop-target scan: builtin / command cd, HOME and OLDPWD, core.worktree", () => {
+test("loop-target scan: builtin / command cd, HOME and OLDPWD, core.worktree", () => {
   for (const cwd of [scanPlain, scanPrimary]) {
     for (const command of [
       `builtin cd ${scanLoop} && git push`,
@@ -2641,7 +2641,7 @@ test("RAD-190 loop-target scan: builtin / command cd, HOME and OLDPWD, core.work
   }
 });
 
-test("RAD-190 loop-target scan: for / foreach list items are cd targets", () => {
+test("loop-target scan: for / foreach list items are cd targets", () => {
   mkdirSync(path.join(scanPlain, "packages", "a"), { recursive: true });
   mkdirSync(path.join(scanPlain, "packages", "b"), { recursive: true });
   mkdirSync(path.join(scanPrimary, "packages", "a"), { recursive: true });
@@ -2673,7 +2673,7 @@ test("RAD-190 loop-target scan: for / foreach list items are cd targets", () => 
   }
 });
 
-test("RAD-190 loop-target scan: the relative cd chain bound is about 180", () => {
+test("loop-target scan: the relative cd chain bound is about 180", () => {
   const chain = (n: number): string =>
     `${Array.from({ length: n }, (_, i) => `cd d${i}`).join(" && ")} && git push`;
   assert.equal(
@@ -2686,7 +2686,7 @@ test("RAD-190 loop-target scan: the relative cd chain bound is about 180", () =>
   );
 });
 
-test("RAD-190 loop-target scan: nested loops keep list candidates past the outer done", () => {
+test("loop-target scan: nested loops keep list candidates past the outer done", () => {
   const denies = [
     "for a in x; do for d in ../repo.loops/lp-abcdef12; do cd $d; done; done; git push",
     "for a in x; do for b in y; do for d in ../repo.loops/lp-abcdef12; do cd $d; done; done; done; git push",
@@ -2706,7 +2706,7 @@ test("RAD-190 loop-target scan: nested loops keep list candidates past the outer
   }
 });
 
-test("RAD-190 loop-target scan: brace expansion in loop list words", () => {
+test("loop-target scan: brace expansion in loop list words", () => {
   const denies = [
     "for d in ../repo.loops/{x,lp-abcdef12}; do cd $d; done; git push",
     "for d in ../repo.loops/{x,{y,lp-abcdef12}}; do cd $d; done; git push",
@@ -2730,7 +2730,7 @@ test("RAD-190 loop-target scan: brace expansion in loop list words", () => {
   }
 });
 
-test("RAD-190 loop-target scan: a list word starting with { is brace-expanded, not a group", () => {
+test("loop-target scan: a list word starting with { is brace-expanded, not a group", () => {
   const denies = [
     "for d in {x,../repo.loops/lp-abcdef12}; do cd $d; done; git push",
     "for d in x {x,../repo.loops/lp-abcdef12}; do cd $d; done; git push",
@@ -2761,7 +2761,7 @@ test("RAD-190 loop-target scan: a list word starting with { is brace-expanded, n
   }
 });
 
-test("RAD-190 loop-target scan: backtick list words are run-time; cd - / popd restores", () => {
+test("loop-target scan: backtick list words are run-time; cd - / popd restores", () => {
   const denies = [
     "for d in `ls -d ../repo.loops/*`; do cd $d; done; git push",
     "for d in $(ls -d ../repo.loops/*); do cd $d; done; git push",

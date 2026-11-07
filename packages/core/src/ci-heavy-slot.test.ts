@@ -27,17 +27,17 @@ async function tempRepo(): Promise<string> {
   return repo;
 }
 
-describe("RAD-134 heavy slot module", () => {
+describe("heavy slot module", () => {
   after(async () => {
     // per-test cleanup
   });
 
-  it("RAD-134: concurrency defaults to 2 and reads PRGENIE_CI_HEAVY_CONCURRENCY", () => {
+  it("concurrency defaults to 2 and reads PRGENIE_CI_HEAVY_CONCURRENCY", () => {
     assert.equal(heavyTestConcurrency({}), 2);
     assert.equal(heavyTestConcurrency({ PRGENIE_CI_HEAVY_CONCURRENCY: "3" }), 3);
   });
 
-  it("RAD-134: invalid concurrency values fall back to 2 with one warning", () => {
+  it("invalid concurrency values fall back to 2 with one warning", () => {
     const writes: string[] = [];
     const orig = process.stderr.write.bind(process.stderr);
     process.stderr.write = ((chunk, encoding, cb) => {
@@ -58,7 +58,7 @@ describe("RAD-134 heavy slot module", () => {
     }
   });
 
-  it("RAD-134: acquire takes the lowest free slot file with exclusive create", async () => {
+  it("acquire takes the lowest free slot file with exclusive create", async () => {
     const repo = await tempRepo();
     try {
       const dir = await ciHeavySlotDir(repo);
@@ -76,7 +76,7 @@ describe("RAD-134 heavy slot module", () => {
     }
   });
 
-  it("RAD-134: third acquire waits until a slot is released", async () => {
+  it("third acquire waits until a slot is released", async () => {
     const repo = await tempRepo();
     try {
       const h1 = await acquireHeavyTestSlot({
@@ -115,7 +115,7 @@ describe("RAD-134 heavy slot module", () => {
     }
   });
 
-  it("RAD-134: holder heartbeat refreshes heartbeatAt", async () => {
+  it("holder heartbeat refreshes heartbeatAt", async () => {
     const repo = await tempRepo();
     try {
       const dir = await ciHeavySlotDir(repo);
@@ -136,7 +136,7 @@ describe("RAD-134 heavy slot module", () => {
     }
   });
 
-  it("RAD-134: release deletes only the holder's own slot file", async () => {
+  it("release deletes only the holder's own slot file", async () => {
     const repo = await tempRepo();
     try {
       const dir = await ciHeavySlotDir(repo);
@@ -161,7 +161,7 @@ describe("RAD-134 heavy slot module", () => {
     }
   });
 
-  it("RAD-134: dead-pid, old-heartbeat and corrupt slots are recovered", async () => {
+  it("dead-pid, old-heartbeat and corrupt slots are recovered", async () => {
     const repo = await tempRepo();
     try {
       const dir = await ciHeavySlotDir(repo);

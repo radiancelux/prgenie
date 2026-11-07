@@ -1,10 +1,8 @@
-# PR Genie local CLI runner (RAD-315)
+# PR Genie local CLI runner
 
-Standalone **localhost** orchestrator for the implement → PR → review → fix loop using pluggable **AI CLI drivers** (`cursor-agent` default). This package does **not** replace the Cursor plugin steward or extension; it is for workstation dogfood and automation via MCP.
+Standalone **localhost** orchestrator for the implement → PR → review → fix loop using pluggable **AI CLI drivers** (`cursor-agent` default). This package does **not** replace the Cursor plugin steward or extension; it is for workstation local development and automation via MCP.
 
 See **`docs/drivers.md`** for the driver adapter contract and built-in drivers.
-
-Linear: [RAD-315](https://linear.app/radiancelux/issue/RAD-315/local-cli-runner-cursor-agent-implementreview-loop-mcp-ui-resend)
 
 ## Batch G lessons (cursor-agent)
 
@@ -34,18 +32,18 @@ Binary: `pnpm local-runner --help` (or `node local-runner/dist/runner.cjs`).
 
 ## Config
 
-| Variable                                             | Purpose                                                                                                    |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `PRGENIE_RUNNER_TOKEN`                               | **Required.** Bearer token for MCP + `/api/*`                                                              |
-| `PRGENIE_RUNNER_HOST`                                | Bind address (default `127.0.0.1`; use `0.0.0.0` for same-LAN phones/tablets)                              |
-| `PRGENIE_RUNNER_PORT`                                | HTTP port (default `9473`)                                                                                 |
-| `PRGENIE_RUNNER_DATA_DIR`                            | Job JSON + logs (default `~/.prgenie/local-runner`)                                                        |
-| `PRGENIE_RUNNER_MODEL`                               | Default model (default `composer-2.5`)                                                                     |
-| `PRGENIE_RUNNER_DRY_RUN`                             | `1` — skip real `cursor-agent` / git worktrees (tests & smoke)                                             |
-| `PRGENIE_RUNNER_DEFAULT_REPO_PATH`                   | Optional local path fallback for **code** jobs when Setup has no code default preset                       |
-| `PRGENIE_RUNNER_NOTIFY_EMAIL`                        | Resend notification recipient                                                                              |
-| `PRGENIE_RUNNER_FROM_EMAIL`                          | Resend sender (default `PR Genie Local Runner <runner@radiancelux.tech>`; full `Name <addr>` or bare addr) |
-| `RESEND_API_KEY` or `PRGENIE_RUNNER_RESEND_KEY_FILE` | Resend API key (never logged)                                                                              |
+| Variable                                             | Purpose                                                                                               |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `PRGENIE_RUNNER_TOKEN`                               | **Required.** Bearer token for MCP + `/api/*`                                                         |
+| `PRGENIE_RUNNER_HOST`                                | Bind address (default `127.0.0.1`; use `0.0.0.0` for same-LAN phones/tablets)                         |
+| `PRGENIE_RUNNER_PORT`                                | HTTP port (default `9473`)                                                                            |
+| `PRGENIE_RUNNER_DATA_DIR`                            | Job JSON + logs (default `~/.prgenie/local-runner`)                                                   |
+| `PRGENIE_RUNNER_MODEL`                               | Default model (default `composer-2.5`)                                                                |
+| `PRGENIE_RUNNER_DRY_RUN`                             | `1` — skip real `cursor-agent` / git worktrees (tests & smoke)                                        |
+| `PRGENIE_RUNNER_DEFAULT_REPO_PATH`                   | Optional local path fallback for **code** jobs when Setup has no code default preset                  |
+| `PRGENIE_RUNNER_NOTIFY_EMAIL`                        | Resend notification recipient                                                                         |
+| `PRGENIE_RUNNER_FROM_EMAIL`                          | Resend sender (default `PR Genie Local Runner <runner@example.com>`; full `Name <addr>` or bare addr) |
+| `RESEND_API_KEY` or `PRGENIE_RUNNER_RESEND_KEY_FILE` | Resend API key (never logged)                                                                         |
 
 Worktrees (non-dry-run): `~/.cursor/worktrees/<repo-slug>/<job-id>`.
 
@@ -79,7 +77,7 @@ On startup the runner prints reachable URLs (loopback plus a best-effort LAN IP 
 
 ### MCP tools
 
-- `start_job` — `repoPath` or `remote`, `branch`, `promptFile` (code jobs), optional **`jobType`** / **`profile`** (`docs` | code), optional **`docsTemplate`** (`marketing` | `policy` | `research`), optional `reviewPromptFile`, `fixPromptFile`, `maxRounds`, `model`, optional **`driver`** (id), `dryRun`, optional `ticketUrl` / `linearIssue` (when omitted, the runner parses `RAD-<n>` from the branch name and links Linear)
+- `start_job` — `repoPath` or `remote`, `branch`, `promptFile` (code jobs), optional **`jobType`** / **`profile`** (`docs` | code), optional **`docsTemplate`** (`marketing` | `policy` | `research`), optional `reviewPromptFile`, `fixPromptFile`, `maxRounds`, `model`, optional **`driver`** (id), `dryRun`, optional `ticketUrl` / `linearIssue` (when omitted, the runner parses `issue-<n>` from the branch name)
 - `list_jobs`
 - `get_job` — status + log tail
 - `steer_job` — queue follow-up text for the next agent step
@@ -91,11 +89,11 @@ On startup the runner prints reachable URLs (loopback plus a best-effort LAN IP 
 
 Default **`maxRounds`** = 2 (review/fix cycles). Reviewer must post **one** GitHub issue comment on the PR ending with `VERDICT: APPROVE` or `VERDICT: CHANGES` (built-in default review prompt enforces this). The runner also accepts the same `VERDICT:` line on PR review bodies as a fallback.
 
-### Docs mode (RAD-326)
+### Docs mode
 
 Non-technical **docs** jobs worktree a **user-configured** business/policy repo (Setup presets + default for `docs`, or per-job `repoPath` / `remote` override). They use built-in implement/review prompts (`docsTemplate`: marketing, policy, research) and open **draft Markdown PRs**. GitHub Actions CI is **not** waited on; optional **doc checks** (markdown lint on changed `.md`) show as **Doc checks** on the dashboard. Draft→ready still requires **`VERDICT: APPROVE`** on the current HEAD and doc checks green (or N/A when disabled). No auto-merge.
 
-Configure research/web in Cursor CLI: [`autoAcceptWebSearch`](https://cursor.com/docs/cli/changelog), WebFetch [`permissions.allow`](https://cursor.com/docs/cli/reference/permissions), headless [`--force`](https://cursor.com/docs/cli/using). Example preset name only (never hardcoded): `cc-consulting-nv/img-business`.
+Configure research/web in Cursor CLI: [`autoAcceptWebSearch`](https://cursor.com/docs/cli/changelog), WebFetch [`permissions.allow`](https://cursor.com/docs/cli/reference/permissions), headless [`--force`](https://cursor.com/docs/cli/using). Configure docs repo presets on the Setup screen (org/repo slug only in settings — never hardcode private paths in prompts).
 
 MCP callers share the runner host owner's compute, Cursor login, and `gh` identity unless they run a separate runner + token.
 
@@ -103,7 +101,7 @@ MCP callers share the runner host owner's compute, Cursor login, and `gh` identi
 
 Default implement prompt requires **`gh pr create --draft`**. After **`VERDICT: APPROVE`** on the current HEAD and **green CI** for that same HEAD, the runner runs **`gh pr ready`** once (stays draft if CI is pending/failed or head moves). Dashboard shows **Draft** vs **Ready** from GitHub `isDraft`. No auto-merge.
 
-The jobs table shows **Ticket** (Linear), **PR**, **Ready** (draft/ready), **Status** (CI), **Model**, **Tokens** (summed from cursor-agent `stream-json` usage in the job log), and **Updated**. On narrow screens (~390px) rows become cards. The job detail view shows a **Cursor-style agent transcript** (stream-json), optional raw log toggle, and a **Steer** box that queues follow-up text via the same bearer-protected API as MCP `steer_job`. **Email notifications** and runner defaults live on the **Setup** screen; settings persist in `$PRGENIE_RUNNER_DATA_DIR/settings.json` (legacy `notify-settings.json` migrates on first load). The Resend API key is never shown in the UI — only `RESEND_API_KEY` / `PRGENIE_RUNNER_RESEND_KEY_FILE` on the server. When the dashboard recipient is empty, notify email falls back to `PRGENIE_RUNNER_NOTIFY_EMAIL`. While a job has a PR, the runner polls CI on a modest interval during active stages and until checks settle on terminal jobs. It prefers **`origin pr checks`** when the Origin CLI is authenticated; otherwise it falls back to GitHub **`gh pr view --json statusCheckRollup`**. The CI badge includes the source (`origin` or `github`).
+The jobs table shows **Ticket** (issue id), **PR**, **Ready** (draft/ready), **Status** (CI), **Model**, **Tokens** (summed from cursor-agent `stream-json` usage in the job log), and **Updated**. On narrow screens (~390px) rows become cards. The job detail view shows a **Cursor-style agent transcript** (stream-json), optional raw log toggle, and a **Steer** box that queues follow-up text via the same bearer-protected API as MCP `steer_job`. **Email notifications** and runner defaults live on the **Setup** screen; settings persist in `$PRGENIE_RUNNER_DATA_DIR/settings.json` (legacy `notify-settings.json` migrates on first load). The Resend API key is never shown in the UI — only `RESEND_API_KEY` / `PRGENIE_RUNNER_RESEND_KEY_FILE` on the server. When the dashboard recipient is empty, notify email falls back to `PRGENIE_RUNNER_NOTIFY_EMAIL`. While a job has a PR, the runner polls CI on a modest interval during active stages and until checks settle on terminal jobs. It prefers **`origin pr checks`** when the Origin CLI is authenticated; otherwise it falls back to GitHub **`gh pr view --json statusCheckRollup`**. The CI badge includes the source (`origin` or `github`).
 
 Authenticated API: `GET` / `PATCH /api/settings`, `GET` / `PUT /api/notify-settings` (legacy) with bearer token (same as other `/api/*` routes).
 
@@ -128,7 +126,7 @@ MCP `start_job`:
 }
 ```
 
-## Dogfood / smoke (no CI)
+## local development / smoke (no CI)
 
 Dry-run loop without network email or real agents:
 
@@ -138,7 +136,7 @@ pnpm build
 node local-runner/scripts/smoke-dry-run.mjs
 ```
 
-Real dogfood: use a ticket prompt file, local `repoPath`, valid `gh auth`, and Resend env vars; watch the UI stage and PR link.
+Real local development: use a ticket prompt file, local `repoPath`, valid `gh auth`, and Resend env vars; watch the UI stage and PR link.
 
 ## Resend
 

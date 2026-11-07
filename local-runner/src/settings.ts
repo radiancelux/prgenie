@@ -31,7 +31,7 @@ export type RunnerSettings = {
   /** Display-only hint; server may still bind from env. */
   hostBindHint: string | null;
   drivers: DriverEntry[];
-  /** Reserved for RAD-326 docs presets — opaque bag. */
+  /** Reserved for docs presets — opaque bag. */
   jobTypes: Record<string, unknown>;
   presets: Record<string, unknown>;
 };

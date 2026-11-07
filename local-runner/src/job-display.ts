@@ -25,10 +25,10 @@ export function firstMarkdownHeading(content: string): string | null {
   return null;
 }
 
-/** Drop a leading `RAD-n:` / `RAD-n —` prefix (and explicit issue id when provided). */
+/** Drop a leading `ISSUE-n:` / `ISSUE-n —` prefix (and explicit issue id when provided). */
 export function stripRadIssuePrefix(heading: string, linearIssue?: string | null): string {
   let t = heading.trim();
-  t = t.replace(/^RAD-\d+\s*[:\u2014\u2013-]\s*/i, "");
+  t = t.replace(/^(?:ISSUE|RAD)-\d+\s*[:\u2014\u2013-]\s*/i, "");
   const issue = linearIssue?.trim();
   if (issue) {
     const esc = issue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

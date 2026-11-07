@@ -87,15 +87,15 @@ If the current branch's local PR is `changes_requested`:
 
 ## Requesting review
 
-You are the agent **on the worktree** (implementor). While coding: after each substantive edit batch, run **targeted** lint/format/type (or scoped `run_ci`) on touched paths before declaring done. Forbid implement-everything then one full `pnpm lint` / `pnpm test` / `eslint .` surprise when a scoped command exists. **Scoped only** (RAD-119): if mapping cannot be confident, `run_ci` skips with a printable reason — skip or manually run touched-package tests; never escalate to full suite. On CI fail, fix to existing project rules (no disable-eslint / widen-ignores unless the ticket says so).
+You are the agent **on the worktree** (implementor). While coding: after each substantive edit batch, run **targeted** lint/format/type (or scoped `run_ci`) on touched paths before declaring done. Forbid implement-everything then one full `pnpm lint` / `pnpm test` / `eslint .` surprise when a scoped command exists. **Scoped only** (): if mapping cannot be confident, `run_ci` skips with a printable reason — skip or manually run touched-package tests; never escalate to full suite. On CI fail, fix to existing project rules (no disable-eslint / widen-ignores unless the ticket says so).
 
 On completion:
 
 1. Loop exists, `body` is a real summary, HEAD matches the work.
-2. Run MCP `run_ci` `{ id }` or `prgenie ci <id>` (path-scoped checks from the loop diff — `docs/ci-checks.md`). **Print** `{ checks, reason }` from the result. Prefer fix-before-ready over discover-via-gate. When mapping is confident, **forbid** substituting whole-repo `pnpm test`; use the selected scoped cmds only. When `skipped` / empty `checks`, **forbid** full suite — use the printed skip reason or manual touched-package tests only. On host repos, trust path-scoped `eslint …` / turbo `--filter` from the progress card — do not escalate to `eslint .`. Fail-fast stops after the first package suite fail. Skip only if the toolchain cannot run — say so in the Review requested comment — or when a human gives an **explicit skip reason** (RAD-97), or when selection itself skipped with a reason.
-3. **On red CI (RAD-121):** print `{ checks, reason }`, open the failing log (progress card / `.git/agent-console/ci-logs/<check>.log`), fix the named assertion or file, then re-run **only that file** (or that **one** check name) once per edit. **Do not** relaunch the multi-check scoped plan after a known failure. **Do not** overlap `run_ci` copies. Still format the files you edited — the ban is full-suite / plan relaunch, not `format:check` on the diff. Wrong-vs-right: `docs/ci-checks.md` (Red CI retry).
+2. Run MCP `run_ci` `{ id }` or `prgenie ci <id>` (path-scoped checks from the loop diff — `docs/ci-checks.md`). **Print** `{ checks, reason }` from the result. Prefer fix-before-ready over discover-via-gate. When mapping is confident, **forbid** substituting whole-repo `pnpm test`; use the selected scoped cmds only. When `skipped` / empty `checks`, **forbid** full suite — use the printed skip reason or manual touched-package tests only. On host repos, trust path-scoped `eslint …` / turbo `--filter` from the progress card — do not escalate to `eslint .`. Fail-fast stops after the first package suite fail. Skip only if the toolchain cannot run — say so in the Review requested comment — or when a human gives an **explicit skip reason** (), or when selection itself skipped with a reason.
+3. **On red CI ():** print `{ checks, reason }`, open the failing log (progress card / `.git/agent-console/ci-logs/<check>.log`), fix the named assertion or file, then re-run **only that file** (or that **one** check name) once per edit. **Do not** relaunch the multi-check scoped plan after a known failure. **Do not** overlap `run_ci` copies. Still format the files you edited — the ban is full-suite / plan relaunch, not `format:check` on the diff. Wrong-vs-right: `docs/ci-checks.md` (Red CI retry).
 4. On CI-resume (export gate blocked): re-run at least the failing check(s) (`prgenie ci <id> --failing lint,test`) — not a fresh full scoped plan — and only return when they pass. Same red-CI file/check unit of retry as above.
-5. `set_status` `ready` (soft-blocked until green `run_ci` / recorded skip — RAD-97).
+5. `set_status` `ready` (soft-blocked until green `run_ci` / recorded skip — ).
 6. `add_comment` `role=agent`: `Review requested.` (single root per SHA).
 7. **Stop.** If a **steward** (`/steward`) is driving this loop, it will Task the reviewer. Do not start listen. Do not review this loop yourself.
 8. When review is done, status is `changes_requested` (findings) or `reviewed` (review cleared — steward runs the export gate). Treat `pendingComments` as the brief only after `changes_requested`. Do not wait for a DM; the loop is the channel. Do not start on comments while the loop is still `ready`. Do not say ready-for-human until `handoff_human`.
@@ -103,7 +103,7 @@ On completion:
 
 `/export` is the developer cutting the GitHub PR at origin.
 
-### Export gate skip carry-over (RAD-144)
+### Export gate skip carry-over ()
 
 Skips recorded at ready (`readyCi` on the loop — per-check `checkSkips` or whole-plan skip) carry into the export gate at the **same HEAD**. The gate shows `skipped (ready: <reason>)` and does **not** re-run those checks.
 
@@ -111,7 +111,7 @@ Name the checks on a human skip: MCP `set_status` `ciSkipChecks`, CLI `prgenie r
 
 Export is **refused** while the gate is **blocked** unless `exportGateOverride` (`who`, `why`) is on the packet **and** the loop body names who, why, and each skipped check. A plain check name in the body does not count — use a backticked name (`` `test:core` ``) or a `Skipped checks:` line (or that check's blocked CI message). No silent validation skip.
 
-Re-export updates an existing GitHub PR title/body from the packet (`gh pr edit --body-file`, RAD-150). Body-update failure reports as partial failure.
+Re-export updates an existing GitHub PR title/body from the packet (`gh pr edit --body-file`, ). Body-update failure reports as partial failure.
 
 ## Worktrees
 
@@ -119,7 +119,7 @@ Each loop has a **feature branch** for export (never `main`/`master`) and an exc
 
 **After create:** Switch / open `worktreePath` before any edits. All commits and CI run there. Never implement in the primary folder when a loop worktree exists. `prgenie worktree <id>` / MCP `ensure_worktree` only creates the checkout — they do not open the editor.
 
-`create_local_pr` / `prgenie doctor` refuse or warn when primary has dirty **tracked** plugin build artifacts (`packages/plugin/hooks|mcp/*.cjs`). After the RAD-113 migration those paths are gitignored — if you still see tracked dirt, stash/`git restore` or rebase off a pre-migration branch. Doctor `plugin-bundles` fails when generated bundles are missing or stale versus sources (`pnpm build`).
+`create_local_pr` / `prgenie doctor` refuse or warn when primary has dirty **tracked** plugin build artifacts (`packages/plugin/hooks|mcp/*.cjs`). After the migration those paths are gitignored — if you still see tracked dirt, stash/`git restore` or rebase off a pre-migration branch. Doctor `plugin-bundles` fails when generated bundles are missing or stale versus sources (`pnpm build`).
 
 Do not delete worktrees unless the user asks. Do not create extras beyond the one per loop. After **export**, PR Genie checks the main workspace off the loop branch (onto the loop base) and removes the sibling `../<repo>.loops/<id>` checkout. The primary repo folder is never deleted. If this window is still on the extra worktree, reopen the primary folder — the sidebar does that, then the extra checkout is cleared.
 

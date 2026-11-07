@@ -14,7 +14,7 @@ import {
   withMcpProgress,
 } from "./mcp-progress.js";
 
-test("RAD-100: heavy tools include the five timeout offenders + CI siblings", () => {
+test("heavy tools include the five timeout offenders + CI siblings", () => {
   for (const name of [
     "list_local_prs",
     "get_local_pr",
@@ -46,7 +46,7 @@ test("assertMcpCiPlanNotFullSuite refuses DEFAULT_CI_CHECKS without scoped stamp
         checks: ["format:check", "lint", "typecheck", "test", "build"],
         reason: ["uncertain → full suite"],
       }),
-    /RAD-100|RAD-119|full-suite/,
+    /refusing full-suite|full-suite CI plan/i,
   );
   assert.doesNotThrow(() =>
     assertMcpCiPlanNotFullSuite({
@@ -56,7 +56,7 @@ test("assertMcpCiPlanNotFullSuite refuses DEFAULT_CI_CHECKS without scoped stamp
   );
 });
 
-test("RAD-128: progressToken present but progress off by default (message still works)", async () => {
+test("progressToken present but progress off by default (message still works)", async () => {
   const methods: string[] = [];
   const messages: string[] = [];
   let fakeNow = 1_000;
@@ -106,7 +106,7 @@ test("RAD-128: progressToken present but progress off by default (message still 
   );
 });
 
-test("RAD-128: opt-in progress mid-flight; stop never sends progress", async () => {
+test("opt-in progress mid-flight; stop never sends progress", async () => {
   const methods: string[] = [];
   const session = startMcpProgressSession({
     notify: (method) => methods.push(method),

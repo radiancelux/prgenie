@@ -24,10 +24,10 @@ export interface ShepherdResult {
   reasons: ShepherdBlockReason[];
   ciPlan?: CiCheckSelection;
   ciChecks?: CiCheckResult[];
-  /** Path local CI ran in (RAD-112). */
+  /** Path local CI ran in (). */
   ciCwd?: string;
   /**
-   * CI toolchain/setup problem (RAD-92). Soft-surfaced — does not hard-block export by default.
+   * CI toolchain/setup problem . Soft-surfaced — does not hard-block export by default.
    * Product CI fails still appear in `reasons` with check `ci`.
    */
   ciEnvUnhealthy?: ShepherdCiEnvUnhealthy;
@@ -38,7 +38,7 @@ export interface ShepherdOptions {
   skipGithubCheck?: boolean;
   /** For testing: skip CI checks */
   skipCiCheck?: boolean;
-  /** Live progress for CLI / sidebar (RAD-73). */
+  /** Live progress for CLI / sidebar (). */
   onProgress?: ProgressCallback;
   signal?: AbortSignal;
   /** Override smart-CI path list (tests). */
@@ -49,7 +49,7 @@ export interface ShepherdOptions {
   parallel?: boolean;
   /**
    * When true, treat CI env unhealthy as a hard export block (opt-in).
-   * Default false — only product CI fails hard-block (RAD-92).
+   * Default false — only product CI fails hard-block .
    */
   hardBlockCiEnv?: boolean;
   /** Skip worktree node_modules junction (unit fixtures with exit-script package.json). */
@@ -177,7 +177,7 @@ export async function shepherdStatus(
       ciCwd = resolvedCwd;
       const paths = options.changedPaths ?? (await changedPathsForCi(resolvedCwd, id));
       // Caller-forced selection (tests / resume) wins — never re-select and empty a real plan.
-      // RAD-123: otherwise prefer worktree selectCiChecks when the loop edits CI selection
+      // : otherwise prefer worktree selectCiChecks when the loop edits CI selection
       // (or when the installed plugin plan diverges from the worktree module).
       let selection: typeof options.selection;
       if (options.selection) {
@@ -203,7 +203,7 @@ export async function shepherdStatus(
       // Caller-forced `options.selection` is allowed for unit fixtures only.
       if (!options.selection && looksLikeStaleFullSuitePlan(selection)) {
         throw new Error(
-          `Refusing stale full-suite CI plan (RAD-123): checks=${JSON.stringify(selection.checks)} ` +
+          `Refusing stale full-suite CI plan: checks=${JSON.stringify(selection.checks)} ` +
             `reason=${JSON.stringify(selection.reason)}. Shepherd must use worktree selectCiChecks ` +
             `(scoped packages — never root pnpm test).`,
         );
@@ -220,14 +220,14 @@ export async function shepherdStatus(
       if (selection.checks.length === 0 && paths.length > 0) {
         reasons.push({
           check: "ci",
-          message: `CI check failed: ci-plan — local CI plan is empty for ${paths.length} changed path(s); fail closed (RAD-154)`,
+          message: `CI check failed: ci-plan — local CI plan is empty for ${paths.length} changed path(s); fail closed`,
         });
       }
       if (carryPlan.scopeInvalidated) {
         onProgress?.({
           phase: "ci",
           state: "start",
-          message: "RAD-144: ready skip scope changed — re-running export gate checks",
+          message: "ready skip scope changed — re-running export gate checks",
           cwd: resolvedCwd,
         });
       }
@@ -237,7 +237,7 @@ export async function shepherdStatus(
           phase: "ci",
           state: "skip",
           selectedChecks: checks,
-          selectionReason: "ready skip carry-over (RAD-144)",
+          selectionReason: "ready skip carry-over",
           message: carryPlan.carriedResults
             .map((c) => `${c.name}: ${c.reason ?? "skipped"}`)
             .join("; "),

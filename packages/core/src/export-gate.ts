@@ -52,7 +52,7 @@ function skippedCheckSectionNames(body: string): Set<string> {
 /**
  * Body documents one blocked CI reason when it quotes the blocked message,
  * wraps the check name in backticks, or lists it under `Skipped checks:`.
- * A bare substring (`lint`, `test`) is not enough (RAD-144).
+ * A bare substring (`lint`, `test`) is not enough .
  */
 function bodyDocumentsBlockedCi(body: string, reason: ExportGateReason): boolean {
   const message = reason.message.trim();
@@ -82,7 +82,7 @@ export function exportGateOverrideDocumented(
   return ciReasons.every((reason) => bodyDocumentsBlockedCi(body, reason));
 }
 
-/** Override bypasses CI blocks only — not review, preflight, or GitHub (RAD-144). */
+/** Override bypasses CI blocks only — not review, preflight, or GitHub (). */
 export function exportGateOverrideAllowsBlockedExport(
   pr: Pick<LocalPr, "body" | "exportGateOverride" | "headSha">,
   shepherd: Pick<ShepherdResult, "reasons">,
@@ -112,7 +112,7 @@ export interface HumanExportUi {
 }
 
 /**
- * RAD-72 label pair (keep these in lockstep in UI + CLI):
+ *  label pair (keep these in lockstep in UI + CLI):
  * - status / pill / helper: Push to origin
  * - primary action (detail CTA, confirm, first-enter popup): Open on GitHub
  */
@@ -267,8 +267,8 @@ export function exportGateForHead(
 }
 
 /**
- * True when a stored export-gate CI plan is the pre-RAD-119 / stale-plugin root
- * suite (root `test`/`build` or classic reason). Peer replay must not reuse it (RAD-123).
+ * True when a stored export-gate CI plan is the pre- / stale-plugin root
+ * suite (root `test`/`build` or classic reason). Peer replay must not reuse it .
  */
 export function exportGateHasStaleFullSuiteCiPlan(
   gate: ExportGateSnapshot | null | undefined,
@@ -282,7 +282,7 @@ export function exportGateHasStaleFullSuiteCiPlan(
 
 /**
  * Complete ready/blocked snapshot for this HEAD that is safe to adopt (not a
- * stale full-suite dogfood plan).
+ * stale full-suite local development plan).
  */
 export function exportGateSnapshotIsAdoptable(
   snap: ExportGateSnapshot | null | undefined,
@@ -305,7 +305,7 @@ export function needsExportGateEvaluation(pr: {
   if (pr.status !== "reviewed") return false;
   const gate = exportGateForHead(pr);
   if (!gate || gate.status === "pending") return true;
-  // Stale full-suite snapshot must be re-run with worktree selectCiChecks (RAD-123).
+  // Stale full-suite snapshot must be re-run with worktree selectCiChecks .
   if (exportGateHasStaleFullSuiteCiPlan(gate)) return true;
   return false;
 }
@@ -329,7 +329,7 @@ export function formatExportBlockLabel(
   reasons: ExportGateReason[],
   gate?: ExportGateSnapshot | null,
 ): string {
-  // RAD-126: stale/refused plans must not label failingCheck as root `test`.
+  // : stale/refused plans must not label failingCheck as root `test`.
   if (exportGateHasStaleFullSuiteCiPlan(gate) || reasonsLookLikeSelectionRefusal(reasons)) {
     return "ci-select";
   }
@@ -342,7 +342,7 @@ export function formatExportBlockLabel(
   return first.check;
 }
 
-/** Messages from refuse-stale / worktree-select paths (RAD-123 / RAD-119 / RAD-126). */
+/** Messages from refuse-stale / worktree-select paths. */
 export function reasonsLookLikeSelectionRefusal(reasons: ExportGateReason[]): boolean {
   return reasons.some((r) =>
     /refusing stale|stale full-suite|worktree select|selectCiChecks|selection.?refus|never root pnpm test/i.test(

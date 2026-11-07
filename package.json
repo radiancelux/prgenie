@@ -4,6 +4,13 @@
   "version": "0.1.2",
   "description": "Local pull requests for agent work. GitHub when you say so.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/radiancelux/prgenie.git"
+  },
+  "bugs": "https://github.com/radiancelux/prgenie/issues",
+  "homepage": "https://github.com/radiancelux/prgenie#readme",
+  "author": "PR Genie contributors",
   "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": ">=22"

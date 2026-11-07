@@ -72,7 +72,7 @@ test("no-remote-pr.mdc distinguishes steward vs implementor and bans listen", ()
   assert.doesNotMatch(rule, /Inbox\/queue listen \(`\/watch-inbox`/);
 });
 
-test("/review skill points at stack-agnostic process bar (RAD-103)", () => {
+test("/review skill points at stack-agnostic process bar", () => {
   const body = skillBody("review");
   const barPath = path.join(skillsRoot, "review", "process-bar.md");
   assert.equal(existsSync(barPath), true);
@@ -93,7 +93,7 @@ test("/review skill points at stack-agnostic process bar (RAD-103)", () => {
   assert.match(steward, /Do \*\*not\*\* paste the process bar/);
 });
 
-test("review process bar requires the reviewer CI backstop (RAD-154)", () => {
+test("review process bar requires the reviewer CI backstop", () => {
   const bar = readFileSync(path.join(skillsRoot, "review", "process-bar.md"), "utf8");
   const reviewSkill = skillBody("review");
   const reviewerAgent = readFileSync(
@@ -122,22 +122,22 @@ test("review process bar requires the reviewer CI backstop (RAD-154)", () => {
   assert.match(bar, /BACKSTOP:/);
 });
 
-test("RAD-134: reviewer backstop full suite runs under ci-slot", () => {
+test("reviewer backstop full suite runs under ci-slot", () => {
   const bar = readFileSync(path.join(skillsRoot, "review", "process-bar.md"), "utf8");
   assert.match(bar, /node packages\/cli\/dist\/prgenie\.cjs ci-slot --check full-suite --/);
   assert.match(bar, /slot: none/);
 });
 
-test("RAD-163: steward skill forbids remote repo creation in EARS specs", () => {
+test("steward skill forbids remote repo creation in EARS specs", () => {
   const steward = skillBody("steward");
   assert.match(steward, /create or delete GitHub repos, orgs/i);
-  assert.match(steward, /RAD-138 R1\/R4/);
+  assert.match(steward, /gh repo create/);
   assert.match(steward, /local temp repos|recorder shim/i);
 });
 
-test("steward skill names PR Genie subagent types (RAD-89)", () => {
+test("steward skill names PR Genie subagent types", () => {
   const steward = skillBody("steward");
-  assert.match(steward, /Model tiers \(RAD-89\)/);
+  assert.match(steward, /Model tiers/);
   assert.match(steward, /prgenie-implementor/);
   assert.match(steward, /prgenie-implementor-strong/);
   assert.match(steward, /prgenie-reviewer/);

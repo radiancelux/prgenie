@@ -71,7 +71,7 @@ function outcomeFromRun(
   return "incomplete";
 }
 
-/** Checks that actually ran green or were intentionally skipped at ready (RAD-162). */
+/** Checks that actually ran green or were intentionally skipped at ready (). */
 export function readyCiExecutedCheckNames(record: ReadyCiRecord): string[] {
   if (record.checkResults?.length) {
     return record.checkResults
@@ -93,7 +93,7 @@ const CI_SKIP_BODY = /^CI skipped:\s*(.+)$/i;
 const CI_SKIP_FIRST_LINE = /^CI skipped:\s*([^\n]+)/i;
 const SKIPPED_CHECKS_LINE = /Skipped checks:\s*([^\n]+)/gi;
 
-/** Parse an explicit "CI skipped: <reason>" body (RAD-97). First line only. */
+/** Parse an explicit "CI skipped: <reason>" body (). First line only. */
 export function parseCiSkipReason(body: string): string | null {
   const match = CI_SKIP_FIRST_LINE.exec(body.trim());
   if (!match) return null;
@@ -184,7 +184,7 @@ export function normalizeReadyCi(raw: unknown): ReadyCiRecord | null {
   };
 }
 
-/** True when readyCi covers this tip as passed or skipped (RAD-97). */
+/** True when readyCi covers this tip as passed or skipped (). */
 export function isReadyCiSatisfied(
   pr: Pick<LocalPr, "readyCi" | "headSha" | "comments">,
   headSha: string = pr.headSha,
@@ -197,7 +197,7 @@ export function isReadyCiSatisfied(
 }
 
 /**
- * Tip-scoped skip reason from an agent comment (RAD-97).
+ * Tip-scoped skip reason from an agent comment .
  * Only comments stamped with forSha === headSha count — unscoped/legacy skips do not.
  */
 export function tipScopedCiSkipReason(
@@ -220,7 +220,7 @@ export function readyCiBlockMessage(pr: Pick<LocalPr, "id" | "headSha" | "readyC
     ? ` Last readyCi was ${prior.outcome} for ${prior.headSha.slice(0, 8)}.`
     : "";
   return (
-    `Ready blocked (RAD-97): run_ci must be green for HEAD ${tip}, or record an explicit ` +
+    `Ready blocked: run_ci must be green for HEAD ${tip}, or record an explicit ` +
     `"CI skipped: <reason>" on the loop (set_status ready with ciSkipReason, or a comment).` +
     priorNote
   );
@@ -302,7 +302,7 @@ export function readyCiFromSkipReason(
 }
 
 /**
- * Upsert a single "Review requested." root for this SHA (RAD-97).
+ * Upsert a single "Review requested." root for this SHA .
  * Mutates pr.comments. Pass newCommentId when a fresh root must be created.
  * Returns true when a new comment was added, false when an existing one was reused.
  */

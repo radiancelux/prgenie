@@ -2,6 +2,14 @@
   "name": "@prgenie/cli",
   "version": "0.1.2",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/radiancelux/prgenie.git",
+    "directory": "packages/cli"
+  },
+  "bugs": "https://github.com/radiancelux/prgenie/issues",
+  "homepage": "https://github.com/radiancelux/prgenie#readme",
+  "author": "PR Genie contributors",
   "type": "module",
   "bin": {
     "prgenie": "./dist/prgenie.cjs"

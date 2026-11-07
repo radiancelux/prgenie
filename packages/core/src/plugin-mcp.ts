@@ -8,8 +8,8 @@ export const PRGENIE_MCP_NAME = "prgenie";
 /**
  * Per-server `timeout` for mcp.json (seconds). Hosts that honor it (Cursor
  * community field) should allow git+CI tools up to the package-test CI wall
- * (~40m for `test:core` globs on Windows, RAD-133) instead of dying with
- * `-32001 Request timed out` (RAD-100).
+ * (~40m for `test:core` globs on Windows, ) instead of dying with
+ * `-32001 Request timed out` .
  */
 export const MCP_SERVER_TIMEOUT_SEC =
   (CI_PACKAGE_TEST_TIMEOUT_MS + CI_HEAVY_SLOT_MAX_WAIT_MS) / 1000;
@@ -22,7 +22,7 @@ export type McpServerEntry = {
   env?: Record<string, string>;
   /**
    * Per-server tools/call timeout hint for hosts that honor it (Cursor community:
-   * seconds). RAD-100 pins {@link MCP_SERVER_TIMEOUT_SEC}.
+   * seconds).  pins {@link MCP_SERVER_TIMEOUT_SEC}.
    */
   timeout?: number;
 };

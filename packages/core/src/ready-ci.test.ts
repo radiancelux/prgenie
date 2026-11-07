@@ -13,7 +13,7 @@ import { formatSessionReconcileDigest, rowForLoop } from "./session-reconcile.js
 import { decideStewardAction } from "./steward.js";
 import type { LocalPr } from "./types.js";
 
-describe("RAD-97 ready CI / review interrupt", { concurrency: 1 }, () => {
+describe("ready CI / review interrupt", { concurrency: 1 }, () => {
   test("parseCiSkipReason and formatCiSkipBody", () => {
     assert.equal(parseCiSkipReason("CI skipped: toolchain missing"), "toolchain missing");
     assert.equal(parseCiSkipReason("Review requested."), null);
@@ -30,7 +30,7 @@ describe("RAD-97 ready CI / review interrupt", { concurrency: 1 }, () => {
     } as unknown as LocalPr;
     assert.equal(isReadyCiSatisfied(pr, "aaa"), false);
     assert.equal(isReadyCiSatisfied(pr, "bbb"), true);
-    assert.match(readyCiBlockMessage(pr), /Ready blocked \(RAD-97\)/);
+    assert.match(readyCiBlockMessage(pr), /Ready blocked: run_ci/);
   });
 
   test("passed readyCi satisfies tip", () => {
@@ -110,7 +110,7 @@ describe("RAD-97 ready CI / review interrupt", { concurrency: 1 }, () => {
       ],
     } as unknown as LocalPr;
     assert.equal(isReadyCiSatisfied(pr), false);
-    assert.match(readyCiBlockMessage(pr), /Ready blocked \(RAD-97\)/);
+    assert.match(readyCiBlockMessage(pr), /Ready blocked: run_ci/);
   });
 
   test("upsertReviewRequestedComment once per SHA", () => {

@@ -15,7 +15,7 @@ import {
   withGhBodyFile,
 } from "./github-ops.js";
 
-const UNICODE_TITLE = "RAD-138 — ↔ · ≥ 😀";
+const UNICODE_TITLE = "— ↔ · ≥ 😀";
 
 async function writeRecorder(
   dir: string,
@@ -68,27 +68,27 @@ process.exit(0);
   await writeFile(path.join(mockDir, "node.cmd"), `@echo off\r\n"${nodeExe}" %*\r\n`);
 }
 
-test("quoteWindowsShellArg refuses multiline argv (RAD-129)", () => {
+test("quoteWindowsShellArg refuses multiline argv", () => {
   assert.throws(
     () => quoteWindowsShellArg("## Why\n\nfull body"),
-    /multiline argument|RAD-129|--body-file/,
+    /multiline argument||--body-file/,
   );
 });
 
 test("quoteGhArgsForSpawn quotes body-file paths with spaces on win32 only", () => {
-  const args = ["pr", "create", "--title", "RAD-95 Foo Bar", "--body-file", "C:\\tmp\\body.md"];
+  const args = ["pr", "create", "--title", "Foo Bar", "--body-file", "C:\\tmp\\body.md"];
   const quoted = quoteGhArgsForSpawn(args);
   if (process.platform === "win32") {
-    assert.equal(quoted[3], `"RAD-95 Foo Bar"`);
+    assert.equal(quoted[3], `"Foo Bar"`);
     assert.equal(quoted[4], "--body-file");
   } else {
     assert.deepEqual(quoted, args);
   }
 });
 
-test("githubPrCreateArgs uses --body-file not --body (RAD-129)", () => {
+test("githubPrCreateArgs uses --body-file not --body", () => {
   const args = githubPrCreateArgs({
-    title: "RAD-129 fix",
+    title: "fix",
     bodyFile: "C:\\tmp\\body.md",
     base: "main",
     head: "lp-abc",
@@ -97,7 +97,7 @@ test("githubPrCreateArgs uses --body-file not --body (RAD-129)", () => {
     "pr",
     "create",
     "--title",
-    "RAD-129 fix",
+    "fix",
     "--body-file",
     "C:\\tmp\\body.md",
     "--base",
@@ -108,7 +108,7 @@ test("githubPrCreateArgs uses --body-file not --body (RAD-129)", () => {
   assert.equal(args.includes("--body"), false);
 });
 
-test("replaceGhBodyWithFile swaps --body, -b, and --body= for --body-file (RAD-129 / 142-R6)", () => {
+test("replaceGhBodyWithFile swaps --body, -b, and --body= for --body-file (/ 142-R6)", () => {
   assert.deepEqual(replaceGhBodyWithFile(["pr", "create", "--body", "x", "--head", "h"], "f.md"), [
     "pr",
     "create",
@@ -132,7 +132,7 @@ test("replaceGhBodyWithFile swaps --body, -b, and --body= for --body-file (RAD-1
   assert.deepEqual(replaceGhBodyWithFile(["pr", "view"], "f.md"), ["pr", "view"]);
 });
 
-test("runGh rewrites --body to --body-file so full newline/percent body reaches gh (RAD-129)", async () => {
+test("runGh rewrites --body to --body-file so full newline/percent body reaches gh", async () => {
   const percentTemp = `%${"TEMP"}%`;
   const fullBody = `## Why\n\nUses ${percentTemp} and survives newlines.`;
   const mockDir = await mkdtemp(path.join(tmpdir(), "mock-gh-body-rewrite-"));
@@ -140,18 +140,7 @@ test("runGh rewrites --body to --body-file so full newline/percent body reaches 
   const ghExecutable = await writeRecorder(mockDir, capturePath);
   try {
     const result = await runGh(
-      [
-        "pr",
-        "create",
-        "--title",
-        "RAD-129",
-        "--body",
-        fullBody,
-        "--base",
-        "main",
-        "--head",
-        "feat/x",
-      ],
+      ["pr", "create", "--title", "", "--body", fullBody, "--base", "main", "--head", "feat/x"],
       { ghExecutable },
     );
     assert.equal(result.code, 0);
@@ -168,7 +157,7 @@ test("runGh rewrites --body to --body-file so full newline/percent body reaches 
   }
 });
 
-test("withGhBodyFile + runGh delivers full newline and percent body via file path (RAD-129)", async () => {
+test("withGhBodyFile + runGh delivers full newline and percent body via file path", async () => {
   const percentTemp = `%${"TEMP"}%`;
   const fullBody = `## Why\n\nUses ${percentTemp} and survives newlines.`;
   const mockDir = await mkdtemp(path.join(tmpdir(), "mock-gh-body-"));
@@ -178,7 +167,7 @@ test("withGhBodyFile + runGh delivers full newline and percent body via file pat
     const result = await withGhBodyFile(fullBody, (bodyFile) =>
       runGh(
         githubPrCreateArgs({
-          title: "RAD-129",
+          title: "",
           bodyFile,
           base: "main",
           head: "feat/x",
@@ -199,7 +188,7 @@ test("withGhBodyFile + runGh delivers full newline and percent body via file pat
   }
 });
 
-test("withGhBodyFile removes the temp file after success and failure (RAD-129)", async () => {
+test("withGhBodyFile removes the temp file after success and failure", async () => {
   let seenPath: string | null = null;
   await withGhBodyFile("ok", async (bodyFile) => {
     seenPath = bodyFile;
@@ -221,7 +210,7 @@ test("withGhBodyFile removes the temp file after success and failure (RAD-129)",
   await assert.rejects(() => readFile(failPath!, "utf8"));
 });
 
-test("RAD-142: resolveGhExecutable prefers gh.exe, then gh.cmd, then null", async () => {
+test("resolveGhExecutable prefers gh.exe, then gh.cmd, then null", async () => {
   if (process.platform === "win32") {
     const root = await mkdtemp(path.join(tmpdir(), "gh-resolve-"));
     try {
@@ -251,7 +240,7 @@ test("RAD-142: resolveGhExecutable prefers gh.exe, then gh.cmd, then null", asyn
   }
 });
 
-test("RAD-142: escapeCmdArg moves percent outside quotes", () => {
+test("escapeCmdArg moves percent outside quotes", () => {
   assert.equal(escapeCmdArg("pct %USERNAME% end"), '"pct "^%"USERNAME"^%" end"');
   assert.equal(escapeCmdArg("100%"), '"100"^%"');
   assert.equal(escapeCmdArg('a"b'), '"a""b"');
@@ -260,7 +249,7 @@ test("RAD-142: escapeCmdArg moves percent outside quotes", () => {
 });
 
 test(
-  "RAD-142: missing gh rejects with a clear error",
+  "missing gh rejects with a clear error",
   { skip: process.platform !== "win32" ? "Windows-only empty PATH (142-R4)" : false },
   async () => {
     const originalPath = process.env.PATH;
@@ -277,7 +266,7 @@ test(
   },
 );
 
-test("RAD-142: -b, --body and --body= all become --body-file", async () => {
+test("-b, --body and --body= all become --body-file", async () => {
   const mockDir = await mkdtemp(path.join(tmpdir(), "gh-body-forms-"));
   const capturePath = path.join(mockDir, "capture.json");
   const ghExecutable = await writeRecorder(mockDir, capturePath);
@@ -308,7 +297,7 @@ test("RAD-142: -b, --body and --body= all become --body-file", async () => {
   }
 });
 
-test("RAD-142: exe spawn passes %VAR% literally", async () => {
+test("exe spawn passes %VAR% literally", async () => {
   const mockDir = await mkdtemp(path.join(tmpdir(), "gh-exe-pct-"));
   const capturePath = path.join(mockDir, "capture.json");
   const ghExecutable = await writeRecorder(mockDir, capturePath);
@@ -333,7 +322,7 @@ test("RAD-142: exe spawn passes %VAR% literally", async () => {
 });
 
 test(
-  "RAD-142: gh.cmd shim receives %VAR% literally (Windows)",
+  "gh.cmd shim receives %VAR% literally (Windows)",
   { skip: process.platform !== "win32" ? "Windows-only (142-R11)" : false },
   async () => {
     const mockDir = await mkdtemp(path.join(tmpdir(), "gh-cmd-shim-"));
@@ -354,7 +343,7 @@ test(
   },
 );
 
-test("RAD-138: non-ASCII title and body round-trip through gh argv and body file", async () => {
+test("non-ASCII title and body round-trip through gh argv and body file", async () => {
   const mockDir = await mkdtemp(path.join(tmpdir(), "gh-unicode-"));
   const capturePath = path.join(mockDir, "capture.json");
   const ghExecutable = await writeRecorder(mockDir, capturePath);
@@ -387,7 +376,7 @@ test("RAD-138: non-ASCII title and body round-trip through gh argv and body file
   }
 });
 
-test("RAD-138: pr edit keeps non-ASCII title and body", async () => {
+test("pr edit keeps non-ASCII title and body", async () => {
   const mockDir = await mkdtemp(path.join(tmpdir(), "gh-unicode-edit-"));
   const capturePath = path.join(mockDir, "capture.json");
   const ghExecutable = await writeRecorder(mockDir, capturePath);
@@ -412,7 +401,7 @@ test("RAD-138: pr edit keeps non-ASCII title and body", async () => {
 });
 
 test(
-  "RAD-138: gh.cmd shim receives non-ASCII title intact (Windows)",
+  "gh.cmd shim receives non-ASCII title intact (Windows)",
   { skip: process.platform !== "win32" ? "Windows-only (138-R11)" : false },
   async () => {
     const mockDir = await mkdtemp(path.join(tmpdir(), "gh-cmd-unicode-"));

@@ -95,9 +95,9 @@ function fail(id: unknown, code: number, message: string): void {
 }
 
 type HandleToolOptions = {
-  /** Live MCP progress/heartbeat session for git+CI-heavy tools (RAD-100). */
+  /** Live MCP progress/heartbeat session for git+CI-heavy tools (). */
   mcpProgress?: McpProgressSession;
-  /** Client cancel / MCP timeout — aborts in-flight export and CI (RAD-185 R4). */
+  /** Client cancel / MCP timeout — aborts in-flight export and CI (R4). */
   signal?: AbortSignal;
 };
 
@@ -253,7 +253,7 @@ export async function handleTool(
         body: typeof args.body === "string" ? args.body : undefined,
       });
     case "get_local_pr": {
-      // RAD-125: persist tip refresh so headSha matches worktree (invalidate reviewed on move).
+      // : persist tip refresh so headSha matches worktree (invalidate reviewed on move).
       mcpProgress?.report("refreshing local PR head");
       const pr = await refreshLocalPrHead(cwd, String(args.id ?? ""));
       const githubBind = await describeRepoGithubBind(cwd);
@@ -431,7 +431,7 @@ export async function handleTool(
           : Array.isArray(args.failingChecks)
             ? (args.failingChecks as unknown[]).filter((s): s is string => typeof s === "string")
             : [];
-      // Caller-forced full suite via args.checks — refuse at MCP boundary (RAD-100/119).
+      // Caller-forced full suite via args.checks — refuse at MCP boundary .
       if (Array.isArray(args.checks)) {
         const forced = (args.checks as unknown[]).filter((s): s is string => typeof s === "string");
         assertMcpCiPlanNotFullSuite({
@@ -685,7 +685,7 @@ export const tools = [
   {
     name: "set_status",
     description:
-      'Set local PR status: draft, ready, review_interrupted, changes_requested, reviewed, approved. reviewed means the automated reviewer cleared and the steward will run the export gate — not a human handoff. Setting reviewed requires a repo gh bind (RAD-95); returns githubBind. When setting to ready, a pattern preflight check runs automatically; pass skipPreflight=true to bypass. Ready is soft-blocked (RAD-97) until run_ci is green for HEAD or ciSkipReason / a "CI skipped: <reason>" comment is recorded. Before ready, run MCP run_ci / prgenie ci and fix failures in-worktree.',
+      'Set local PR status: draft, ready, review_interrupted, changes_requested, reviewed, approved. reviewed means the automated reviewer cleared and the steward will run the export gate — not a human handoff. Setting reviewed requires a repo gh bind; returns githubBind. When setting to ready, a pattern preflight check runs automatically; pass skipPreflight=true to bypass. Ready is soft-blocked until run_ci is green for HEAD or ciSkipReason / a "CI skipped: <reason>" comment is recorded. Before ready, run MCP run_ci / prgenie ci and fix failures in-worktree.',
     inputSchema: {
       type: "object",
       required: ["id", "status"],
@@ -710,13 +710,13 @@ export const tools = [
         ciSkipReason: {
           type: "string",
           description:
-            'RAD-97: explicit skip reason when toolchain cannot run. Records readyCi as skipped for current HEAD (stored as "CI skipped: <reason>").',
+            'explicit skip reason when toolchain cannot run. Records readyCi as skipped for current HEAD (stored as "CI skipped: <reason>").',
         },
         ciSkipChecks: {
           type: "array",
           items: { type: "string" },
           description:
-            "RAD-144: check names this human skip covers. Recorded as checkSkips and skipScope for the current HEAD. A prior readyCi on a different HEAD is ignored.",
+            "check names this human skip covers. Recorded as checkSkips and skipScope for the current HEAD. A prior readyCi on a different HEAD is ignored.",
         },
         cwd: { type: "string" },
       },
@@ -807,7 +807,7 @@ export const tools = [
   {
     name: "complete_review",
     description:
-      "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed (review cleared; steward runs the export gate) and requires a repo gh bind (RAD-95) — returns githubBind with prompt if unbound. Ready-for-human / Push language only after handoff_human. Resolves remaining addressed comments. Refuses when HEAD moved after Review requested unless allowDrift=true — re-diff and file findings first. Archived loops stay archived. Do not git push.",
+      "Reviewer: end of review. Always call this when finished. Open findings set the loop to changes_requested for the implementor. No open findings sets reviewed (review cleared; steward runs the export gate) and requires a repo gh bind — returns githubBind with prompt if unbound. Ready-for-human / Push language only after handoff_human. Resolves remaining addressed comments. Refuses when HEAD moved after Review requested unless allowDrift=true — re-diff and file findings first. Archived loops stay archived. Do not git push.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -925,7 +925,7 @@ export const tools = [
   {
     name: "export_local_pr",
     description:
-      "Developer command: validate review status and preflight, then git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export. Export is blocked unless the export gate is ready (review complete, preflight clean, gh bound, local CI green). Re-export updates title/body on existing GitHub PRs via gh pr edit --body-file (RAD-150). Blocked export requires exportGateOverride (who/why) on the packet and each skipped check name in the body (RAD-144). Unbound gh fails before CI. On prune/checkout or body-update failure after push, returns partialFailure.",
+      "Developer command: validate review status and preflight, then git push, open a GitHub PR, archive the loop, check the main workspace off the loop branch, and remove the extra .loops worktree. Only when the developer explicitly asks to export. Export is blocked unless the export gate is ready (review complete, preflight clean, gh bound, local CI green). Re-export updates title/body on existing GitHub PRs via gh pr edit --body-file. Blocked export requires exportGateOverride (who/why) on the packet and each skipped check name in the body. Unbound gh fails before CI. On prune/checkout or body-update failure after push, returns partialFailure.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -1045,7 +1045,7 @@ export const tools = [
   {
     name: "mark_review_interrupted",
     description:
-      "RAD-97: mark a ready loop review_interrupted after reviewer auth/host failure. Persists status so steward resumes the same reviewerTaskId without re-brief. Prefer this over leaving the loop ready with a dead Task.",
+      "mark a ready loop review_interrupted after reviewer auth/host failure. Persists status so steward resumes the same reviewerTaskId without re-brief. Prefer this over leaving the loop ready with a dead Task.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -1059,7 +1059,7 @@ export const tools = [
   {
     name: "resume_review",
     description:
-      "RAD-97: one-command resume after review_interrupted → ready. Keeps reviewRequestedSha; steward should resume the same reviewer Task (no re-brief). Returns reconcile row with Task ids.",
+      "one-command resume after review_interrupted → ready. Keeps reviewRequestedSha; steward should resume the same reviewer Task (no re-brief). Returns reconcile row with Task ids.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -1069,7 +1069,7 @@ export const tools = [
   {
     name: "reconcile_session",
     description:
-      "RAD-97 / RAD-88 stuck-Task slice: reconcile live loop status vs steward Task ids (one digest). Omit id for all live loops; pass id for one row. Use on session reconnect.",
+      "/ stuck-Task slice: reconcile live loop status vs steward Task ids (one digest). Omit id for all live loops; pass id for one row. Use on session reconnect.",
     inputSchema: {
       type: "object",
       properties: { id: { type: "string" }, cwd: { type: "string" } },
@@ -1078,7 +1078,7 @@ export const tools = [
   {
     name: "run_ci",
     description:
-      "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; confident package paths → scoped lint/typecheck/unit; unmappable/hard-config → skip with printable reason — never root monorepo pnpm test / full suite). Runs in the loop worktreePath (never a stale Cursor plugin install). Returns allPassed, checks, selection `{ checks[], reason[] }` (print both; empty checks + skipped means intentional skip), cwd (path CI ran in), and a progressCard. Streams MCP progress/heartbeats so long runs do not die with -32001 (RAD-100); refuses stale full-suite plans at the MCP boundary (RAD-119). When selection is confident/packageScoped, do not substitute whole-repo pnpm test. When skipped, do not escalate to full suite — record the reason or run touched-package tests only. Fail-fast stops after the first package suite fail. Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run or selection skipped — say so; do not skip a flaky failure.",
+      "Implementor preflight / CI-resume: run the same smart local CI shepherd will run (path-selected; confident package paths → scoped lint/typecheck/unit; unmappable/hard-config → skip with printable reason — never root monorepo pnpm test / full suite). Runs in the loop worktreePath (never a stale Cursor plugin install). Returns allPassed, checks, selection `{ checks[], reason[] }` (print both; empty checks + skipped means intentional skip), cwd (path CI ran in), and a progressCard. Streams MCP progress/heartbeats so long runs do not die with -32001; refuses stale full-suite plans at the MCP boundary. When selection is confident/packageScoped, do not substitute whole-repo pnpm test. When skipped, do not escalate to full suite — record the reason or run touched-package tests only. Fail-fast stops after the first package suite fail. Fix failures in the worktree before set_status ready or returning from a gate resume. On CI-resume pass failingChecks so those run even if the smart set would omit them. Cancel is abort_ci / loop panel Cancel (shared abort token). Skip only when the toolchain cannot run or selection skipped — say so; do not skip a flaky failure.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -1113,7 +1113,7 @@ export const tools = [
   {
     name: "abort_ci",
     description:
-      "Cancel in-flight implementor preflight or export-gate CI for a loop. Same abort as the loop panel Cancel: bumps the shared abort token under .git/agent-console/ci-abort and stops the in-process gate. For a human/steward CI skip (RAD-112), this is one half of the skip: also stop/interrupt the returned implementorTaskId — abort alone leaves the implementor Task looping. Returns { aborted, implementorTaskId, stewardAction, message }.",
+      "Cancel in-flight implementor preflight or export-gate CI for a loop. Same abort as the loop panel Cancel: bumps the shared abort token under .git/agent-console/ci-abort and stops the in-process gate. For a human/steward CI skip, this is one half of the skip: also stop/interrupt the returned implementorTaskId — abort alone leaves the implementor Task looping. Returns { aborted, implementorTaskId, stewardAction, message }.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -1261,7 +1261,7 @@ async function onRequest(msg: Json, callTool: McpToolHandler = handleTool): Prom
 /**
  * Read MCP JSON-RPC from `input`.
  * `notifications/cancelled` aborts the matching in-flight controller here, in the
- * stdin reader, without waiting for the active `tools/call` to return (RAD-185 R4).
+ * stdin reader, without waiting for the active `tools/call` to return .
  * A stdin `error` aborts every in-flight controller the same way.
  */
 export function attachMcpInput(input: Readable, options?: { handleTool?: McpToolHandler }): void {
