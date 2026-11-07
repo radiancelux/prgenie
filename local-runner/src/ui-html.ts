@@ -72,20 +72,25 @@ export function runnerUiHtml(
     <button type="button" id="startJobBtn" class="primary mt-3 min-h-11 w-full rounded-md border border-sky-700 bg-sky-900/50 px-4 py-2 font-medium text-sky-100 sm:w-auto">Start agent</button>
     <div id="newJobStatus" class="meta mt-1 min-h-5 text-sm text-zinc-400" role="status" aria-live="polite"></div>
   </section>
+  <h2 id="agentsHeading" class="text-base font-semibold">Agents</h2>
   <div class="jobs-toolbar mb-2 flex flex-wrap items-center gap-3 text-sm">
     <label class="toggle-row flex min-h-11 items-center gap-2"><input type="checkbox" id="showAllJobs" class="h-4 w-4" /> Show finished</label>
     <span class="meta text-zinc-500" id="jobsHiddenHint"></span>
+    <span class="meta text-zinc-500" id="jobsSelectHint">Select an agent to open its transcript, steer, and stop controls.</span>
   </div>
-  <div id="jobCards" class="flex flex-col gap-3 md:hidden" role="list" aria-label="Agents"></div>
+  <div id="jobCards" class="flex flex-col gap-3 md:hidden" role="list" aria-labelledby="agentsHeading"></div>
   <div class="hidden overflow-x-auto md:block">
-  <table class="w-full border-collapse text-sm">
+  <table class="w-full border-collapse text-sm" aria-labelledby="agentsHeading">
     <thead class="text-left text-zinc-400"><tr class="border-b border-zinc-800"><th class="p-2">Agent</th><th class="p-2">Repo</th><th class="p-2">Stage</th><th class="p-2">Round</th><th class="p-2">Ticket</th><th class="p-2">PR</th><th class="p-2">Ready</th><th class="p-2">Status</th><th class="p-2">Model</th><th class="p-2">Tokens</th><th class="p-2">Updated</th></tr></thead>
     <tbody id="jobs"></tbody>
   </table>
   </div>
-  <h2 id="detailTitle" class="mt-6 text-base font-semibold">Agent log</h2>
-  <p class="log-placeholder text-sm text-zinc-400" id="logPlaceholder">Select an agent to view its transcript.</p>
-  <div class="detail-chat mt-2 flex flex-col" id="detailChat" style="display:none;">
+  <div id="detailHome" hidden>
+  <section id="jobDetailPanel" class="job-detail flex flex-col rounded-lg border border-sky-900/60 bg-zinc-950/80 p-3 wrap-anywhere" role="region" aria-labelledby="detailTitle">
+    <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <h3 id="detailTitle" class="text-base font-semibold">Agent log</h3>
+      <div id="detailStatus" class="flex flex-wrap items-center gap-2 text-sm text-zinc-400"></div>
+    </div>
     <div id="docFindings" class="doc-findings mb-3 hidden rounded-lg border border-zinc-800 bg-zinc-900/50 p-3" aria-live="polite"></div>
     <div class="log-toolbar flex flex-wrap items-center gap-3 text-sm text-zinc-400">
       <label class="flex min-h-11 items-center gap-2"><input type="checkbox" id="showRaw" class="h-4 w-4" /> Raw log</label>
@@ -104,6 +109,7 @@ export function runnerUiHtml(
       </div>
       <div id="steerStatus" class="mt-1 min-h-5 text-sm text-zinc-400" role="status" aria-live="polite"></div>
     </div>
+  </section>
   </div>
   </main>
   <script>
@@ -259,16 +265,6 @@ export function runnerUiHtml(
       stopBtn.disabled = !selected || TERMINAL_STAGES.has(selectedJobStage || "");
     }
 
-    function updateDetailVisibility() {
-      const hasJob = Boolean(selected);
-      document.getElementById("logPlaceholder").style.display = hasJob ? "none" : "block";
-      document.getElementById("detailChat").style.display = hasJob ? "flex" : "none";
-      if (!hasJob) {
-        document.getElementById("detailTitle").textContent = "Agent log";
-        renderLogTail("");
-      }
-    }
-
     function fmtTokens(u) {
       if (!u) return "—";
       const total = u.total ?? (u.input + u.output + (u.cacheRead||0) + (u.cacheWrite||0));
@@ -328,6 +324,197 @@ export function runnerUiHtml(
       return dashFmt.jobAgentDisplayLabel(j).label;
     }
 
+    function renderDetailHeader(j) {
+      document.getElementById("detailTitle").textContent = detailTitleForJob(j);
+      const stage = j
+        ? '<span class="rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-300">' + dashFmt.dashboardStageLabel(j) + "</span>"
+        : "";
+      setHtml(document.getElementById("detailStatus"), j ? stage + fmtStatus(j, j.ciStatus) : "");
+    }
+
+    const tbodyEl = document.getElementById("jobs");
+    const cardsEl = document.getElementById("jobCards");
+    const detailHome = document.getElementById("detailHome");
+    const detailPanel = document.getElementById("jobDetailPanel");
+    const detailRowEl = document.createElement("tr");
+    detailRowEl.className = "job-detail-row";
+    const detailCellEl = document.createElement("td");
+    detailCellEl.colSpan = 11;
+    detailCellEl.className = "job-detail-cell border-b border-zinc-800 bg-zinc-900/40 p-3";
+    detailRowEl.appendChild(detailCellEl);
+    // Tailwind md: breakpoint — the table is shown at and above it, cards below it.
+    const desktopMq = typeof window.matchMedia === "function" ? window.matchMedia("(min-width: 48rem)") : null;
+    const rowEls = new Map();
+    let panelJobId = null;
+
+    function isDesktopLayout() {
+      return desktopMq ? desktopMq.matches : true;
+    }
+
+    function detailPanelId(id) {
+      return "job-detail-" + id;
+    }
+
+    function visibleToggle(els) {
+      return isDesktopLayout() ? els.toggles[0] : els.toggles[1];
+    }
+
+    function setHtml(el, html) {
+      if (el._prgHtml === html) return;
+      el._prgHtml = html;
+      el.innerHTML = html;
+    }
+
+    /** Reorder parent's children to match nodes, moving only out-of-place nodes. */
+    function syncChildren(parent, nodes) {
+      let cursor = parent.firstChild;
+      for (const node of nodes) {
+        if (node === cursor) {
+          cursor = cursor.nextSibling;
+          continue;
+        }
+        parent.insertBefore(node, cursor);
+      }
+      while (cursor) {
+        const next = cursor.nextSibling;
+        parent.removeChild(cursor);
+        cursor = next;
+      }
+    }
+
+    /** Moving a node in the DOM drops its focus and scroll offset; restore both. */
+    function keepFocusAndScroll(fn) {
+      const active = document.activeElement;
+      let selStart = null;
+      let selEnd = null;
+      try {
+        if (active && typeof active.selectionStart === "number") {
+          selStart = active.selectionStart;
+          selEnd = active.selectionEnd;
+        }
+      } catch {}
+      const scrollers = [document.getElementById("logSteps"), document.getElementById("logRaw")];
+      const offsets = scrollers.map((el) => el.scrollTop);
+      fn();
+      scrollers.forEach((el, i) => {
+        if (el.scrollTop !== offsets[i]) el.scrollTop = offsets[i];
+      });
+      if (active && active !== document.body && active.isConnected && document.activeElement !== active) {
+        active.focus({ preventScroll: true });
+        if (selStart !== null) {
+          try { active.setSelectionRange(selStart, selEnd); } catch {}
+        }
+      }
+    }
+
+    const TOGGLE_CLASS =
+      "job-toggle group flex min-h-11 w-full items-start gap-2 rounded-md text-left text-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500";
+    const TOGGLE_INNER =
+      '<span aria-hidden="true" class="job-chevron mt-0.5 inline-block w-3 shrink-0 text-zinc-500 transition-transform group-aria-expanded:rotate-90 group-aria-expanded:text-sky-400">▸</span><span class="job-toggle-label min-w-0 flex-1"></span>';
+    const CELL_LABELS = ["Agent", "Repo", "Stage", "Round", "Ticket", "PR", "Ready", "Status", "Model", "Tokens", "Updated"];
+
+    function createJobEls(id) {
+      const tr = document.createElement("tr");
+      tr.className = "job-row cursor-pointer border-b border-zinc-800 hover:bg-zinc-900/80";
+      tr.dataset.id = id;
+      tr.innerHTML = CELL_LABELS.map((label, i) => {
+        const cls = i === 1 ? "meta p-2 text-zinc-400" : "p-2";
+        const inner = i === 0 ? '<button type="button" class="' + TOGGLE_CLASS + '">' + TOGGLE_INNER + "</button>" : "";
+        return '<td class="' + cls + '" data-label="' + label + '">' + inner + "</td>";
+      }).join("");
+      tr.addEventListener("click", (e) => {
+        if (e.target.closest("a, button, input, textarea, select, summary, label")) return;
+        toggleJob(id);
+      });
+      const card = document.createElement("div");
+      card.className = "job-row job-card rounded-xl border border-zinc-800 bg-zinc-900/50 p-3";
+      card.setAttribute("role", "listitem");
+      card.dataset.id = id;
+      card.innerHTML =
+        '<button type="button" class="' + TOGGLE_CLASS + '">' + TOGGLE_INNER + "</button>" +
+        '<details class="job-card-more mt-2 text-sm text-zinc-300"><summary class="cursor-pointer text-zinc-500">More</summary><div class="job-card-meta mt-2 grid gap-1"></div></details>';
+      const toggles = [tr.querySelector(".job-toggle"), card.querySelector(".job-toggle")];
+      toggles.forEach((b) => b.addEventListener("click", () => toggleJob(id)));
+      return {
+        tr,
+        cells: [...tr.children],
+        card,
+        toggles,
+        cardLabel: card.querySelector(".job-toggle-label"),
+        cardMeta: card.querySelector(".job-card-meta"),
+      };
+    }
+
+    function updateJobEls(els, j) {
+      const stageLabel = dashFmt.dashboardStageLabel(j);
+      const pr = j.prUrl ? '<a class="text-sky-400" href="' + j.prUrl + '" target="_blank" rel="noopener">PR</a>' : "—";
+      const values = [
+        fmtAgent(j),
+        fmtRepo(j),
+        stageLabel,
+        j.reviewRound + "/" + j.maxRounds,
+        fmtTicket(j),
+        pr,
+        fmtPrDraft(j),
+        fmtStatus(j, j.ciStatus),
+        j.model || "—",
+        fmtTokens(j.tokenUsage),
+        fmtUpdated(j.updatedAt),
+      ];
+      setHtml(els.cells[0].querySelector(".job-toggle-label"), values[0]);
+      for (let i = 1; i < values.length; i++) setHtml(els.cells[i], values[i]);
+      els.cells[7].dataset.label = dashFmt.isDocsJobRecord(j) ? "Doc checks" : "Status";
+      setHtml(
+        els.cardLabel,
+        '<span class="block font-medium leading-snug">' + values[0] + '</span><span class="meta mt-1 block text-sm text-zinc-400">' + values[1] + " · " + stageLabel + "</span>",
+      );
+      setHtml(els.cardMeta, values[4] + " · " + pr + " · " + values[6] + " · " + values[7]);
+    }
+
+    function syncSelectionUi() {
+      for (const [id, els] of rowEls) {
+        const on = id === selected;
+        for (const b of els.toggles) {
+          b.setAttribute("aria-expanded", on ? "true" : "false");
+          b.setAttribute("aria-controls", detailPanelId(id));
+        }
+        els.tr.classList.toggle("bg-zinc-800/80", on);
+        els.tr.classList.toggle("hover:bg-zinc-900/80", !on);
+        els.card.classList.toggle("ring-2", on);
+        els.card.classList.toggle("ring-sky-600/50", on);
+      }
+    }
+
+    /** Attach the single detail panel under the selected row (table) or inside its card. */
+    function placeDetail() {
+      const els = selected ? rowEls.get(selected) : null;
+      if (!els) {
+        if (detailRowEl.parentNode) detailRowEl.remove();
+        if (detailPanel.parentNode !== detailHome) detailHome.appendChild(detailPanel);
+        detailPanel.id = "jobDetailPanel";
+        delete detailRowEl.dataset.detailFor;
+        return;
+      }
+      detailPanel.id = detailPanelId(selected);
+      if (isDesktopLayout()) {
+        detailRowEl.dataset.detailFor = selected;
+        if (els.tr.nextSibling !== detailRowEl) els.tr.after(detailRowEl);
+        if (detailPanel.parentNode !== detailCellEl) detailCellEl.appendChild(detailPanel);
+      } else {
+        if (detailRowEl.parentNode) detailRowEl.remove();
+        delete detailRowEl.dataset.detailFor;
+        if (detailPanel.parentNode !== els.card) els.card.appendChild(detailPanel);
+      }
+      detailPanel.classList.toggle("mt-3", !isDesktopLayout());
+    }
+
+    function showJobsMessage(html) {
+      rowEls.clear();
+      placeDetail();
+      tbodyEl.innerHTML = '<tr><td colspan="11" class="empty-state p-3 text-zinc-400">' + html + "</td></tr>";
+      cardsEl.innerHTML = '<div role="listitem" class="empty-state rounded-xl border border-zinc-800 p-3 text-sm text-zinc-400">' + html + "</div>";
+    }
+
     function renderJobTable(jobs) {
       const showFinished = showAllJobsEl.checked;
       const staleHidden = showFinished ? 0 : jobs.filter((j) => dashFmt.shouldHideStaleJob(j)).length;
@@ -338,10 +525,8 @@ export function runnerUiHtml(
       }
       if (staleHidden > 0) hintParts.push("(" + staleHidden + " stale hidden)");
       jobsHiddenHint.textContent = hintParts.join(" ");
-      const tbody = document.getElementById("jobs");
-      const cardsEl = document.getElementById("jobCards");
       if (!visible.length) {
-        cardsEl.innerHTML = "";
+        if (selected) collapseDetail();
         let msg;
         if (jobs.length === 0 && lastJobsMeta.totalOnDisk === 0) {
           msg = "<strong>No agents yet.</strong> Start an agent below or from MCP.";
@@ -354,109 +539,101 @@ export function runnerUiHtml(
           msg =
             "No agents match the current filter. Turn on <em>Show finished</em> to include finished and stale rows.";
         }
-        tbody.innerHTML = '<tr><td colspan="11" class="empty-state">' + msg + "</td></tr>";
+        showJobsMessage(msg);
         return;
       }
-      function bindJobRow(el, id) {
-        el.dataset.id = id;
-        el.classList.add("job-row");
-        el.tabIndex = 0;
-        el.setAttribute("role", "button");
-        el.onclick = () => selectJob(id);
-        el.onkeydown = (e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            selectJob(id);
-          }
-        };
+      const visibleIds = new Set(visible.map((j) => j.id));
+      for (const id of [...rowEls.keys()]) {
+        if (!visibleIds.has(id)) rowEls.delete(id);
       }
-      tbody.innerHTML = visible.map(j => {
-        const stageLabel = dashFmt.dashboardStageLabel(j);
-        const sel = j.id === selected ? " bg-zinc-800/80 ring-1 ring-sky-600/40" : " hover:bg-zinc-900/80";
-        const checksLabel = dashFmt.isDocsJobRecord(j) ? "Doc checks" : "Status";
-        return \`<tr class="job-row cursor-pointer border-b border-zinc-800\${sel}" data-id="\${j.id}" tabindex="0" role="button">
-        <td class="p-2" data-label="Agent">\${fmtAgent(j)}</td>
-        <td class="meta p-2 text-zinc-400" data-label="Repo">\${fmtRepo(j)}</td>
-        <td class="p-2" data-label="Stage">\${stageLabel}</td>
-        <td class="p-2" data-label="Round">\${j.reviewRound}/\${j.maxRounds}</td>
-        <td class="p-2" data-label="Ticket">\${fmtTicket(j)}</td>
-        <td class="p-2" data-label="PR">\${j.prUrl ? '<a class="text-sky-400" href="'+j.prUrl+'" target="_blank" rel="noopener">PR</a>' : "—"}</td>
-        <td class="p-2" data-label="Ready">\${fmtPrDraft(j)}</td>
-        <td class="p-2" data-label="\${checksLabel}">\${fmtStatus(j, j.ciStatus)}</td>
-        <td class="p-2" data-label="Model">\${j.model || "—"}</td>
-        <td class="p-2" data-label="Tokens">\${fmtTokens(j.tokenUsage)}</td>
-        <td class="p-2" data-label="Updated">\${fmtUpdated(j.updatedAt)}</td>
-      </tr>\`;
-      }).join("");
-      cardsEl.innerHTML = visible.map(j => {
-        const stageLabel = dashFmt.dashboardStageLabel(j);
-        const sel = j.id === selected ? " ring-2 ring-sky-600/50" : "";
-        return \`<article class="job-row rounded-xl border border-zinc-800 bg-zinc-900/50 p-3\${sel}">
-          <div class="font-medium leading-snug">\${fmtAgent(j)}</div>
-          <div class="meta mt-1 text-sm text-zinc-400">\${fmtRepo(j)} · \${stageLabel}</div>
-          <details class="mt-2 text-sm text-zinc-300"><summary class="cursor-pointer text-zinc-500">More</summary>
-            <div class="mt-2 grid gap-1">\${fmtTicket(j)} · \${fmtPrDraft(j)} · \${fmtStatus(j, j.ciStatus)}</div>
-          </details>
-        </article>\`;
-      }).join("");
-      tbody.querySelectorAll("tr.job-row").forEach(tr => bindJobRow(tr, tr.dataset.id));
-      cardsEl.querySelectorAll(".job-row").forEach(card => bindJobRow(card, card.dataset.id));
-      if (selected) {
-        const row = tbody.querySelector('tr[data-id="' + selected + '"]');
-        if (row) {
-          selectedJobStage = jobs.find(j => j.id === selected)?.stage ?? selectedJobStage;
-        } else if (!visible.some(j => j.id === selected)) {
-          selected = null;
-          selectedJobStage = null;
-          if (es) { es.close(); es = null; }
-          updateDetailVisibility();
+      if (selected && !visibleIds.has(selected)) collapseDetail();
+      const desktop = isDesktopLayout();
+      keepFocusAndScroll(() => {
+        const rows = [];
+        const cards = [];
+        for (const j of visible) {
+          let els = rowEls.get(j.id);
+          if (!els) {
+            els = createJobEls(j.id);
+            rowEls.set(j.id, els);
+          }
+          updateJobEls(els, j);
+          rows.push(els.tr);
+          if (j.id === selected && desktop) rows.push(detailRowEl);
+          cards.push(els.card);
         }
+        syncChildren(tbodyEl, rows);
+        syncChildren(cardsEl, cards);
+        placeDetail();
+      });
+      syncSelectionUi();
+      if (selected) {
+        const picked = visible.find((j) => j.id === selected);
+        selectedJobStage = picked?.stage ?? selectedJobStage;
+        renderDetailHeader(picked);
       }
       updateSteerUi();
     }
 
+    let refreshSeq = 0;
     async function refresh() {
+      const seq = ++refreshSeq;
       const metaRes = await fetch("/api/jobs/meta", { headers: authHeaders() });
       if (metaRes.ok) {
         lastJobsMeta = await metaRes.json();
       }
       const jobsPath = showAllJobsEl.checked ? "/api/jobs?includeFinished=1" : "/api/jobs";
       const res = await fetch(jobsPath, { headers: authHeaders() });
-      const tbody = document.getElementById("jobs");
+      if (seq !== refreshSeq) return;
       if (res.status === 401) {
-        tbody.innerHTML = '<tr><td colspan="11" class="empty-state"><strong>Unauthorized.</strong> Paste your runner bearer token above and click Save token.</td></tr>';
+        showJobsMessage("<strong>Unauthorized.</strong> Paste your runner bearer token above and click Save token.");
         lastJobs = [];
         return;
       }
       if (!res.ok) {
-        tbody.innerHTML = '<tr><td colspan="11" class="empty-state">Could not reach the runner (' + res.status + "). Check that serve is running.</td></tr>";
+        showJobsMessage("Could not reach the runner (" + res.status + "). Check that serve is running.");
         lastJobs = [];
         return;
       }
-      lastJobs = await res.json();
+      const jobs = await res.json();
+      if (seq !== refreshSeq) return;
+      lastJobs = jobs;
       renderJobTable(lastJobs);
     }
 
+    function toggleJob(id) {
+      if (selected === id) collapseDetail();
+      else selectJob(id);
+    }
+
     function selectJob(id) {
+      const prevEls = rowEls.get(id);
+      const anchor = prevEls ? visibleToggle(prevEls) : null;
+      const anchorTop = anchor ? anchor.getBoundingClientRect().top : 0;
       selected = id;
       steerStatus.textContent = "";
       const picked = lastJobs.find((j) => j.id === id);
-      document.getElementById("detailTitle").textContent = detailTitleForJob(picked);
-      updateDetailVisibility();
-      document.querySelectorAll(".job-row").forEach(el => {
-        const on = el.dataset.id === id;
-        if (el.tagName === "TR") {
-          el.classList.toggle("bg-zinc-800/80", on);
-          el.classList.toggle("ring-1", on);
-        } else {
-          el.classList.toggle("ring-2", on);
-          el.classList.toggle("ring-sky-600/50", on);
-        }
-      });
+      selectedJobStage = picked ? picked.stage : null;
+      if (panelJobId !== id) {
+        panelJobId = id;
+        steerEl.value = "";
+        renderLogTail("");
+        renderDocFindings(null);
+      }
+      renderDetailHeader(picked);
+      keepFocusAndScroll(placeDetail);
+      syncSelectionUi();
+      updateSteerUi();
+      if (anchor) {
+        const shift = anchor.getBoundingClientRect().top - anchorTop;
+        if (shift) window.scrollBy(0, shift);
+      }
       if (es) es.close();
       const t = tokenEl.value || localStorage.getItem(tokenKey);
-      es = new EventSource("/api/jobs/" + id + "/stream?token=" + encodeURIComponent(t || ""));
-      es.onmessage = (ev) => {
+      const stream = new EventSource("/api/jobs/" + id + "/stream?token=" + encodeURIComponent(t || ""));
+      es = stream;
+      stream.onmessage = (ev) => {
+        if (es !== stream || selected !== id) return;
         const data = JSON.parse(ev.data);
         if (data.logTail !== undefined) renderLogTail(data.logTail);
         if (data.stage) {
@@ -466,13 +643,42 @@ export function runnerUiHtml(
         }
       };
       fetch("/api/jobs/" + id, { headers: authHeaders() }).then(r => r.json()).then(j => {
+        if (selected !== id) return;
         selectedJobStage = j.stage;
         updateSteerUi();
-        document.getElementById("detailTitle").textContent = detailTitleForJob(j);
+        renderDetailHeader(j);
         renderLogTail(j.logTail || "");
         renderDocFindings(j);
       });
     }
+
+    function collapseDetail() {
+      const id = selected;
+      const focusWasInPanel = detailPanel.contains(document.activeElement);
+      selected = null;
+      selectedJobStage = null;
+      if (es) { es.close(); es = null; }
+      placeDetail();
+      syncSelectionUi();
+      updateSteerUi();
+      if (focusWasInPanel) {
+        const els = id ? rowEls.get(id) : null;
+        (els ? visibleToggle(els) : showAllJobsEl).focus();
+      }
+    }
+
+    detailPanel.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && selected) {
+        e.preventDefault();
+        collapseDetail();
+      }
+    });
+
+    const onLayoutChange = () => {
+      if (rowEls.size && lastJobs.length) renderJobTable(lastJobs);
+    };
+    if (desktopMq && desktopMq.addEventListener) desktopMq.addEventListener("change", onLayoutChange);
+    else if (desktopMq && desktopMq.addListener) desktopMq.addListener(onLayoutChange);
 
     async function steerJob() {
       const prompt = steerEl.value.trim();
@@ -573,7 +779,6 @@ export function runnerUiHtml(
     };
 
     updateSteerUi();
-    updateDetailVisibility();
     refresh();
     void loadNotifySettingsUi();
     setInterval(refresh, 8000);

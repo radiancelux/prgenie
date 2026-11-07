@@ -1,7 +1,9 @@
 # Runner dashboard evidence (synthetic)
 
-Screenshots are generated with `pnpm exec tsx scripts/capture-dashboard-evidence.mjs` after `pnpm build`.
+Screenshots are generated with `timeout 120 pnpm exec tsx scripts/capture-dashboard-evidence.mjs` after `pnpm build`.
 
 - Fixture uses synthetic issue/repo identifiers only.
-- Playwright headless Chromium at 360 / 390 / 768 px viewport widths.
-- Desktop layout is covered by jsdom render tests; physical device verification is still operator-optional.
+- The first agent is expanded, so each screenshot shows its detail panel (transcript, steer, stop) inline beneath its own row or card.
+- Playwright headless Chromium: mobile cards at 360 / 390 px, desktop table at 768 / 1280 px.
+- The script exits on its own; each screenshot and the whole run are capped by timeouts.
+- Inline placement, single expansion, collapse, `aria-expanded` / `aria-controls`, and re-render stability are covered by jsdom tests in `local-runner/src/ui-html.test.ts`.
