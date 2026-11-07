@@ -103,6 +103,15 @@ export type JobQueueState = {
   since?: string;
 };
 
+export type JobContinueHistoryEntry = {
+  at: string;
+  extraRounds: number;
+  priorMaxRounds: number;
+  newMaxRounds: number;
+  prompt: string | null;
+  model: string | null;
+};
+
 export type JobEffectiveSnapshot = {
   maxRounds: number;
   stageModels: JobStageModels;
@@ -154,6 +163,16 @@ export interface JobRecord {
   dryRun: boolean;
   /** Set while the job lives under `archived/` (dashboard Remove / MCP archive_job); null when live. */
   archivedAt: string | null;
+  /** Extra fix→review rounds started via continue_job / POST continue. */
+  continueHistory?: JobContinueHistoryEntry[];
+}
+
+export interface ContinueJobArgs {
+  id: string;
+  prompt?: string;
+  promptFile?: string;
+  extraRounds?: number;
+  model?: string;
 }
 
 export interface StartJobArgs {

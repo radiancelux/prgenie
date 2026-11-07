@@ -36,6 +36,7 @@ import {
   isJobSettling,
   markJobSettling,
 } from "./job-settling.js";
+import { ContinueJobError, continueJobFromRaw } from "./job-continue.js";
 import { normalizeStartJobArgs, ValidationError } from "./settings-validation.js";
 import { resolveJobTarget } from "./job-target.js";
 
@@ -258,6 +259,39 @@ export class RunnerEngine extends EventEmitter {
     });
   }
 
+  async continueJob(raw: Record<string, unknown>): Promise<{
+    ok: true;
+    id: string;
+    stage: string;
+    maxRounds: number;
+    reviewRound: number;
+    worktree: "reused" | "recreated" | "none";
+    queued: boolean;
+  }> {
+    const result = await this.withQueueLock(async () => {
+      const prepared = await continueJobFromRaw(this.config, raw, {
+        isRunning: (id) => this.isRunning(id),
+      });
+      if (!prepared.queued) {
+        this.schedule(prepared.job.id);
+      }
+      return prepared;
+    });
+    this.emitJobsChanged();
+    if (this.watchCi && result.job.prUrl) {
+      void this.ciWatcher.refreshJobById(result.job.id);
+    }
+    return {
+      ok: true,
+      id: result.job.id,
+      stage: result.job.stage,
+      maxRounds: result.job.maxRounds,
+      reviewRound: result.job.reviewRound,
+      worktree: result.worktree,
+      queued: result.queued,
+    };
+  }
+
   async stop(jobId: string): Promise<JobRecord | null> {
     const job = await this.withQueueLock(async () => {
       const loaded = await loadJob(this.config.dataDir, jobId);
@@ -277,3 +311,4 @@ export class RunnerEngine extends EventEmitter {
 }
 
 export type { JobEvent };
+export { ContinueJobError };

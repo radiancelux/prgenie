@@ -58,6 +58,50 @@ export async function ensureWorktree(
   throw new Error(`git worktree add failed: ${lastErr || "no base ref found"}`);
 }
 
+/** Reuse an existing job worktree when present; otherwise add one at `origin/<branch>`. */
+export async function ensureContinueWorktree(
+  repoPath: string,
+  jobId: string,
+  branch: string,
+  existingPath: string | null,
+  settings?: RunnerSettings,
+): Promise<{ path: string; reused: boolean }> {
+  const slug = repoSlugFromPath(repoPath);
+  const wt = existingPath?.trim() || cursorWorktreeDir(slug, jobId);
+  if (existingPath?.trim()) {
+    try {
+      await access(existingPath);
+      const listed = await git(repoPath, ["worktree", "list", "--porcelain"]);
+      if (listed.stdout.includes(`worktree ${existingPath}`)) {
+        return { path: existingPath, reused: true };
+      }
+    } catch {
+      /* recreate below */
+    }
+  }
+  const listed = await git(repoPath, ["worktree", "list", "--porcelain"]);
+  if (listed.stdout.includes(`worktree ${wt}`)) {
+    try {
+      await access(wt);
+      return { path: wt, reused: true };
+    } catch {
+      await git(repoPath, ["worktree", "remove", "--force", wt]).catch(() => undefined);
+      await rm(wt, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+  await mkdir(path.dirname(wt), { recursive: true });
+  await git(repoPath, ["fetch", "origin"]);
+  const remoteRef = `origin/${branch}`;
+  const probe = await git(repoPath, ["rev-parse", "--verify", remoteRef]);
+  if (probe.code === 0) {
+    const add = await git(repoPath, ["worktree", "add", "-B", branch, wt, remoteRef]);
+    if (add.code === 0) return { path: wt, reused: false };
+    throw new Error(`git worktree add failed: ${add.stderr.trim() || add.stdout.trim()}`);
+  }
+  const pathFromEnsure = await ensureWorktree(repoPath, jobId, branch, settings);
+  return { path: pathFromEnsure, reused: false };
+}
+
 export async function removeWorktree(repoPath: string, worktreePath: string): Promise<void> {
   await git(repoPath, ["worktree", "remove", "--force", worktreePath]).catch(() => undefined);
   await rm(worktreePath, { recursive: true, force: true }).catch(() => undefined);

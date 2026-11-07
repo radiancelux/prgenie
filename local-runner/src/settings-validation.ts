@@ -14,7 +14,7 @@ import {
   type WatchdogPolicy,
 } from "./runner-policy.js";
 import { driverSupportsAuto } from "./job-models.js";
-import type { JobProfile, StartJobArgs } from "./types.js";
+import type { ContinueJobArgs, JobProfile, StartJobArgs } from "./types.js";
 import type {
   DriverEntry,
   NotifyEventSettings,
@@ -86,6 +86,48 @@ function optionalEnum<T extends string>(
 export function validateMaxRounds(n: unknown): number | undefined {
   if (n === undefined || n === null) return undefined;
   return validateBoundedInt(n, "maxRounds", MAX_ROUNDS_MIN, MAX_ROUNDS_MAX);
+}
+
+export function validateExtraRounds(n: unknown): number {
+  if (n === undefined || n === null) return 1;
+  return validateBoundedInt(n, "extraRounds", 1, MAX_ROUNDS_MAX);
+}
+
+/**
+ * Validator for continue_job / POST /api/jobs/:id/continue (parity with MCP).
+ */
+export function normalizeContinueJobArgs(raw: Record<string, unknown>): ContinueJobArgs {
+  const idRaw = raw.id;
+  if (idRaw !== undefined && idRaw !== null && typeof idRaw !== "string") {
+    throw new ValidationError("id must be a string");
+  }
+  let id = typeof idRaw === "string" ? idRaw.trim() : "";
+  if (!id && typeof raw.jobId === "string") id = raw.jobId.trim();
+  if (!id) throw new ValidationError("id is required");
+
+  const prompt = optionalString(raw, "prompt");
+  const promptFile = optionalString(raw, "promptFile");
+  const modelRaw = optionalString(raw, "model");
+  const extraRounds = validateExtraRounds(raw.extraRounds);
+
+  const model = modelRaw?.trim() || undefined;
+  if (model === "auto") {
+    const driver = validateDriverId(raw.driver) ?? "cursor-agent";
+    if (!driverSupportsAuto(driver)) {
+      throw new ValidationError(`model "auto" is not supported for driver ${driver}`);
+    }
+  }
+
+  return { id, prompt, promptFile, extraRounds, model };
+}
+
+export function assertContinueMaxRounds(jobMaxRounds: number, extraRounds: number): void {
+  const next = jobMaxRounds + extraRounds;
+  if (next > MAX_ROUNDS_MAX) {
+    throw new ValidationError(
+      `maxRounds would exceed ${MAX_ROUNDS_MAX} (${jobMaxRounds} + ${extraRounds})`,
+    );
+  }
 }
 
 export function validateDriverId(driver: unknown): string | undefined {

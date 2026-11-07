@@ -1,6 +1,10 @@
 import type { RunnerEngine } from "./engine.js";
 import { loadSettings, saveSettings, toPublicSettings } from "./settings.js";
-import { normalizeStartJobArgs, parseSettingsPatch } from "./settings-validation.js";
+import {
+  normalizeContinueJobArgs,
+  normalizeStartJobArgs,
+  parseSettingsPatch,
+} from "./settings-validation.js";
 
 type Json = Record<string, unknown>;
 
@@ -117,6 +121,22 @@ export const RUNNER_MCP_TOOLS = [
     },
   },
   {
+    name: "continue_job",
+    description:
+      "Run additional fix→review round(s) on a terminal job (approved, changes_remaining, stuck, stopped, or failed).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        prompt: { type: "string" },
+        promptFile: { type: "string" },
+        extraRounds: { type: "number", description: "Default 1" },
+        model: { type: "string", description: "Optional fix-stage model override (default auto)" },
+      },
+      required: ["id"],
+    },
+  },
+  {
     name: "settings",
     description:
       "Read runner settings (no arguments) or patch defaults/drivers/watchdog (same fields as PATCH /api/settings).",
@@ -168,6 +188,7 @@ const RUNNER_TOOL_HANDLERS: Record<string, ToolHandler> = {
     if (!result.ok) throw new Error(`${result.error}: ${id}`);
     return { ok: true, id: result.id, stage: result.job.stage };
   },
+  continue_job: (engine, args) => engine.continueJob({ ...normalizeContinueJobArgs(args) }),
   settings: async (engine, args) => {
     const dataDir = engine.config.dataDir;
     const hasPatch =
