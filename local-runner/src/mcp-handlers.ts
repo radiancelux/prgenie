@@ -1,5 +1,5 @@
 import type { RunnerEngine } from "./engine.js";
-import { normalizeStartJobArgs } from "./settings-validation.js";
+import { normalizeContinueJobArgs, normalizeStartJobArgs } from "./settings-validation.js";
 
 type Json = Record<string, unknown>;
 
@@ -115,6 +115,22 @@ export const RUNNER_MCP_TOOLS = [
       required: ["id"],
     },
   },
+  {
+    name: "continue_job",
+    description:
+      "Run additional fix→review round(s) on a terminal job (approved, changes_remaining, stuck, stopped, or failed).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        prompt: { type: "string" },
+        promptFile: { type: "string" },
+        extraRounds: { type: "number", description: "Default 1" },
+        model: { type: "string", description: "Optional fix-stage model override (default auto)" },
+      },
+      required: ["id"],
+    },
+  },
 ] as const;
 
 export async function handleRunnerTool(
@@ -158,6 +174,8 @@ export async function handleRunnerTool(
       if (!result.ok) throw new Error(`${result.error}: ${id}`);
       return { ok: true, id: result.id, stage: result.job.stage };
     }
+    case "continue_job":
+      return engine.continueJob({ ...normalizeContinueJobArgs(args) });
     default:
       throw new Error(`unknown tool: ${name}`);
   }

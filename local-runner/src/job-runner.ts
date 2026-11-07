@@ -218,6 +218,78 @@ async function setStage(
   emit(cb, job, { type: "stage", stage, reviewRound: job.reviewRound });
 }
 
+async function runFixStage(
+  runner: AgentRunner,
+  config: RunnerConfig,
+  job: JobRecord,
+  control: JobControl,
+  settings: Awaited<ReturnType<typeof loadSettings>>,
+  baseSettings: Awaited<ReturnType<typeof loadSettings>>,
+  wt: string,
+  outputFormat: "stream-json" | "text",
+  driverEntry: NonNullable<ReturnType<typeof findDriverEntry>>,
+  callbacks?: JobCallbacks,
+): Promise<boolean> {
+  await setStage(config, job, "fixing", control, callbacks);
+  if (!job.dryRun) {
+    await rebaseOntoBase(wt, baseSettings);
+  }
+  const fixDefault = isDocsJob(job) ? resolveDocsFixPrompt() : DEFAULT_FIX_PROMPT;
+  const fixPrompt = await readPromptFile(job.input.fixPromptFile ?? "", fixDefault);
+  const fixSteer = control.drainSteer();
+  const fixFull = fixSteer
+    ? `${fixPrompt}\n\nPR: ${job.prUrl}\n\n--- steer ---\n${fixSteer}`
+    : `${fixPrompt}\n\nPR: ${job.prUrl}`;
+
+  const fixRun = await runAgentStage(
+    runner,
+    config,
+    job,
+    control,
+    settings,
+    "fixing",
+    {
+      cwd: wt,
+      prompt: fixFull,
+      model: job.model,
+      logPath: job.logPath,
+      dryRun: job.dryRun,
+      outputFormat,
+      signal: control.signal,
+      driverId: job.driverId,
+      driverEntry,
+    },
+    callbacks?.watchdogTiming,
+  );
+  if (control.stopRequested) {
+    runner.kill();
+    job.stopRequested = true;
+    await setStage(config, job, "stopped", control, callbacks);
+    return false;
+  }
+  if (!fixRun || fixRun.code !== 0) {
+    if (!fixRun) {
+      await setStage(config, job, "stuck", control, callbacks);
+      await notify(
+        config,
+        job,
+        `Watchdog exhausted (fix): ${job.input.branch}`,
+        callbacks?.fetchImpl,
+        "watchdog-fix",
+      );
+    } else {
+      job.error = `fixer exited ${fixRun.code}`;
+      await setStage(config, job, "failed", control, callbacks);
+    }
+    return false;
+  }
+  if (!(await ensurePushedBeforeReview(config, job, wt, control, callbacks))) return false;
+  if (!job.dryRun) {
+    await notify(config, job, `PR pushed after fix round ${job.reviewRound}`, callbacks?.fetchImpl);
+  }
+  return true;
+}
+
 async function ensurePushedBeforeReview(
   config: RunnerConfig,
   job: JobRecord,
@@ -361,6 +433,22 @@ export async function runJobLoop(
 
     if (!(await ensurePushedBeforeReview(config, job, wt, control, callbacks))) return;
 
+    if (job.stage === "fixing" && job.prUrl) {
+      const ok = await runFixStage(
+        runner,
+        config,
+        job,
+        control,
+        settings,
+        baseSettings,
+        wt,
+        outputFormat,
+        driverEntry,
+        callbacks,
+      );
+      if (!ok) return;
+    }
+
     while (job.reviewRound <= job.maxRounds) {
       if (await checkStop()) return;
 
@@ -470,63 +558,23 @@ export async function runJobLoop(
         return;
       }
 
-      await setStage(config, job, "fixing", control, callbacks);
-      if (!job.dryRun) {
-        await rebaseOntoBase(wt, baseSettings);
-      }
-      const fixDefault = isDocsJob(job) ? resolveDocsFixPrompt() : DEFAULT_FIX_PROMPT;
-      const fixPrompt = await readPromptFile(job.input.fixPromptFile ?? "", fixDefault);
-      const fixSteer = control.drainSteer();
-      const fixFull = fixSteer
-        ? `${fixPrompt}\n\nPR: ${job.prUrl}\n\n--- steer ---\n${fixSteer}`
-        : `${fixPrompt}\n\nPR: ${job.prUrl}`;
-
-      const fixRun = await runAgentStage(
-        runner,
-        config,
-        job,
-        control,
-        settings,
-        "fixing",
-        {
-          cwd: wt,
-          prompt: fixFull,
-          model: job.model,
-          logPath: job.logPath,
-          dryRun: job.dryRun,
-          outputFormat,
-          signal: control.signal,
-          driverId: job.driverId,
-          driverEntry,
-        },
-        callbacks?.watchdogTiming,
-      );
-      if (await checkStop()) return;
-      if (!fixRun || fixRun.code !== 0) {
-        if (!fixRun) {
-          await setStage(config, job, "stuck", control, callbacks);
-          await notify(
-            config,
-            job,
-            `Watchdog exhausted (fix): ${job.input.branch}`,
-            callbacks?.fetchImpl,
-            "watchdog-fix",
-          );
-          return;
-        }
-        job.error = `fixer exited ${fixRun.code}`;
-        await setStage(config, job, "failed", control, callbacks);
-        return;
-      }
-      if (!(await ensurePushedBeforeReview(config, job, wt, control, callbacks))) return;
-      if (!job.dryRun) {
-        await notify(
+      if (
+        !(await runFixStage(
+          runner,
           config,
           job,
-          `PR pushed after fix round ${job.reviewRound}`,
-          callbacks?.fetchImpl,
-        );
+          control,
+          settings,
+          baseSettings,
+          wt,
+          outputFormat,
+          driverEntry,
+          callbacks,
+        ))
+      ) {
+        return;
       }
+      if (await checkStop()) return;
       // loop continues to next review round
     }
   } catch (err) {

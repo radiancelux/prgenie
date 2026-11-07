@@ -11,6 +11,7 @@ import {
   toPublicNotifySettings,
 } from "./notify-settings.js";
 import { loadSettings, saveSettings, SettingsConflictError, toPublicSettings } from "./settings.js";
+import { ContinueJobError } from "./job-continue.js";
 import {
   normalizeStartJobArgs,
   parseSettingsPatch,
@@ -42,11 +43,39 @@ const ARCHIVE_ERROR_STATUS = {
   collision: 409,
 } as const;
 
+const CONTINUE_ERROR_STATUS: Record<ContinueJobError["code"], number> = {
+  invalid_id: 400,
+  not_found: 404,
+  archived: 409,
+  running: 409,
+  not_terminal: 409,
+  branch_conflict: 409,
+  no_pr: 409,
+};
+
 /** Validation is 400, a settings or branch conflict is 409, anything else is a server fault. */
 function errorStatus(err: unknown): number {
   if (err instanceof ValidationError) return 400;
+  if (err instanceof ContinueJobError) return CONTINUE_ERROR_STATUS[err.code];
   if (err instanceof SettingsConflictError || err instanceof BranchConflictError) return 409;
   return 500;
+}
+
+export async function handleContinueJobRequest(
+  engine: RunnerEngine,
+  jobId: string,
+  payload: Record<string, unknown>,
+): Promise<{ status: number; body: unknown }> {
+  try {
+    const body = await engine.continueJob({ ...payload, id: jobId });
+    return { status: 200, body };
+  } catch (err) {
+    const stage = err instanceof ContinueJobError && err.stage ? { stage: err.stage } : {};
+    return {
+      status: errorStatus(err),
+      body: { error: safeHandlerMessage(err), ...stage },
+    };
+  }
 }
 
 /** POST /api/jobs: same normalizer as MCP start_job, so both reject bad input identically. */
@@ -386,6 +415,15 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
           return;
         }
         guard.json(200, { ok: true, id: result.id, stage: result.job.stage });
+        return;
+      }
+
+      const continueMatch = path.match(/^\/api\/jobs\/([^/]+)\/continue$/);
+      if (continueMatch && req.method === "POST") {
+        const payload = await readOptionalJsonObject(req, guard);
+        if (!payload || guard.started) return;
+        const reply = await handleContinueJobRequest(engine, continueMatch[1], payload);
+        guard.json(reply.status, reply.body);
         return;
       }
 
