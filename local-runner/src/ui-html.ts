@@ -84,15 +84,15 @@ export function runnerUiHtml(
     <span class="meta text-zinc-500" id="jobsSelectHint">Select an agent to open its transcript, steer, and stop controls.</span>
   </div>
   <div id="jobsStatus" class="meta mb-2 min-h-5 text-sm text-zinc-400 wrap-anywhere" role="status" aria-live="polite"></div>
-  <div id="jobCards" class="flex flex-col gap-3 md:hidden" role="list" aria-labelledby="agentsHeading"></div>
-  <div class="hidden overflow-x-auto md:block">
-  <table class="w-full border-collapse text-sm" aria-labelledby="agentsHeading">
+  <div id="jobCards" class="flex min-w-0 flex-col gap-3 lg:hidden" role="list" aria-labelledby="agentsHeading"></div>
+  <div id="jobsTableWrap" class="relative hidden max-w-full overflow-x-auto lg:block">
+  <table class="w-full table-auto border-collapse text-sm" aria-labelledby="agentsHeading">
     <thead class="text-left text-zinc-400"><tr class="border-b border-zinc-800"><th class="p-2">Agent</th><th class="p-2">Repo</th><th class="p-2">Stage</th><th class="p-2">Round</th><th class="p-2">Ticket</th><th class="p-2">PR</th><th class="p-2">Ready</th><th class="p-2">Status</th><th class="p-2">Model</th><th class="p-2">Tokens</th><th class="p-2">Updated</th><th class="p-2"><span class="sr-only">Actions</span></th></tr></thead>
     <tbody id="jobs"></tbody>
   </table>
   </div>
   <div id="detailHome" hidden>
-  <section id="jobDetailPanel" class="job-detail flex flex-col rounded-lg border border-sky-900/60 bg-zinc-950/80 p-3 wrap-anywhere" role="region" aria-labelledby="detailTitle">
+  <section id="jobDetailPanel" class="job-detail flex w-full min-w-0 max-w-full flex-col rounded-lg border border-sky-900/60 bg-zinc-950/80 p-3 wrap-anywhere [contain:inline-size]" role="region" aria-labelledby="detailTitle">
     <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
       <h3 id="detailTitle" class="text-base font-semibold">Agent log</h3>
       <div id="detailStatus" class="flex flex-wrap items-center gap-2 text-sm text-zinc-400"></div>
@@ -102,14 +102,14 @@ export function runnerUiHtml(
       <label class="flex min-h-11 items-center gap-2"><input type="checkbox" id="showRaw" class="h-4 w-4" /> Raw log</label>
       <label class="flex min-h-11 items-center gap-2"><input type="checkbox" id="followLive" class="h-4 w-4" checked /> Follow live</label>
     </div>
-    <div class="log-panel flex min-h-0 flex-1 flex-col">
-      <div id="logSteps" class="max-h-[min(32rem,52vh)] min-h-32 flex-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-sm md:max-h-[min(24rem,45vh)]"></div>
-      <pre id="logRaw" class="max-h-96 overflow-auto rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-xs whitespace-pre-wrap break-words"></pre>
+    <div class="log-panel flex min-h-0 min-w-0 flex-1 flex-col">
+      <div id="logSteps" class="max-h-[min(32rem,52vh)] min-h-32 min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-sm lg:max-h-[min(24rem,45vh)]"></div>
+      <pre id="logRaw" class="max-h-96 min-w-0 max-w-full overflow-auto rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-xs whitespace-pre-wrap wrap-anywhere"></pre>
     </div>
     <div class="chat-composer steer-panel mt-3 border-t border-zinc-800 pt-3">
       <label for="steerPrompt" class="mb-1 block text-sm text-zinc-400">Steer (queued for next agent step)</label>
       <div class="steer-row flex flex-wrap gap-2">
-        <textarea id="steerPrompt" rows="2" class="min-h-14 w-full flex-[1_1_100%] rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base" placeholder="Add guidance… Enter to send, Shift+Enter for newline"></textarea>
+        <textarea id="steerPrompt" rows="2" class="min-h-14 w-full min-w-0 flex-[1_1_100%] rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base" placeholder="Add guidance… Enter to send, Shift+Enter for newline"></textarea>
         <button type="button" class="primary min-h-11 flex-1 rounded-md border border-sky-700 bg-sky-900/50 px-4 py-2 sm:flex-none" id="steerBtn">Steer</button>
         <button type="button" class="danger min-h-11 flex-1 rounded-md border border-red-800 bg-red-950/60 px-4 py-2 sm:flex-none" id="stopBtn">Stop</button>
         <button type="button" class="min-h-11 flex-1 rounded-md border border-zinc-600 bg-zinc-800 px-4 py-2 sm:flex-none" id="archiveBtn" data-action="archive" hidden>Remove</button>
@@ -337,7 +337,7 @@ export function runnerUiHtml(
       const d = dashFmt.jobAgentDisplayLabel(j);
       const tip = d.tooltip.replace(/"/g, "&quot;");
       const label = d.label.replace(/</g, "&lt;");
-      let html = '<span class="agent-label inline-block max-w-[min(16rem,42vw)] truncate align-top" title="' + tip + '">' + label + '</span>';
+      let html = '<span class="agent-label inline-block max-w-[min(16rem,42vw)] truncate align-top lg:max-w-36 xl:max-w-64" title="' + tip + '">' + label + '</span>';
       if (dashFmt.isDocsJobRecord(j) && j.input && j.input.docsTemplate) {
         html += '<br><span class="meta">' + String(j.input.docsTemplate).replace(/</g, "&lt;") + '</span>';
       }
@@ -367,8 +367,8 @@ export function runnerUiHtml(
     detailCellEl.colSpan = 12;
     detailCellEl.className = "job-detail-cell border-b border-zinc-800 bg-zinc-900/40 p-3";
     detailRowEl.appendChild(detailCellEl);
-    // Tailwind md: breakpoint — the table is shown at and above it, cards below it.
-    const desktopMq = typeof window.matchMedia === "function" ? window.matchMedia("(min-width: 48rem)") : null;
+    // Tailwind lg: breakpoint — the 12-column table is shown at and above it, cards below it.
+    const desktopMq = typeof window.matchMedia === "function" ? window.matchMedia("(min-width: 64rem)") : null;
     const rowEls = new Map();
     let panelJobId = null;
 

@@ -22,13 +22,13 @@
   @apply cursor-pointer text-xs uppercase tracking-wide text-zinc-500 select-none;
 }
 .agent-thinking-body {
-  @apply mt-1 leading-relaxed whitespace-pre-wrap break-words;
+  @apply mt-1 leading-relaxed whitespace-pre-wrap wrap-anywhere;
 }
 .agent-chat-row {
   @apply my-2 flex justify-start;
 }
 .agent-bubble {
-  @apply max-w-2xl rounded-2xl rounded-bl-sm border border-zinc-600/60 bg-zinc-800 px-3 py-2 leading-relaxed text-zinc-100 break-words;
+  @apply max-w-2xl rounded-2xl rounded-bl-sm border border-zinc-600/60 bg-zinc-800 px-3 py-2 leading-relaxed text-zinc-100 wrap-anywhere;
 }
 .agent-prose p {
   @apply my-1;
@@ -49,10 +49,10 @@
   @apply text-sm text-zinc-400;
 }
 .agent-tool-body {
-  @apply mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-xs whitespace-pre-wrap break-words text-zinc-300;
+  @apply mt-1 max-w-full min-w-0 overflow-x-auto rounded bg-black/40 p-2 font-mono text-xs whitespace-pre-wrap wrap-anywhere text-zinc-300;
 }
 .agent-tool-result {
-  @apply mt-1 max-h-48 overflow-x-auto rounded bg-black/30 p-2 font-mono text-xs whitespace-pre-wrap break-words text-zinc-400;
+  @apply mt-1 max-h-48 max-w-full min-w-0 overflow-x-auto rounded bg-black/30 p-2 font-mono text-xs whitespace-pre-wrap wrap-anywhere text-zinc-400;
 }
 .agent-tool-failed {
   @apply border-red-500/50;
@@ -64,7 +64,7 @@
   @apply my-2 text-red-300;
 }
 .agent-plain {
-  @apply my-1 font-mono text-sm text-zinc-400;
+  @apply my-1 font-mono text-sm wrap-anywhere text-zinc-400;
 }
 .agent-pass-through {
   @apply m-0 max-h-none bg-transparent p-0;

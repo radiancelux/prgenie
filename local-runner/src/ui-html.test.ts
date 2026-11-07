@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { JSDOM } from "jsdom";
 import { dashboardFormatBrowserScript } from "./dashboard-format.js";
@@ -221,13 +222,23 @@ async function waitFor(check: () => boolean, label: string): Promise<void> {
   assert.fail(`timed out waiting for ${label}`);
 }
 
+/** Evaluates a `(min-width: Nrem|Npx)` media query against a simulated viewport width. */
+function minWidthMatches(query: string, viewportWidth: number): boolean {
+  const m = /\(min-width:\s*([\d.]+)(rem|px)\)/.exec(query);
+  assert.ok(m, `unsupported media query in test stub: ${query}`);
+  return viewportWidth >= Number(m[1]) * (m[2] === "rem" ? 16 : 1);
+}
+
 /** Boots the dashboard in jsdom with stubbed fetch, EventSource, and matchMedia. */
-async function bootDashboard(opts: { jobs?: FixtureJob[]; desktop?: boolean } = {}) {
+async function bootDashboard(
+  opts: { jobs?: FixtureJob[]; desktop?: boolean; viewportWidth?: number; logTail?: string } = {},
+) {
   const html = runnerUiHtml(9473, ["http://127.0.0.1:9473/"]);
   const state = { jobs: opts.jobs ?? fixtureJobs(), confirmAnswer: true };
   const requests: Array<{ method: string; path: string; body: unknown }> = [];
   const confirms: string[] = [];
   const errors: string[] = [];
+  const mediaQueries: string[] = [];
   let desktop = opts.desktop ?? true;
   const layoutListeners: Array<() => void> = [];
   FakeEventSource.instances = [];
@@ -312,7 +323,7 @@ async function bootDashboard(opts: { jobs?: FixtureJob[]; desktop?: boolean } = 
     if (single) {
       const job = state.jobs.find((j) => j.id === single[1]);
       return job
-        ? jsonResponse({ ...job, logTail: `Transcript for ${job.id}` })
+        ? jsonResponse({ ...job, logTail: opts.logTail ?? `Transcript for ${job.id}` })
         : jsonResponse({}, 404);
     }
     if (url.pathname === "/api/jobs") {
@@ -329,7 +340,10 @@ async function bootDashboard(opts: { jobs?: FixtureJob[]; desktop?: boolean } = 
   (window as unknown as { matchMedia: (q: string) => unknown }).matchMedia = (query: string) => ({
     media: query,
     get matches() {
-      return desktop;
+      mediaQueries.push(query);
+      return opts.viewportWidth === undefined
+        ? desktop
+        : minWidthMatches(query, opts.viewportWidth);
     },
     addEventListener: (_type: string, cb: () => void) => layoutListeners.push(cb),
     removeEventListener() {},
@@ -355,6 +369,7 @@ async function bootDashboard(opts: { jobs?: FixtureJob[]; desktop?: boolean } = 
     errors,
     requests,
     confirms,
+    mediaQueries,
     /** Remove/Restore button rendered for a job in the table row or mobile card. */
     rowAction: (id: string, action: "archive" | "restore") =>
       doc.querySelector<HTMLButtonElement>(
@@ -592,6 +607,135 @@ describe("runnerUiHtml inline job detail", () => {
       assertCollapsed(d);
     });
   });
+});
+
+const LONG_TOKEN = "0123456789abcdef".repeat(40);
+const LONG_URL = `https://example.com/artifacts/${"segment-".repeat(60)}end?q=${LONG_TOKEN}`;
+
+/** Stream-json transcript plus plain lines, all carrying long unbroken tokens. */
+function longLogTail(): string {
+  const shell = (subtype: string, output?: string) =>
+    JSON.stringify({
+      type: "tool_call",
+      subtype,
+      tool_call: {
+        shellToolCall: {
+          args: { command: `run --flag=${LONG_TOKEN} ${LONG_URL}` },
+          ...(output ? { result: { success: { output } } } : {}),
+        },
+      },
+    });
+  return [
+    "--- agent (round 0) ---",
+    JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "text", text: `Fetching ${LONG_URL} ${LONG_TOKEN}` }] },
+    }),
+    shell("started"),
+    shell("completed", `${LONG_TOKEN}\n${LONG_URL}`),
+    `plain-${LONG_TOKEN}`,
+  ].join("\n");
+}
+
+/** Utilities applied to `.agent-*` classes by `@apply` in dashboard.css. */
+function dashboardCssApplies(): Map<string, string[]> {
+  const css = readFileSync(new URL("./dashboard.css", import.meta.url), "utf8");
+  const rules = new Map<string, string[]>();
+  for (const m of css.matchAll(/^\.([\w-]+)\s*\{\s*@apply\s+([^;]+);/gm)) {
+    rules.set(m[1], m[2].trim().split(/\s+/));
+  }
+  return rules;
+}
+
+/**
+ * jsdom has no layout engine, so model the inherited `overflow-wrap` (and wrapping-related
+ * utilities) from Tailwind classes plus dashboard.css `@apply` rules, nearest ancestor first.
+ */
+function effectiveWrap(el: Element, applies: Map<string, string[]>): string {
+  for (let node: Element | null = el; node; node = node.parentElement) {
+    const utils = [...node.classList].flatMap((c) => [c, ...(applies.get(c) ?? [])]);
+    if (utils.includes("whitespace-nowrap") || utils.includes("truncate")) return "nowrap";
+    if (utils.includes("wrap-anywhere")) return "anywhere";
+    if (utils.includes("break-words") || utils.includes("wrap-break-word")) return "break-word";
+  }
+  return "normal";
+}
+
+describe("runnerUiHtml horizontal overflow (long unbroken log lines)", () => {
+  // Real-browser measurement across 320–1440px: scripts/check-dashboard-overflow.mjs.
+  for (const viewportWidth of [768, 1024]) {
+    it(`keeps the expanded detail within the viewport at ${viewportWidth}px`, async () => {
+      await withDashboard({ viewportWidth, logTail: longLogTail() }, async (d) => {
+        const tableLayout = viewportWidth >= 1024;
+        assert.ok(
+          d.mediaQueries.every((q) => q === "(min-width: 64rem)"),
+          "JS layout switch uses the Tailwind lg breakpoint",
+        );
+        const cards = d.doc.getElementById("jobCards")!;
+        const tableWrap = d.doc.getElementById("jobsTableWrap")!;
+        assert.ok(cards.classList.contains("lg:hidden"), "cards hide at lg, matching the JS");
+        for (const c of ["hidden", "lg:block", "overflow-x-auto", "max-w-full", "relative"]) {
+          // `relative` keeps the absolutely positioned sr-only header inside the scroller.
+          assert.ok(tableWrap.classList.contains(c), `table wrapper has ${c}`);
+        }
+        (tableLayout ? d.tableToggle(JOB_A) : d.cardToggle(JOB_A)).click();
+        const panel = d.panel();
+        if (tableLayout) {
+          assertDetailUnderRow(d, JOB_A);
+        } else {
+          assert.equal(panel.parentElement, d.card(JOB_A), "below lg the detail opens in the card");
+          assert.equal(d.doc.querySelectorAll(".job-detail-row").length, 0, "no table detail row");
+        }
+        assertExpanded(d, JOB_A);
+        await waitFor(
+          () => panel.querySelectorAll("#logSteps .agent-tool-result").length > 0,
+          "long transcript",
+        );
+
+        // The panel must not size the table (or card) to its content's longest token.
+        for (const c of [
+          "min-w-0",
+          "max-w-full",
+          "w-full",
+          "wrap-anywhere",
+          "[contain:inline-size]",
+        ]) {
+          assert.ok(panel.classList.contains(c), `detail panel has ${c}`);
+        }
+        const applies = dashboardCssApplies();
+        for (const cls of ["agent-tool-body", "agent-tool-result"]) {
+          const utils = applies.get(cls) ?? [];
+          for (const u of ["overflow-x-auto", "max-w-full", "min-w-0", "wrap-anywhere"]) {
+            assert.ok(utils.includes(u), `.${cls} applies ${u}`);
+          }
+        }
+        const pres = [...panel.querySelectorAll("pre")];
+        assert.ok(pres.length >= 3, "raw log plus tool command and output blocks");
+        for (const pre of pres) {
+          const utils = [...pre.classList].flatMap((c) => [c, ...(applies.get(c) ?? [])]);
+          assert.ok(
+            utils.some((u) => /^overflow(-x)?-(auto|hidden)$/.test(u)),
+            `<pre class="${pre.className}"> scrolls or clips horizontally`,
+          );
+        }
+
+        // Every element showing a long token must be able to break it.
+        const holders = [...panel.querySelectorAll("*")].filter((el) =>
+          [...el.childNodes].some((n) => n.nodeType === 3 && /\S{80,}/.test(n.textContent ?? "")),
+        );
+        assert.ok(holders.length >= 5, `long-token elements rendered (${holders.length})`);
+        for (const el of holders) {
+          assert.equal(
+            effectiveWrap(el, applies),
+            "anywhere",
+            `<${el.tagName.toLowerCase()} class="${el.className}"> wraps long tokens anywhere`,
+          );
+        }
+        const steer = d.doc.getElementById("steerPrompt")!;
+        assert.ok(steer.classList.contains("w-full") && steer.classList.contains("min-w-0"));
+      });
+    });
+  }
 });
 
 describe("runnerUiHtml jsdom render", () => {

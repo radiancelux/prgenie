@@ -198,7 +198,8 @@ writeFileSync(mobileSnapPath, mobileSnapshot);
 const shots = [
   { width: 360, file: mobileSnapPath },
   { width: 390, file: mobileSnapPath },
-  { width: 768, file: snapPath },
+  { width: 768, file: mobileSnapPath },
+  { width: 1024, file: snapPath },
   { width: 1280, file: snapPath },
 ];
 try {
