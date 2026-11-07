@@ -36,14 +36,14 @@ function fixtureJobs() {
       createdAt: new Date(now - 60_000).toISOString(),
       updatedAt: new Date(now - 90_000).toISOString(),
       input: {
-        repoPath: "/home/brett/dev/prgenie",
-        branch: "feat/rad-319-chat-log-view",
+        repoPath: "/path/to/repo",
+        branch: "feat/issue-319-chat-log-view",
         promptFile: "/tmp/p.md",
         maxRounds: 2,
         model: "composer-2.5",
         ticketUrl:
-          "https://linear.app/radiancelux/issue/RAD-319/local-runner-ui-render-stream-json-logs-as-readable-steps",
-        linearIssue: "RAD-319",
+          "https://example.com/issue/ISSUE-319/local-runner-ui-render-stream-json-logs-as-readable-steps",
+        linearIssue: "ISSUE-319",
         jobType: "code",
         profile: "code",
         title: "local-runner UI: render stream-json logs as readable steps",
@@ -60,9 +60,9 @@ function fixtureJobs() {
       prIsDraft: true,
       approveHeadSha: null,
       readyPromotedAt: null,
-      linearIssue: "RAD-319",
+      linearIssue: "ISSUE-319",
       ticketUrl:
-        "https://linear.app/radiancelux/issue/RAD-319/local-runner-ui-render-stream-json-logs-as-readable-steps",
+        "https://example.com/issue/ISSUE-319/local-runner-ui-render-stream-json-logs-as-readable-steps",
       title: "local-runner UI: render stream-json logs as readable steps",
       tokenUsage: null,
       ciStatus: {
@@ -86,14 +86,13 @@ function fixtureJobs() {
       createdAt: new Date(now - 120_000).toISOString(),
       updatedAt: new Date(now - 45_000).toISOString(),
       input: {
-        repoPath: "/home/brett/dev/img-business",
+        repoPath: "/path/to/docs-repo",
         branch: "docs/marketing-q4",
         promptFile: "",
         maxRounds: 2,
         model: "composer-2.5",
-        ticketUrl:
-          "https://linear.app/radiancelux/issue/RAD-326/local-runner-non-technical-docs-mode",
-        linearIssue: "RAD-326",
+        ticketUrl: "https://example.com/issue/ISSUE-326/local-runner-non-technical-docs-mode",
+        linearIssue: "ISSUE-326",
         jobType: "docs",
         profile: "docs",
         docsTemplate: "marketing",
@@ -105,15 +104,14 @@ function fixtureJobs() {
       model: "composer-2.5",
       driverId: "cursor-agent",
       worktreePath: null,
-      repoSlug: "cc-consulting-nv/img-business",
+      repoSlug: "example-org/example-business",
       prUrl: null,
       prNumber: null,
       prIsDraft: null,
       approveHeadSha: null,
       readyPromotedAt: null,
-      linearIssue: "RAD-326",
-      ticketUrl:
-        "https://linear.app/radiancelux/issue/RAD-326/local-runner-non-technical-docs-mode",
+      linearIssue: "ISSUE-326",
+      ticketUrl: "https://example.com/issue/ISSUE-326/local-runner-non-technical-docs-mode",
       title: "Q4 marketing one-pager",
       tokenUsage: null,
       ciStatus: {
@@ -168,11 +166,11 @@ describe("dashboardFormatBrowserScript runtime", () => {
     const label = api.jobAgentDisplayLabel({
       id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
       title: "Hello",
-      linearIssue: "RAD-319",
+      linearIssue: "ISSUE-319",
       ticketUrl: null,
       input: { branch: "feat/x" },
     });
-    assert.equal(label.label, "RAD-319 · Hello");
+    assert.equal(label.label, "ISSUE-319 · Hello");
   });
 });
 
@@ -273,11 +271,11 @@ describe("runnerUiHtml jsdom render", () => {
     const bodyText = rows.map((r) => r.textContent ?? "").join("\n");
     assert.match(
       bodyText,
-      /RAD-319\s*·\s*local-runner UI: render stream-json logs as readable steps/,
+      /ISSUE-319\s*·\s*local-runner UI: render stream-json logs as readable steps/,
     );
-    assert.match(bodyText, /RAD-326\s*·\s*Q4 marketing one-pager/);
+    assert.match(bodyText, /ISSUE-326\s*·\s*Q4 marketing one-pager/);
     assert.match(bodyText, /radiancelux\/prgenie/);
-    assert.match(bodyText, /cc-consulting-nv\/img-business/);
+    assert.match(bodyText, /example-org\/example-business/);
     // Docs plain-language stage + relative updated cell
     assert.match(bodyText, /Review \(r1\)/);
     assert.match(bodyText, /\d+m ago|just now|\d+s ago/);

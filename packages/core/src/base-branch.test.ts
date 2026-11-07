@@ -23,7 +23,7 @@ import { prFile, prsDir, writeJsonFile } from "./store.js";
 import type { LocalPr } from "./types.js";
 
 /** Sequential: tests mutate a shared `repo` path. */
-describe("RAD-145 / RAD-149 branch-only base and duplicate head", { concurrency: false }, () => {
+describe("/ branch-only base and duplicate head", { concurrency: false }, () => {
   let repo = "";
 
   function git(args: string[], cwd = repo): string {

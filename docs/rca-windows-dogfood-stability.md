@@ -1,10 +1,10 @@
-# RCA: Windows dogfood stability (Brett Humphreys)
+# RCA: Windows local development stability (contributor)
 
-**Status:** Historical analysis. Inbox/queue listen was **removed in RAD-81** — `/steward` is the only orchestrator. Keep this page as RCA, not as a dogfood path.
+**Status:** Historical analysis. Inbox/queue listen was **removed** — `/steward` is the only orchestrator. Keep this page as RCA, not as a recommended setup path.
 
 **Audience:** PM + next CloudAgent implement slices.
-**Scope:** Windows MVP dogfood against `radiancelux/prgenie` checkout
-`C:\Users\BrettHumphreys\Documents\GitHub\pr-genie` (loops `lp-9ff837d2`, draft `lp-15976a74`).
+**Scope:** Windows MVP local development against `radiancelux/prgenie` checkout
+`C:\path\to\prgenie` (loops `lp-9ff837d2`, draft `lp-15976a74`).
 **CLI used:** `node packages\cli\dist\prgenie.cjs` (not on PATH).
 
 Flows 1–4 passed (install/doctor, gh bind, `/start` create, review flywheel via CLI).
@@ -16,40 +16,40 @@ Flow 5 shepherd stopped (appeared hung). Flows 6–8 not run.
 
 ```text
 Install friction (PATH, VSIX vs folder copy, plugin file locks)
-        │
-        ▼
+ │
+ ▼
 /watch-ready (+ optional inbox) starts `watch listen`
-        │  TICK every 60s, no code-level cap
-        ▼
+ │ TICK every 60s, no code-level cap
+ ▼
 Each TICK wakes the parent agent → new shells / Task subagents
-        │  ~1 background task per minute if the agent re-spawns work
-        ▼
+ │ ~1 background task per minute if the agent re-spawns work
+ ▼
 Extension host 2s poller: pushSnapshot → shepherdStatus → runCiChecks
-        │  no in-flight mutex; first paint waits on this
-        │  cache.json write retriggers fs.watch → more overlapping CI
-        ▼
+ │ no in-flight mutex; first paint waits on this
+ │ cache.json write retriggers fs.watch → more overlapping CI
+ ▼
 Machine lag + many cmd.exe + "Extension host became UNRESPONSIVE"
-        │
-        ├── sidebar webview never gets a snapshot (empty UI, refresh no-op)
-        ├── reviewer Tasks report "done" without packet flip
-        └── `prgenie shepherd` looks hung (same CI path, 5 min/check)
+ │
+ ├── sidebar webview never gets a snapshot (empty UI, refresh no-op)
+ ├── reviewer Tasks report "done" without packet flip
+ └── `prgenie shepherd` looks hung (same CI path, 5 min/check)
 ```
 
-**Approximate dogfood timeline (inferred, not a recorded trace):**
+**Approximate local development timeline (inferred, not a recorded trace):**
 
-| T   | What happens                                                                                                                                                                                                   | Why it looks like the next symptom                                                       |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| T0  | `pnpm link-extension` / plugin copy while Cursor is open; CLI never lands on PATH                                                                                                                              | Doctor can still be green (filesystem checks only)                                       |
-| T1  | `/watch-ready` arms `watch listen queue --interval 60` with Cursor **Notify on** `AGENT_LOOP_TICK_review-queue`                                                                                            | One cheap Node sleeper; expensive part is the agent wake                                 |
-| T2  | Every 60s the listen process prints a TICK **even if the queue did not change**                                                                                                                                | Parent chat gets a new turn every minute                                                 |
+| T   | What happens                                                                                                                                                                                            | Why it looks like the next symptom                                                       |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| T0  | `pnpm link-extension` / plugin copy while Cursor is open; CLI never lands on PATH                                                                                                                       | Doctor can still be green (filesystem checks only)                                       |
+| T1  | `/watch-ready` arms `watch listen queue --interval 60` with Cursor **Notify on** `AGENT_LOOP_TICK_review-queue`                                                                                         | One cheap Node sleeper; expensive part is the agent wake                                 |
+| T2  | Every 60s the listen process prints a TICK **even if the queue did not change**                                                                                                                         | Parent chat gets a new turn every minute                                                 |
 | T3  | Each turn may spawn `watch queue`, `/queue`, and a `generalPurpose` Task. Prompt says "don't duplicate"; nothing enforces it. Implementor `stop` hook can spawn a **second** reviewer for the same HEAD | ~27 background tasks ≈ ~27 minutes of listen                                             |
-| T4  | Local PRs webview activates. `LaneHub` polls every 2s and, for a selected loop, calls `shepherdStatus()` which runs **full local CI** (format/lint/typecheck/test/build) unless cache hits                     | First snapshot is blocked for minutes; overlapping polls stack more `pnpm` / `cmd.exe`   |
-| T5  | `checkFormatFromBlobs` shells `git show \| pnpm exec prettier` **once per tracked file** (~102 prettier-eligible files in this repo)                                                                           | "Many cmd.exe children" without any watch skill                                          |
-| T6  | CI cache write under `.git/agent-console/` fires recursive `fs.watch` → another `pushSnapshot` with no single-flight                                                                                           | Feedback loop while the first CI is still running                                        |
-| T7  | Extension host misses its heartbeat → `Extension host became UNRESPONSIVE`. Webview stays on initial HTML (empty list, hidden gh-bind, blank panel). Refresh posts a message nobody handles                    | Sidebar empty **while CLI `list` / `gh status` still work**                              |
-| T8  | Reviewer Task claims "Review complete" (comment and/or Task summary). `complete_review` never lands (PATH, MCP missing in Task, head-drift throw, no post-condition check)                                     | Packet stays `ready`; human uses CLI `complete-review`                                   |
-| T9  | Flow 5 `prgenie shepherd <id>` runs the **same** `runCiChecks` with 5 min timeout **per** check, on a lagged machine                                                                                           | Looks hung; may actually be working                                                      |
-| T10 | User kills Cursor background tasks → lag clears. Host/webview may stay dead until full Cursor quit                                                                                                             | Confirms Tasks were a major CPU hog; does not prove the sidebar bug is _only_ host death |
+| T4  | Local PRs webview activates. `LaneHub` polls every 2s and, for a selected loop, calls `shepherdStatus()` which runs **full local CI** (format/lint/typecheck/test/build) unless cache hits              | First snapshot is blocked for minutes; overlapping polls stack more `pnpm` / `cmd.exe`   |
+| T5  | `checkFormatFromBlobs` shells `git show \| pnpm exec prettier` **once per tracked file** (~102 prettier-eligible files in this repo)                                                                    | "Many cmd.exe children" without any watch skill                                          |
+| T6  | CI cache write under `.git/agent-console/` fires recursive `fs.watch` → another `pushSnapshot` with no single-flight                                                                                    | Feedback loop while the first CI is still running                                        |
+| T7  | Extension host misses its heartbeat → `Extension host became UNRESPONSIVE`. Webview stays on initial HTML (empty list, hidden gh-bind, blank panel). Refresh posts a message nobody handles             | Sidebar empty **while CLI `list` / `gh status` still work**                              |
+| T8  | Reviewer Task claims "Review complete" (comment and/or Task summary). `complete_review` never lands (PATH, MCP missing in Task, head-drift throw, no post-condition check)                              | Packet stays `ready`; human uses CLI `complete-review`                                   |
+| T9  | Flow 5 `prgenie shepherd <id>` runs the **same** `runCiChecks` with 5 min timeout **per** check, on a lagged machine                                                                                    | Looks hung; may actually be working                                                      |
+| T10 | User kills Cursor background tasks → lag clears. Host/webview may stay dead until full Cursor quit                                                                                                      | Confirms Tasks were a major CPU hog; does not prove the sidebar bug is _only_ host death |
 
 ---
 
@@ -57,12 +57,12 @@ Machine lag + many cmd.exe + "Extension host became UNRESPONSIVE"
 
 | #   | Finding                                                                                                                                                                                                                                                                                                                                                                                                       | Class                                                                                                                       | Confidence                                                         | Evidence                                                                                                                                                                                                                                                                                                                                       |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R1  | Watch **TICK wakes are uncapped**. Listen itself is one process; Cursor + skills treat every 60s TICK as a new agent turn that may spawn shells/Tasks. Dedup is prompt-only ("remember `id`+`headSha` this session").                                                                                                                                                                                         | **Root** (lag / 27 tasks)                                                                                                   | High                                                               | `listenWatchLane` always `write(TICK)` after each interval (`packages/core/src/watch.ts`). Skills: `watch-ready`, `queue`. CLI `--interval` is **seconds** (`packages/cli/src/cli.ts`).                                                                                                                                             |
+| R1  | Watch **TICK wakes are uncapped**. Listen itself is one process; Cursor + skills treat every 60s TICK as a new agent turn that may spawn shells/Tasks. Dedup is prompt-only ("remember `id`+`headSha` this session").                                                                                                                                                                                         | **Root** (lag / 27 tasks)                                                                                                   | High                                                               | `listenWatchLane` always `write(TICK)` after each interval (`packages/core/src/watch.ts`). Skills: `watch-ready`, `queue`. CLI `--interval` is **seconds** (`packages/cli/src/cli.ts`).                                                                                                                                                        |
 | R2  | **Implementor `stop` hook also Tasks a reviewer** for the same ready HEAD (`shouldSpawnReviewer` / `formatSpawnReviewer`), independent of the reviewer chat queue.                                                                                                                                                                                                                                            | **Root** (duplicate reviewers)                                                                                              | High                                                               | `packages/cli/src/review-hook.ts` `event === "stop"`; `hooks.json` `stop` + `subagentStop`.                                                                                                                                                                                                                                                    |
 | R3  | Sidebar `pushSnapshot` **blocks first paint on `shepherdStatus` → `runCiChecks`**, every 2s, **no in-flight guard**. Cache writes re-enter via `fs.watch`.                                                                                                                                                                                                                                                    | **Root** (host death, empty UI, stacked CI, shepherd "hang")                                                                | High                                                               | `LaneHub` constructor `setInterval(..., 2000)`; `pushSnapshot` awaits `shepherdStatus` before `post()` (`packages/extension/src/laneView.ts`). `shepherdStatus` always runs CI unless `skipCiCheck` (`packages/core/src/shepherd.ts`). `runCiChecks` default timeout **300s per check**, per-file prettier (`packages/core/src/ci-runner.ts`). |
-| R4  | Review complete is **prompt-gated, not state-gated**. Leaf may lack MCP; Windows fallback is `prgenie` which is **not on PATH**. Parent is told not to wait and not to `complete_review`. Head-drift **throws** before status flip. "Review complete" text is also the default comment body _inside_ a successful `completeLocalPrReview` — agents can mimic it via `add_comment` while status stays `ready`. | **Root** (flaky review)                                                                                                     | High                                                               | Skills `review` / `queue`; `completeLocalPrReview` (`packages/core/src/prs.ts`); CLI `bin` only in `packages/cli/package.json`, never globally linked.                                                                                                                                                                         |
+| R4  | Review complete is **prompt-gated, not state-gated**. Leaf may lack MCP; Windows fallback is `prgenie` which is **not on PATH**. Parent is told not to wait and not to `complete_review`. Head-drift **throws** before status flip. "Review complete" text is also the default comment body _inside_ a successful `completeLocalPrReview` — agents can mimic it via `add_comment` while status stays `ready`. | **Root** (flaky review)                                                                                                     | High                                                               | Skills `review` / `queue`; `completeLocalPrReview` (`packages/core/src/prs.ts`); CLI `bin` only in `packages/cli/package.json`, never globally linked.                                                                                                                                                                                         |
 | R5  | Windows install/docs assume **folder copy + Unix PATH**. `link-extension` is a copy into `~\.cursor\extensions`; doctor only checks **disk version**, not that Cursor loaded the extension. Plugin uninstall wiping `~\.cursor\plugins\local\prgenie` is expected Cursor behavior; relink while Cursor holds `server.cjs` needs a full quit on Windows.                                                       | **Root** (install friction)                                                                                                 | High (docs/process); Medium (why VSIX was required)                | `scripts/link-extension.ps1`, `scripts/link-plugin.ps1`, `docs/release.md` ("You do **not** need a VSIX"), `doctor.ts` extension check.                                                                                                                                                                                                        |
-| R6  | Test harness still has **Unix-only** bits after RAD-49. CI is `ubuntu-latest` only.                                                                                                                                                                                                                                                                                                                           | **Root** (4 Windows test fails)                                                                                             | High                                                               | `attach.test.ts` `chmod` + bash `gh` stub; `ci-runner.test.ts` RAD-46 uses `ln -s` and `sleep N` (cmd.exe has no `sleep`).                                                                                                                                                                                                                     |
+| R6  | Test harness still has **Unix-only** bits after . CI is `ubuntu-latest` only.                                                                                                                                                                                                                                                                                                                                 | **Root** (4 Windows test fails)                                                                                             | High                                                               | `attach.test.ts` `chmod` + bash `gh` stub; `ci-runner.test.ts` uses `ln -s` and `sleep N` (cmd.exe has no `sleep`).                                                                                                                                                                                                                            |
 | S1  | ~27 Cursor background tasks + many `cmd.exe`                                                                                                                                                                                                                                                                                                                                                                  | **Symptom** of R1 (and R3 prettier/pnpm children)                                                                           | High                                                               | Matches 60s ticks × ~27 min; plus ~102 prettier shells on a CI miss.                                                                                                                                                                                                                                                                           |
 | S2  | Extension host UNRESPONSIVE                                                                                                                                                                                                                                                                                                                                                                                   | **Symptom** of R1+R3 starving the host                                                                                      | High                                                               | Console message; lag cleared when Tasks were killed.                                                                                                                                                                                                                                                                                           |
 | S3  | Local PRs sidebar empty, refresh no-op, doctor green, CLI list works                                                                                                                                                                                                                                                                                                                                          | **Mostly symptom** of S2/R3 (webview never posted). **Possible independent** empty-accounts / error-path issues — see §2.1. | High for host-death path; Medium for a remaining bind/snapshot bug | Initial HTML hides watch + gh-bind and leaves `#list` empty until a snapshot arrives. `refresh` is `postMessage` into the same host. Doctor does not talk to the webview.                                                                                                                                                                      |
@@ -75,8 +75,8 @@ Machine lag + many cmd.exe + "Extension host became UNRESPONSIVE"
 | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Watch listeners spawn unbounded shell/agent tasks without caps → host starvation → empty sidebar as a _symptom_ of host death | **Confirmed.** Listen process is capped (30m idle / 8h wall). The **agent reaction to TICK** is not. Empty sidebar is the expected webview state until the first `post()`.                                                                                                                                                                                                                                                                                                                                                                       |
 | Sidebar also has an independent snapshot/bind bug when the host is healthy                                                    | **Not disproven.** Two real code smells remain: (1) first `post()` waits on CI; a healthy host still shows empty UI for minutes; (2) outer `catch` in `pushSnapshot` posts `prs: []`, wiping a previously good list. `spawn("gh")` without `shell` can fail to see `gh.cmd` under Cursor's Windows PATH even when a user terminal `gh status` works — that would empty the **dropdown**, not the loop list. **Do not treat "fix bind spawn" as the empty-list fix.** Re-test sidebar with R3 fixed and Tasks stopped before more UI archaeology. |
-| Install/docs assume Unix PATH + folder link; Windows needs VSIX-first                                                         | **Mostly confirmed.** Docs explicitly say VSIX is optional. Dogfood needed `pack:extension` + `cursor --install-extension`. Likely mix of "Cursor didn't rescan unpacked copy until full quit" and Windows file locks. Doctor stays green either way.                                                                                                                                                                                                                                                                                            |
-| Test harness uses Unix-only APIs on Windows                                                                                   | **Confirmed** for the four named failures. RAD-49's `linkNodeModules` helper was **not** used in the RAD-46 CRLF test.                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Install/docs assume Unix PATH + folder link; Windows needs VSIX-first                                                         | **Mostly confirmed.** Docs explicitly say VSIX is optional. local development needed `pack:extension` + `cursor --install-extension`. Likely mix of "Cursor didn't rescan unpacked copy until full quit" and Windows file locks. Doctor stays green either way.                                                                                                                                                                                                                                                                                  |
+| Test harness uses Unix-only APIs on Windows                                                                                   | **Confirmed** for the four named failures. 's `linkNodeModules` helper was **not** used in the CRLF test.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Review complete gate races or doesn't wait for MCP/skill state                                                                | **Confirmed as a process/prompt hole, not a core race on the JSON lock.** `withFileLock` serializes writers. The leaf is not required to re-`show` the packet; the parent is forbidden from completing or awaiting. Drift throw + missing Windows CLI are sufficient.                                                                                                                                                                                                                                                                            |
 
 ---
@@ -123,7 +123,7 @@ Ship **in this order**. Each slice is independently mergeable. Do not combine R1
 
 - [ ] A 30-minute idle listen on an unchanged queue produces **0** reviewer Tasks and **1** listen process.
 - [ ] Two ready loops → at most two reviewer claims; a second `/queue` pass does not spawn duplicates.
-- [ ] Windows dogfood: Cursor Background Agents panel does not accumulate ~1 task/minute.
+- [ ] Windows local development: Cursor Background Agents panel does not accumulate ~1 task/minute.
 - [ ] `/stop-review` still kills the lane; idle/max DONE still halt as today.
 
 ### Slice 2 — P0: Review complete is a verified state transition
@@ -178,7 +178,7 @@ Ship **in this order**. Each slice is independently mergeable. Do not combine R1
 **Change (after Slice 0):**
 
 - `prgenie shepherd` prints each check as it starts/finishes (`format:check…`, `lint…`) and that default timeout is 5 min/check.
-- Reuse CI cache (already RAD-35); do not skip it.
+- Reuse CI cache (already ); do not skip it.
 - Sidebar shepherd widget: cached/cheap gates live; CI result is last-known from cache or a **manual Refresh CI** action, never a 2s poll.
 
 **Acceptance criteria:**
@@ -187,12 +187,12 @@ Ship **in this order**. Each slice is independently mergeable. Do not combine R1
 - [ ] A cache-hot shepherd returns in seconds, not minutes.
 - [ ] Sidebar does not start a new full CI suite to paint the export widget.
 
-### Slice 6 — P2: Windows-portable tests (finish RAD-49)
+### Slice 6 — P2: Windows-portable tests (finish )
 
 **Change:**
 
 - `attach.test.ts`: replace `chmod` + bash `gh` stub with a `gh.cmd` / `gh.bat` on PATH (or `spawn` mock). No `chmod` binary.
-- RAD-46 CRLF test: use existing `linkNodeModules` (junction on win32), not `ln -s`.
+- CRLF test: use existing `linkNodeModules` (junction on win32), not `ln -s`.
 - Timeout tests: do not call `sleep` (missing on cmd.exe). Use `node -e "setTimeout(()=>{}, 3000)"` or a tiny JS sleeper.
 - Temp `rm`: retry on `EBUSY`/`EPERM` (Windows), or skip `after` throw.
 - CI: add a `windows-latest` test job **or** document that Ubuntu CI cannot catch these. Prefer a Windows job once tests are portable.
@@ -200,27 +200,27 @@ Ship **in this order**. Each slice is independently mergeable. Do not combine R1
 **Acceptance criteria:**
 
 - [ ] `pnpm test` on Windows: 0 fails from chmod / ln / sleep / EBUSY cleanup.
-- [ ] RAD-46 CRLF assertion still proves blob-LF vs worktree-CRLF (the product fix stays).
+- [ ] CRLF assertion still proves blob-LF vs worktree-CRLF (the product fix stays).
 - [ ] Linux CI stays green.
 
 ---
 
 ## 4. Do **not** fix yet
 
-| Item                                                                        | Why defer                                                                                                             |
-| --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Unbounded skill rewrite into a native Cursor subscription / MCP resource    | Product/platform; Slice 1 is the small cap.                                                                           |
-| Making `complete_review` ignore head drift                                  | Safety feature; fix the agent around it (Slice 2).                                                                    |
-| Running CI in the extension host "but cached" as the sidebar design         | Cache misses during dogfood (constant commits) still explode. Slice 0 first.                                          |
-| Global `npm i -g` / committing a VSIX                                       | Release policy already gitignores VSIX (`docs/release.md`).                                                           |
-| H5 sidebar search (RAD-65), extension UI tests (P2 remainder), extra polish | Unrelated to this outage.                                                                                             |
-| Changing listen idle 30m / max 8h defaults                                  | Not implicated; the bug is per-TICK spawn, not the ceiling.                                                           |
-| `parseGhAuthStatus` / `spawn("gh")` Windows PATH                            | Revisit only if Slice 0+1 still leave an empty **dropdown** while `gh auth status` works in the same Cursor terminal. |
-| Refactors of `laneView.ts` HTML/CSS, MCP tool sprawl, learnings             | Out of scope.                                                                                                         |
+| Item                                                                     | Why defer                                                                                                             |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| Unbounded skill rewrite into a native Cursor subscription / MCP resource | Product/platform; Slice 1 is the small cap.                                                                           |
+| Making `complete_review` ignore head drift                               | Safety feature; fix the agent around it (Slice 2).                                                                    |
+| Running CI in the extension host "but cached" as the sidebar design      | Cache misses during local development (constant commits) still explode. Slice 0 first.                                |
+| Global `npm i -g` / committing a VSIX                                    | Release policy already gitignores VSIX (`docs/release.md`).                                                           |
+| H5 sidebar search, extension UI tests (P2 remainder), extra polish       | Unrelated to this outage.                                                                                             |
+| Changing listen idle 30m / max 8h defaults                               | Not implicated; the bug is per-TICK spawn, not the ceiling.                                                           |
+| `parseGhAuthStatus` / `spawn("gh")` Windows PATH                         | Revisit only if Slice 0+1 still leave an empty **dropdown** while `gh auth status` works in the same Cursor terminal. |
+| Refactors of `laneView.ts` HTML/CSS, MCP tool sprawl, learnings          | Out of scope.                                                                                                         |
 
 ---
 
-## 5. Repro notes (Windows dogfood, from code)
+## 5. Repro notes (Windows local development, from code)
 
 Environment: Windows, Cursor, repo at `…\GitHub\pr-genie`, Node 20+, `pnpm build` already done. Use Task Manager or Cursor **Background Agents** / terminal pane.
 
@@ -245,7 +245,7 @@ Environment: Windows, Cursor, repo at `…\GitHub\pr-genie`, Node 20+, `pnpm bui
 1. Mark a loop `ready` (`prgenie ready <id>`).
 2. Run a reviewer **Task** (not the parent chat) with `/review` on a machine where `prgenie` is not on PATH and MCP is not in the Task.
 3. **Expect today:** Task text "reviewed" / "Review complete"; `prgenie show <id>` still `ready`.
-4. Manual recovery (what Brett did): `node packages\cli\dist\prgenie.cjs complete-review <id>`.
+4. Manual recovery (manual recovery): `node packages\cli\dist\prgenie.cjs complete-review <id>`.
 
 ### D. Shepherd "hang" (S4)
 
@@ -261,12 +261,12 @@ pnpm test
 
 **Expect today (from code, not re-run here):**
 
-| Failure           | File                                              | Mechanism                                                          |
-| ----------------- | ------------------------------------------------- | ------------------------------------------------------------------ |
-| `chmod` ENOENT    | `packages/core/src/attach.test.ts`                | `execFileSync("chmod", ["+x", mockGhPath])`; stub is `#!/bin/bash` |
-| `ln -s`           | `packages/core/src/ci-runner.test.ts` RAD-46 CRLF | shell `ln -s` instead of `linkNodeModules`                         |
-| Timeout assertion | same file, `sleep 2` / `sleep 3`                  | `child_process.exec` → `cmd.exe`; `sleep` is not a Windows command |
-| EBUSY cleanup     | several `after()` `rm(..., { recursive: true })`  | Windows lock on temp git dirs / worktrees                          |
+| Failure           | File                                             | Mechanism                                                          |
+| ----------------- | ------------------------------------------------ | ------------------------------------------------------------------ |
+| `chmod` ENOENT    | `packages/core/src/attach.test.ts`               | `execFileSync("chmod", ["+x", mockGhPath])`; stub is `#!/bin/bash` |
+| `ln -s`           | `packages/core/src/ci-runner.test.ts` CRLF       | shell `ln -s` instead of `linkNodeModules`                         |
+| Timeout assertion | same file, `sleep 2` / `sleep 3`                 | `child_process.exec` → `cmd.exe`; `sleep` is not a Windows command |
+| EBUSY cleanup     | several `after()` `rm(..., { recursive: true })` | Windows lock on temp git dirs / worktrees                          |
 
 `.github/workflows/ci.yml` is `runs-on: ubuntu-latest` only — these never fail on GitHub.
 
@@ -275,7 +275,7 @@ pnpm test
 ```powershell
 pnpm build
 pnpm link-plugin
-pnpm link-extension   # copy to %USERPROFILE%\.cursor\extensions\prgenie.prgenie-<ver>
+pnpm link-extension # copy to %USERPROFILE%\.cursor\extensions\prgenie.prgenie-<ver>
 ```
 
 Then, if Local PRs does not activate:
@@ -295,63 +295,63 @@ Plugin uninstall removing `%USERPROFILE%\.cursor\plugins\local\prgenie` is expec
 **Listen always ticks (even with no activity):**
 
 ```241:275:packages/core/src/watch.ts
-  while (true) {
-    const before = await getRepoWatch(cwd);
-    // ...
-    await sleep(intervalMs);
-    // fingerprint only resets idle — TICK still prints every interval
-    tick += 1;
-    write(`${sentinel.tick} ${JSON.stringify({ prompt: sentinel.prompt })}`);
-  }
+ while (true) {
+ const before = await getRepoWatch(cwd);
+ // ...
+ await sleep(intervalMs);
+ // fingerprint only resets idle — TICK still prints every interval
+ tick += 1;
+ write(`${sentinel.tick} ${JSON.stringify({ prompt: sentinel.prompt })}`);
+ }
 ```
 
 **Sidebar poller + blocking shepherd/CI:**
 
 ```124:127:packages/extension/src/laneView.ts
-  constructor(private readonly context: vscode.ExtensionContext) {
-    this.showArchived = this.context.workspaceState.get("prgenie.showArchived", false);
-    this.poller = setInterval(() => void this.pushSnapshot(), 2000);
-  }
+ constructor(private readonly context: vscode.ExtensionContext) {
+ this.showArchived = this.context.workspaceState.get("prgenie.showArchived", false);
+ this.poller = setInterval(() => void this.pushSnapshot(), 2000);
+ }
 ```
 
 ```658:685:packages/extension/src/laneView.ts
-      let shepherd: ShepherdResult | null = null;
-      if (selected) {
-        try {
-          shepherd = await shepherdStatus(root, selected.id);
-        } catch (err) {
-          console.error("[prgenie] Failed to fetch shepherd status:", err);
-        }
-      }
-      this.post({ type: "snapshot", /* prs, ghBind, shepherdStatus, ... */ }, force);
+ let shepherd: ShepherdResult | null = null;
+ if (selected) {
+ try {
+ shepherd = await shepherdStatus(root, selected.id);
+ } catch (err) {
+ console.error("[prgenie] Failed to fetch shepherd status:", err);
+ }
+ }
+ this.post({ type: "snapshot", /* prs, ghBind, shepherdStatus, ... */ }, force);
 ```
 
 **Shepherd = full CI:**
 
 ```92:105:packages/core/src/shepherd.ts
-    if (!options.skipCiCheck) {
-      const ciResult = await runCiChecks(cwd);
-      if (!ciResult.allPassed) {
-        for (const check of ciResult.checks) {
-          if (!check.passed) {
-            reasons.push({
-              check: "ci",
-              message: `CI check failed: ${check.name}${check.error ? ` — ${check.error}` : ""}`,
-            });
-          }
-        }
-      }
-    }
+ if (!options.skipCiCheck) {
+ const ciResult = await runCiChecks(cwd);
+ if (!ciResult.allPassed) {
+ for (const check of ciResult.checks) {
+ if (!check.passed) {
+ reasons.push({
+ check: "ci",
+ message: `CI check failed: ${check.name}${check.error ? ` — ${check.error}` : ""}`,
+ });
+ }
+ }
+ }
+ }
 ```
 
 **Per-file prettier (Windows = one cmd.exe per file):**
 
 ```110:118:packages/core/src/ci-runner.ts
 async function checkFormatFromBlobs(cwd: string, files: string[]): Promise<void> {
-  for (const file of files) {
-    const command = `git show ":${file.replace(/"/g, '\\"')}" | pnpm exec prettier --stdin-filepath "${file.replace(/"/g, '\\"')}" --check`;
-    await execAsync(command, { cwd });
-  }
+ for (const file of files) {
+ const command = `git show ":${file.replace(/"/g, '\\"')}" | pnpm exec prettier --stdin-filepath "${file.replace(/"/g, '\\"')}" --check`;
+ await execAsync(command, { cwd });
+ }
 }
 ```
 
@@ -359,15 +359,15 @@ async function checkFormatFromBlobs(cwd: string, files: string[]): Promise<void>
 
 ```780:798:packages/core/src/prs.ts
 export async function completeLocalPrReview(...) {
-    const headDrift = Boolean(reviewedAgainstSha && reviewedAgainstSha !== pr.headSha);
-    if (headDrift && !options.allowDrift) {
-      throw new Error(
-        `HEAD moved since Review requested ...`,
-      );
-    }
+ const headDrift = Boolean(reviewedAgainstSha && reviewedAgainstSha !== pr.headSha);
+ if (headDrift && !options.allowDrift) {
+ throw new Error(
+ `HEAD moved since Review requested ...`,
+ );
+ }
 ```
 
-**Docs vs dogfood (VSIX optional):**
+**Docs vs local development (VSIX optional):**
 
 ```26:26:docs/release.md
 You do **not** need a VSIX for local Cursor installs — `link-extension` is enough.
@@ -377,6 +377,6 @@ You do **not** need a VSIX for local Cursor installs — `link-extension` is eno
 
 ## 7. Recommended PM call
 
-Greenlight **Slice 0 + Slice 1** as the stability MVP (empty sidebar + machine lag). Slice 2 is the next flywheel fix (reviewer Task). Slices 3–6 are hardening so the next Windows dogfood is not another archaeology session.
+Greenlight **Slice 0 + Slice 1** as the stability MVP (empty sidebar + machine lag). Slice 2 is the next flywheel fix (reviewer Task). Slices 3–6 are hardening so the next Windows local development is not another archaeology session.
 
 This document is the handoff. Do not start a large `laneView` rewrite in the same PR as watch-listen caps.

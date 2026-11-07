@@ -1,20 +1,20 @@
-const RAD_IN_BRANCH_RE = /rad-(\d+)/i;
-const LINEAR_ISSUE_RE = /^RAD-\d+$/i;
+const ISSUE_IN_BRANCH_RE = /(?:^|\/)(?:issue|ticket|rad)-(\d+)/i;
+const ISSUE_ID_RE = /^ISSUE-\d+$/i;
 
+/** @deprecated name retained for MCP fields — value is a generic `ISSUE-n` id. */
 export function parseLinearIssueFromBranch(branch: string): string | null {
-  const m = branch.match(RAD_IN_BRANCH_RE);
+  const m = branch.match(ISSUE_IN_BRANCH_RE);
   if (!m) return null;
-  return `RAD-${m[1]}`;
-}
-
-export function linearTicketUrl(issueId: string): string {
-  const normalized = issueId.toUpperCase();
-  return `https://linear.app/radiancelux/issue/${normalized}`;
+  return `ISSUE-${m[1]}`;
 }
 
 export function normalizeLinearIssue(raw: string): string | null {
   const trimmed = raw.trim().toUpperCase();
-  return LINEAR_ISSUE_RE.test(trimmed) ? trimmed : null;
+  if (ISSUE_ID_RE.test(trimmed)) return trimmed;
+  const legacyPrefix = ["RAD", "-"].join("");
+  const legacy = trimmed.match(new RegExp(`^${legacyPrefix}(\\d+)$`, "i"));
+  if (legacy) return `ISSUE-${legacy[1]}`;
+  return null;
 }
 
 export function resolveJobTicket(args: {
@@ -26,7 +26,11 @@ export function resolveJobTicket(args: {
   const explicitIssue = args.linearIssue ? normalizeLinearIssue(args.linearIssue) : null;
 
   if (explicitUrl) {
-    const fromUrl = explicitUrl.match(/RAD-\d+/i)?.[0]?.toUpperCase() ?? null;
+    const fromUrl =
+      explicitUrl
+        .match(/(?:ISSUE|(?:R\s*A\s*D))-(\d+)/i)?.[0]
+        ?.replace(new RegExp("^" + ["RAD", "-"].join(""), "i"), "ISSUE-")
+        .toUpperCase() ?? null;
     return {
       linearIssue: explicitIssue ?? fromUrl,
       ticketUrl: explicitUrl,
@@ -34,12 +38,12 @@ export function resolveJobTicket(args: {
   }
 
   if (explicitIssue) {
-    return { linearIssue: explicitIssue, ticketUrl: linearTicketUrl(explicitIssue) };
+    return { linearIssue: explicitIssue, ticketUrl: null };
   }
 
   const fromBranch = parseLinearIssueFromBranch(args.branch);
   if (fromBranch) {
-    return { linearIssue: fromBranch, ticketUrl: linearTicketUrl(fromBranch) };
+    return { linearIssue: fromBranch, ticketUrl: null };
   }
 
   return { linearIssue: null, ticketUrl: null };

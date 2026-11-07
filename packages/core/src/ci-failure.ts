@@ -17,7 +17,7 @@ export interface ExecFailureOutput {
   combined: string;
 }
 
-/** Priority context for CI failure excerpts (RAD-137). */
+/** Priority context for CI failure excerpts (). */
 export type FailureExcerptKind = "timeout" | "cancelled" | "maxBuffer" | "spawn";
 
 export interface FailureExcerptContext {
@@ -32,7 +32,7 @@ export interface CiFailureLogMeta {
   excerpt: string;
   logPath: string;
   writtenAt: string;
-  /** Loop key when stored under ci-logs/<loopId>/; null for the shared dir (RAD-136). */
+  /** Loop key when stored under ci-logs/<loopId>/; null for the shared dir (). */
   loopId?: string | null;
 }
 
@@ -409,7 +409,7 @@ export async function listCiFailureLogs(
   }
 }
 
-/** Newest failure per loop (shared counts as null), for doctor (RAD-136 R10). */
+/** Newest failure per loop (shared counts as null), for doctor (R10). */
 export async function latestCiFailuresByLoop(cwd: string, limit = 5): Promise<CiFailureLogMeta[]> {
   const entries: CiFailureLogMeta[] = [];
   try {

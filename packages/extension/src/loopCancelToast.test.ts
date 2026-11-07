@@ -7,7 +7,7 @@ import {
   resumeToastCopy,
 } from "./loopCancelToast.js";
 
-test("RAD-139: cancel writes abort token before marker", async () => {
+test("cancel writes abort token before marker", async () => {
   const order: string[] = [];
   await cancelLoop({
     abort: async () => {
@@ -20,7 +20,7 @@ test("RAD-139: cancel writes abort token before marker", async () => {
   assert.deepEqual(order, ["abort", "marker"]);
 });
 
-test("RAD-139: cancel and resume toast copy", () => {
+test("cancel and resume toast copy", () => {
   const cancel = cancelToastCopy("My loop");
   assert.equal(
     cancel.message,

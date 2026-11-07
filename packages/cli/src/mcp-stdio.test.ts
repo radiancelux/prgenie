@@ -50,7 +50,7 @@ test("encodeMcpFrame is official NDJSON (one JSON line), not Content-Length", ()
   assert.equal(decoded.messages.length, 1);
 });
 
-test("takeMcpMessages parses initialize with no trailing newline (RAD-82)", () => {
+test("takeMcpMessages parses initialize with no trailing newline", () => {
   const raw = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}';
   assert.equal(raw.includes("\n"), false);
   const { messages, rest } = takeMcpMessages(Buffer.from(raw, "utf8"));
@@ -62,7 +62,7 @@ test("takeMcpMessages parses initialize with no trailing newline (RAD-82)", () =
   assert.equal((one.value as { id: number }).id, 1);
 });
 
-test("legacy Content-Length body without a trailing newline is not a complete NDJSON line (RAD-82 hang)", () => {
+test("legacy Content-Length body without a trailing newline is not a complete NDJSON line (hang)", () => {
   const body = Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), "utf8");
   const legacy = Buffer.concat([
     Buffer.from(`Content-Length: ${body.length}\r\n\r\n`, "ascii"),

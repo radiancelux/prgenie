@@ -18,7 +18,7 @@ describe("detectMonorepoWideScript", () => {
     assert.equal(detectMonorepoWideScript("npx eslint --ext .ts,.tsx .")?.tool, "eslint");
   });
 
-  it("does not treat already path-scoped eslint as monorepo-wide (RAD-105)", () => {
+  it("does not treat already path-scoped eslint as monorepo-wide", () => {
     assert.equal(
       detectMonorepoWideScript(
         "eslint packages/core/src packages/cli/src packages/extension/src scripts",
@@ -96,7 +96,7 @@ describe("resolveCiCheckCommand host-repo fixtures", () => {
     assert.equal(resolved.command, "pnpm lint");
   });
 
-  it("leaves package-scoped lint:core on RAD-105 commands", () => {
+  it("leaves package-scoped lint:core on commands", () => {
     const resolved = resolveCiCheckCommand({
       check: "lint:core",
       cwd: "/tmp/prgenie",
@@ -144,7 +144,7 @@ describe("resolveCiCheckCommand host-repo fixtures", () => {
     assert.match(resolved.reason ?? "", /blob path over all tracked/);
   });
 
-  it("shows blob-scoped format paths in progress when formatScoped (RAD-117)", () => {
+  it("shows blob-scoped format paths in progress when formatScoped", () => {
     const resolved = resolveCiCheckCommand({
       check: "format:check",
       cwd: "/tmp/host",

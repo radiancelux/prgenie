@@ -1,7 +1,7 @@
 /**
  * Official MCP stdio is one compact JSON-RPC object per line (no Content-Length).
  * Cursor's Windows host reads line-delimited JSON; LSP-style headers left Local
- * on Connecting… forever (RAD-82) because the JSON body had no trailing newline.
+ * on Connecting… forever  because the JSON body had no trailing newline.
  */
 
 /** Written to stderr on listen so Output → MCP Logs proves Cursor spawned us. */

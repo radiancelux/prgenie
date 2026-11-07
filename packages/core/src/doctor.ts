@@ -239,13 +239,13 @@ export async function runDoctor(
       id: "mcp-duplicate",
       ok: false,
       summary: `Workspace .cursor/mcp.json registers "${PRGENIE_MCP_NAME}" (same name as the plugin). Connected MCPs shows two disabled/enabled prgenie rows (tag Plugin + tag <folder, e.g. pr-genie>). Dual same-name can leave Local on Connecting… (0 tools).`,
-      fix: "Dogfood path is the plugin only. Delete .cursor/mcp.json (do not ship it) or rename the workspace server. Then disable/enable PR Genie — enable only one prgenie entry.",
+      fix: "local development path is the plugin only. Delete .cursor/mcp.json (do not ship it) or rename the workspace server. Then disable/enable PR Genie — enable only one prgenie entry.",
     });
   } else if (workspaceNames.length) {
     checks.push({
       id: "mcp-duplicate",
       ok: true,
-      summary: `Workspace MCP ${workspaceNames.join(", ")} is extra (Cursor tags it with the folder name). Dogfood: enable only plugin prgenie.`,
+      summary: `Workspace MCP ${workspaceNames.join(", ")} is extra (Cursor tags it with the folder name). local development: enable only plugin prgenie.`,
     });
   } else {
     checks.push({

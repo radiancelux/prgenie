@@ -10,19 +10,19 @@ describe("resolveResendFromEmail", () => {
     else process.env.PRGENIE_RUNNER_FROM_EMAIL = prev;
   });
 
-  it("defaults to radiancelux.tech runner address", () => {
+  it("defaults to example.com runner address", () => {
     delete process.env.PRGENIE_RUNNER_FROM_EMAIL;
-    assert.equal(resolveResendFromEmail(), "PR Genie Local Runner <runner@radiancelux.tech>");
+    assert.equal(resolveResendFromEmail(), "PR Genie Local Runner <runner@example.com>");
   });
 
   it("accepts bare email override", () => {
-    process.env.PRGENIE_RUNNER_FROM_EMAIL = "notify@radiancelux.tech";
-    assert.equal(resolveResendFromEmail(), "PR Genie Local Runner <notify@radiancelux.tech>");
+    process.env.PRGENIE_RUNNER_FROM_EMAIL = "notify@example.com";
+    assert.equal(resolveResendFromEmail(), "PR Genie Local Runner <notify@example.com>");
   });
 
   it("accepts full Name <addr> override", () => {
-    process.env.PRGENIE_RUNNER_FROM_EMAIL = "Alerts <alerts@radiancelux.tech>";
-    assert.equal(resolveResendFromEmail(), "Alerts <alerts@radiancelux.tech>");
+    process.env.PRGENIE_RUNNER_FROM_EMAIL = "Alerts <alerts@example.com>";
+    assert.equal(resolveResendFromEmail(), "Alerts <alerts@example.com>");
   });
 });
 
@@ -54,7 +54,7 @@ describe("sendResendEmail", () => {
     );
     assert.equal(result.ok, true);
     assert.equal(authHeader, "Bearer re_secret_key");
-    assert.equal(bodyJson.from, "PR Genie Local Runner <runner@radiancelux.tech>");
+    assert.equal(bodyJson.from, "PR Genie Local Runner <runner@example.com>");
   });
 
   it("surfaces API errors", async () => {

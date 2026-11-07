@@ -30,7 +30,7 @@ test("exportPartialFailureFromRelease is null when prune and branch delete succe
   );
 });
 
-test("exportPartialFailureFromRelease names leftover path and prune error (RAD-95)", () => {
+test("exportPartialFailureFromRelease names leftover path and prune error", () => {
   const leftover = "C:/Users/me/pr-genie.loops/lp-deadbeef";
   const partial = exportPartialFailureFromRelease(
     "https://github.com/radiancelux/pr-genie/pull/99",
@@ -106,7 +106,7 @@ test("exportPartialFailureFromRelease falls back to archived worktree path", () 
   assert.equal(partial.message, `PR opened; worktree still at ${archived}; prune failed`);
 });
 
-test("exportPartialFailureFromRelease reports failed local branch delete (RAD-130)", () => {
+test("exportPartialFailureFromRelease reports failed local branch delete", () => {
   const partial = exportPartialFailureFromRelease(
     "https://github.com/o/r/pull/7",
     released({

@@ -30,7 +30,7 @@ export const RUNNER_MCP_TOOLS = [
         },
         linearIssue: {
           type: "string",
-          description: "Linear issue id e.g. RAD-321 (optional; builds ticketUrl when set alone)",
+          description: "Linear issue id e.g. (optional; builds ticketUrl when set alone)",
         },
         jobType: {
           type: "string",

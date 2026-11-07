@@ -12,12 +12,12 @@ import { gitCommonDir } from "./git.js";
 import { createTempGitRepo } from "./test-git-fixture.js";
 import { shepherdStatus } from "./shepherd.js";
 
-describe("RAD-136 per-loop CI logs", () => {
+describe("per-loop CI logs", () => {
   async function initRepo(): Promise<string> {
     return createTempGitRepo({ prefix: "prgenie-ci-logs-", template: "loop-ci" });
   }
 
-  it("RAD-136: runLoopCi and shepherdStatus write logs under the resolved loop id", async () => {
+  it("runLoopCi and shepherdStatus write logs under the resolved loop id", async () => {
     const repo = await initRepo();
     try {
       await git(repo, ["checkout", "-b", "feature"]);
@@ -85,7 +85,7 @@ describe("RAD-136 per-loop CI logs", () => {
     }
   });
 
-  it("RAD-136: fail progress event and result logPath point into the loop dir", async () => {
+  it("fail progress event and result logPath point into the loop dir", async () => {
     const repo = await initRepo();
     try {
       await git(repo, ["checkout", "-b", "feature"]);
@@ -127,7 +127,7 @@ describe("RAD-136 per-loop CI logs", () => {
     }
   });
 
-  it("RAD-136: four concurrent runs with different loop ids keep separate logs", async () => {
+  it("four concurrent runs with different loop ids keep separate logs", async () => {
     const repo = await initRepo();
     const worktrees: string[] = [];
     let wtParent: string | undefined;

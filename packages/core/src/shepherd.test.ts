@@ -296,7 +296,7 @@ describe("shepherdStatus", () => {
       await setLocalPrStatus(repo, pr.id, "reviewed");
 
       // Skip github check but allow CI check to run (exit-script fixture — no real bins).
-      // Force the root plan: selectCiChecks would skip this fixture diff (RAD-119).
+      // Force the root plan: selectCiChecks would skip this fixture diff .
       const result = await shepherdStatus(repo, pr.id, {
         skipGithubCheck: true,
         skipToolchainEnsure: true,
@@ -476,7 +476,7 @@ describe("shepherdStatus", () => {
     }
   });
 
-  it("CI env unhealthy does not hard-block export by default (RAD-92)", async () => {
+  it("CI env unhealthy does not hard-block export by default", async () => {
     const repo = await initRepo();
     try {
       await git(repo, ["checkout", "-b", "feature"]);
@@ -566,7 +566,7 @@ describe("shepherdStatus", () => {
     }
   });
 
-  it("RAD-74: CI block names the check and includes a test excerpt + log path", async () => {
+  it("CI block names the check and includes a test excerpt + log path", async () => {
     const repo = await initRepo();
     try {
       await git(repo, ["checkout", "-b", "feature"]);
@@ -626,7 +626,7 @@ describe("shepherdStatus", () => {
     }
   });
 
-  it("RAD-154: empty local CI plan for a non-empty diff blocks the gate", async () => {
+  it("empty local CI plan for a non-empty diff blocks the gate", async () => {
     const repo = await initRepo();
     try {
       await git(repo, ["checkout", "-b", "feature"]);
@@ -652,7 +652,7 @@ describe("shepherdStatus", () => {
     }
   });
 
-  it("RAD-154: empty diff keeps the skip without a ci-plan block", async () => {
+  it("empty diff keeps the skip without a ci-plan block", async () => {
     const repo = await initRepo();
     try {
       await git(repo, ["checkout", "-b", "feature"]);
@@ -672,7 +672,7 @@ describe("shepherdStatus", () => {
     }
   });
 
-  it("RAD-154: skipCiCheck never adds the ci-plan block", async () => {
+  it("skipCiCheck never adds the ci-plan block", async () => {
     const repo = await initRepo();
     try {
       await git(repo, ["checkout", "-b", "feature"]);
@@ -692,7 +692,7 @@ describe("shepherdStatus", () => {
     }
   });
 
-  it("RAD-154: root package.json change runs the full plan at the gate", async () => {
+  it("root package.json change runs the full plan at the gate", async () => {
     const repo = await initRepo();
     try {
       await git(repo, ["checkout", "-b", "feature"]);

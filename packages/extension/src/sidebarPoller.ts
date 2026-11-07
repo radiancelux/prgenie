@@ -7,7 +7,7 @@ import {
 } from "@prgenie/core";
 
 /**
- * Sidebar snapshot helpers for RCA Slice 0 (Windows dogfood stability).
+ * Sidebar snapshot helpers for RCA Slice 0 (Windows local development stability).
  * The 2s poller / fs.watch path must never await full local CI.
  */
 
@@ -71,7 +71,7 @@ export type CheapShepherdScheduler = {
   schedule(root: string, id: string | undefined): void;
 };
 
-/** Cheap shepherd fetch only for reviewed loops (RAD-110). */
+/** Cheap shepherd fetch only for reviewed loops (). */
 export function cheapShepherdTargetId(
   selected: { id: string; status: string } | null | undefined,
 ): string | undefined {

@@ -159,11 +159,7 @@ describe("ci-cache", () => {
         await writeFile(join(repo, "untracked.txt"), "untracked content\n");
 
         const hash2 = await computeCiInputHash(repo);
-        assert.notEqual(
-          hash1,
-          hash2,
-          "Full-repo lint scope includes untracked worktree files (RAD-118)",
-        );
+        assert.notEqual(hash1, hash2, "Full-repo lint scope includes untracked worktree files");
       } finally {
         await rm(repo, { recursive: true, force: true });
       }

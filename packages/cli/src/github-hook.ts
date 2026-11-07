@@ -150,7 +150,7 @@ function serverIdStrings(input: HookInput): string[] {
   return [...new Set(out)];
 }
 
-/** Raw tool name field(s) Cursor may send before normalization (RAD-164). */
+/** Raw tool name field(s) Cursor may send before normalization (). */
 export function rawMcpToolName(input: HookInput): string {
   for (const key of ["tool_name", "toolName", "name"]) {
     const v = input[key];
@@ -159,7 +159,7 @@ export function rawMcpToolName(input: HookInput): string {
   return "";
 }
 
-/** Strip `<server>-`, `mcp_<server>_`, and `<server>:` prefixes (RAD-164 follow-up). */
+/** Strip `<server>-`, `mcp_<server>_`, and `<server>:` prefixes (follow-up). */
 export function normalizeBareMcpToolName(input: HookInput): string {
   const raw = rawMcpToolName(input);
   if (!raw) return "";
@@ -210,7 +210,7 @@ function stringField(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
-/** True when beforeMCPExecution targets PR Genie (RAD-164). */
+/** True when beforeMCPExecution targets PR Genie (). */
 export function isPrgenieMcpContext(input: HookInput): boolean {
   for (const s of serverFieldValues(input)) {
     if (serverFieldIdentifiesPrgenie(s)) return true;
@@ -234,7 +234,7 @@ export function mcpToolName(input: HookInput): string {
   return normalizeBareMcpToolName(input);
 }
 
-/** PR Genie MCP tools agents may call without confirmation (RAD-164 R2 allowlist). */
+/** PR Genie MCP tools agents may call without confirmation (R2 allowlist). */
 export const PRGENIE_MCP_AGENT_TOOLS = new Set([
   "list_sessions",
   "learning_digest",
@@ -274,7 +274,7 @@ export const PRGENIE_MCP_AGENT_TOOLS = new Set([
 ]);
 
 /**
- * Human-only MCP tools agents always receive `deny` for (RAD-188 CoS; RAD-190 R5/R6 moved the former
+ * Human-only MCP tools agents always receive `deny` for ( CoS;  R5/R6 moved the former
  * always-ask tools here because Cursor 3.23 on Windows runs `ask` with no dialog).
  */
 export const PRGENIE_MCP_AGENT_DENY_TOOLS = new Set([
@@ -287,8 +287,8 @@ export const PRGENIE_MCP_AGENT_DENY_TOOLS = new Set([
 ]);
 
 /**
- * Gated names; without server/command/url these still run through the PR Genie gate (RAD-164 R4).
- * Derived from the deny list so every agent-denied tool is gated in that payload shape (RAD-190 R6).
+ * Gated names; without server/command/url these still run through the PR Genie gate .
+ * Derived from the deny list so every agent-denied tool is gated in that payload shape .
  */
 export const PRGENIE_MCP_GATED_TOOL_NAMES = new Set([
   ...PRGENIE_MCP_AGENT_DENY_TOOLS,
@@ -327,7 +327,7 @@ export function hasMcpIdentityFields(input: HookInput): boolean {
   return false;
 }
 
-/** True when beforeMCPExecution should apply PR Genie MCP gating (RAD-164). */
+/** True when beforeMCPExecution should apply PR Genie MCP gating (). */
 export function shouldApplyPrgenieMcpGate(input: HookInput, toolName: string): boolean {
   if (isPrgenieMcpContext(input)) return true;
   if (!hasMcpIdentityFields(input) && PRGENIE_MCP_GATED_TOOL_NAMES.has(toolName)) return true;
@@ -336,7 +336,7 @@ export function shouldApplyPrgenieMcpGate(input: HookInput, toolName: string): b
 
 /**
  * Gate decision for a PR Genie MCP tool. There is no `ask`: Cursor 3.23 on Windows runs `ask` with no
- * dialog, so every former ask is a deliberate allow or a deny (RAD-190 R5, table in
+ * dialog, so every former ask is a deliberate allow or a deny ( R5, table in
  * docs/github-access.md). Only the human-set `PRGENIE_GITHUB_GATE_ASK` turns a deny back into ask.
  */
 export type McpGateDecision = "allow" | "deny" | "invalid";
@@ -352,7 +352,7 @@ export function mcpHumanConfirmationGate(
     case "set_status": {
       if (toolInput === null) return "invalid";
       const rawStatus = toolInput.status ?? "";
-      // A non-string status (for example {"toString":null}) is malformed: fail closed (RAD-190 R5).
+      // A non-string status (for example {"toString":null}) is malformed: fail closed .
       if (typeof rawStatus !== "string") return "invalid";
       const status = rawStatus.trim().toLowerCase();
       // Human sign-off (approved) and review clear (reviewed, via complete_review) are not agent writes.
@@ -461,11 +461,11 @@ function prgenieCliHumanPath(sub: PrgenieHumanOnlyCli): string {
 const TOO_COMPLEX_RETRY =
   "Retry it in smaller pieces: put a long message or script in a file (`git commit -F msg.txt` instead of a huge `-m`, `pwsh -File x.ps1` instead of a huge `-Command`), or split it into several shorter commands. Splitting it does not permit human-only PR Genie actions (such as `prgenie export`); those stay blocked.";
 
-/** Too-complex text for the human (RAD-190 R6 nit 2). */
+/** Too-complex text for the human (R6 nit 2). */
 const TOO_COMPLEX_USER =
   "The agent can rerun it as smaller commands or with long text moved into a file. Human-only PR Genie actions (such as `prgenie export`) stay blocked either way.";
 
-/** Human-only prgenie CLI subcommands from an agent shell (RAD-190 R1), same guidance as RAD-188. */
+/** Human-only prgenie CLI subcommands from an agent shell (R1), same guidance as . */
 export function shellPrgenieCliDenyPayload(sub: PrgenieHumanOnlyCli): {
   permission: "deny";
   user_message: string;
@@ -538,7 +538,7 @@ export function shellPublishAskPayload(asWho = ""): {
 
 type GatePayload = { permission: HookPermission; user_message: string; agent_message: string };
 
-/** Bound-account shell guards (RAD-190 R5: former asks, now deny unless the human set the flag). */
+/** Bound-account shell guards (R5: former asks, now deny unless the human set the flag). */
 export function shellAccountSwitchPayload(boundLogin: string, switchingTo: string): GatePayload {
   return {
     permission: hookPrefersAskOverDeny() ? "ask" : "deny",
@@ -590,7 +590,7 @@ export async function appendBeforeMcpExecutionLog(
 export function decideBeforeMcpExecution(input: HookInput): { permission: HookPermission } | null {
   const rawName = rawMcpToolName(input);
   if (!rawName) {
-    // A PR Genie MCP payload with no tool name is malformed: fail closed (RAD-190 R5).
+    // A PR Genie MCP payload with no tool name is malformed: fail closed .
     if (
       serverFieldValues(input).some(serverFieldIdentifiesPrgenie) &&
       !stringField(input.command)
@@ -606,7 +606,7 @@ export function decideBeforeMcpExecution(input: HookInput): { permission: HookPe
   const parsed = parseToolInput(input.tool_input ?? input.toolInput);
   const gate = mcpHumanConfirmationGate(toolName, parsed);
   if (gate === "allow") return { permission: "allow" };
-  // "deny" and "invalid" (unparseable tool_input) both fail closed (RAD-190 R5).
+  // "deny" and "invalid" (unparseable tool_input) both fail closed .
   return hookPrefersAskOverDeny() ? mcpAskPayload(toolName) : mcpAgentDenyPayload(toolName, parsed);
 }
 
@@ -638,7 +638,7 @@ function nearestGitRoot(p: string, memo: Map<string, string | null> = new Map())
 }
 
 /**
- * RAD-190 loop-only scope: true when the hook cwd itself is a PR Genie loop agent's — the RAD-163
+ *  loop-only scope: true when the hook cwd itself is a PR Genie loop agent's — the
  * context ({@link isLoopAgentShellContextForGate}) or a cwd / git root inside a loop worktree.
  */
 export async function cwdIsLoopContext(
@@ -657,8 +657,8 @@ export async function cwdIsLoopContext(
 export type LoopTarget = { cwd: string; runTime: false } | { cwd: string; runTime: true } | null;
 
 /**
- * RAD-190 loop-only scope: for a command from a non-loop cwd that would be denied in a loop
- * (publish or a RAD-163 deny), the loop directory it acts in, found from its `cd` / `git -C` /
+ *  loop-only scope: for a command from a non-loop cwd that would be denied in a loop
+ * (publish or a  deny), the loop directory it acts in, found from its `cd` / `git -C` /
  * `--git-dir` / `GIT_DIR` / `env -C` / `-WorkingDirectory` targets ({@link shellCommandPathTargets}),
  * or `runTime` when a target is decided at run time or the scan hits its bounds (fail closed).
  * Null for a normal agent's command.
@@ -700,7 +700,7 @@ export async function loopTargetOfCommand(
   return null;
 }
 
-/** A normal agent's publish whose target directory is decided at run time (RAD-190). */
+/** A normal agent's publish whose target directory is decided at run time (). */
 export function shellRunTimeTargetPayload(ask: boolean): {
   permission: "deny" | "ask";
   user_message: string;
@@ -781,7 +781,7 @@ export async function main(): Promise<void> {
     return;
   }
 
-  // RAD-190 loop-only scope: a command from a non-loop cwd that cds into or points git at a loop
+  //  loop-only scope: a command from a non-loop cwd that cds into or points git at a loop
   // is still a loop agent's.
   let loopCwd: string | null = cwdInLoop ? cwd : null;
   if (command && !cwdInLoop) {
@@ -805,7 +805,7 @@ export async function main(): Promise<void> {
     }
   }
 
-  // RAD-190 loop-only scope: git push / gh publish denies apply only to PR Genie loop agents. A
+  //  loop-only scope: git push / gh publish denies apply only to PR Genie loop agents. A
   // normal agent publishes with its own (fine-grained) token; the PR Genie CLI / MCP denies stay global.
   if (command && loopCwd && isPublish(command)) {
     const bind = root ? await getRepoGithubBind(root) : null;

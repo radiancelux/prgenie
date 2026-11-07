@@ -43,7 +43,7 @@ export function parseActiveGhTokenScopes(text: string): string[] {
   return [];
 }
 
-/** True when the active token has classic scopes broader than loop agents need (RAD-163 R3). */
+/** True when the active token has classic scopes broader than loop agents need (R3). */
 export function ghTokenScopesTooBroadForLoops(scopes: string[]): boolean {
   return scopes.some((scope) => {
     if (scope === "repo" || scope === "delete_repo" || scope === "workflow") return true;

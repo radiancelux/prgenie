@@ -16,7 +16,7 @@ import { prFile, prsDir, writeJsonFile } from "./store.js";
 import type { LocalPr } from "./types.js";
 
 /** Sequential: tests mutate a shared `repo` path via beforeEach-style helpers. */
-describe("RAD-94 declared baseRef", { concurrency: false }, () => {
+describe("declared baseRef", { concurrency: false }, () => {
   let repo = "";
 
   function git(args: string[], cwd = repo): string {
@@ -99,7 +99,7 @@ describe("RAD-94 declared baseRef", { concurrency: false }, () => {
     await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true, ciSkipReason: "test" });
   });
 
-  test("RAD-94: merge-base ≠ declared base tip fails alignment", async () => {
+  test("merge-base ≠ declared base tip fails alignment", async () => {
     await freshRepo();
     git(["checkout", "-b", "feat/stale"]);
     await writeFile(path.join(repo, "stale.txt"), "a\n");
@@ -127,7 +127,7 @@ describe("RAD-94 declared baseRef", { concurrency: false }, () => {
     await assert.rejects(() => assertDeclaredBaseAligned(repo, pr), /merge-base/);
   });
 
-  test("RAD-94: intermediate WIP bookmark must not fail alignment", async () => {
+  test("intermediate WIP bookmark must not fail alignment", async () => {
     await freshRepo();
     git(["checkout", "-b", "feat/bookmarked"]);
     await writeFile(path.join(repo, "one.txt"), "1\n");
@@ -149,7 +149,7 @@ describe("RAD-94 declared baseRef", { concurrency: false }, () => {
     assert.equal(check.ok, true, "WIP bookmark on first-parent walk must not look stacked");
   });
 
-  test("RAD-94: bare named parent without a live local PR is not stacked", async () => {
+  test("bare named parent without a live local PR is not stacked", async () => {
     await freshRepo();
     git(["checkout", "-b", "feat/parent"]);
     await writeFile(path.join(repo, "parent.txt"), "parent\n");
@@ -170,11 +170,11 @@ describe("RAD-94 declared baseRef", { concurrency: false }, () => {
     assert.equal(
       check.ok,
       true,
-      "named feature parent without a live local PR is not auto-detected (RAD-87)",
+      "named feature parent without a live local PR is not auto-detected",
     );
   });
 
-  test("RAD-94: stacked on a live local PR parent fails", async () => {
+  test("stacked on a live local PR parent fails", async () => {
     await freshRepo();
     git(["checkout", "-b", "feat/parent"]);
     await writeFile(path.join(repo, "parent.txt"), "parent\n");
@@ -206,12 +206,12 @@ describe("RAD-94 declared baseRef", { concurrency: false }, () => {
     if (!check.ok) {
       assert.equal(check.stackedOn, "feat/parent");
       assert.match(check.message, /stacked on feat\/parent/);
-      assert.match(check.message, /RAD-87/);
+      assert.match(check.message, /stacked on feat\/parent/);
     }
     await assert.rejects(() => assertDeclaredBaseAligned(repo, pr), /stacked on feat\/parent/);
   });
 
-  test("RAD-94: stacked on another lp-* head mentions dependsOn", async () => {
+  test("stacked on another lp-* head mentions dependsOn", async () => {
     await freshRepo();
     git(["checkout", "-b", "lp-aaaaaaaa"]);
     await writeFile(path.join(repo, "loop-parent.txt"), "p\n");

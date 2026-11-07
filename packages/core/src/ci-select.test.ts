@@ -23,7 +23,7 @@ function assertNotFullSuite(result: ReturnType<typeof selectCiChecks>): void {
 }
 
 describe("selectCiChecks", () => {
-  it("skips (never full suite) when paths are empty or unknown (RAD-119)", () => {
+  it("skips (never full suite) when paths are empty or unknown", () => {
     const empty = selectCiChecks([]);
     assert.equal(empty.uncertain, true);
     assert.equal(empty.skipped, true);
@@ -51,7 +51,7 @@ describe("selectCiChecks", () => {
     assert.ok(!result.checks.some((c) => c === "test" || c.startsWith("test:")));
   });
 
-  it("RAD-154: root package.json, lockfiles, tsconfig.base.json and .github/workflows select the full local plan", () => {
+  it("root package.json, lockfiles, tsconfig.base.json and .github/workflows select the full local plan", () => {
     for (const p of [
       "package.json",
       "pnpm-lock.yaml",
@@ -75,7 +75,7 @@ describe("selectCiChecks", () => {
     }
   });
 
-  it("RAD-154: other hard-config paths select the full local plan", () => {
+  it("other hard-config paths select the full local plan", () => {
     for (const p of [
       "tsconfig.json",
       "pnpm-workspace.yaml",
@@ -91,7 +91,7 @@ describe("selectCiChecks", () => {
     }
   });
 
-  it("RAD-154: hard config wins over unknown, out-of-package and package-scoped paths", () => {
+  it("hard config wins over unknown, out-of-package and package-scoped paths", () => {
     const mixed = selectCiChecks([
       "package.json",
       "bin/mystery.bin",
@@ -102,9 +102,9 @@ describe("selectCiChecks", () => {
     assert.equal(mixed.skipped, false);
   });
 
-  it("RAD-154: full plan reason is stamped and is not a skip or legacy stale reason", () => {
+  it("full plan reason is stamped and is not a skip or legacy stale reason", () => {
     const result = selectCiChecks(["package.json"]);
-    assert.ok(result.reason.some((r) => /RAD-154/.test(r) && /hard config\/CI changed/.test(r)));
+    assert.ok(result.reason.some((r) => /hard config\/CI changed/.test(r)));
     assert.ok(!result.reason.some((r) => /skip local CI/.test(r)));
     assert.ok(
       !result.reason.some((r) =>
@@ -113,7 +113,7 @@ describe("selectCiChecks", () => {
     );
   });
 
-  it("RAD-154: formatted files add format:check to uncertain and out-of-package plans", () => {
+  it("formatted files add format:check to uncertain and out-of-package plans", () => {
     const mixedUnknown = selectCiChecks(["README.md", "bin/mystery.bin"]);
     assert.deepEqual(mixedUnknown.checks, ["format:check"]);
     assert.equal(mixedUnknown.skipped, false);
@@ -121,14 +121,14 @@ describe("selectCiChecks", () => {
     assert.equal(mixedUnknown.packageScoped, false);
     assert.equal(mixedUnknown.mapping.length, 1);
     assert.equal(mixedUnknown.mapping[0]?.check, "format:check");
-    assert.ok(mixedUnknown.reason.some((r) => /RAD-154/.test(r) && /format:check/.test(r)));
+    assert.ok(mixedUnknown.reason.some((r) => /format:check/.test(r)));
 
     const gitattributes = selectCiChecks([".gitattributes", "docs/x.md"]);
     assert.deepEqual(gitattributes.checks, ["format:check"]);
-    assert.ok(gitattributes.reason.some((r) => /RAD-154/.test(r) && /format:check/.test(r)));
+    assert.ok(gitattributes.reason.some((r) => /format:check/.test(r)));
   });
 
-  it("RAD-154: every non-empty plan starts with format:check", () => {
+  it("every non-empty plan starts with format:check", () => {
     const samples = [
       selectCiChecks(["package.json"]),
       selectCiChecks(["README.md", "bin/mystery.bin"]),
@@ -186,11 +186,11 @@ describe("selectCiChecks", () => {
     assert.equal(mixed.uncertain, true);
     assert.equal(mixed.skipped, false);
     assert.deepEqual(mixed.checks, ["format:check"]);
-    assert.ok(mixed.reason.some((r) => /RAD-154/.test(r)));
+    assert.ok(mixed.reason.some((r) => /uncertain|format/.test(r)));
     assertNotFullSuite(mixed);
   });
 
-  it("plugin build artifacts alone skip — never uncertain → full suite (RAD-119)", () => {
+  it("plugin build artifacts alone skip — never uncertain → full suite", () => {
     const result = selectCiChecks(["packages/plugin/hooks/capture-subagent.cjs"]);
     assert.equal(result.skipped, true);
     assert.deepEqual(result.checks, []);
@@ -310,7 +310,7 @@ describe("selectCiChecks", () => {
     assert.notEqual(ciCheckCommand("test:core"), "pnpm test");
   });
 
-  it("file-scopes test:core for leaf progress.ts; keeps glob for prs/export-gate (RAD-127)", () => {
+  it("file-scopes test:core for leaf progress.ts; keeps glob for prs/export-gate", () => {
     const leaf = selectCiChecks(["packages/core/src/progress.ts"]);
     assert.equal(leaf.packageScoped, true);
     assert.deepEqual(leaf.checks, ["format:check", "lint:core", "typecheck:core", "test:core"]);
@@ -347,7 +347,7 @@ describe("selectCiChecks", () => {
     assert.deepEqual(leafPlusTest.testFiles?.["test:core"], ["packages/core/src/progress.test.ts"]);
   });
 
-  it("keeps package glob when sibling *.test.ts does not exist (RAD-127)", () => {
+  it("keeps package glob when sibling *.test.ts does not exist", () => {
     // session-reconcile.ts has no sibling test file — must not invent a phantom path.
     const missing = selectCiChecks(["packages/core/src/session-reconcile.ts"]);
     assert.equal(missing.packageScoped, true);
@@ -374,7 +374,7 @@ describe("selectCiChecks", () => {
     assert.ok(cliLeaf.reason.some((r) => /no covering \*\.test\.ts/.test(r)));
   });
 
-  it("keeps package glob for mixed leaves when any sibling is missing (RAD-127)", () => {
+  it("keeps package glob for mixed leaves when any sibling is missing", () => {
     // progress.ts has a sibling; session-reconcile.ts does not — must not under-scope to
     // progress.test.ts only (would skip coverage that may exercise session-reconcile).
     const mixed = selectCiChecks([

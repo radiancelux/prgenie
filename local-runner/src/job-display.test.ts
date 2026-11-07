@@ -17,30 +17,30 @@ describe("linearSlugTitleFromTicketUrl", () => {
   it("humanizes slug after issue id", () => {
     assert.equal(
       linearSlugTitleFromTicketUrl(
-        "https://linear.app/radiancelux/issue/RAD-327/local-runner-dashboard-blank",
+        "https://example.com/issue/ISSUE-327/local-runner-dashboard-blank",
       ),
       "local runner dashboard blank",
     );
   });
 
   it("returns null without slug segment", () => {
-    assert.equal(
-      linearSlugTitleFromTicketUrl("https://linear.app/radiancelux/issue/RAD-320"),
-      null,
-    );
+    assert.equal(linearSlugTitleFromTicketUrl("https://example.com/issue/ISSUE-320"), null);
   });
 });
 
 describe("firstMarkdownHeading", () => {
   it("reads first h1", () => {
-    assert.equal(firstMarkdownHeading("intro\n# RAD-327: Fix parse\n## sub"), "RAD-327: Fix parse");
+    assert.equal(
+      firstMarkdownHeading("intro\n# ISSUE-327: Fix parse\n## sub"),
+      "ISSUE-327: Fix parse",
+    );
   });
 });
 
 describe("stripRadIssuePrefix", () => {
-  it("strips RAD prefix variants", () => {
-    assert.equal(stripRadIssuePrefix("RAD-327: Fix dashboard", "RAD-327"), "Fix dashboard");
-    assert.equal(stripRadIssuePrefix("RAD-327 — Fix dashboard"), "Fix dashboard");
+  it("strips issue prefix variants", () => {
+    assert.equal(stripRadIssuePrefix("ISSUE-327: Fix dashboard", "ISSUE-327"), "Fix dashboard");
+    assert.equal(stripRadIssuePrefix("ISSUE-327 — Fix dashboard"), "Fix dashboard");
   });
 });
 
@@ -54,9 +54,9 @@ describe("resolveJobTitle", () => {
     assert.equal(t, "Custom");
   });
 
-  it("uses linear slug before prompt", async () => {
+  it("uses ticket slug before prompt", async () => {
     const t = await resolveJobTitle({
-      ticketUrl: "https://linear.app/radiancelux/issue/RAD-1/my-slug",
+      ticketUrl: "https://example.com/issue/ISSUE-1/my-slug",
       branch: "b",
       promptFile: "/nope",
     });
@@ -66,9 +66,9 @@ describe("resolveJobTitle", () => {
   it("uses prompt heading when no slug", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "lr-title-"));
     const prompt = path.join(dir, "p.md");
-    await writeFile(prompt, "# RAD-99: Ship feature\n", "utf8");
+    await writeFile(prompt, "# ISSUE-99: Ship feature\n", "utf8");
     const t = await resolveJobTitle({
-      linearIssue: "RAD-99",
+      linearIssue: "ISSUE-99",
       branch: "feat/x",
       promptFile: prompt,
     });
@@ -76,8 +76,8 @@ describe("resolveJobTitle", () => {
   });
 
   it("falls back to branch", async () => {
-    const t = await resolveJobTitle({ branch: "feat/rad-327-fix", promptFile: "/nope" });
-    assert.equal(t, "feat/rad-327-fix");
+    const t = await resolveJobTitle({ branch: "feat/issue-327-fix", promptFile: "/nope" });
+    assert.equal(t, "feat/issue-327-fix");
   });
 });
 
@@ -86,9 +86,9 @@ describe("jobAgentDisplayLabel", () => {
     const r = jobAgentDisplayLabel({
       id: "abcd-efgh",
       title: "Fix parse",
-      linearIssue: "RAD-327",
+      linearIssue: "ISSUE-327",
     });
-    assert.equal(r.label, "RAD-327 · Fix parse");
+    assert.equal(r.label, "ISSUE-327 · Fix parse");
     assert.equal(r.tooltip, r.label);
   });
 

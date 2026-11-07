@@ -1,5 +1,5 @@
 param(
-  # Optional: quit Cursor before unlink. Off by default (too aggressive for dogfood).
+  # Optional: quit Cursor before unlink. Off by default (too aggressive for local development).
   [switch]$ForceQuitCursor
 )
 
@@ -172,4 +172,4 @@ Write-Host "  $dest"
 Write-Host "Reload is often not enough for MCP tools. In Customize -> Plugins, disable and re-enable PR Genie."
 Write-Host "Canonical MCP is this plugin (prgenie). Delete leftover .cursor/mcp.json if Connected MCPs shows two prgenie rows. See docs/troubleshooting.md."
 Write-Host "CLI is NOT on PATH. Use: pnpm cli …  or  node $repoRoot\packages\cli\dist\prgenie.cjs …"
-Write-Host "MCP timeout pinned to 1200s (RAD-100). Soft max parallel implementor Tasks: 2 (RAD-84 owns hard limits)."
+Write-Host "MCP timeout pinned to 1200s (). Soft max parallel implementor Tasks: 2 ( owns hard limits)."

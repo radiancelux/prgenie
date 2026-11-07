@@ -154,7 +154,7 @@ describe("humanExportState", () => {
     assert.equal(needsExportGateEvaluation(pr), false);
   });
 
-  it("forces re-evaluation when stored gate has a stale full-suite CI plan (RAD-123)", () => {
+  it("forces re-evaluation when stored gate has a stale full-suite CI plan", () => {
     const pr = reviewedPr({
       exportGate: {
         status: "blocked",
@@ -174,10 +174,10 @@ describe("humanExportState", () => {
     assert.equal(needsExportGateEvaluation(pr), true);
   });
 
-  it("RAD-154: snapshot with the full plan is adoptable", () => {
+  it("snapshot with the full plan is adoptable", () => {
     const fullPlan = {
       checks: ["format:check", "lint", "typecheck", "test", "build"],
-      reason: ["RAD-154: hard config/CI changed → full local plan"],
+      reason: ["hard config/CI changed → full local plan"],
       uncertain: false,
     };
     const pr = reviewedPr({
@@ -220,20 +220,20 @@ describe("formatExportBlockLabel", () => {
     );
   });
 
-  it("RAD-154: formatExportBlockLabel returns ci-plan for the empty-plan block", () => {
+  it("formatExportBlockLabel returns ci-plan for the empty-plan block", () => {
     const message =
-      "CI check failed: ci-plan — local CI plan is empty for 2 changed path(s); fail closed (RAD-154)";
+      "CI check failed: ci-plan — local CI plan is empty for 2 changed path(s); fail closed";
     assert.equal(formatExportBlockLabel([{ check: "ci", message }]), "ci-plan");
     assert.equal(reasonsLookLikeSelectionRefusal([{ check: "ci", message }]), false);
   });
 
-  it("labels stale/refused plans as ci-select, never root test (RAD-126)", () => {
+  it("labels stale/refused plans as ci-select, never root test", () => {
     assert.equal(
       formatExportBlockLabel([
         {
           check: "ci",
           message:
-            'Refusing stale full-suite CI plan (RAD-123): checks=["test"] reason=["uncertain → full suite"]. Export gate must use worktree selectCiChecks (scoped core/cli — never root pnpm test).',
+            'Refusing stale full-suite CI plan: checks=["test"] reason=["uncertain → full suite"]. Export gate must use worktree selectCiChecks (scoped core/cli — never root pnpm test).',
         },
       ]),
       "ci-select",
@@ -529,7 +529,7 @@ describe("evaluateAndStoreExportGate", () => {
     }
   });
 
-  it("validateExport reuses stored blocked gate when fresh select would skip (RAD-119)", async () => {
+  it("validateExport reuses stored blocked gate when fresh select would skip", async () => {
     const repo = await initRepo();
     try {
       await git(repo, ["checkout", "-b", "feature"]);

@@ -117,7 +117,7 @@ test("export validation allows approved status", async () => {
   assert.equal(reviewIssue, undefined, "Review should not be blocking");
 });
 
-test("export validation refuses blocked gate without exportGateOverride (RAD-144)", async () => {
+test("export validation refuses blocked gate without exportGateOverride", async () => {
   const pr = await createLocalPr(repo, {
     title: "Blocked gate",
     body: "Not ready for export",

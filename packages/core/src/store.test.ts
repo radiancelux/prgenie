@@ -25,7 +25,7 @@ after(async () => {
 });
 
 describe("store", { concurrency: 1 }, () => {
-  test("RAD-173 R4: torn packet fails loudly with path", () => {
+  test("R4: torn packet fails loudly with path", () => {
     const body = { id: "lp-test", status: "approved" };
     const raw = `${JSON.stringify(body, null, 2)}\n7.247Z"\n}`;
     const packet = path.join(dir, "lp-torn.json");
@@ -39,7 +39,7 @@ describe("store", { concurrency: 1 }, () => {
     );
   });
 
-  test("RAD-173 R4: truncated packet fails loudly with path", () => {
+  test("R4: truncated packet fails loudly with path", () => {
     const packet = path.join(dir, "lp-trunc.json");
     assert.throws(
       () => parseJsonObject('{"id":"lp-x"', packet),
@@ -51,7 +51,7 @@ describe("store", { concurrency: 1 }, () => {
     );
   });
 
-  test("RAD-173 R1: rename retries on EBUSY then succeeds", async () => {
+  test("R1: rename retries on EBUSY then succeeds", async () => {
     const file = path.join(dir, "retry-rename.json");
     await writeFile(file, "{}\n", "utf8");
     let attempts = 0;
@@ -77,7 +77,7 @@ describe("store", { concurrency: 1 }, () => {
     assert.equal(parsed.ok, true);
   });
 
-  test("RAD-173 R1 R3: persistent rename failure throws and leaves target intact", async () => {
+  test("R1 R3: persistent rename failure throws and leaves target intact", async () => {
     const file = path.join(dir, "persist-fail.json");
     const original = `${JSON.stringify({ status: "changes_requested", pad: "x".repeat(40) }, null, 2)}\n`;
     await writeFile(file, original, "utf8");
@@ -104,7 +104,7 @@ describe("store", { concurrency: 1 }, () => {
     assert.equal(await readFile(file, "utf8"), original);
   });
 
-  test("RAD-173 R2: concurrent writes use distinct temp paths", async () => {
+  test("R2: concurrent writes use distinct temp paths", async () => {
     const file = path.join(dir, "concurrent-tmp.json");
     await writeFile(file, "{}\n", "utf8");
     const temps: string[] = [];

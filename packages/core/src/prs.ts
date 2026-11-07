@@ -104,7 +104,7 @@ async function readPrFile(file: string): Promise<LocalPr> {
   return pr;
 }
 
-/** Minimum hex digits after `lp-` for destructive id prefixes (RAD-168). */
+/** Minimum hex digits after `lp-` for destructive id prefixes (). */
 export const DESTRUCTIVE_LOOP_ID_MIN_HEX = 6;
 
 export type ResolveLocalPrOptions = { destructive?: boolean };
@@ -123,7 +123,7 @@ export function destructiveLoopIdAllowed(id: string, match: LocalPr): boolean {
   return new RegExp(`^[0-9a-f]{${DESTRUCTIVE_LOOP_ID_MIN_HEX},}$`, "i").test(suffix);
 }
 
-/** Pure id resolution — shared by CLI and MCP (RAD-168). */
+/** Pure id resolution — shared by CLI and MCP (). */
 export function resolveLocalPrFromList(
   prs: LocalPr[],
   id: string,
@@ -154,7 +154,7 @@ export function resolveLocalPrFromList(
 
 /**
  * Disk + worktree overlay lookup without refreshing headSha.
- * Prefer {@link getLocalPr} for agent/MCP reads (RAD-125 refreshes tip).
+ * Prefer {@link getLocalPr} for agent/MCP reads .
  */
 async function findLocalPr(
   cwd: string,
@@ -177,7 +177,7 @@ async function withPrLock(
   return withFileLock(file, async () => {
     const pr = await readPrFile(file);
     await fn(pr);
-    // Persist live worktree overlay so packet worktreePath / ciCwd are not null on disk (RAD-123).
+    // Persist live worktree overlay so packet worktreePath / ciCwd are not null on disk .
     // Also clear a stale on-disk path when the live overlay is null (pruned worktree).
     if (resolved.worktreePath) {
       pr.worktreePath = resolved.worktreePath;
@@ -193,12 +193,12 @@ async function withPrLock(
 /**
  * Resolve loop tip from the exclusive worktree when present; else the loop branch tip.
  * Worktree commits update the shared branch, but reading HEAD in the worktree is the
- * authoritative tip for agent decisions (RAD-125).
+ * authoritative tip for agent decisions .
  *
  * Only trust paths from `listWorktrees` / `worktreeForLoop`. Never fall back to the
  * on-disk packet `worktreePath` — a pruned path throws and breaks refresh / steward_next.
  *
- * Never adopt the primary checkout when the loop worktree/branch is missing (RAD-130):
+ * Never adopt the primary checkout when the loop worktree/branch is missing :
  * archive deletes the local branch; falling back rewrote archived packets to `main`.
  */
 async function resolveLoopHeadTip(
@@ -234,7 +234,7 @@ function stampCompleteReviewClear(pr: LocalPr, at: string): void {
 
 /**
  * When a reviewed loop's tip moves, clear the review verdict until Reviewer
- * re-clears that SHA (RAD-126). Default is re-review — no mechanical allowlist.
+ * re-clears that SHA . Default is re-review — no mechanical allowlist.
  */
 export function invalidateReviewedOnHeadMove(pr: LocalPr, previousHeadSha: string): boolean {
   if (pr.status !== "reviewed") return false;
@@ -405,7 +405,7 @@ export async function listLocalPrs(
 /**
  * Show one local PR (disk + worktreePath overlay).
  * Does **not** persist a tip refresh — that avoids nested file locks with `withPrLock`.
- * For a tip that matches the worktree HEAD (and RAD-126 invalidate), use
+ * For a tip that matches the worktree HEAD (and  invalidate), use
  * {@link refreshLocalPrHead} or MCP `get_local_pr` (which refreshes).
  * `list_local_prs` also skips head refresh (read-only listing).
  */
@@ -466,7 +466,7 @@ export async function createLocalPr(cwd: string, input: CreateLocalPrInput = {})
     (await shortLogSubject(cwd, headSha).catch(() => "")) ||
     `Local PR from ${headRef}`;
   const createdAt = nowIso();
-  // RAD-94: persist declared baseRef + baseSha at create; ready/CI/export enforce alignment.
+  // : persist declared baseRef + baseSha at create; ready/CI/export enforce alignment.
   const pr: LocalPr = {
     id,
     title,
@@ -517,7 +517,7 @@ export async function updateLocalPr(
     if (patch.body !== undefined) {
       pr.body = patch.body.trim();
     }
-    // After implementor commits, refresh headSha without a manual JSON edit (RAD-125).
+    // After implementor commits, refresh headSha without a manual JSON edit .
     await applyHeadRefresh(cwd, pr);
   });
 }
@@ -538,13 +538,13 @@ export async function setLocalPrStatus(
       );
     }
     if (status === "ready") {
-      // RAD-94: refresh tip then refuse ready when merge-base ≠ declared base (or stacked).
+      // : refresh tip then refuse ready when merge-base ≠ declared base (or stacked).
       await applyHeadRefresh(cwd, pr);
       const { assertDeclaredBaseAligned, assertStoredBaseRefIsBranch } =
         await import("./base-ref.js");
       await assertStoredBaseRefIsBranch(cwd, pr);
       await assertDeclaredBaseAligned(cwd, pr);
-      // RAD-97: soft-block before pattern preflight (fail fast; avoid diff work when CI missing).
+      // : soft-block before pattern preflight (fail fast; avoid diff work when CI missing).
       applyReadyCiGate(pr, options.ciSkipReason, options.ciSkipChecks);
     }
     if (status === "ready" && !options.skipPreflight) {
@@ -618,7 +618,7 @@ function recordHumanSkip(
   );
 }
 
-/** Soft-block / record skip for ready (RAD-97 / RAD-144). Mutates pr.readyCi. */
+/** Soft-block / record skip for ready (/ ). Mutates pr.readyCi. */
 function applyReadyCiGate(pr: LocalPr, ciSkipReason?: string, ciSkipChecks?: string[]): void {
   if (ciSkipReason?.trim()) {
     recordHumanSkip(pr, ciSkipReason.trim(), ciSkipChecks);
@@ -634,7 +634,7 @@ function applyReadyCiGate(pr: LocalPr, ciSkipReason?: string, ciSkipChecks?: str
   assertReadyCiSatisfied(pr);
 }
 
-/** Persist implementor CI result onto the loop packet (RAD-97). */
+/** Persist implementor CI result onto the loop packet (). */
 export async function recordLocalPrReadyCi(
   cwd: string,
   id: string,
@@ -651,7 +651,7 @@ export async function recordLocalPrReadyCi(
   });
 }
 
-/** Record an explicit export-gate override (RAD-144). Body must echo who, why, and each skipped check name before export. */
+/** Record an explicit export-gate override (). Body must echo who, why, and each skipped check name before export. */
 export async function recordExportGateOverride(
   cwd: string,
   id: string,
@@ -667,7 +667,7 @@ export async function recordExportGateOverride(
   });
 }
 
-/** Persist repo guidance snapshots on the loop packet (RAD-102). */
+/** Persist repo guidance snapshots on the loop packet (). */
 export async function recordLoopGuidanceSnapshots(
   cwd: string,
   id: string,
@@ -688,7 +688,7 @@ export async function recordLoopGuidanceSnapshots(
 }
 
 /**
- * Auth / host failure while a reviewer Task was in flight (RAD-97).
+ * Auth / host failure while a reviewer Task was in flight .
  * Keeps reviewRequestedSha and steward reviewerTaskId; steward resumes without re-brief.
  */
 export async function markReviewInterrupted(
@@ -722,7 +722,7 @@ export async function markReviewInterrupted(
 }
 
 /**
- * One-command resume after review_interrupted (RAD-97).
+ * One-command resume after review_interrupted .
  * Returns ready + clears interrupt so steward can resume the same reviewer Task.
  */
 export async function resumeReview(cwd: string, id: string): Promise<LocalPr> {
@@ -846,7 +846,7 @@ function roundFindingCounts(threads: CommentThread[]): {
 /**
  * Group comment threads into implement↔review rounds.
  * A new round starts at each root "Review requested." agent comment when the
- * current bucket already contains a prior Review requested (RAD-114).
+ * current bucket already contains a prior Review requested .
  * Comments before the first Review requested stay in round 1.
  */
 export function groupThreadsByRound(threads: CommentThread[]): CommentRound[] {
@@ -875,7 +875,7 @@ export function groupThreadsByRound(threads: CommentThread[]): CommentRound[] {
   });
 }
 
-/** Persist review-round count from RAD-114 comment grouping. */
+/** Persist review-round count from comment grouping. */
 export function syncReviewRoundCount(pr: LocalPr): number {
   const rounds = groupThreadsByRound(commentThreads(pr.comments ?? []));
   const count = rounds.length > 0 ? rounds.length : 0;
@@ -935,7 +935,7 @@ async function maybeHandoffToReviewer(
   if (pendingReviewComments(pr).length > 0) return;
   applyReadyCiGate(pr);
   await armReviewRequest(cwd, pr);
-  // RAD-94: same gate as set_status ready — refuse handoff when base is misaligned.
+  // : same gate as set_status ready — refuse handoff when base is misaligned.
   const { assertDeclaredBaseAligned, assertStoredBaseRefIsBranch } = await import("./base-ref.js");
   await assertStoredBaseRefIsBranch(cwd, pr);
   await assertDeclaredBaseAligned(cwd, pr);
@@ -1054,7 +1054,7 @@ export async function addLocalPrComment(
     const now = nowIso();
     const author = options.author?.trim() || (await userName(cwd));
 
-    // RAD-97: upsert a single Review-requested root per HEAD sha.
+    // : upsert a single Review-requested root per HEAD sha.
     if (role === "agent" && isReviewRequestBody(text) && !options.replyTo) {
       await applyHeadRefresh(cwd, pr);
       upsertReviewRequestedComment(pr, now, author, pr.headSha, newId("c"));
@@ -1064,7 +1064,7 @@ export async function addLocalPrComment(
       return pr;
     }
 
-    // RAD-97: "CI skipped: <reason>" stamps forSha and readyCi for this tip only.
+    // : "CI skipped: <reason>" stamps forSha and readyCi for this tip only.
     const skipReason = role === "agent" ? parseCiSkipReason(text) : null;
     if (skipReason && !options.replyTo) {
       await applyHeadRefresh(cwd, pr);
@@ -1387,7 +1387,7 @@ export type ArchiveLocalPrResult = {
 };
 
 /**
- * Archive one loop locally (RAD-130): set approved, prune `.loops/<id>`, delete local
+ * Archive one loop locally : set approved, prune `.loops/<id>`, delete local
  * loop branch. Remote origin branch/PR untouched. Packet stays for Show/Reopen.
  */
 export async function archiveLocalPr(cwd: string, id: string): Promise<ArchiveLocalPrResult> {
@@ -1416,7 +1416,7 @@ export type ClearArchivedLocalPrsResult = {
 };
 
 /**
- * Fail closed on incomplete local disk cleanup after a packet delete (RAD-130).
+ * Fail closed on incomplete local disk cleanup after a packet delete .
  * False prune/branch flags count even when error strings are empty/null.
  */
 export function clearArchivedDiskFailure(
@@ -1446,7 +1446,7 @@ export function clearArchivedDiskFailure(
 }
 
 /**
- * Bulk-delete every archived loop packet plus its worktree and local branch (RAD-130).
+ * Bulk-delete every archived loop packet plus its worktree and local branch .
  * Remotes stay. Partial failures name paths; does not claim full success when any fail.
  */
 export async function clearArchivedLocalPrs(cwd: string): Promise<ClearArchivedLocalPrsResult> {
@@ -1749,7 +1749,7 @@ export async function captureAgentWork(
       if (input.source) pr.source = input.source;
       if (input.title?.trim()) pr.title = input.title.trim();
       if (input.body?.trim()) pr.body = input.body.trim();
-      // applyHeadRefresh invalidates reviewed → ready when tip moved (RAD-126).
+      // applyHeadRefresh invalidates reviewed → ready when tip moved .
       await applyHeadRefresh(cwd, pr);
     });
     updated.worktreePath = await ensureWorktreeForLoop(cwd, updated, {

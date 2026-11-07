@@ -64,7 +64,7 @@ const execAsync = promisify(exec);
 /** Default per-check wall for format/lint/typecheck/build (20 minutes). */
 export const CI_CHECK_TIMEOUT_MS = 1_200_000;
 
-/** Package unit tests (`test:core`, …) on Windows full globs need more headroom (RAD-133). */
+/** Package unit tests (`test:core`, …) on Windows full globs need more headroom (). */
 export const CI_PACKAGE_TEST_TIMEOUT_MS = 2_400_000;
 
 /** Resolve the exec timeout for one check; optional override applies to every check. */
@@ -77,7 +77,7 @@ export function resolveCiCheckTimeout(check: string, override?: number): number 
 /**
  * Env for CI shell checks. Strip Node's test-runner context so nested
  * `tsx --test` / `node --test` (e.g. file-scoped test:core) report their own
- * exit codes instead of joining the parent harness (RAD-127).
+ * exit codes instead of joining the parent harness .
  */
 function ciShellEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env = { ...process.env, ...extra };
@@ -117,10 +117,10 @@ export interface CiCheckResult {
   /** Relative or absolute path to the capped full log. */
   logPath?: string;
   elapsedMs?: number;
-  /** Wall time waiting for a heavy-test slot before the check started (RAD-134). */
+  /** Wall time waiting for a heavy-test slot before the check started (). */
   waitedMs?: number;
   reason?: string;
-  /** Env/setup failure (missing bins) vs product lint/test fail (RAD-92). */
+  /** Env/setup failure (missing bins) vs product lint/test fail (). */
   kind?: "product" | "env";
 }
 
@@ -132,7 +132,7 @@ export interface CiRunnerResult {
   cwd: string;
   /**
    * True when CI could not run (or failed) because the worktree toolchain is missing.
-   * Distinct from a product check fail — export gate soft-surfaces this by default (RAD-92).
+   * Distinct from a product check fail — export gate soft-surfaces this by default .
    */
   envUnhealthy?: boolean;
   envMessage?: string;
@@ -143,21 +143,21 @@ export interface CiRunnerResult {
 export interface CiRunnerOptions {
   /** Override the default CI checks */
   checks?: string[];
-  /** Override every check's timeout (ms). Default: 20m; `test` / `test:*` use 40m (RAD-133). */
+  /** Override every check's timeout (ms). Default: 20m; `test` / `test:*` use 40m (). */
   timeout?: number;
   /** Skip cache and force all checks to run (for testing). Default false. */
   skipCache?: boolean;
-  /** Live progress for CLI / sidebar (RAD-73). */
+  /** Live progress for CLI / sidebar (). */
   onProgress?: ProgressCallback;
   /** Cancel in-flight checks (kills the child process). */
   signal?: AbortSignal;
   /**
-   * Stop remaining checks after the first failure (RAD-77).
+   * Stop remaining checks after the first failure .
    * Default true, or PRGENIE_CI_FAIL_FAST=0 to disable.
    */
   failFast?: boolean;
   /**
-   * Run independent checks concurrently (RAD-77).
+   * Run independent checks concurrently .
    * Default true, or PRGENIE_CI_PARALLEL=0 to disable.
    */
   parallel?: boolean;
@@ -175,9 +175,9 @@ export interface CiRunnerOptions {
    * When omitted, scripts are read from `cwd/package.json`.
    */
   packageScripts?: Record<string, string> | null;
-  /** Resolved loop id for per-loop CI logs and slot records (RAD-136 / RAD-134). */
+  /** Resolved loop id for per-loop CI logs and slot records (/ ). */
   loopId?: string;
-  /** Override PRGENIE_CI_HEAVY_CONCURRENCY (RAD-134). */
+  /** Override PRGENIE_CI_HEAVY_CONCURRENCY (). */
   heavyConcurrency?: number;
   /** Test-only heavy slot timing knobs. */
   heavySlotTiming?: HeavySlotTiming;
@@ -188,7 +188,7 @@ export interface CiRunnerOptions {
  * This ensures local CI matches remote CI (clean checkout).
  * Filters to only include files prettier can check.
  *
- * When `onlyPaths` is set (RAD-117 scoped format), only those candidates are
+ * When `onlyPaths` is set , only those candidates are
  * considered — never the whole tracked tree. Uses argv-form `git` (no shell).
  *
  * Scoped resolution errors must not return [] (that greenwashed format:check).
@@ -302,7 +302,7 @@ export async function resolveFormatCheckFiles(
 
 /**
  * Check format for tracked files using git blob content (LF-normalized).
- * RAD-46: This ensures Windows autocrlf repos pass when blob content is properly formatted,
+ * : This ensures Windows autocrlf repos pass when blob content is properly formatted,
  * even when working tree files have CRLF line endings.
  *
  * Uses the Prettier API (not per-file `pnpm exec`) so Windows CI does not pay
@@ -561,7 +561,7 @@ async function runOneCheck(
       // No tracked prettier files, not a git repo, or prettier is not installed in cwd.
     }
 
-    // RAD-127: file-scoped package tests run one file at a time so progress moves.
+    // : file-scoped package tests run one file at a time so progress moves.
     if (scopedTestFiles && scopedTestFiles.length > 0) {
       const total = scopedTestFiles.length;
       for (let i = 0; i < total; i++) {
@@ -702,13 +702,13 @@ async function runOneCheck(
  * Run local CI checks. Discovers checks from package.json/CI workflow.
  * For prgenie: format:check, lint, typecheck, test, build
  *
- * RAD-35: Implements cache/incremental CI - skips checks when inputs unchanged.
- * RAD-36: format:check runs over git-tracked files only (matching remote CI clean checkout).
- * RAD-46: format:check checks git blob (LF-normalized) content, not CRLF working tree.
- * RAD-77: fail-fast (default), parallel independent checks, smart selection via caller.
- * RAD-92: junction/link primary node_modules into worktree before running checks.
- * RAD-117: confident package-/docs-scoped plans format only changed prettier paths (blobs).
- * RAD-119: empty selection checks = intentional skip (never inflate to full suite).
+ * : Implements cache/incremental CI - skips checks when inputs unchanged.
+ * : format:check runs over git-tracked files only (matching remote CI clean checkout).
+ * : format:check checks git blob (LF-normalized) content, not CRLF working tree.
+ * : fail-fast (default), parallel independent checks, smart selection via caller.
+ * : junction/link primary node_modules into worktree before running checks.
+ * : confident package-/docs-scoped plans format only changed prettier paths (blobs).
+ * : empty selection checks = intentional skip (never inflate to full suite).
  */
 export async function runCiChecks(
   cwd: string,
@@ -788,7 +788,7 @@ export async function runCiChecks(
     });
   }
 
-  // RAD-119: intentional empty plan (selectCiChecks skip) — never inflate to full suite.
+  // : intentional empty plan (selectCiChecks skip) — never inflate to full suite.
   // Only `skipped: true` may pass with zero checks. An empty list without that flag is a
   // bug / lost selection — fail closed so the export gate cannot lie that CI ran green.
   if (checks.length === 0) {
@@ -960,7 +960,7 @@ export async function runLoopCi(
     const ciCwd = resolveCiCwd(cwd, pr.worktreePath);
     const paths = options.changedPaths ?? (await changedPathsForCi(ciCwd, id));
     throwIfAborted(controller.signal);
-    // RAD-123: when the loop edits ci-select/ci-runner (or installed plan diverges),
+    // : when the loop edits ci-select/ci-runner (or installed plan diverges),
     // evaluate selection from the worktree source — never a stale installed plugin.
     const selection =
       options.selection ??
@@ -974,7 +974,7 @@ export async function runLoopCi(
       ).selection;
     if (!options.selection && looksLikeStaleFullSuitePlan(selection)) {
       throw new Error(
-        `Refusing stale full-suite CI plan (RAD-123): checks=${JSON.stringify(selection.checks)} ` +
+        `Refusing stale full-suite CI plan: checks=${JSON.stringify(selection.checks)} ` +
           `reason=${JSON.stringify(selection.reason)}. run_ci must use worktree selectCiChecks — never root pnpm test.`,
       );
     }
@@ -1018,7 +1018,7 @@ export async function runLoopCi(
       signal: controller.signal,
       loopId: pr.id,
     });
-    // RAD-97: persist green / intentional-skip onto the loop so ready soft-block can pass.
+    // : persist green / intentional-skip onto the loop so ready soft-block can pass.
     try {
       const tip = await getLocalPr(cwd, id);
       const record = readyCiFromRunnerResult(tip.headSha, result);

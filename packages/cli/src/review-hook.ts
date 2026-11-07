@@ -44,7 +44,7 @@ export async function main(): Promise<void> {
   const inbox = pr ? formatReviewInbox(pr) : null;
 
   if (event === "sessionStart") {
-    // RAD-97: one reconnect digest reconciling Task ids vs loop status (all live loops).
+    // : one reconnect digest reconciling Task ids vs loop status (all live loops).
     const digest = await formatSessionReconnectDigest(root).catch(() => null);
     const parts = [digest, inbox].filter((s): s is string => Boolean(s && s.trim()));
     if (parts.length === 0) {

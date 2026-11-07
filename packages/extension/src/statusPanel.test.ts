@@ -23,7 +23,7 @@ function injectedDecide(): typeof decideStatusPanelPaint {
   )() as typeof decideStatusPanelPaint;
 }
 
-describe("STATUS panel copy (RAD-110)", () => {
+describe("STATUS panel copy", () => {
   it("renames the section to STATUS", () => {
     assert.equal(STATUS_PANEL_TITLE, "STATUS");
     assert.equal(/<span class="label">EXPORT<\/span>/.test(laneViewSrc), false);
@@ -60,17 +60,17 @@ describe("STATUS panel copy (RAD-110)", () => {
   });
 });
 
-describe("export busy helper (RAD-124)", () => {
+describe("export busy helper", () => {
   it("names the active step when Open on GitHub is disabled", () => {
     assert.equal(exportBusyHelper("Pushing"), "Open on GitHub unavailable — Pushing");
     assert.match(exportBusyHelper(undefined), /export in progress/);
   });
 });
 
-describe("decideStatusPanelPaint (RAD-110)", () => {
+describe("decideStatusPanelPaint", () => {
   const loop = (status: string, id = "lp-a") => ({ id, status });
 
-  it("RAD-110: decideStatusPanelPaint is self-contained and injectable", () => {
+  it("decideStatusPanelPaint is self-contained and injectable", () => {
     const injected = injectedDecide();
     const matrix: StatusPanelPaintInput[] = [
       { liveCount: 0, selected: null, progress: null, shepherd: null },
@@ -121,7 +121,7 @@ describe("decideStatusPanelPaint (RAD-110)", () => {
     }
   });
 
-  it("RAD-110: idle with no live loops never shows reasons or CI card", () => {
+  it("idle with no live loops never shows reasons or CI card", () => {
     const d = decideStatusPanelPaint({
       liveCount: 0,
       selected: null,
@@ -136,7 +136,7 @@ describe("decideStatusPanelPaint (RAD-110)", () => {
     assert.equal(d.body, statusPanelIdleBody({}));
   });
 
-  it("RAD-110: no selection shows select-a-loop copy", () => {
+  it("no selection shows select-a-loop copy", () => {
     const d = decideStatusPanelPaint({
       liveCount: 3,
       selected: null,
@@ -149,7 +149,7 @@ describe("decideStatusPanelPaint (RAD-110)", () => {
     assert.equal(d.showProgress, false);
   });
 
-  it("RAD-110: pre-reviewed loops stay quiet even with matching progress and blocked shepherd", () => {
+  it("pre-reviewed loops stay quiet even with matching progress and blocked shepherd", () => {
     const noisy = {
       progress: { id: "lp-a", step: "export" },
       shepherd: {
@@ -176,7 +176,7 @@ describe("decideStatusPanelPaint (RAD-110)", () => {
     }
   });
 
-  it("RAD-110: archived loop is quiet ARCHIVED", () => {
+  it("archived loop is quiet ARCHIVED", () => {
     const d = decideStatusPanelPaint({
       liveCount: 0,
       selected: loop("approved"),
@@ -189,7 +189,7 @@ describe("decideStatusPanelPaint (RAD-110)", () => {
     assert.equal(d.showReasons, false);
   });
 
-  it("RAD-110: reviewed loop shows only its own progress", () => {
+  it("reviewed loop shows only its own progress", () => {
     const d = decideStatusPanelPaint({
       liveCount: 1,
       selected: loop("reviewed"),
@@ -244,7 +244,7 @@ describe("decideStatusPanelPaint (RAD-110)", () => {
     assert.ok(laneViewSrc.includes("await this.pushSnapshot(true)"));
   });
 
-  it("RAD-110: reviewed loop without gate result shows pending hint", () => {
+  it("reviewed loop without gate result shows pending hint", () => {
     const d = decideStatusPanelPaint({
       liveCount: 1,
       selected: { id: "lp-a", status: "reviewed", humanKind: "pending", humanHint: "Custom hint" },
@@ -256,7 +256,7 @@ describe("decideStatusPanelPaint (RAD-110)", () => {
     assert.equal(d.body, "Custom hint");
   });
 
-  it("RAD-110: reviewed blocked loop shows reasons", () => {
+  it("reviewed blocked loop shows reasons", () => {
     const d = decideStatusPanelPaint({
       liveCount: 1,
       selected: loop("reviewed"),
@@ -271,7 +271,7 @@ describe("decideStatusPanelPaint (RAD-110)", () => {
     assert.equal(d.showReasons, true);
   });
 
-  it("RAD-110: laneView paintShepherd uses the injected decision", () => {
+  it("laneView paintShepherd uses the injected decision", () => {
     assert.match(laneViewSrc, /decideStatusPanelPaint\.toString\(\)/);
     assert.match(laneViewSrc, /decideStatusPanelPaint\(paintInput\)/);
     assert.equal(
@@ -281,7 +281,7 @@ describe("decideStatusPanelPaint (RAD-110)", () => {
     );
   });
 
-  it("RAD-110: switching from a blocked reviewed loop to zero loops clears to idle", () => {
+  it("switching from a blocked reviewed loop to zero loops clears to idle", () => {
     const blocked = decideStatusPanelPaint({
       liveCount: 1,
       selected: loop("reviewed"),
@@ -301,7 +301,7 @@ describe("decideStatusPanelPaint (RAD-110)", () => {
     assert.equal(idle.showReasons, false);
   });
 
-  it("RAD-110: STATUS box children are stacked full-width blocks", () => {
+  it("STATUS box children are stacked full-width blocks", () => {
     const titleIdx = laneViewSrc.indexOf('class="shepherd-title-row"');
     const badgeIdx = laneViewSrc.indexOf('class="shepherd-badge-row"');
     const progressIdx = laneViewSrc.indexOf('id="shepherdProgress"');
@@ -314,7 +314,7 @@ describe("decideStatusPanelPaint (RAD-110)", () => {
     assert.match(laneViewSrc, /\.shepherd-title-row,\s*\.shepherd-badge-row[\s\S]*?width:\s*100%/);
   });
 
-  it("RAD-110: STATUS CSS wraps words, never overflow-wrap anywhere", () => {
+  it("STATUS CSS wraps words, never overflow-wrap anywhere", () => {
     const shepherdBlock = laneViewSrc.slice(
       laneViewSrc.indexOf(".shepherd {"),
       laneViewSrc.indexOf(".pr {"),

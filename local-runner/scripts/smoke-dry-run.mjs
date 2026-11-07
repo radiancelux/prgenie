@@ -13,7 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 const token = process.env.PRGENIE_RUNNER_TOKEN || "smoke-test-token";
 const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-smoke-"));
 const promptFile = path.join(dataDir, "prompt.md");
-await writeFile(promptFile, "Implement RAD-315 smoke ticket and open a PR.\n", "utf8");
+await writeFile(promptFile, "Implement  smoke ticket and open a PR.\n", "utf8");
 
 const runner = spawn("node", [path.join(root, "local-runner/dist/runner.cjs"), "serve"], {
   env: {
@@ -42,7 +42,7 @@ const startRes = await fetch(`${base}/mcp`, {
       name: "start_job",
       arguments: {
         repoPath: root,
-        branch: "smoke/rad-315",
+        branch: "smoke/issue-315",
         promptFile,
         maxRounds: 2,
         dryRun: true,

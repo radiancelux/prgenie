@@ -18,7 +18,7 @@ The extension package version is also what `doctor`'s `extension` check compares
 
 ```powershell
 pnpm build
-pnpm link-extension   # copies package.json + dist into ~/.cursor/extensions/prgenie.prgenie-<version>
+pnpm link-extension # copies package.json + dist into ~/.cursor/extensions/prgenie.prgenie-<version>
 # quit Cursor fully and reopen
 prgenie doctor
 ```

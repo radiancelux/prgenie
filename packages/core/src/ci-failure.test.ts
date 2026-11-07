@@ -113,7 +113,7 @@ describe("ci failure excerpts", () => {
     );
   });
 
-  it("RAD-136: writeCiFailureLog writes under ci-logs/<loopId>/", async () => {
+  it("writeCiFailureLog writes under ci-logs/<loopId>/", async () => {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-log-loop-"));
     try {
       await execAsync("git init", { cwd: repo });
@@ -140,7 +140,7 @@ describe("ci failure excerpts", () => {
     }
   });
 
-  it("RAD-136: loop key falls back to the .loops worktree id, then the shared dir", async () => {
+  it("loop key falls back to the .loops worktree id, then the shared dir", async () => {
     const primary = await mkdtemp(join(tmpdir(), "prgenie-primary-"));
     const loops = join(path.dirname(primary), `${path.basename(primary)}.loops`);
     const loopPath = join(loops, "lp-aabbccdd");
@@ -174,7 +174,7 @@ describe("ci failure excerpts", () => {
     }
   });
 
-  it("RAD-136: invalid loop ids never escape ci-logs", async () => {
+  it("invalid loop ids never escape ci-logs", async () => {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-log-bad-"));
     try {
       await execAsync("git init", { cwd: repo });
@@ -219,7 +219,7 @@ describe("ci failure excerpts", () => {
     }
   });
 
-  it("RAD-136: latest.json is replaced atomically", async () => {
+  it("latest.json is replaced atomically", async () => {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-log-atomic-"));
     try {
       await execAsync("git init", { cwd: repo });
@@ -246,7 +246,7 @@ describe("ci failure excerpts", () => {
     }
   });
 
-  it("RAD-136: latestCiFailure scopes to one loop and never falls back", async () => {
+  it("latestCiFailure scopes to one loop and never falls back", async () => {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-log-scope-"));
     try {
       await execAsync("git init", { cwd: repo });
@@ -275,7 +275,7 @@ describe("ci failure excerpts", () => {
     }
   });
 
-  it("RAD-136: listCiFailureLogs never returns another loop's logs", async () => {
+  it("listCiFailureLogs never returns another loop's logs", async () => {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-log-list-"));
     try {
       await execAsync("git init", { cwd: repo });
@@ -304,7 +304,7 @@ describe("ci failure excerpts", () => {
     }
   });
 
-  it("RAD-136: readers without a loop id cover all loops and the shared dir", async () => {
+  it("readers without a loop id cover all loops and the shared dir", async () => {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-log-all-"));
     try {
       await execAsync("git init", { cwd: repo });
@@ -347,7 +347,7 @@ describe("ci failure excerpts", () => {
     }
   });
 
-  it("RAD-136: legacy shared logs stay readable as shared", async () => {
+  it("legacy shared logs stay readable as shared", async () => {
     const repo = await mkdtemp(join(tmpdir(), "prgenie-ci-log-legacy-"));
     try {
       await execAsync("git init", { cwd: repo });

@@ -1,5 +1,5 @@
 /**
- * RAD-100 / RAD-128 — keep Cursor MCP sessions alive during long git/CI tool calls.
+ *  /  — keep Cursor MCP sessions alive during long git/CI tool calls.
  *
  * Heartbeats use `notifications/message` (safe). `notifications/progress` is
  * **opt-in only** (`PRGENIE_MCP_PROGRESS=1`): Cursor Shared MCP treats an unknown
@@ -22,7 +22,7 @@ export { MCP_SERVER_TIMEOUT_SEC };
 export const MCP_HEARTBEAT_INTERVAL_MS = 15_000;
 
 /**
- * Env opt-in for `notifications/progress` (RAD-128). Default off — message
+ * Env opt-in for `notifications/progress` . Default off — message
  * heartbeats alone keep the session alive without unknown-token disconnects.
  */
 export const MCP_PROGRESS_ENV = "PRGENIE_MCP_PROGRESS";
@@ -35,7 +35,7 @@ export function isMcpProgressOptIn(env: NodeJS.ProcessEnv = process.env): boolea
 
 /**
  * Soft guidance for steward Task fan-out (docs only). Product concurrency
- * guardrails / batching are RAD-84 — do not enforce here.
+ * guardrails / batching are  — do not enforce here.
  */
 export const RECOMMENDED_MAX_PARALLEL_IMPLEMENTOR_TASKS = 2;
 
@@ -72,7 +72,7 @@ export function extractProgressToken(params: Json): string | number | undefined 
 }
 
 /**
- * Refuse a stale root full-suite plan at the MCP boundary (RAD-100 / RAD-119).
+ * Refuse a stale root full-suite plan at the MCP boundary .
  * Core `runLoopCi` / shepherd already refuse; this fails fast before a silent hang.
  */
 export function assertMcpCiPlanNotFullSuite(selection: {
@@ -81,7 +81,7 @@ export function assertMcpCiPlanNotFullSuite(selection: {
 }): void {
   if (!looksLikeStaleFullSuitePlan(selection)) return;
   throw new Error(
-    `MCP refusing full-suite CI plan without scoped progress (RAD-100 / RAD-119): ` +
+    `MCP refusing full-suite CI plan without scoped progress: ` +
       `checks=${JSON.stringify(selection.checks ?? [])} ` +
       `reason=${JSON.stringify(selection.reason ?? [])}. ` +
       `Use worktree selectCiChecks (package/path-scoped) — never root pnpm lint/test/turbo.`,
@@ -165,7 +165,7 @@ export function startMcpProgressSession(opts: {
       if (stopped) return;
       clearInterval(timer);
       // Mark settled before the final tick so no progress can race tools/call
-      // return (unknown-token disconnect — RAD-128). Message "done" still fires.
+      // return (unknown-token disconnect — ). Message "done" still fires.
       stopped = true;
       emitMessage("done");
     },

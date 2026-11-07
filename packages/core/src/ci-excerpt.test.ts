@@ -16,7 +16,7 @@ import { CiShellError } from "./ci-kill.js";
 
 const execAsync = promisify(exec);
 
-describe("ci failure excerpt priority (RAD-137)", () => {
+describe("ci failure excerpt priority", () => {
   it("timeout leads with check name and seconds, then optional TAP tail", () => {
     const tap = [
       "ok 1 - helper still running",

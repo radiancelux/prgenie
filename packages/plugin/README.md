@@ -11,15 +11,15 @@ pnpm link-plugin
 
 Clean clone path: install → build → link-plugin → Customize → Plugins → PR Genie off/on. There is no pre-committed `server.cjs`.
 
-**Agents (RAD-89):** `packages/plugin/agents/*.md` defines `prgenie-implementor`, `prgenie-implementor-strong`, and `prgenie-reviewer` with vendor model ids. `link-plugin` copies them to `%USERPROFILE%\.cursor\agents\` and excludes `agents/` from the plugin folder copy (Cursor auto-loads plugin `agents/`).
+**Agents ():** `packages/plugin/agents/*.md` defines `prgenie-implementor`, `prgenie-implementor-strong`, and `prgenie-reviewer` with vendor model ids. `link-plugin` copies them to `%USERPROFILE%\.cursor\agents\` and excludes `agents/` from the plugin folder copy (Cursor auto-loads plugin `agents/`).
 
 If a PR still shows huge ±tens-of-thousands-line diffs on those `.cjs` files, you have a dirty local build against an old tracked copy, or you are on a pre-migration branch — rebuild or rebase; that is not product source.
 
-`mcp.json` uses `${CURSOR_PLUGIN_ROOT}/mcp/server.cjs` (Cursor does **not** expand `${PLUGIN_ROOT}`). A relative `./mcp/server.cjs` resolves against the **workspace**, which 404s. `link-plugin` rewrites the installed copy to an absolute `node.exe` + `server.cjs` (UTF-8, no BOM; `cmd /c` when the node path has spaces) and pins `timeout: 1200` (seconds) for git+CI tools (RAD-100). **Do not ship** a workspace `.cursor/mcp.json` named `prgenie` — that creates a second Connected MCP row tagged with the folder name.
+`mcp.json` uses `${CURSOR_PLUGIN_ROOT}/mcp/server.cjs` (Cursor does **not** expand `${PLUGIN_ROOT}`). A relative `./mcp/server.cjs` resolves against the **workspace**, which 404s. `link-plugin` rewrites the installed copy to an absolute `node.exe` + `server.cjs` (UTF-8, no BOM; `cmd /c` when the node path has spaces) and pins `timeout: 1200` (seconds) for git+CI tools (). **Do not ship** a workspace `.cursor/mcp.json` named `prgenie` — that creates a second Connected MCP row tagged with the folder name.
 
 **Windows CLI:** `link-plugin` does **not** put `prgenie` on PATH. Use `pnpm cli …` from the repo, or `node <absolute-repo>\packages\cli\dist\prgenie.cjs …`. Prefer MCP tools when available.
 
-**Parallel Tasks:** soft max **2** concurrent implementor Tasks. Product concurrency guardrails are RAD-84 — this plugin does not enforce a hard limit.
+**Parallel Tasks:** soft max **2** concurrent implementor Tasks. Product concurrency guardrails are — this plugin does not enforce a hard limit.
 
 Then **Developer: Reload Window** is not enough for MCP tools (Cursor caches the first tool list). In **Customize → Plugins**, disable and re-enable PR Genie. After `pnpm link-plugin` or any hook bundle change, **fully quit and restart Cursor** so `beforeMCPExecution` / `beforeShellExecution` reload — reload window alone can leave stale hook code. Confirm:
 
@@ -27,7 +27,7 @@ Then **Developer: Reload Window** is not enough for MCP tools (Cursor caches the
 - Command (skills, one slash name each): `/steward`, `/start`, `/local-pr`, `/review`, `/export`
 - Do not add `commands/*.md` that duplicate a skill name — Cursor lists both and the user sees two `/start` entries.
 - MCP server: `prgenie`
-- Hooks: github-gate (also `beforeMCPExecution`: known loop MCP tools auto-allow; agent `export_local_pr` / `record_export_gate_override` / `gh_use` / `clear_loop_cancel` / deletes, loop-agent shell publish verbs (loop worktree, loop subagent or active steward loop only; RAD-190 R7) and shell `prgenie export` / `gh use` / `export-gate-override` **deny**; no default path returns ask (RAD-190); optional `PRGENIE_GITHUB_GATE_ASK=1` restores ask on hosts that honor it), session log, **review loop** (`sessionStart` / `subagentStop` inject pending comments when status is `changes_requested`; no stop-hook reviewer spawn), **subagentStop capture** (off by default; `PRGENIE_CAPTURE_SUBAGENT=1`)
+- Hooks: github-gate (also `beforeMCPExecution`: known loop MCP tools auto-allow; agent `export_local_pr` / `record_export_gate_override` / `gh_use` / `clear_loop_cancel` / deletes, loop-agent shell publish verbs (loop worktree, loop subagent or active steward loop only; R7) and shell `prgenie export` / `gh use` / `export-gate-override` **deny**; no default path returns ask (); optional `PRGENIE_GITHUB_GATE_ASK=1` restores ask on hosts that honor it), session log, **review loop** (`sessionStart` / `subagentStop` inject pending comments when status is `changes_requested`; no stop-hook reviewer spawn), **subagentStop capture** (off by default; `PRGENIE_CAPTURE_SUBAGENT=1`)
 
 Each loop has a feature branch for export and a git worktree. **Switch** in Local PRs replaces this window with that checkout. When a loop is **reviewed**, **Open on GitHub** on the loop panel publishes it (or the human runs `prgenie export <id>`). Exported (`approved`) loops are archived: they stay on disk. **Archive (N)** in Local PRs lists them (default collapsed). A merged GitHub PR archives the matching local packet. Export / Archive locally also checks the main workspace off the loop branch, drops the sibling `.loops` checkout, and deletes the local loop branch (remotes stay). **Clear archived** bulk-deletes local packets after confirm. Loop agent `git push` / `gh pr create` and any agent's MCP export or `prgenie export` are **denied** by the hook; humans publish loops via the panel or CLI. Agents outside a loop may use `git push` / `gh` normally.
 
@@ -38,6 +38,6 @@ Orchestration is **`/steward`** (one steward, durable Task ids, export gate befo
 Repo docs (from monorepo root):
 
 - [Architecture](../../docs/architecture.md)
-- **Local CLI runner (RAD-315):** [`local-runner/README.md`](../../local-runner/README.md) — workstation `cursor-agent` loop, MCP, UI (separate from this plugin steward)
+- **Local CLI runner ():** [`local-runner/README.md`](../../local-runner/README.md) — workstation `cursor-agent` loop, MCP, UI (separate from this plugin steward)
 - [Default review bar](../../docs/review-bar.md) — `/review` process bar + `.prgenie/review.md`
 - [Troubleshooting](../../docs/troubleshooting.md) — stale MCP, extension refresh, watch halt/idle, export/bind

@@ -32,7 +32,7 @@ export interface CiCacheData {
   checks: Record<string, CiCacheEntry>;
 }
 
-/** Scope inputs passed from ci-runner when resolving per-check cache keys (RAD-118). */
+/** Scope inputs passed from ci-runner when resolving per-check cache keys (). */
 export interface CheckInputScopeOptions {
   changedPaths?: string[];
   formatScoped?: boolean;
@@ -77,7 +77,7 @@ function isPrettierWorktreeInput(relPath: string): boolean {
 
 /**
  * Present on every check. Worktree bytes, not the git index — an unstaged
- * devDependency or lockfile edit must miss (RAD-118).
+ * devDependency or lockfile edit must miss .
  */
 const EVERY_CHECK_DISK_INPUTS = ["package.json", "pnpm-lock.yaml", "tsconfig.base.json"] as const;
 
@@ -491,7 +491,7 @@ async function resolveScopedCheckInputPaths(
 
 /**
  * Resolve the repo-relative paths whose content affects a CI check.
- * Safe over-approximations are documented in docs/ci-checks.md (RAD-118).
+ * Safe over-approximations are documented in docs/ci-checks.md .
  * Fail-closed: returns null when scope cannot be determined reliably.
  */
 export async function resolveCheckInputPaths(
@@ -690,7 +690,7 @@ async function computeCheckScriptsHash(
 }
 
 /**
- * Compute per-check input hash from worktree content in that check's scope (RAD-118).
+ * Compute per-check input hash from worktree content in that check's scope .
  * Returns null if we cannot compute a reliable hash (fail-closed: cache miss).
  */
 export async function computeCheckInputHash(

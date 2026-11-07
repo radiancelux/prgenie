@@ -11,7 +11,7 @@ import {
 } from "./loop-cancel.js";
 
 describe("loop-cancel marker", () => {
-  it("RAD-139: write, read and clear the cancel marker", async () => {
+  it("write, read and clear the cancel marker", async () => {
     const repo = await createTempGitRepo({ prefix: "prgenie-loop-cancel-" });
     try {
       const id = "lp-test01";

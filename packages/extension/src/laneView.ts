@@ -177,7 +177,7 @@ type Snapshot = {
   selectedId: string | null;
   files: { status: string; path: string }[];
   threads?: { root: LocalPr["comments"][number]; replies: LocalPr["comments"] }[];
-  /** implement↔review cycles for the COMMENTS column (RAD-114). */
+  /** implement↔review cycles for the COMMENTS column (). */
   rounds?: {
     round: number;
     threads: { root: LocalPr["comments"][number]; replies: LocalPr["comments"] }[];
@@ -281,7 +281,7 @@ export class LaneHub implements vscode.Disposable {
   private liveProgress: LiveProgress | null = null;
   private ciSnap = emptyCiProgressSnapshot();
   private exportBusy = false;
-  /** Loop id currently exporting — keeps selection/visual primary stable (RAD-124). */
+  /** Loop id currently exporting — keeps selection/visual primary stable (). */
   private exportingId: string | null = null;
   private exportAbort: AbortController | null = null;
   private searchQuery = "";
@@ -507,7 +507,7 @@ export class LaneHub implements vscode.Disposable {
       const ac = new AbortController();
       this.exportAbort = ac;
       this.ciSnap = emptyCiProgressSnapshot();
-      // RAD-124: distinguish re-running gate CI vs reusing a green gate vs push/create PR.
+      // : distinguish re-running gate CI vs reusing a green gate vs push/create PR.
       const reuseGreenGate = Boolean(
         pr &&
         pr.exportGate?.status === "ready" &&
@@ -539,10 +539,10 @@ export class LaneHub implements vscode.Disposable {
           onProgress: (event) => this.emitProgress("export", id, event),
         });
         this.clearLiveProgress();
-        // Drop exportingId before the post-export snapshot so STATUS leaves gate mode (RAD-110).
+        // Drop exportingId before the post-export snapshot so STATUS leaves gate mode .
         this.exportingId = null;
         await this.pushSnapshot(true);
-        // RAD-95: prune/checkout incomplete after PR open is not a pure success.
+        // : prune/checkout incomplete after PR open is not a pure success.
         if (result.partialFailure) {
           const open = await vscode.window.showWarningMessage(
             formatExportPartialFailure(result.partialFailure),
@@ -1107,17 +1107,17 @@ export class LaneHub implements vscode.Disposable {
       const archivedCount = all.filter(isArchivedPr).length;
       const live = all.filter((p) => !isArchivedPr(p));
       const archived = all.filter(isArchivedPr);
-      // Live list always; archived rows paint under Archive (N) when expanded (RAD-131).
+      // Live list always; archived rows paint under Archive (N) when expanded .
       const prs = live;
       const selectable = this.archiveExpanded ? [...live, ...archived] : live;
       const ids = live.map((p) => p.id);
       const freshIds = this.primed ? ids.filter((id) => !this.knownIds.has(id)) : [];
       this.primed = true;
       for (const id of ids) this.knownIds.add(id);
-      // RAD-124: while export is busy, keep the exporting loop selected even if a
+      // : while export is busy, keep the exporting loop selected even if a
       // draft sibling updates and would otherwise become "fresh" / top of list.
       // A user click on a different loop (userPinned to another id) stays, so
-      // STATUS can show quiet DRAFT during export (RAD-110 R16).
+      // STATUS can show quiet DRAFT during export .
       const userChoseOther =
         this.userPinned && !!this.selectedId && this.selectedId !== this.exportingId;
       if (
@@ -1173,7 +1173,7 @@ export class LaneHub implements vscode.Disposable {
       }
       const cheap = selected && this.lastShepherdId === selected.id ? this.lastShepherd : null;
       // Only surface STATUS shepherd chrome (ready/blocked) once the loop is past review.
-      // Draft/ready/changes_requested cheap results must not paint BLOCKED (RAD-83 / RAD-110).
+      // Draft/ready/changes_requested cheap results must not paint BLOCKED .
       const shepherd =
         selected && selected.status === "reviewed" ? displayShepherdStatus(cheap, selected) : null;
       const sidebarPrs = prs.map((pr) => ({ ...pr, humanExport: humanExportUi(pr) }));
@@ -1421,7 +1421,7 @@ function ciUiScript(): string {
     function bindCiModal() {
       // Query fresh #ciModal nodes on every open/close. Selecting another loop
       // rebuilds root.innerHTML (new dialog); capturing the first node once
-      // left clicks/Esc writing to a detached element (RAD-77 AC3).
+      // left clicks/Esc writing to a detached element .
       const close = () => {
         const modal = document.getElementById("ciModal");
         if (modal) modal.hidden = true;
@@ -2039,7 +2039,7 @@ function laneHtml(webview: vscode.Webview): string {
       const msg = event.data;
       if (msg.type === "progress") {
         liveProgress = msg.progress || null;
-        // Keep lastSnapshot.progress in sync so replaying the list does not wipe the live step (RAD-124).
+        // Keep lastSnapshot.progress in sync so replaying the list does not wipe the live step .
         lastSnapshot = Object.assign({}, lastSnapshot, { progress: liveProgress });
         paintShepherd(lastSnapshot);
         if (lastSnapshot.prs) {
@@ -2167,7 +2167,7 @@ function laneHtml(webview: vscode.Webview): string {
         const el = paintRow(prs[i]);
         if (list.children[i] !== el) list.insertBefore(el, list.children[i] || null);
       }
-      // Archive section (RAD-131) — hidden when N=0
+      // Archive section  — hidden when N=0
       let section = list.querySelector(":scope > .archive-section");
       if (archived > 0) {
         if (!section) {
@@ -2371,7 +2371,7 @@ function panelHtml(webview: vscode.Webview): string {
     bindCiModal();
     const COMPOSER_HINT = ${JSON.stringify(HUMAN_EXPORT_COMPOSER_HINT)};
     const EXPORT_PRIMARY = ${JSON.stringify(HUMAN_EXPORT_PRIMARY_ACTION)};
-    // Injected from statusPanel.exportBusyHelper (single source of truth — RAD-124).
+    // Injected from statusPanel.exportBusyHelper (single source of truth — ).
     const EXPORT_BUSY_TEMPLATE = ${JSON.stringify(exportBusyHelper("{{STEP}}"))};
     function exportBusyHintFor(step) {
       const label = (step && String(step).trim()) || "export in progress";

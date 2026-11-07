@@ -19,7 +19,7 @@ Structure:
 
 - **Org / always-apply rules** at the top (security, auth, data handling)
 - **Stack / path-scoped rules** below (UI libs, framework patterns)
-- **`## Zero-tolerance`** — always-fail categories (fill RAD-103 opt-in keys; plugin defaults stay empty)
+- **`## Zero-tolerance`** — always-fail categories (fill opt-in keys; plugin defaults stay empty)
 - **`## Stack`** — stack-specific review categories
 
 PR Genie reads the file, hashes it, and injects path + top bullet rules into the reviewer brief — not the full file.

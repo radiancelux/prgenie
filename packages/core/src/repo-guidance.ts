@@ -95,7 +95,7 @@ async function discoverCursorReviewRules(repoRoot: string): Promise<ReviewGuidan
 }
 
 /**
- * Discovery order (RAD-102):
+ * Discovery order :
  * 1. `.prgenie/review.md`
  * 2. `.cursor/rules/*review*`
  * 3. Review section of `CLAUDE.md`
@@ -155,7 +155,7 @@ function extractSectionBullets(content: string, headingPattern: string): string[
   return extractTopRules(body, 50).map((line) => line.replace(/^-\s+/, "").trim());
 }
 
-/** Zero-tolerance / stack categories from review.md fill RAD-103 opt-in keys. */
+/** Zero-tolerance / stack categories from review.md fill opt-in keys. */
 export function parseReviewGuidanceMeta(content: string): ReviewGuidanceMeta {
   return {
     zeroToleranceCategories: extractSectionBullets(content, "zero[- ]?tolerance"),

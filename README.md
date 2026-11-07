@@ -18,7 +18,7 @@ When a **subagent** finishes with commits, PR Genie drafts a loop and puts it on
 
 ## What you can do today
 
-**How to dogfood the agent flywheel** (preferred):
+**How to run the agent flywheel locally** (preferred):
 
 1. **Refresh the plugin** so MCP lists `steward_next` / `bind_steward`: `pnpm build && pnpm link-plugin`, then Customize → Plugins → PR Genie off/on. If Configure → Local stays on **Connecting…** (0 tools), see [Troubleshooting — sticky Connecting](docs/troubleshooting.md#sticky-connecting--0-tools-windows). Do not implement in the `/steward` chat.
 2. **`/steward`** with a ticket URL or brief. You are talking to the **steward**. It creates the packet, Tasks an implementor, then a reviewer, resumes the same implementor on `changes_requested`, and runs the export gate.
@@ -37,11 +37,12 @@ Run `prgenie attach --help` and `prgenie --help` for full command reference.
 
 ## Docs
 
+- [ADR 0001: extension → local runner](docs/decisions/0001-extension-to-local-runner.md) — why automation moved to `local-runner/` while the plugin/extension remain supported
 - [Architecture](docs/architecture.md) — packages, lifecycle, steward flywheel, storage, worktrees, `gh` bind
 - [Default review bar](docs/review-bar.md) — `/review` process bar + authoring `.prgenie/review.md`
 - [Troubleshooting](docs/troubleshooting.md) — `prgenie doctor` checks and common failure modes
 - [Release](docs/release.md) — version alignment, `check-versions`, `pack:extension`
-- [Local CLI runner (RAD-315)](local-runner/README.md) — optional workstation `cursor-agent` loop + MCP + UI (not the plugin steward)
+- [Local CLI runner](local-runner/README.md) — optional workstation `cursor-agent` loop + MCP + UI (not the plugin steward)
 
 ## What it is not
 
@@ -71,9 +72,9 @@ Then:
 2. **Cursor Plugin** (rules, `/local-pr`, MCP) — `link-plugin` copies to `%USERPROFILE%\.cursor\plugins\local\prgenie`. A reload often **does not** refresh the MCP tool list. In **Customize → Plugins**, turn PR Genie **off and on**. **Canonical MCP is the plugin** (`prgenie`). Do not add a workspace `.cursor/mcp.json` named `prgenie` — Connected MCPs will show two rows (tag Plugin + tag folder, e.g. pr-genie) and Local can stick on Connecting…. Enable **only one** `prgenie` entry.
 3. **Sidebar / Local PRs** — that is a **VS Code extension**, not the plugin. `link-plugin` does not update it. Run `pnpm link-extension`, then **quit Cursor fully and reopen** (or F5 `Run PR Genie Extension` for a debug host).
 
-`link-plugin` runs `pnpm build`, then pins MCP `command` to this machine's `node.exe` and `server.cjs` to the plugin folder (UTF-8, no BOM) so Cursor does not look for `mcp/server.cjs` in the workspace root. It also pins `timeout: 1200` (seconds) so git+CI MCP tools are less likely to die with `-32001 Request timed out` (RAD-100); the server streams progress/heartbeats during those calls.
+`link-plugin` runs `pnpm build`, then pins MCP `command` to this machine's `node.exe` and `server.cjs` to the plugin folder (UTF-8, no BOM) so Cursor does not look for `mcp/server.cjs` in the workspace root. It also pins `timeout: 1200` (seconds) so git+CI MCP tools are less likely to die with `-32001 Request timed out`; the server streams progress/heartbeats during those calls.
 
-**Parallel Tasks:** keep at most **2** concurrent implementor Tasks as a soft default. Hard concurrency / batching is [RAD-84](https://linear.app/radiancelux/issue/RAD-84) — do not invent a local steward guard here.
+**Parallel Tasks:** keep at most **2** concurrent implementor Tasks as a soft default. Hard concurrency limits are product policy — do not invent a local steward guard here.
 
 ## CLI
 
@@ -123,7 +124,7 @@ prgenie mcp [--smoke]
 
 `prgenie doctor` checks plugin/extension freshness, MCP config (BOM / `${PLUGIN_ROOT}` / duplicate `prgenie` name / pinned `node`), monorepo/VSIX version alignment, export-halt state, corrupt PR files, orphaned `.loops` worktrees, `gh` bind, legacy hooks, and the last shepherd CI failure log (when present). On CI failure, toast/CLI name the check and a short excerpt; `prgenie shepherd <id> --verbose` prints the capped full log under `.git/agent-console/ci-logs/`. Agent orchestration is `/steward` (`prgenie steward` / MCP `steward_next`): one steward per loop, durable Task ids in `.git/agent-console/stewards.json`, export gate before Push to origin. `prgenie watch start|stop|listen` hard-errors and points at `/steward`. `prgenie claim-review` / MCP `claim_review` is the durable one-reviewer-per-HEAD lock.
 
-Bind a GitHub login per repo (`prgenie gh use <login>`). Before `git push` / `gh`, PR Genie switches `gh` to that account. `gh auth` is global — only one account is active at a time — so the bind is how this project stays on `radiancelux` instead of `ccc-radiancelux`.
+Bind a GitHub login per repo (`prgenie gh use <login>`). Before `git push` / `gh`, PR Genie switches `gh` to that account. `gh auth` is global — only one account is active at a time — so the bind is how this project stays on the org account instead of a personal account.
 
 Works from a Conductor workspace or any other worktree — same repo git dir.
 

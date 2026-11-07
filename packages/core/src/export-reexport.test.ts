@@ -37,7 +37,7 @@ async function markGateReady(repo: string, id: string): Promise<void> {
   });
 }
 
-describe("re-export updates a multiline body (RAD-150)", () => {
+describe("re-export updates a multiline body", () => {
   it("second export calls gh pr edit --title --body-file with the new body", async () => {
     const repo = await createTempGitRepo({ prefix: "prgenie-reexport-" });
     const bare = await mkdtemp(path.join(tmpdir(), "prgenie-reexport-origin-"));

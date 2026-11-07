@@ -34,7 +34,7 @@ function fixtureRootSelection(checks: string[]): CiCheckSelection {
   };
 }
 
-describe("planReadySkipCarry (RAD-144)", () => {
+describe("planReadySkipCarry", () => {
   it("carries per-check skip at the same HEAD and scope", () => {
     const plan = planReadySkipCarry({
       headSha: "abc",
@@ -223,7 +223,7 @@ describe("export gate honour ready skips", () => {
     }
   });
 
-  it("RAD-154: empty plan with changed files is not exportable", async () => {
+  it("empty plan with changed files is not exportable", async () => {
     const repo = await createTempGitRepo({ prefix: "prgenie-rad154-empty-" });
     try {
       await git(repo, ["checkout", "-b", "feature"]);
@@ -255,7 +255,7 @@ describe("export gate honour ready skips", () => {
     }
   });
 
-  it("RAD-154: documented override naming ci-plan allows export", async () => {
+  it("documented override naming ci-plan allows export", async () => {
     const repo = await createTempGitRepo({ prefix: "prgenie-rad154-override-" });
     try {
       await git(repo, ["checkout", "-b", "feature"]);
@@ -265,7 +265,7 @@ describe("export gate honour ready skips", () => {
       await git(repo, ["commit", "-m", "logo"]);
       const pr = await createLocalPr(repo, {
         title: "Override",
-        body: "Override by brett because the diff is binary-only assets.\nSkipped checks: `ci-plan`",
+        body: "Override by contributor because the diff is binary-only assets.\nSkipped checks: `ci-plan`",
         base: "main",
       });
       assert.ok(pr.worktreePath);
@@ -282,7 +282,7 @@ describe("export gate honour ready skips", () => {
         skipToolchainEnsure: true,
       });
       await recordExportGateOverride(repo, pr.id, {
-        who: "brett",
+        who: "contributor",
         why: "the diff is binary-only assets",
       });
       const validation = await validateExport(repo, pr.id);
@@ -460,7 +460,7 @@ describe("export gate honour ready skips", () => {
       });
       assert.equal(shepherd.status, "ready");
       const lint = shepherd.ciChecks?.find((c) => c.name === "lint");
-      assert.match(lint?.reason ?? "", /passed at ready \(RAD-162\)/);
+      assert.match(lint?.reason ?? "", /passed at ready/);
       const testCore = shepherd.ciChecks?.find((c) => c.name === "test:core");
       assert.ok(testCore?.passed && !testCore.skipped);
     } finally {
@@ -526,7 +526,7 @@ describe("export gate honour ready skips", () => {
   });
 });
 
-describe("export refusal and override (RAD-144)", () => {
+describe("export refusal and override", () => {
   it("refuses export while the gate is blocked", async () => {
     const repo = await createTempGitRepo({ prefix: "prgenie-export-block-" });
     try {
@@ -678,7 +678,7 @@ describe("export refusal and override (RAD-144)", () => {
   });
 });
 
-describe("githubPrEditArgs (RAD-150)", () => {
+describe("githubPrEditArgs", () => {
   it("uses --body-file for multiline-safe edit", () => {
     const args = githubPrEditArgs({
       prUrl: "https://github.com/o/r/pull/12",
@@ -697,7 +697,7 @@ describe("githubPrEditArgs (RAD-150)", () => {
   });
 });
 
-describe("exportPartialFailureFromRelease body update (RAD-150)", () => {
+describe("exportPartialFailureFromRelease body update", () => {
   it("reports body-update failure as partial failure", () => {
     const partial = exportPartialFailureFromRelease(
       "https://github.com/o/r/pull/1",

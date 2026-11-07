@@ -5,7 +5,7 @@ import type { ReadyCiRecord } from "./types.js";
 const FAIL_FAST = /fail-fast/i;
 const READY_SKIP_PREFIX = /^skipped \(ready:\s*/i;
 
-/** Display reason for a check carried from readyCi into the export gate (RAD-144). */
+/** Display reason for a check carried from readyCi into the export gate (). */
 export function formatReadyCarriedSkipReason(reason: string): string {
   const trimmed = reason.trim();
   if (READY_SKIP_PREFIX.test(trimmed)) return trimmed.replace(/\s+$/, "");
@@ -42,7 +42,7 @@ export interface ReadySkipCarryPlan {
 }
 
 /**
- * Decide which export-gate checks can be carried from readyCi without re-running (RAD-144).
+ * Decide which export-gate checks can be carried from readyCi without re-running .
  * HEAD mismatch, a dropped recorded check, or a broader plan that no longer matches → fail closed.
  * A named human skip (scope is only those checkSkips) is carried when the gate plan still includes them.
  */
@@ -57,8 +57,8 @@ export function planReadySkipCarry(options: {
     return { checksToRun: planned, carriedResults: [], scopeInvalidated: false };
   }
 
-  // RAD-162-R3: partial readyCi at the same HEAD — run checks that never ran at ready.
-  // Named checkSkips stay on the RAD-144 path (scope match / invalidation).
+  // : partial readyCi at the same HEAD — run checks that never ran at ready.
+  // Named checkSkips stay on the  path (scope match / invalidation).
   if (
     (record.outcome === "passed" || record.outcome === "incomplete") &&
     !(record.checkSkips?.length ?? 0)
@@ -82,7 +82,7 @@ export function planReadySkipCarry(options: {
           carriedResults.push({
             name,
             passed: true,
-            reason: "passed at ready (RAD-162)",
+            reason: "passed at ready",
           });
         }
       }

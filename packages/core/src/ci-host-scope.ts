@@ -46,12 +46,12 @@ export interface ResolveCiCheckCommandOptions {
   /** Optional pre-read scripts map (tests). */
   scripts?: Record<string, string> | null;
   /**
-   * RAD-117: when true, format:check progress reflects changed-path blob scope
+   * : when true, format:check progress reflects changed-path blob scope
    * (must match what checkFormatFromBlobs actually checks).
    */
   formatScoped?: boolean;
   /**
-   * RAD-127: smart selection (carries `testFiles` for file-scoped package tests).
+   * : smart selection (carries `testFiles` for file-scoped package tests).
    */
   selection?: CiCheckSelection;
   /** Explicit file list for `test:<pkg>` (overrides selection.testFiles). */
@@ -179,7 +179,7 @@ export function detectMonorepoWideScript(script: string): MonorepoWideScript | n
     if (pathToks.length === 0 || pathToks.every(isDotPathToken)) {
       return { tool: "eslint", script: trimmed, args: rest };
     }
-    // Explicit package/dir targets already scoped (RAD-105 prgenie root lint).
+    // Explicit package/dir targets already scoped .
     return null;
   }
 
@@ -274,7 +274,7 @@ export function resolveCiCheckCommand(options: ResolveCiCheckCommandOptions): Re
     (check.startsWith("test:") ? options.selection?.testFiles?.[check] : undefined);
   const fallback = ciCheckCommand(check, scopedTestFiles);
 
-  // RAD-105 package scopes — never host-rewrite. RAD-127 may file-scope test:<pkg>.
+  //  package scopes — never host-rewrite.  may file-scope test:<pkg>.
   if (packageFromScopedCheck(check)) {
     if (check.startsWith("test:") && scopedTestFiles && scopedTestFiles.length > 0) {
       return {
@@ -286,7 +286,7 @@ export function resolveCiCheckCommand(options: ResolveCiCheckCommandOptions): Re
     return { command: fallback, hostScoped: false };
   }
 
-  // RAD-117: format:check always uses git-blob Prettier API (LF on Windows).
+  // : format:check always uses git-blob Prettier API (LF on Windows).
   // Progress must match the blob runner — scoped vs full tracked tree.
   if (check === "format:check") {
     if (options.formatScoped) {
@@ -335,7 +335,7 @@ export function resolveCiCheckCommand(options: ResolveCiCheckCommandOptions): Re
     };
   }
 
-  // Host prettier CLI rewrite stays deferred — blob runner owns format:check (RAD-46 LF).
+  // Host prettier CLI rewrite stays deferred — blob runner owns format:check .
   if (wide.tool === "prettier") {
     return {
       command: fallback,

@@ -238,7 +238,7 @@ test("stewardNext gate-before-handoff: blocked CI resumes implementor, ready han
   assert.equal(await getStewardBinding(repo, pr.id), null);
 });
 
-test("abortCiForSteward returns stop_implementor when a Task is bound (RAD-112)", async () => {
+test("abortCiForSteward returns stop_implementor when a Task is bound", async () => {
   const { abortCiForSteward } = await import("./export-validation.js");
   const pr = await createLocalPr(repo, { title: "CI skip steward", base: "main" });
   await bindSteward(repo, pr.id, { implementorTaskId: "task-impl-skip" });
@@ -254,14 +254,14 @@ test("abortCiForSteward returns stop_implementor when a Task is bound (RAD-112)"
   assert.equal(alone.stewardAction, "abort_ci_only");
 });
 
-test("RAD-125: stewardNext refreshes headSha before matching a blocked gate", async () => {
+test("stewardNext refreshes headSha before matching a blocked gate", async () => {
   git(["checkout", "main"]);
-  git(["checkout", "-b", "feat/rad-125-stale-head"]);
+  git(["checkout", "-b", "feat/issue-125-stale-head"]);
   await writeFile(path.join(repo, "rad125.txt"), "a\n");
   git(["add", "."]);
   git(["commit", "-m", "rad125 a"]);
 
-  const pr = await createLocalPr(repo, { title: "RAD-125 refresh", base: "main" });
+  const pr = await createLocalPr(repo, { title: "refresh", base: "main" });
   const oldSha = pr.headSha;
   const tipCwd = pr.worktreePath ?? repo;
   await bindSteward(repo, pr.id, { implementorTaskId: "task-impl-125" });
@@ -281,7 +281,7 @@ test("RAD-125: stewardNext refreshes headSha before matching a blocked gate", as
 
   // Packet still has old headSha on disk until stewardNext refreshes.
   const next = await stewardNext(repo, pr.id, { evaluateGate: false });
-  // RAD-126: tip moved after CLEAN → re-enter review (not resume for stale test).
+  // : tip moved after CLEAN → re-enter review (not resume for stale test).
   assert.equal(next.status, "ready");
   assert.equal(next.decision.kind, "spawn_reviewer");
   assert.equal(next.decision.humanExportable, false);
@@ -293,7 +293,7 @@ test("RAD-125: stewardNext refreshes headSha before matching a blocked gate", as
   assert.equal(shown.status, "ready");
 });
 
-test("RAD-89: stewardNext spawn_implementor returns cheap tier by default", async () => {
+test("stewardNext spawn_implementor returns cheap tier by default", async () => {
   const pr = await createLocalPr(repo, { title: "Tier default", body: "Fix tooltip copy." });
   const next = await stewardNext(repo, pr.id, { evaluateGate: false });
   assert.equal(next.decision.kind, "spawn_implementor");
@@ -302,7 +302,7 @@ test("RAD-89: stewardNext spawn_implementor returns cheap tier by default", asyn
   assert.match(formatStewardDecision(next), /implementorSubagentType=prgenie-implementor/);
 });
 
-test("RAD-89: bindSteward records implementor tier and model on new Task id", async () => {
+test("bindSteward records implementor tier and model on new Task id", async () => {
   const fakeHome = await mkdtemp(path.join(tmpdir(), "prgenie-agent-home-"));
   const agentsDir = path.join(fakeHome, ".cursor", "agents");
   await mkdir(agentsDir, { recursive: true });
@@ -316,7 +316,7 @@ test("RAD-89: bindSteward records implementor tier and model on new Task id", as
   try {
     const pr = await createLocalPr(repo, {
       title: "Tier record",
-      body: "RAD-1: rewrite the packet store.\ntier: strong",
+      body: "Ticket: rewrite the packet store.\ntier: strong",
     });
     await bindSteward(repo, pr.id, { implementorTaskId: "task-tier-1" });
     const stored = await getLocalPr(repo, pr.id);
@@ -331,7 +331,7 @@ test("RAD-89: bindSteward records implementor tier and model on new Task id", as
   }
 });
 
-test("RAD-89: stewardNext spawn_reviewer names prgenie-reviewer subagent", async () => {
+test("stewardNext spawn_reviewer names prgenie-reviewer subagent", async () => {
   const pr = await createLocalPr(repo, { title: "Reviewer tier", body: "Body" });
   await setLocalPrStatus(repo, pr.id, "ready", { skipPreflight: true, ciSkipReason: "test" });
   const next = await stewardNext(repo, pr.id, { evaluateGate: false });
@@ -339,7 +339,7 @@ test("RAD-89: stewardNext spawn_reviewer names prgenie-reviewer subagent", async
   assert.equal(next.decision.reviewerSubagentType, "prgenie-reviewer");
 });
 
-test("RAD-89: formatStewardDecision shows persisted tier on spawn_reviewer", async () => {
+test("formatStewardDecision shows persisted tier on spawn_reviewer", async () => {
   const pr = await createLocalPr(repo, { title: "Persisted tier", body: "Body" });
   await bindSteward(repo, pr.id, { implementorTaskId: "task-tier-persist" });
   const stored = await getLocalPr(repo, pr.id);
@@ -351,7 +351,7 @@ test("RAD-89: formatStewardDecision shows persisted tier on spawn_reviewer", asy
   assert.match(formatStewardDecision(next), new RegExp(`tier=${stored.implementorTier}`));
 });
 
-test("RAD-89: stewardNext spawns strong after two failed AC rounds on same Task id", async () => {
+test("stewardNext spawns strong after two failed AC rounds on same Task id", async () => {
   const pr = await createLocalPr(repo, { title: "AC bump", body: "Fix tooltip copy." });
   await bindSteward(repo, pr.id, { implementorTaskId: "task-same-ac" });
 
@@ -387,7 +387,7 @@ test("RAD-89: stewardNext spawns strong after two failed AC rounds on same Task 
   assert.equal(next.decision.resumeSameImplementor, true);
 });
 
-test("RAD-89: export-gate restart spawn stays cheap even with tier marker brief", async () => {
+test("export-gate restart spawn stays cheap even with tier marker brief", async () => {
   git(["checkout", "main"]);
   git(["checkout", "-b", "feat/steward-gate-restart"]);
   await writeFile(path.join(repo, "gate-restart.txt"), "g\n");
@@ -396,7 +396,7 @@ test("RAD-89: export-gate restart spawn stays cheap even with tier marker brief"
 
   const pr = await createLocalPr(repo, {
     title: "Gate restart tier",
-    body: "tier: strong\nRAD-1: architecture rewrite for export gate CI fix",
+    body: "tier: strong\nTicket: architecture rewrite for export gate CI fix",
     base: "main",
   });
   await bindSteward(repo, pr.id, { implementorTaskId: "task-impl-gate-old" });
@@ -422,7 +422,7 @@ test("RAD-89: export-gate restart spawn stays cheap even with tier marker brief"
   assert.equal(stored.implementorTier, "cheap");
 });
 
-test("RAD-154: blocked ci-plan gate tells the steward run_ci cannot fix it", () => {
+test("blocked ci-plan gate tells the steward run_ci cannot fix it", () => {
   const decided = decideStewardAction(
     prStub({
       status: "reviewed",
@@ -432,7 +432,7 @@ test("RAD-154: blocked ci-plan gate tells the steward run_ci cannot fix it", () 
           {
             check: "ci",
             message:
-              "CI check failed: ci-plan — local CI plan is empty for 1 changed path(s); fail closed (RAD-154)",
+              "CI check failed: ci-plan — local CI plan is empty for 1 changed path(s); fail closed",
           },
         ],
         headSha: "abc123",
@@ -452,7 +452,7 @@ test("RAD-154: blocked ci-plan gate tells the steward run_ci cannot fix it", () 
   assert.match(decided.reason, /exportGateOverride.*`ci-plan`/);
 });
 
-test("RAD-126: decideStewardAction labels refused plan as ci-select not test", () => {
+test("decideStewardAction labels refused plan as ci-select not test", () => {
   const decided = decideStewardAction(
     prStub({
       status: "reviewed",
@@ -462,7 +462,7 @@ test("RAD-126: decideStewardAction labels refused plan as ci-select not test", (
           {
             check: "ci",
             message:
-              'Refusing stale full-suite CI plan (RAD-123): checks=["test"] — never root pnpm test. Use worktree selectCiChecks.',
+              'Refusing stale full-suite CI plan: checks=["test"] — never root pnpm test. Use worktree selectCiChecks.',
           },
         ],
         headSha: "abc123",
@@ -481,7 +481,7 @@ test("RAD-126: decideStewardAction labels refused plan as ci-select not test", (
   assert.match(decided.reason, /worktree select|do not fix root pnpm test/i);
 });
 
-test("RAD-102: stewardNext records reviewGuidance hash on packet", async () => {
+test("stewardNext records reviewGuidance hash on packet", async () => {
   const pr = await createLocalPr(repo, { title: "Guidance hash", body: "Body" });
   assert.ok(pr.worktreePath, "loop worktree required");
   await mkdir(path.join(pr.worktreePath, ".prgenie"), { recursive: true });

@@ -92,7 +92,7 @@ interface ScanSink {
   /**
    * The same simple commands in order, with `"("` / `")"` around a context whose working directory
    * does not carry out: a POSIX `( … )` subshell, a `$( … )` / backtick / `<( … )` substitution,
-   * and a PowerShell `{ … }` scriptblock (RAD-190 loop-target scan).
+   * and a PowerShell `{ … }` scriptblock .
    */
   events: (string[] | "(" | ")")[];
   /** Literal scripts a shell or evaluator reads on stdin or from `<(…)`; parsed as commands. */
@@ -1063,7 +1063,7 @@ function isUnresolvedToken(word: string): boolean {
 
 /**
  * A PowerShell splat or array expression (`@a`, `@args`, a bare `@` before `(…)`, `@(`, `@{`,
- * or a here-string `@'…`), never a scoped package name like `@prgenie/cli` (RAD-190 round 5).
+ * or a here-string `@'…`), never a scoped package name like `@prgenie/cli` .
  */
 function isPowerShellSplat(word: string): boolean {
   if (!word.startsWith("@")) return false;
@@ -1393,7 +1393,7 @@ function ghDenialReason({ args, literal, launcher }: GhInvocation): string | nul
   return null;
 }
 
-/** True when gh api would mutate repo lifecycle endpoints (RAD-163 R1). */
+/** True when gh api would mutate repo lifecycle endpoints (R1). */
 export function ghApiRepoLifecycleMutation(command: string): boolean {
   for (const words of shellSimpleCommands(command)) {
     for (const { args } of ghInvocations(words)) {
@@ -1561,7 +1561,7 @@ function gitPushDenialReason(
   return `force-push to default branch (${local}) is not allowed from loop agents`;
 }
 
-/** True when a force-push targets the repository default branch (RAD-163 R2). */
+/** True when a force-push targets the repository default branch (R2). */
 export function forcePushTargetsDefaultBranch(
   command: string,
   defaultBranch: string,
@@ -1585,7 +1585,7 @@ export function loopAgentForcePushDenialReason(
 }
 
 /**
- * `git push --help` / `git push -h` print usage and never push (RAD-190 R3). Only the first argument
+ * `git push --help` / `git push -h` print usage and never push . Only the first argument
  * after `push` counts, so a flag value (`-o -h`, `--push-option -h`, `--repo -h`) is never read as help.
  */
 function gitPushIsHelp(args: string[]): boolean {
@@ -1597,7 +1597,7 @@ export function shellCommandPublishes(command: string): boolean {
   const lines: string[][] = [];
   for (const words of shellSimpleCommands(command)) {
     lines.push(words);
-    // `Start-Process git -ArgumentList 'push','origin'`: read the line it launches (RAD-190).
+    // `Start-Process git -ArgumentList 'push','origin'`: read the line it launches .
     const head = commandHeadIndex(words);
     if (
       START_PROCESS_COMMANDS.has(commandBasename(words[head] ?? "")) &&
@@ -1615,7 +1615,7 @@ export function shellCommandPublishes(command: string): boolean {
           const sub = s.word.toLowerCase();
           if (group === "pr" && (sub === "create" || sub === "merge")) return true;
           if (group === "repo" && sub === "create") return true;
-          // RAD-190 loop-only scope: releases publish too (loop agents only, like every publish deny).
+          //  loop-only scope: releases publish too (loop agents only, like every publish deny).
           if (
             group === "release" &&
             ["create", "upload", "edit", "delete", "delete-asset"].includes(sub)
@@ -1629,7 +1629,7 @@ export function shellCommandPublishes(command: string): boolean {
   return false;
 }
 
-/** Human-only prgenie CLI subcommand an agent shell command would run (RAD-190 R1). */
+/** Human-only prgenie CLI subcommand an agent shell command would run (R1). */
 export type PrgenieHumanOnlyCli =
   "export" | "export-gate-override" | "gh use" | "run-time" | "too-complex";
 
@@ -2135,7 +2135,7 @@ const LAUNCH_HINT = /prgenie|cli|bin\.ts|np[mx]|pnp|yarn|bun|corepack|node|tsx|s
  * quoted pwsh scripts, `watch` scripts, `npx -c`) draws on it. The limit is deterministic work
  * units (characters re-read plus words scanned), so the same command always gets the same answer;
  * a 5s clock is only a backstop against a slow or loaded machine. Rebuilding a Start-Process
- * line is not charged on its own (RAD-190 R6 nit 3): its words are charged when the rebuilt line is
+ * line is not charged on its own : its words are charged when the rebuilt line is
  * scanned, and the nesting itself (Start-Process inside Start-Process) is bounded by the 5s clock. When either runs out the check
  * stops and the command is denied as `too-complex` (fail closed), so no input can fall open.
  */
@@ -2371,7 +2371,7 @@ function normalizePowerShellGroups(command: string): string {
 
 /**
  * The human-only PR Genie CLI subcommand (`export`, `export-gate-override`, `gh use`) an agent shell
- * command would run (RAD-190 R1). A PR Genie launch is looked for at every word position, like
+ * command would run . A PR Genie launch is looked for at every word position, like
  * `git push` and `gh`: the bin, `pnpm cli` / `pnpm prgenie` / `pnpm exec` / `npx` / `npm exec`, a CLI
  * script (`<path>/prgenie.cjs`, `cli.js`, `packages/cli/src/bin.ts`) under any runner, after any
  * prefix or launcher (`call`, `start /b`, `setsid`, `env -S`, `su -c`, …), through Start-Process,

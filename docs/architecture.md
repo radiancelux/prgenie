@@ -17,14 +17,14 @@ Build at the monorepo root (`pnpm build`). Dev install copies the plugin and ext
 
 ```text
 Cursor chat (skills + MCP)
-        │
-        ▼
-  packages/cli  ──►  @prgenie/core  ──►  git (.git/agent-console, refs/local-pr)
-        ▲
-        │
-  hooks / github-gate (plugin)
-        │
-  Local PRs sidebar (extension) ── Switch / export UI
+ │
+ ▼
+ packages/cli ──► @prgenie/core ──► git (.git/agent-console, refs/local-pr)
+ ▲
+ │
+ hooks / github-gate (plugin)
+ │
+ Local PRs sidebar (extension) ── Switch / export UI
 ```
 
 - **CLI + core** — create/list/update/approve local PRs from any worktree of the same repo. Same APIs the MCP server exposes.
@@ -39,8 +39,8 @@ Statuses (from `@prgenie/core` types):
 
 Typical path:
 
-1. **Create** (`create_local_pr` / `prgenie create` / `/steward` / `/start`) — feature branch `lp-<id>`, draft packet. `createLocalPr` always calls `ensureWorktreeForLoop` and records a `worktreePath` at `../<repo>.loops/<id>` (`loopWorktreeDir`). Every live loop gets that exclusive checkout — never the primary folder, including the first loop. If the loop branch was checked out in primary, PR Genie moves primary back onto the loop base (or detaches) and peels the sibling worktree. Bind/create that would still land on primary while another non-archived loop is live throws a clear error ([RAD-99](https://linear.app/radiancelux/issue/RAD-99/exclusive-loop-worktrees-refuse-primary-when-another-loop-live)). **After create, Switch / open `worktreePath` before any implementor edits** — never commit on primary when an exclusive `.loops/<id>` exists ([RAD-106](https://linear.app/radiancelux/issue/RAD-106/post-rad-99-implementor-path-switch-to-loops-no-primary-commits)). Create/doctor refuse or warn when primary has dirty tracked plugin build artifacts (`packages/plugin/hooks|mcp/*.cjs`).
-2. **Ready** — implementor refreshes `body` (why / what / how to test), runs `run_ci` (persists `readyCi` on the packet), then `set_status ready` / `prgenie ready`. Ready is **soft-blocked** until `readyCi` is green for HEAD or an explicit skip is recorded (`ciSkipReason` / `CI skipped: <reason>` — [RAD-97](https://linear.app/radiancelux/issue/RAD-97/ready-requires-ci-or-skip-reason-review-resume-after-auth)). That also arms the review request (`armReviewRequest`: sets `reviewRequestedSha`, clears `reviewerNotifiedSha`). It does **not** post a comment. On the first draft→ready handoff, agents `add_comment` **Review requested.** themselves (skills) — upserted **once per SHA**. `formatSpawnReviewer` is implementor copy only: stop and wait for `/steward` to Task `/review` — it does not authorize claim_review spawn. After later review rounds, addressing the last open finding runs `maybeHandoffToReviewer`, which returns `ready` and posts that comment automatically (same CI gate).
+1. **Create** (`create_local_pr` / `prgenie create` / `/steward` / `/start`) — feature branch `lp-<id>`, draft packet. `createLocalPr` always calls `ensureWorktreeForLoop` and records a `worktreePath` at `../<repo>.loops/<id>` (`loopWorktreeDir`). Every live loop gets that exclusive checkout — never the primary folder, including the first loop. If the loop branch was checked out in primary, PR Genie moves primary back onto the loop base (or detaches) and peels the sibling worktree. Bind/create that would still land on primary while another non-archived loop is live throws a clear error (). **After create, Switch / open `worktreePath` before any implementor edits** — never commit on primary when an exclusive `.loops/<id>` exists (). Create/doctor refuse or warn when primary has dirty tracked plugin build artifacts (`packages/plugin/hooks|mcp/*.cjs`).
+2. **Ready** — implementor refreshes `body` (why / what / how to test), runs `run_ci` (persists `readyCi` on the packet), then `set_status ready` / `prgenie ready`. Ready is **soft-blocked** until `readyCi` is green for HEAD or an explicit skip is recorded (`ciSkipReason` / `CI skipped: <reason>` —). That also arms the review request (`armReviewRequest`: sets `reviewRequestedSha`, clears `reviewerNotifiedSha`). It does **not** post a comment. On the first draft→ready handoff, agents `add_comment` **Review requested.** themselves (skills) — upserted **once per SHA**. `formatSpawnReviewer` is implementor copy only: stop and wait for `/steward` to Task `/review` — it does not authorize claim_review spawn. After later review rounds, addressing the last open finding runs `maybeHandoffToReviewer`, which returns `ready` and posts that comment automatically (same CI gate).
 3. **Review** — reviewer files findings while status stays `ready`, then **`complete_review`**. That flip wakes the implementor (`changes_requested`) or marks `reviewed` (review cleared — steward runs the export gate; not a human handoff). On auth/host failure mid-review: `review_interrupted` + `resume_review` / panel **Resume review** (same Task id, no re-brief). Session reconnect injects a Task↔loop reconcile digest.
 4. **Address** — implementor `address_comment`s each open finding; addressing the last open finding returns `ready` and posts Review requested again.
 5. **Resolve + complete** — reviewer resolves addressed comments, then always `complete_review`.
@@ -58,12 +58,12 @@ One steward chat owns one loop. It does **not** implement or review in-chat. It:
 2. When status is `ready`, Tasks a reviewer and persists `reviewerTaskId`.
 3. On `changes_requested`, **resumes the same implementor Task id** (no twin) unless missing/failed or the user asks to restart.
 4. After Reviewer clear (`reviewed`), runs the full export gate (`evaluateAndStoreExportGate` / `steward_next`). Human-exportable / Push to origin only when the gate is **ready**. On **blocked** (especially CI), resume the implementor with `failingCheck`, then `evaluate_export_gate` **again**. Do **not** auto-spawn a reviewer because CI failed. See [ci-checks.md](ci-checks.md).
-5. **Packet HEAD ([RAD-125](https://linear.app/radiancelux/issue/RAD-125)):** `steward_next`, MCP/`prgenie show` `get_local_pr`, and `update_local_pr` refresh `headSha` from the loop worktree tip before gate / resume decisions — never match a blocked gate for a stale SHA. Core `getLocalPr` stays a non-locking disk read (used under locks); call `refreshLocalPrHead` at decision entrypoints. `list_local_prs` does not refresh every row.
-6. **HEAD moved after CLEAN ([RAD-126](https://linear.app/radiancelux/issue/RAD-126)):** if status is `reviewed` and tip moves, invalidate to `ready` (re-review) before Open on GitHub. Stale/refused CI plans label `failingCheck` as `ci-select`, not root `test`.
+5. **Packet HEAD ():** `steward_next`, MCP/`prgenie show` `get_local_pr`, and `update_local_pr` refresh `headSha` from the loop worktree tip before gate / resume decisions — never match a blocked gate for a stale SHA. Core `getLocalPr` stays a non-locking disk read (used under locks); call `refreshLocalPrHead` at decision entrypoints. `list_local_prs` does not refresh every row.
+6. **HEAD moved after CLEAN ():** if status is `reviewed` and tip moves, invalidate to `ready` (re-review) before Open on GitHub. Stale/refused CI plans label `failingCheck` as `ci-select`, not root `test`.
 
 CLI: `prgenie steward <id>`, `prgenie steward bind <id> --implementor <taskId>`. MCP: `steward_next`, `bind_steward`. Skill: `/steward`. There is no inbox/queue listen flywheel.
 
-**Model tiers (RAD-89):** default asymmetric spend — cheap implementor (`prgenie-implementor`), strong reviewer (`prgenie-reviewer`). Strong implementor only when the brief carries an explicit marker (e.g. `tier: strong`) or after two reviewer rejections with the same AC still open. Agent definitions ship in `packages/plugin/agents/` (copied to `~/.cursor/agents/` by `link-plugin`; the plugin copy excludes `agents/`). `steward_next` returns tier hints and records tier/model/review-round metrics on the loop packet.
+**Model tiers:** default asymmetric spend — cheap implementor (`prgenie-implementor`), strong reviewer (`prgenie-reviewer`). Strong implementor only when the brief carries an explicit marker (e.g. `tier: strong`) or after two reviewer rejections with the same AC still open. Agent definitions ship in `packages/plugin/agents/` (copied to `~/.cursor/agents/` by `link-plugin`; the plugin copy excludes `agents/`). `steward_next` returns tier hints and records tier/model/review-round metrics on the loop packet.
 
 ## Export halt (`watch.json`)
 
@@ -94,8 +94,8 @@ All local-PR state is git-native / machine-local — not committed:
 
 - Primary checkout: the main repo folder (e.g. `…/pr-genie`). Never implement loop work here when a loop worktree exists — Switch onto `../<repo>.loops/<id>` instead.
 - Loop worktrees: sibling path `../<repo>.loops/<id>` (e.g. `…/pr-genie.loops/lp-3b8dbf41`).
-- **Invariant ([RAD-99](https://linear.app/radiancelux/issue/RAD-99/exclusive-loop-worktrees-refuse-primary-when-another-loop-live)):** every live implementor loop uses an exclusive `.loops/<id>` worktree. Reusing primary because the branch is already checked out there is not valid parallel behavior; create/bind refuses primary when another non-archived loop is live.
-- **Implementor happy path ([RAD-106](https://linear.app/radiancelux/issue/RAD-106/post-rad-99-implementor-path-switch-to-loops-no-primary-commits)):** after create, Switch / open `worktreePath`; all edits, commits, and CI stay under `.loops/<id>`.
+- **Invariant ():** every live implementor loop uses an exclusive `.loops/<id>` worktree. Reusing primary because the branch is already checked out there is not valid parallel behavior; create/bind refuses primary when another non-archived loop is live.
+- **Implementor happy path ():** after create, Switch / open `worktreePath`; all edits, commits, and CI stay under `.loops/<id>`.
 - Tests: call shared `pruneLoopWorktrees(cwd)` in `beforeEach` so leftover `.loops` checkouts do not poison later cases.
 - Each loop owns a feature branch; never use the repo base (`main`/`master`) as head.
 - **Switch** in Local PRs reopens this window on that loop's worktree.
@@ -121,7 +121,7 @@ MCP server name: `prgenie` (tools such as `list_local_prs`, `create_local_pr`, `
 
 Hooks registered in `hooks.json`:
 
-- `github-gate.cjs` — push / `gh pr create` **deny** for agents + bound-account switch; `beforeMCPExecution` applies an explicit PR Genie MCP allowlist (no default path returns ask — RAD-190; unknown tool names, `delete_local_pr`, `delete_learning`, `clear_loop_cancel`, `export_local_pr`, `record_export_gate_override`, `gh_use`, `set_status` approved/reviewed and human-role `add_comment` deny; CI-skip status/comments are a deliberate allow — see the ask-audit table in `docs/github-access.md`); agent shell `prgenie export` / `gh use` / `export-gate-override` deny in every wrapper form. Logs to `.git/agent-console/before-mcp-execution.jsonl` record only payload key names, normalized/raw tool name, and server/provider identifiers.
+- `github-gate.cjs` — push / `gh pr create` **deny** for agents + bound-account switch; `beforeMCPExecution` applies an explicit PR Genie MCP allowlist (no default path returns ask — ; unknown tool names, `delete_local_pr`, `delete_learning`, `clear_loop_cancel`, `export_local_pr`, `record_export_gate_override`, `gh_use`, `set_status` approved/reviewed and human-role `add_comment` deny; CI-skip status/comments are a deliberate allow — see the ask-audit table in `docs/github-access.md`); agent shell `prgenie export` / `gh use` / `export-gate-override` deny in every wrapper form. Logs to `.git/agent-console/before-mcp-execution.jsonl` record only payload key names, normalized/raw tool name, and server/provider identifiers.
 - `review-inbox.cjs` — inject pending comments into implementor sessions (no listen ticks; no stop-hook reviewer spawn)
 - `capture-subagent.cjs` — subagentStop capture into local PRs (**off by default**; set `PRGENIE_CAPTURE_SUBAGENT=1` to enable)
 - `session-log.mjs` — session log helper used by hooks

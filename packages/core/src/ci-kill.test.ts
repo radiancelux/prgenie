@@ -54,7 +54,7 @@ async function cleanupDescendant(dir: string, pid: number | undefined): Promise<
   await rm(dir, { recursive: true, force: true });
 }
 
-describe("ci process tree kill (RAD-135)", () => {
+describe("ci process tree kill", () => {
   it("killProcessTree is a no-op for invalid pids", () => {
     assert.doesNotThrow(() => {
       killProcessTree(undefined);

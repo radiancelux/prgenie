@@ -43,7 +43,7 @@ describe("progress helpers", () => {
     assert.match(formatProgressLine({ phase: "review", state: "start" }), /\[review\] running/);
   });
 
-  it("RAD-134: waiting state formats in line, card and step", () => {
+  it("waiting state formats in line, card and step", () => {
     assert.equal(
       formatProgressLine({
         phase: "ci",

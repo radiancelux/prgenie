@@ -4,16 +4,16 @@ PR Genie selects local checks from the loop diff (implementor preflight **and** 
 
 ## Default suite
 
-`format:check`, `lint`, `typecheck`, `test`, `build` (`pnpm <check>`) are `DEFAULT_CI_CHECKS` (root `pnpm <check>`). **Local `run_ci` / shepherd select this full set only when hard config / CI changes** (RAD-154). Otherwise confident package-scoped, docs/style, thin-plugin, or `format:check`-only uncertain plans apply (RAD-119). Unclassifiable diffs with no prettier-able files still **skip** with an explicit printable reason (empty `checks[]`, `skipped: true`). **Empty plan + non-empty diff fails closed** at the export gate (`ci-plan` block); record `exportGateOverride` naming `` `ci-plan` `` to export anyway (RAD-154).
+`format:check`, `lint`, `typecheck`, `test`, `build` (`pnpm <check>`) are `DEFAULT_CI_CHECKS` (root `pnpm <check>`). **Local `run_ci` / shepherd select this full set only when hard config / CI changes**. Otherwise confident package-scoped, docs/style, thin-plugin, or `format:check`-only uncertain plans apply. Unclassifiable diffs with no prettier-able files still **skip** with an explicit printable reason (empty `checks[]`, `skipped: true`). **Empty plan + non-empty diff fails closed** at the export gate (`ci-plan` block); record `exportGateOverride` naming `` `ci-plan` `` to export anyway.
 
 ## Two scoping modes
 
-| Mode                                  | When                                                                                                                                               | What runs                                                                                                                                                   |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **PR Genie package-scoped** (RAD-105) | Changed paths stay under `packages/core\|cli\|extension`                                                                                           | Check names like `lint:core` → `pnpm exec eslint packages/core/src` (never root `pnpm test`)                                                                |
-| **Host-repo path-scoped** (RAD-120)   | Root checks selected on a host monorepo (Phoenix-style) whose `package.json` scripts are monorepo-wide (`eslint .`, `turbo run lint`, `pnpm -r …`) | Same root check names (`lint`, …) but **execution** rewrites to changed-path args or `--filter` — progress shows `eslint path1 path2`, not bare `pnpm lint` |
+| Mode                        | When                                                                                                                                               | What runs                                                                                                                                                   |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **PR Genie package-scoped** | Changed paths stay under `packages/core\|cli\|extension`                                                                                           | Check names like `lint:core` → `pnpm exec eslint packages/core/src` (never root `pnpm test`)                                                                |
+| **Host-repo path-scoped**   | Root checks selected on a host monorepo (Phoenix-style) whose `package.json` scripts are monorepo-wide (`eslint .`, `turbo run lint`, `pnpm -r …`) | Same root check names (`lint`, …) but **execution** rewrites to changed-path args or `--filter` — progress shows `eslint path1 path2`, not bare `pnpm lint` |
 
-RAD-105 package scoping is unchanged. Host-repo scoping does **not** invent `lint:core` on foreign repos; it keeps root check names and scopes the **command**.
+package scoping is unchanged. Host-repo scoping does **not** invent `lint:core` on foreign repos; it keeps root check names and scopes the **command**.
 
 ### Host-repo fail-closed
 
@@ -24,7 +24,7 @@ Keep the **full `pnpm <check>` script body** for a _single_ root check name (wit
 - The script is not a known monorepo-wide pattern (or is already path-scoped, like prgenie’s root `eslint packages/…`)
 - Turbo / `pnpm -r` cannot map paths to `packages|apps|services/<name>/`
 
-That is **not** permission to select the entire `DEFAULT_CI_CHECKS` list (including root `test`) from `selectCiChecks`. Unmappable product loops **skip** locally (RAD-119).
+That is **not** permission to select the entire `DEFAULT_CI_CHECKS` list (including root `test`) from `selectCiChecks`. Unmappable product loops **skip** locally.
 
 ## Path mapping (locked examples)
 
@@ -32,9 +32,9 @@ Changed paths = committed `baseSha...headSha` plus dirty/untracked files in the 
 
 `run_ci` / shepherd always run in the loop’s `worktreePath` when that checkout exists. A Cursor plugin-install cwd (`~/.cursor/plugins/...`) is refused or redirected — never a silent format fail against a stale linked build. Progress cards, CLI, and export-gate snapshots cite `CI cwd: <path>`.
 
-### Worktree CI selection (RAD-123)
+### Worktree CI selection
 
-RAD-112 fixed **cwd**. Selection still used to come from the **in-memory / installed plugin** `selectCiChecks`, so a loop that edits `ci-select` / `ci-runner` could not be gated by its own code until merge + relink.
+fixed **cwd**. Selection still used to come from the **in-memory / installed plugin** `selectCiChecks`, so a loop that edits `ci-select` / `ci-runner` could not be gated by its own code until merge + relink.
 
 `run_ci`, shepherd, and the export gate now call `resolveCiSelection`:
 
@@ -47,7 +47,7 @@ A loop that only changes CI selection (or any product loop with a worktree) must
 
 Printable `{ checks, reason }` from the gate must match what unit tests of the worktree selector print for the same paths.
 
-### Worktree deps (RAD-92)
+### Worktree deps
 
 Loop checkouts under `../<repo>.loops/<id>` usually have **no** `node_modules`. Before checks run, PR Genie **junctions** (Windows) or **symlinks** (macOS/Linux) `node_modules` from the primary checkout into the worktree so `pnpm exec eslint|tsc|tsx|prettier` resolve. Package-local `packages/*/node_modules` are linked the same way when present on primary.
 
@@ -65,13 +65,13 @@ Fix path when setup fails: `pnpm install` once in the **primary** checkout, then
 | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------ |
 | Empty after name-status + base…HEAD + dirty tree                                                        | **Skip** (empty plan)                                         | `no changed paths` / `skip local CI` — never `uncertain → full`    |
 | Unclassifiable (binaries, unknown extensions) without prettier-able files                               | **Skip**                                                      | `uncertain path mapping` / `skip local CI`                         |
-| Unclassifiable mixed with formatted paths (e.g. `README.md` + binary)                                   | `format:check` only                                           | `RAD-154` … `format:check` (blob all tracked — uncertain)          |
-| Hard config / CI (`package.json` root, lockfiles, `tsconfig*` root, eslint, `.github/**`, `scripts/**`) | **Full plan** (`DEFAULT_CI_CHECKS`)                           | `RAD-154: hard config/CI changed → full local plan`                |
+| Unclassifiable mixed with formatted paths (e.g. `README.md` + binary)                                   | `format:check` only                                           | `` … `format:check` (blob all tracked — uncertain)                 |
+| Hard config / CI (`package.json` root, lockfiles, `tsconfig*` root, eslint, `.github/**`, `scripts/**`) | **Full plan** (`DEFAULT_CI_CHECKS`)                           | `: hard config/CI changed → full local plan`                       |
 | Docs / markdown only (`*.md`, `*.mdc`, `docs/**`, LICENSE, README, `*.txt`)                             | `format:check` only (changed prettier paths)                  | `docs/markdown-only → format:check`; skip units                    |
 | Docs + style (`*.css`, non-config `*.json`, incidental plugin meta)                                     | `format:check` only (changed prettier paths)                  | format; skip lint/test/build                                       |
 | `packages/core/**` source/tests (+ optional docs / incidental plugin meta)                              | `format:check` (changed paths) + `lint\|typecheck\|test:core` | confident — **not** full monorepo `pnpm test`                      |
-| Leaf core module + sibling test (e.g. `progress.ts`) — **not** shared surface (RAD-127)                 | Same checks; `test:core` runs **only** covering `*.test.ts`   | reason + progress list file paths; command is not the package glob |
-| Core shared surface (`git`/`prs`/`steward`/`export-gate`/`ci-runner`/…) or package config (RAD-127)     | Same checks; `test:core` keeps `packages/core/src/*.test.ts`  | reason says shared surface / config → package glob                 |
+| Leaf core module + sibling test (e.g. `progress.ts`) — **not** shared surface                           | Same checks; `test:core` runs **only** covering `*.test.ts`   | reason + progress list file paths; command is not the package glob |
+| Core shared surface (`git`/`prs`/`steward`/`export-gate`/`ci-runner`/…) or package config               | Same checks; `test:core` keeps `packages/core/src/*.test.ts`  | reason says shared surface / config → package glob                 |
 | `packages/cli/**` / `packages/extension/**` (same pattern)                                              | `format:check` + `lint\|typecheck\|test:<pkg>`                | per-package unit + typecheck/lint                                  |
 | Package-local `packages/{core\|cli\|extension}/package.json` (or tsconfig)                              | Same as that package’s scoped row                             | package-local config → scope, not hard-config skip                 |
 | Multiple scopable packages                                                                              | format + each package’s lint→typecheck→test in order          | fail-fast stops after first package suite fail                     |
@@ -79,19 +79,19 @@ Fix path when setup fails: `pnpm install` once in the **primary** checkout, then
 | Bundled plugin `.cjs` alone                                                                             | **Skip**                                                      | `plugin build artifacts only`                                      |
 | Routine `packages/plugin/**` source (skills, hooks `.mjs`, rules) without core/cli/extension            | Thin plugin suite: `format:check` only                        | `packages/plugin/** → thin plugin suite`                           |
 | Incidental `plugin.json` / `mcp.json` / `hooks.json` under `packages/plugin/**` + scoped package        | Same as the scopable package row(s)                           | meta is not `config → full suite`                                  |
-| Host repo paths outside prgenie SCOPABLE_PACKAGES (e.g. `apps/mobile/**`) with formatted files          | `format:check` only when no hard config (RAD-154)             | `RAD-154` … `format:check`                                         |
-| Host repo paths outside SCOPABLE_PACKAGES without formatted files                                       | **Skip** locally (RAD-119); origin CI is the bar              | printable skip — agent may run touched-package tests               |
-| Host repo + caller-provided single root check (RAD-120)                                                 | That check’s **exec** may path-scope (`eslint <changed>`)     | host-repo path scope; config → full **script** for that check      |
+| Host repo paths outside prgenie SCOPABLE_PACKAGES (e.g. `apps/mobile/**`) with formatted files          | `format:check` only when no hard config                       | `` … `format:check`                                                |
+| Host repo paths outside SCOPABLE_PACKAGES without formatted files                                       | **Skip** locally; origin CI is the bar                        | printable skip — agent may run touched-package tests               |
+| Host repo + caller-provided single root check                                                           | That check’s **exec** may path-scope (`eslint <changed>`)     | host-repo path scope; config → full **script** for that check      |
 
-### Audited dogfood cases (RAD-119) — former `uncertain → full suite` / `config → full suite`
+### Audited local development cases — former `uncertain → full suite` / `config → full suite`
 
-| Dogfood trigger                                                            | Old outcome              | New outcome                                     |
+| local development trigger                                                  | Old outcome              | New outcome                                     |
 | -------------------------------------------------------------------------- | ------------------------ | ----------------------------------------------- |
 | Empty / incomplete path discovery mid-loop                                 | `uncertain → full suite` | Prefer name-status + `base…HEAD`; else **skip** |
 | Only generated `packages/plugin/hooks\|mcp/*.cjs`                          | full suite               | **skip** (`plugin build artifacts only`)        |
 | Plugin skills / hooks `.mjs` / rules without core/cli/extension            | full suite               | thin plugin `format:check`                      |
 | `plugin.json` / `mcp.json` / `hooks.json` beside a core/cli/extension edit | `config → full suite`    | ignore meta; keep package-scoped plan           |
-| Root `package.json` / `.github` / eslint config on a product loop          | `config → full suite`    | **full local plan** (RAD-154)                   |
+| Root `package.json` / `.github` / eslint config on a product loop          | `config → full suite`    | **full local plan**                             |
 | `packages/core/package.json` (+ core source)                               | full suite               | scoped `*:core`                                 |
 
 Bundled MCP/hooks `.cjs` outputs (`isPluginBuildArtifact`) are skipped when collecting package scopes so a rebuild beside `packages/core|cli|extension` does not force a skip or thin suite by itself. Alone, mapping skips with an explicit reason.
@@ -100,54 +100,54 @@ Bundled MCP/hooks `.cjs` outputs (`isPluginBuildArtifact`) are skipped when coll
 
 On host repos, when progress shows `eslint path1 path2` (or turbo `--filter`), do **not** replace that with root `pnpm lint` / `eslint .`.
 
-Hard-config mapping selects the **full local plan** (RAD-154). Other uncertain mapping **skips** or adds **`format:check` only** when formatted files change (RAD-154); otherwise explicit `skip local CI` / `never full monorepo pnpm test` (RAD-119). Host-repo execution may still path-scope a **caller-selected** single root script when paths are known source/test and not config.
+Hard-config mapping selects the **full local plan**. Other uncertain mapping **skips** or adds **`format:check` only** when formatted files change; otherwise explicit `skip local CI` / `never full monorepo pnpm test`. Host-repo execution may still path-scope a **caller-selected** single root script when paths are known source/test and not config.
 
 ## Speed
 
-- **Git fixture templates** (RAD-133): heavy core suites (`export-gate`, `shepherd`, `ci-runner` loop-CI, `ci-abort`) clone a process-local seeded template (`packages/core/src/test-git-fixture.ts`) instead of `git init` per test. Templates are removed on process exit (best effort). Measured Windows solo `export-gate.test.ts` (2026-09-25): `main` @ `d9f5674` mean **104.8s**; RAD-133 branch mean **113.2s** (**103.2s** uncontended). The ~522s dogfood baseline did not reproduce solo — wall time is dominated by six tests that run real CI checks. AC5 speed target moved to **RAD-146**.
+- **Git fixture templates**: heavy core suites (`export-gate`, `shepherd`, `ci-runner` loop-CI, `ci-abort`) clone a process-local seeded template (`packages/core/src/test-git-fixture.ts`) instead of `git init` per test. Templates are removed on process exit (best effort). Measured Windows solo `export-gate.test.ts` (2026-09-25): `main` @ `d9f5674` mean **104.8s**; branch mean **113.2s** (**103.2s** uncontended). The ~522s local development baseline did not reproduce solo — wall time is dominated by six tests that run real CI checks. AC5 speed target moved to .
 - **Fail-fast** (default): stop remaining checks after the first failure. Disable with `failFast: false` or `PRGENIE_CI_FAIL_FAST=0`.
 - **Package suites**: implementor preflight runs package-scoped checks **sequentially** so fail-fast **stops after the first package suite fail** (do not continue lint/typecheck/test for later packages).
 - **Parallel** (default when multiple independent root checks are caller-selected): independent checks may run concurrently. Disable with `parallel: false` or `PRGENIE_CI_PARALLEL=0`. Package-scoped plans are always sequential.
-- **format:check scope** (RAD-117): confident package-scoped or docs/style-only plans blob-check **only changed prettier-able paths** (loop diff + dirty/untracked in the CI cwd). **Skip plans run no format.** Uncertain `format:check`-only plans (RAD-154) blob-check all tracked files (`shouldScopeFormatCheck` stays false when `uncertain`). Always git blob content (LF) — never working-tree CRLF (RAD-46). Progress shows `format:check (blobs) <paths>` when scoped, or `pnpm format:check` when a caller still requests full-tree format. Host `prettier --check .` rewrite stays deferred (blob runner owns format).
-- **test:core file scope** (RAD-127): leaf core modules (and sibling `*.test.ts`) that do **not** touch the shared git-fixture / steward / export-gate / ci-runner surface select only those covering test files. Progress shows `tsx --test packages/core/src/progress.test.ts` (and `1/N files` when multiple). Shared-surface or package-config diffs keep `packages/core/src/*.test.ts` with an explicit reason. `--failing test:core` re-selects from the same paths, so the file list repeats.
-- **Host-repo vs package**: RAD-105 rewrites check **names** (`lint:core`). RAD-120 rewrites host **commands** (`eslint <changed>`). Format scoping is independent: it filters the blob file list from `changedPaths`, not a prettier CLI rewrite.
-- **Cache** (RAD-35, RAD-118): per-check input hashes cover **worktree** content in that check’s scope, not only committed HEAD. Unrelated dirty edits **outside** the set below stay cached. Anything uncertain (unreadable path, non-regular entry, unknown ignored directory) is a **miss** — never a false pass. A real hit still shows progress `cached` with **0 elapsed**. Stored under `.git/agent-console/ci-cache`.
+- **format:check scope**: confident package-scoped or docs/style-only plans blob-check **only changed prettier-able paths** (loop diff + dirty/untracked in the CI cwd). **Skip plans run no format.** Uncertain `format:check`-only plans blob-check all tracked files (`shouldScopeFormatCheck` stays false when `uncertain`). Always git blob content (LF) — never working-tree CRLF. Progress shows `format:check (blobs) <paths>` when scoped, or `pnpm format:check` when a caller still requests full-tree format. Host `prettier --check .` rewrite stays deferred (blob runner owns format).
+- **test:core file scope**: leaf core modules (and sibling `*.test.ts`) that do **not** touch the shared git-fixture / steward / export-gate / ci-runner surface select only those covering test files. Progress shows `tsx --test packages/core/src/progress.test.ts` (and `1/N files` when multiple). Shared-surface or package-config diffs keep `packages/core/src/*.test.ts` with an explicit reason. `--failing test:core` re-selects from the same paths, so the file list repeats.
+- **Host-repo vs package**: rewrites check **names** (`lint:core`). rewrites host **commands** (`eslint <changed>`). Format scoping is independent: it filters the blob file list from `changedPaths`, not a prettier CLI rewrite.
+- **Cache**: per-check input hashes cover **worktree** content in that check’s scope, not only committed HEAD. Unrelated dirty edits **outside** the set below stay cached. Anything uncertain (unreadable path, non-regular entry, unknown ignored directory) is a **miss** — never a false pass. A real hit still shows progress `cached` with **0 elapsed**. Stored under `.git/agent-console/ci-cache`.
 
-  **Included**
+**Included**
 
-  - Tracked, dirty, and untracked files under the check scope: `packages/<pkg>/**` for `lint|typecheck|test|build:<pkg>`. `typecheck:*`, `test:*`, and `build:*` also include each `workspace:*` dependency package. File-scoped `test:*` uses that **same** tree (the selected test paths change only the command string, not the file set).
-  - Other gitignored files in that scope (a new ignored file is a miss).
-  - On **every** check, worktree bytes of root `package.json`, `pnpm-lock.yaml`, and `tsconfig.base.json` when that file exists (unstaged edits count).
-  - `lint:*`: root ESLint config files that exist. `typecheck:*`: root `tsconfig.json` when it exists. `build:*`: `scripts/build.mjs` when it exists.
-  - `format:check`: changed prettier-able paths as **index blobs** (LF, matching the blob runner), plus Prettier config and `.prettierignore` as worktree bytes. The three root inputs above are still worktree bytes.
-  - The check command (`ciCheckCommand`, including a file-scoped `test:*` argv) and the target package’s `package.json` text.
-  - `test:*` also includes `HEAD^{tree}`, so a moved base misses even when the selected test file list is unchanged.
+- Tracked, dirty, and untracked files under the check scope: `packages/<pkg>/**` for `lint|typecheck|test|build:<pkg>`. `typecheck:*`, `test:*`, and `build:*` also include each `workspace:*` dependency package. File-scoped `test:*` uses that **same** tree (the selected test paths change only the command string, not the file set).
+- Other gitignored files in that scope (a new ignored file is a miss).
+- On **every** check, worktree bytes of root `package.json`, `pnpm-lock.yaml`, and `tsconfig.base.json` when that file exists (unstaged edits count).
+- `lint:*`: root ESLint config files that exist. `typecheck:*`: root `tsconfig.json` when it exists. `build:*`: `scripts/build.mjs` when it exists.
+- `format:check`: changed prettier-able paths as **index blobs** (LF, matching the blob runner), plus Prettier config and `.prettierignore` as worktree bytes. The three root inputs above are still worktree bytes.
+- The check command (`ciCheckCommand`, including a file-scoped `test:*` argv) and the target package’s `package.json` text.
+- `test:*` also includes `HEAD^{tree}`, so a moved base misses even when the selected test file list is unchanged.
 
-  **Left out** (a hit stays valid)
+**Left out** (a hit stays valid)
 
-  - Gitignored install/build/tool trees: `node_modules/**`, `dist/**`, `coverage/**`, `.turbo/**`, `.vscode-test/**`, and `*.vsix`. Untracked listings use `git ls-files -o --directory` plus omit pathspecs so those trees are **never descended** — including a primary→worktree `node_modules` junction when the worktree has no `.gitignore`. Post-filtering after a full `-o` walk is not enough (that walk is the hang). Dependency identity is the hashed lockfile and root `package.json`, not the install tree.
-  - Files outside the scope above (a dirty root `README.md` does not invalidate `lint:core`).
-  - `format:check` does not hash worktree CRLF for source files; those use the index blob.
+- Gitignored install/build/tool trees: `node_modules/**`, `dist/**`, `coverage/**`, `.turbo/**`, `.vscode-test/**`, and `*.vsix`. Untracked listings use `git ls-files -o --directory` plus omit pathspecs so those trees are **never descended** — including a primary→worktree `node_modules` junction when the worktree has no `.gitignore`. Post-filtering after a full `-o` walk is not enough (that walk is the hang). Dependency identity is the hashed lockfile and root `package.json`, not the install tree.
+- Files outside the scope above (a dirty root `README.md` does not invalidate `lint:core`).
+- `format:check` does not hash worktree CRLF for source files; those use the index blob.
 
-  **Always a miss**
+**Always a miss**
 
-  - A symlink, junction, or other non-regular entry whose path is itself in scope (tracked or untracked), including a tracked directory symlink.
-  - A gitignored directory in scope that is not one of the omitted trees above.
-  - An untracked directory in scope that is not one of the omitted trees (listed as a directory line; contents are not walked).
-  - Unreadable inputs, or `test:*` when `HEAD^{tree}` cannot be resolved.
-  - A check that passed while its inputs changed mid-run (hash before; re-hash after; record only if unchanged).
+- A symlink, junction, or other non-regular entry whose path is itself in scope (tracked or untracked), including a tracked directory symlink.
+- A gitignored directory in scope that is not one of the omitted trees above.
+- An untracked directory in scope that is not one of the omitted trees (listed as a directory line; contents are not walked).
+- Unreadable inputs, or `test:*` when `HEAD^{tree}` cannot be resolved.
+- A check that passed while its inputs changed mid-run (hash before; re-hash after; record only if unchanged).
 
-- **Per-check timeout** (RAD-133): format/lint/typecheck/build default to **20 minutes**; `test` / `test:*` (including full `packages/core/src/*.test.ts` globs on Windows) default to **40 minutes** so ~28 min suites finish inside `run_ci` / `prgenie ci`. **Waiting for a heavy-test slot does not count** toward that per-check wall (RAD-134). MCP `mcp.json` / `MCP_SERVER_TIMEOUT_SEC` is **4200 s** (40-minute package test + 30-minute max slot wait) so queued `run_ci` / `shepherd_status` are not cut off early (RAD-100 / RAD-134).
-- **Parallel loops: heavy-test slots** (RAD-134): when several loops run package-glob `test` / `test:*` CI at once, the runner **queues** heavy runs instead of scaling timeouts. Default **N = 2** concurrent heavy runs per clone (`PRGENIE_CI_HEAVY_CONCURRENCY`; Windows: `setx PRGENIE_CI_HEAVY_CONCURRENCY 3`, then fully restart Cursor so every process sees the same value). Slot dir: `.git/agent-console/ci-heavy/slot-<k>.json`. Progress shows `waiting for heavy-test slot (…)`. Stale slots (dead pid or **90 s** without heartbeat) are stolen; max wait **30 minutes** then the check fails closed without starting. File-scoped `test:*` (RAD-127), non-test checks, manual `tsx --test`, and other clones are not counted; the reviewer backstop full suite runs under `prgenie ci-slot` (RAD-134 R26). **134-R25 Windows dogfood** (2026-09-27, N=2, four parallel `test:core` glob `runCiChecks`, no competing CI): solo glob wall **684,049 ms** (~11.4 min).
+- **Per-check timeout**: format/lint/typecheck/build default to **20 minutes**; `test` / `test:*` (including full `packages/core/src/*.test.ts` globs on Windows) default to **40 minutes** so ~28 min suites finish inside `run_ci` / `prgenie ci`. **Waiting for a heavy-test slot does not count** toward that per-check wall. MCP `mcp.json` / `MCP_SERVER_TIMEOUT_SEC` is **4200 s** (40-minute package test + 30-minute max slot wait) so queued `run_ci` / `shepherd_status` are not cut off early.
+- **Parallel loops: heavy-test slots**: when several loops run package-glob `test` / `test:*` CI at once, the runner **queues** heavy runs instead of scaling timeouts. Default **N = 2** concurrent heavy runs per clone (`PRGENIE_CI_HEAVY_CONCURRENCY`; Windows: `setx PRGENIE_CI_HEAVY_CONCURRENCY 3`, then fully restart Cursor so every process sees the same value). Slot dir: `.git/agent-console/ci-heavy/slot-<k>.json`. Progress shows `waiting for heavy-test slot (…)`. Stale slots (dead pid or **90 s** without heartbeat) are stolen; max wait **30 minutes** then the check fails closed without starting. File-scoped `test:*`, non-test checks, manual `tsx --test`, and other clones are not counted; the reviewer backstop full suite runs under `prgenie ci-slot`. **134-R25 Windows local development** (2026-09-27, N=2, four parallel `test:core` glob `runCiChecks`, no competing CI): solo glob wall **684,049 ms** (~11.4 min).
 
-  | loopId  |  waitedMs | elapsedMs | passed |
-  | ------- | --------: | --------: | -----: |
-  | lp-r25a | 1,417,198 | 1,003,538 |   true |
-  | lp-r25b |       530 | 1,416,181 |   true |
-  | lp-r25c |       380 | 1,415,693 |   true |
-  | lp-r25d | 1,417,511 | 1,004,482 |   true |
+| loopId  |  waitedMs | elapsedMs | passed |
+| ------- | --------: | --------: | -----: |
+| lp-r25a | 1,417,198 | 1,003,538 |   true |
+| lp-r25b |       530 | 1,416,181 |   true |
+| lp-r25c |       380 | 1,415,693 |   true |
+| lp-r25d | 1,417,511 | 1,004,482 |   true |
 
-- **CI failure logs are per loop (RAD-136):** failed checks write `.git/agent-console/ci-logs/<loopId>/<check>.log` and `latest.json` when a valid loop id is passed (R2). When **no** loop id is passed, a `../<repo>.loops/<id>` worktree cwd uses that worktree’s loop key (R3); invalid ids (`""`, `..`, `a/b`, …) use the shared `ci-logs/` root (R4). Overlapping `run_ci` and steward gate on the same loop share that loop dir; last writer wins for a check name. Legacy files in the shared `ci-logs/` root stay put (no migration).
+- **CI failure logs are per loop:** failed checks write `.git/agent-console/ci-logs/<loopId>/<check>.log` and `latest.json` when a valid loop id is passed (R2). When **no** loop id is passed, a `../<repo>.loops/<id>` worktree cwd uses that worktree’s loop key (R3); invalid ids (`""`, `..`, `a/b`, …) use the shared `ci-logs/` root (R4). Overlapping `run_ci` and steward gate on the same loop share that loop dir; last writer wins for a check name. Legacy files in the shared `ci-logs/` root stay put (no migration).
 - **prs.test.ts solo timing (134-R22, Windows):** three runs of `node node_modules/tsx/dist/cli.mjs --test --test-name-pattern "HEAD moved after Review requested" packages/core/src/prs.test.ts` — **5.5s**, **5.0s**, **5.0s** (mean **5.2s**). Fixture uses `createTempGitRepo`; head-drift reject path no longer retries `withFileLock` on intentional `completeLocalPrReview` throws.
 - Progress UI shows **elapsed time per check** and the **actual command** (including path args / blob scope).
 
@@ -161,9 +161,9 @@ Hard-config mapping selects the **full local plan** (RAD-154). Other uncertain m
 | Reviewer (backstop)     | `pnpm build`, `pnpm lint`, `pnpm typecheck`, Prettier, sometimes full `pnpm test` | In loop worktree at reviewed HEAD before `complete_review` (see `process-bar.md`) |
 | Human export            | panel Push / `prgenie export`                                                     | Same gate; cancel is shared                                                       |
 
-Skip implementor preflight only when the toolchain cannot run (say so), mapping **skips** with a printable reason (RAD-119), or a human/steward gives an **explicit skip reason** (RAD-97). Do not skip a red scoped check. Do not “just `pnpm test` the whole repo” when `run_ci` already selected a confident scoped plan — and never escalate a skip/uncertain plan into full suite.
+Skip implementor preflight only when the toolchain cannot run (say so), mapping **skips** with a printable reason, or a human/steward gives an **explicit skip reason**. Do not skip a red scoped check. Do not “just `pnpm test` the whole repo” when `run_ci` already selected a confident scoped plan — and never escalate a skip/uncertain plan into full suite.
 
-### Ready skip carry-over → export gate (RAD-144)
+### Ready skip carry-over → export gate
 
 When implementor `run_ci` records a skip on check **X** at HEAD **H** (`readyCi.checkSkips` or whole-plan `readyCi.outcome === skipped`), the export gate **must not re-run** **X** at the same **H** when that skip still covers **X**. Progress shows `skipped (ready: <reason>)`.
 
@@ -184,7 +184,7 @@ Those names are stored as `checkSkips`. A same-HEAD plan stays `skipScope`. A pr
 
 Export **refuses** while the stored gate is **blocked** or **failed**. There is no silent `--skip-validation` publish path. To export anyway, record `exportGateOverride` (`who`, `why`) on the loop packet **and** echo who, why, and each skipped check in the loop body. A plain check name does not count. Each check needs a backticked name (`` `test:core` ``), a `Skipped checks:` line, or that check's full blocked CI message. A who/why substring alone does not authorize the block.
 
-Re-export to an existing GitHub PR updates title/body from the packet via `gh pr edit --body-file` (RAD-150). Body-update failure is a **partial failure** (RAD-95), not hidden behind a successful push.
+Re-export to an existing GitHub PR updates title/body from the packet via `gh pr edit --body-file`. Body-update failure is a **partial failure**, not hidden behind a successful push.
 
 When a human/steward **skips** CI (or hits panel **Cancel**): MCP `abort_ci` / panel Cancel both call `abortCiForSteward` and return the bound `implementorTaskId` — stop/interrupt that Task in the same steward turn. Cancel is the skip half; the panel alone does not kill the agent (abort alone leaves the implementor looping).
 
@@ -201,16 +201,16 @@ Loop panel **Cancel** and MCP `abort_ci` share one path: `abortCiForSteward` bum
 - **Bound implementor:** `stewardAction` is `stop_implementor_and_abort_ci`. Cancel is the **skip half** — abort CI and surface the Task id. Do **not** assume the panel alone kills the agent; the steward (or human) must still stop/interrupt that Task so it does not keep calling `run_ci`.
 - **No implementor bound:** `stewardAction` is `abort_ci_only` — abort token only.
 
-**Persistent cancel marker (RAD-139):** panel **Cancel** also writes `<git-common-dir>/agent-console/loop-cancel/<id>.json` (`{ id, cancelledAt, cancelledBy, source, implementorTaskId }`). While that file exists:
+**Persistent cancel marker:** panel **Cancel** also writes `<git-common-dir>/agent-console/loop-cancel/<id>.json` (`{ id, cancelledAt, cancelledBy, source, implementorTaskId }`). While that file exists:
 
 - MCP **`run_ci`** refuses before starting any check (`assertLoopNotCancelled`).
 - **`steward_next`** returns `{ kind: "cancelled", … }` before refresh, export-gate, spawn, or resume — stop the bound implementor Task if one is running; do not spawn or resume agents.
 
-Clear the marker three ways: panel toast **Resume loop**, MCP **`clear_loop_cancel`** `{ id }`, or **`steward_next`** `{ id, restart: true }`. The github-gate hook denies `clear_loop_cancel` for agents (RAD-190), so the human path is **Resume loop**. Chat **`abort_ci`** alone does not write the marker (one-shot abort only). `run_ci`, `steward_next`, and `clear_loop_cancel` accept a loop id prefix and resolve it to the full loop id before reading or clearing the marker; `clear_loop_cancel` returns `cleared: true` for a known loop with no marker and errors with `Local PR not found` when the id matches no loop.
+Clear the marker three ways: panel toast **Resume loop**, MCP **`clear_loop_cancel`** `{ id }`, or **`steward_next`** `{ id, restart: true }`. The github-gate hook denies `clear_loop_cancel` for agents, so the human path is **Resume loop**. Chat **`abort_ci`** alone does not write the marker (one-shot abort only). `run_ci`, `steward_next`, and `clear_loop_cancel` accept a loop id prefix and resolve it to the full loop id before reading or clearing the marker; `clear_loop_cancel` returns `cleared: true` for a known loop with no marker and errors with `Local PR not found` when the id matches no loop.
 
 Export-gate evaluations also take a per id+HEAD lock (`.git/agent-console/ci-lock/`) so steward and the panel do not run two full suites; a waiter adopts the persisted snapshot or aborts with the owner.
 
-### Process tree kill (RAD-135)
+### Process tree kill
 
 Each CI shell check runs via `execCiShell` (`packages/core/src/ci-kill.ts`). Timeout and Cancel both **kill the spawned child and its descendants** so `tsx --test` / node workers cannot outlive the parent (especially on Windows).
 
@@ -232,13 +232,13 @@ Implementors: when Cancel fires mid-check, do not assume orphan `tsx` processes 
 
 ## UI
 
-Panel + lane + agent-chat progress card list **which** checks were selected and **why** (`reason[]`). Click a check name for status + RAD-74 excerpt/log. Elapsed time uses the same `formatElapsed` units as the CLI card. The command line must match what ran (`eslint apps/foo.ts`, not only `lint`).
+Panel + lane + agent-chat progress card list **which** checks were selected and **why** (`reason[]`). Click a check name for status + excerpt/log. Elapsed time uses the same `formatElapsed` units as the CLI card. The command line must match what ran (`eslint apps/foo.ts`, not only `lint`).
 
 ## CI-resume (locked)
 
 After a blocked export gate: steward `resume_implementor` → implementor fixes and re-runs failing checks → steward `evaluate_export_gate` **again**. Do **not** auto-spawn a reviewer because CI failed. Reviewer still owns product findings (`changes_requested`). Ready-for-human / Push language only on `handoff_human`.
 
-## Red CI retry (RAD-121)
+## Red CI retry
 
 After the **first** `run_ci` / `prgenie ci` plan is selected, print `{ checks, reason }`. If a check goes red:
 
@@ -247,13 +247,13 @@ After the **first** `run_ci` / `prgenie ci` plan is selected, print `{ checks, r
 3. Re-run **only that file** (e.g. `pnpm exec tsx --test path/to/file.test.ts`) or **that one check name** (`prgenie ci <id> --failing test:core`) once per edit.
 4. Still format the files you edited (`format:check` on the diff / Prettier on touched paths). The ban is **not** “skip format.”
 
-**Do not** relaunch the multi-check scoped plan after a known failure. **Do not** start a second overlapping `run_ci` while one is still running (kill/retry of the whole plan burned ~40 min on RAD-119 dogfood).
+**Do not** relaunch the multi-check scoped plan after a known failure. **Do not** start a second overlapping `run_ci` while one is still running (kill/retry of the whole plan burned ~40 min on local development).
 
-### Wrong vs right (RAD-119 dogfood, `lp-a2478356`)
+### Wrong vs right
 
 |           | Action                                                                                                                                                                                                                         |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Wrong** | `test:core` fails → relaunch entire scoped plan (`format:check` + lint/typecheck/test for core+cli). That pulls every `packages/core/src/*.test.ts`; export-gate fixtures alone are ~5 min. Overlapping `run_ci` + kill/retry. |
 | **Right** | Print `{ checks, reason }` → open the log → fix the named file → run **only that test file** once → format the edited files → when green, continue (or `--failing` that one check).                                            |
 
-Local full-suite / root `pnpm test` remains banned for confident product mapping (RAD-119). **Exceptions:** hard-config diffs select the full local plan (RAD-154), and the **reviewer backstop** may run the full suite when ready CI is missing, skipped, or HEAD-drifted (`process-bar.md`).
+Local full-suite / root `pnpm test` remains banned for confident product mapping. **Exceptions:** hard-config diffs select the full local plan, and the **reviewer backstop** may run the full suite when ready CI is missing, skipped, or HEAD-drifted (`process-bar.md`).

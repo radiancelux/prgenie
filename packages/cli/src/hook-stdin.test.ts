@@ -15,7 +15,7 @@ const CURSOR_SHAPE = {
   tool_input: JSON.stringify({ id: "lp-deadbeef" }),
 };
 
-test("RAD-185: UTF-8 BOM + Cursor-shaped JSON parses", () => {
+test("UTF-8 BOM + Cursor-shaped JSON parses", () => {
   const json = JSON.stringify(CURSOR_SHAPE);
   const raw = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(json, "utf8")]);
   const parsed = parseHookPayloadBuffer(raw);
@@ -26,7 +26,7 @@ test("RAD-185: UTF-8 BOM + Cursor-shaped JSON parses", () => {
   assert.equal(stripUtf8BomBuffer(raw).toString("utf8"), json);
 });
 
-test("RAD-185: empty stdin fails closed parse", () => {
+test("empty stdin fails closed parse", () => {
   const empty = parseHookPayloadBuffer(Buffer.alloc(0));
   assert.equal(empty.ok, false);
   if (!empty.ok) {
@@ -35,7 +35,7 @@ test("RAD-185: empty stdin fails closed parse", () => {
   }
 });
 
-test("RAD-185: truncated JSON fails closed parse", () => {
+test("truncated JSON fails closed parse", () => {
   const bad = parseHookPayloadText('{"conversation_id":');
   assert.equal(bad.ok, false);
   if (!bad.ok) {
@@ -43,7 +43,7 @@ test("RAD-185: truncated JSON fails closed parse", () => {
   }
 });
 
-test("RAD-185: normalizeHookWorkspacePath accepts /c:/ roots", () => {
+test("normalizeHookWorkspacePath accepts /c:/ roots", () => {
   if (process.platform === "win32") {
     const normalized = normalizeHookWorkspacePath("/c:/Users/foo/pr-genie");
     assert.match(normalized, /^C:[\\/]Users[\\/]foo[\\/]pr-genie$/i);

@@ -4,7 +4,7 @@ import { git } from "./git.js";
 import { isPluginBuildArtifact } from "./plugin-dirt.js";
 import { getLocalPr, getLocalPrNameStatus, refreshLocalPrHead } from "./prs.js";
 
-/** Default local CI suite names (legacy / host callers and RAD-154 hard-config loops). */
+/** Default local CI suite names (legacy / host callers and hard-config loops). */
 export const DEFAULT_CI_CHECKS = ["format:check", "lint", "typecheck", "test", "build"] as const;
 
 /** Extensions prettier commonly formats (aligned with ci-runner blob format filter). */
@@ -37,7 +37,7 @@ const PRETTIER_SKIP_BASENAMES = new Set([
 ]);
 
 /**
- * Prettier-able paths from the loop diff / dirty tree (RAD-117 format scope).
+ * Prettier-able paths from the loop diff / dirty tree .
  * Does not require source/test classification — docs/style markdown and CSS count.
  */
 export function prettierPathsFromChanged(changedPaths: string[]): string[] {
@@ -71,7 +71,7 @@ export interface CiCheckMapping {
 export interface CiCheckSelection {
   /** Check names to run (`format:check`, `lint:core`, `test`, …). Empty when skipped. */
   checks: string[];
-  /** Why this plan was chosen (print these; RAD-105 / RAD-119). */
+  /** Why this plan was chosen (print these; / ). */
   reason: string[];
   mapping: CiCheckMapping[];
   uncertain: boolean;
@@ -81,7 +81,7 @@ export interface CiCheckSelection {
   /** True when local CI is intentionally empty (printable skip — never silent). */
   skipped?: boolean;
   /**
-   * RAD-127: when set for `test:<pkg>`, run only these `*.test.ts` paths instead of
+   * : when set for `test:<pkg>`, run only these `*.test.ts` paths instead of
    * the package glob. Absent / empty → `packages/<pkg>/src/*.test.ts`.
    */
   testFiles?: Record<string, string[]>;
@@ -89,7 +89,7 @@ export interface CiCheckSelection {
 
 /**
  * Core modules whose diffs keep the package test glob (shared git-fixture /
- * steward / export-gate / ci-runner surface — RAD-127). Leaf modules (e.g.
+ * steward / export-gate / ci-runner surface — ). Leaf modules (e.g.
  * `progress.ts`) file-scope to their sibling `*.test.ts` instead.
  */
 export const CORE_PACKAGE_GLOB_MODULES = new Set([
@@ -138,7 +138,7 @@ export type ScopedTestFilePlan = {
   reason: string;
 };
 
-/** Options for path-aware CI selection (RAD-127 sibling exists checks). */
+/** Options for path-aware CI selection (sibling exists checks). */
 export interface SelectCiChecksOptions {
   /** Repo root for sibling `existsSync` (loop worktree when evaluating there). */
   cwd?: string;
@@ -156,7 +156,7 @@ function pathExistsUnderRepo(relativePath: string, options?: SelectCiChecksOptio
 }
 
 /**
- * RAD-127: pick covering `*.test.ts` files for a scopable package, or null to
+ * : pick covering `*.test.ts` files for a scopable package, or null to
  * keep `packages/<pkg>/src/*.test.ts`. Shared-surface / package-config diffs
  * always keep the glob with an explicit reason. Sibling paths are included
  * only when they exist on disk (never invent phantom `*.test.ts`).
@@ -280,7 +280,7 @@ const CONFIG_BASENAMES = new Set([
 
 const SCOPABLE_SET = new Set<string>(SCOPABLE_PACKAGES);
 
-/** Plugin manifest / MCP / hooks metadata — not monorepo toolchain config (RAD-119). */
+/** Plugin manifest / MCP / hooks metadata — not monorepo toolchain config (). */
 const INCIDENTAL_PLUGIN_META = new Set(["plugin.json", "mcp.json", "hooks.json"]);
 
 export function normalizeCiPath(filePath: string): string {
@@ -389,7 +389,7 @@ export function formatCiSelectionReason(reason: string | string[] | undefined): 
  * does not force whole-monorepo `pnpm test`.
  * Skip plans still keep named resume checks (CI-resume contract) — that is not a full-suite
  * reinflation; only the requested names run. Dropping them would empty the plan and
- * greenwash via `skipped: true` + `allPassed: true` (RAD-119).
+ * greenwash via `skipped: true` + `allPassed: true` .
  */
 export function expandFailingChecks(
   failingChecks: string[],
@@ -415,7 +415,7 @@ export function expandFailingChecks(
 }
 
 /**
- * RAD-117: confident package-scoped or docs/style-only plans format only changed
+ * : confident package-scoped or docs/style-only plans format only changed
  * prettier-able paths (git blobs). Skip / uncertain keep format off the plan (empty checks).
  */
 export function shouldScopeFormatCheck(selection: CiCheckSelection | undefined): boolean {
@@ -425,7 +425,7 @@ export function shouldScopeFormatCheck(selection: CiCheckSelection | undefined):
 }
 
 function fullLocalPlan(paths: string[]): CiCheckSelection {
-  const stamp = "RAD-154: hard config/CI changed → full local plan";
+  const stamp = "hard config/CI changed → full local plan";
   const reason = [
     stamp,
     "confident mapping — root pnpm format:check, lint, typecheck, test, build",
@@ -450,7 +450,7 @@ function formatOnlyUncertainPlan(
   uncertain: boolean,
   branchReason: string,
 ): CiCheckSelection {
-  const stamp = `RAD-154: ${branchReason} → format:check`;
+  const stamp = `${branchReason} → format:check`;
   const reason = [stamp, "confident mapping — not full monorepo pnpm test"];
   return {
     checks: ["format:check"],
@@ -468,7 +468,7 @@ function formatOnlyUncertainPlan(
   };
 }
 
-/** Intentional empty plan — printable skip, never root `pnpm test` (RAD-119). */
+/** Intentional empty plan — printable skip, never root `pnpm test` (). */
 function skipCi(reasons: string[], paths: string[], uncertain: boolean): CiCheckSelection {
   const reason = reasons.length
     ? reasons
@@ -599,8 +599,8 @@ function scopablePackageFromConfigPath(filePath: string): ScopablePackage | null
 /**
  * Path-aware check selection for implementor preflight and shepherd/export.
  * Confident package mapping → scoped lint/typecheck/unit (never root `pnpm test`).
- * Hard config / CI → full local plan (RAD-154). Other uncertain paths → format-only
- * when prettier-able files change, else skip with an explicit reason (RAD-119).
+ * Hard config / CI → full local plan . Other uncertain paths → format-only
+ * when prettier-able files change, else skip with an explicit reason .
  */
 export function selectCiChecks(
   changedPaths: string[],
@@ -804,7 +804,7 @@ export function isCursorPluginInstallPath(cwd: string): boolean {
 /**
  * Resolve the directory local CI must run in.
  * Live loops prefer `worktreePath`. A Cursor plugin-install cwd is never used
- * silently (RAD-112): redirect to the worktree, or refuse with a clear error.
+ * silently : redirect to the worktree, or refuse with a clear error.
  * Allowed only when the loop itself is editing that install path.
  */
 export function resolveCiCwd(cwd: string, worktreePath: string | null | undefined): string {
@@ -845,7 +845,7 @@ export async function changedPathsForCi(cwd: string, id?: string): Promise<strin
   const paths = new Set<string>();
   if (id) {
     try {
-      // RAD-94: refuse run_ci when merge-base ≠ declared base (or ahead-of-base is stacked).
+      // : refuse run_ci when merge-base ≠ declared base (or ahead-of-base is stacked).
       const prForBase = await getLocalPr(cwd, id);
       const { assertDeclaredBaseAligned, assertStoredBaseRefIsBranch } =
         await import("./base-ref.js");
@@ -863,10 +863,10 @@ export async function changedPathsForCi(cwd: string, id?: string): Promise<strin
         }
       }
     } catch (err) {
-      // RAD-94 base misalignment must not be swallowed as "packet missing".
+      //  base misalignment must not be swallowed as "packet missing".
       if (
         err instanceof Error &&
-        /declared base|merge-base|stacked on|RAD-87|dependsOn|is a commit|is not a branch name/i.test(
+        /declared base|merge-base|stacked on||dependsOn|is a commit|is not a branch name/i.test(
           err.message,
         )
       ) {

@@ -10,7 +10,7 @@ export type HookStdinReadResult = {
 export type HookPayloadParseResult =
   { ok: true; input: Record<string, unknown> } | { ok: false; reason: string };
 
-/** Strip a leading UTF-8 BOM (Cursor Windows hook delivery, RAD-185). */
+/** Strip a leading UTF-8 BOM (Cursor Windows hook delivery, ). */
 export function stripUtf8BomBuffer(buf: Buffer): Buffer {
   if (buf.length >= 3 && buf.subarray(0, 3).equals(UTF8_BOM)) {
     return buf.subarray(3);
@@ -135,7 +135,7 @@ function normalizeForGateAskScan(command: string): string {
 }
 
 /**
- * Agents must not set the R5 escape hatch (RAD-188 R5): deny any command that names the flag
+ * Agents must not set the R5 escape hatch : deny any command that names the flag
  * (case-insensitive — Windows env names are) and writes environment or registry state. Pure reads
  * (`rg`, `echo $env:...`, `reg query`, `Get-ItemProperty`) stay allowed.
  */
@@ -160,7 +160,7 @@ export function gateEscapeHatchSetDenyPayload(): {
   };
 }
 
-/** When set by a human in the environment, restore RAD-185 `ask` for hosts that honor it (RAD-188 R5). */
+/** When set by a human in the environment, restore `ask` for hosts that honor it (R5). */
 export function hookPrefersAskOverDeny(): boolean {
   const v = process.env.PRGENIE_GITHUB_GATE_ASK?.trim();
   if (!v) return false;
@@ -186,7 +186,7 @@ export function gateNoInputPayload(reason: string): {
   };
 }
 
-/** Payload when the gate itself throws: deny, or ask only when the human set the flag (RAD-190 R5). */
+/** Payload when the gate itself throws: deny, or ask only when the human set the flag (R5). */
 export function gateCrashPayload(): {
   permission: "ask" | "deny";
   user_message: string;

@@ -41,7 +41,7 @@ export function failedAcRoundCount(pr: Pick<LocalPr, "failedAcRoundCount">): num
 }
 
 /**
- * True when the same AC is still open after two reviewer rejections (RAD-89).
+ * True when the same AC is still open after two reviewer rejections .
  * `failedAcRoundCount` stands in for "same AC still open" — two `changes_requested`
  * rounds without clearing the AC.
  */

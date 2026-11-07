@@ -119,7 +119,7 @@ test("doctor reports git-path ok with resolved absolute git binary", async () =>
   assert.match(gitPath.summary, /resolvable from this process at /);
 });
 
-test("RAD-136: ci-failure-log lists the newest failure per loop", async () => {
+test("ci-failure-log lists the newest failure per loop", async () => {
   const repo = await initRepo("ci-failure-per-loop");
   const { writeCiFailureLog } = await import("./ci-failure.js");
   await writeCiFailureLog(
@@ -171,7 +171,7 @@ test("doctor reports stale file lock with holder and fix (172-R3)", async () => 
   assert.match(formatDoctorReport(report), /stale-file-locks/);
 });
 
-test("RAD-173 R4: doctor corrupt-prs flags torn and truncated packets", async () => {
+test("R4: doctor corrupt-prs flags torn and truncated packets", async () => {
   const repo = await initRepo("corrupt-packets");
   const home = path.join(dir, "home-corrupt-packets");
   const { consoleDir } = await import("./store.js");
@@ -190,7 +190,7 @@ test("RAD-173 R4: doctor corrupt-prs flags torn and truncated packets", async ()
   assert.match(corruptCheck.summary ?? "", /lp-r173-doc-trunc\.json/);
 });
 
-test("RAD-163: warns on broad gh token scopes", () => {
+test("warns on broad gh token scopes", () => {
   const stub = `
 github.com
   ✓ Logged in to github.com account radiancelux (keyring)

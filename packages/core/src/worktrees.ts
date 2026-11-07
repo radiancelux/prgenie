@@ -300,7 +300,7 @@ export async function deleteLocalLoopBranch(
 
 /**
  * After archive/export/delete: free primary off the loop branch, prune `.loops/<id>`,
- * and delete the local loop branch. Remotes stay. (RAD-130)
+ * and delete the local loop branch. Remotes stay.
  */
 export async function finalizeArchivedLoop(
   cwd: string,
@@ -350,7 +350,7 @@ export type PruneArchivedLoopWorktreeResult = {
 /**
  * Drop a sibling .loops checkout after export. Never remove the primary repo folder.
  * Force-remove when possible; if git unregisters the worktree but leaves the directory
- * (Windows dogfood), remove the orphaned folder or report leftoverPath (RAD-95).
+ * (Windows local development), remove the orphaned folder or report leftoverPath .
  */
 export async function pruneArchivedLoopWorktreeDetailed(
   cwd: string,

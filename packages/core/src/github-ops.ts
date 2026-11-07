@@ -18,7 +18,7 @@ export type GhRunOptions = {
 
 /**
  * Quote one argv for cmd.exe when spawning a gh.cmd / gh.bat shim (142-R3).
- * Multiline payloads must use `--body-file` (RAD-129).
+ * Multiline payloads must use `--body-file` .
  *
  * Double quotes alone do **not** stop `%VAR%` expansion under cmd.exe — use `escapeCmdArg()`.
  */
@@ -26,7 +26,7 @@ export function quoteWindowsShellArg(arg: string): string {
   if (arg.length === 0) return '""';
   if (/[\r\n]/.test(arg)) {
     throw new Error(
-      "Refusing to pass a multiline argument through Windows cmd.exe argv (RAD-129). Use --body-file instead.",
+      "Refusing to pass a multiline argument through Windows cmd.exe argv. Use --body-file instead.",
     );
   }
   if (/^[A-Za-z0-9_./:\\@+=,:-]+$/.test(arg)) return arg;
@@ -43,7 +43,7 @@ export function quoteGhArgsForSpawn(args: string[]): string[] {
 export function escapeCmdArg(arg: string): string {
   if (/[\r\n]/.test(arg)) {
     throw new Error(
-      "Refusing to pass a multiline argument through Windows cmd.exe argv (RAD-129). Use --body-file instead.",
+      "Refusing to pass a multiline argument through Windows cmd.exe argv. Use --body-file instead.",
     );
   }
   if (arg.length === 0) return '""';
@@ -92,7 +92,7 @@ export function resolveGhExecutable(env: NodeJS.ProcessEnv = process.env): GhExe
 /**
  * Write `body` to a temp file, invoke `fn(bodyFilePath)`, then delete the file
  * (success and failure). Prefer this over `gh --body` so newlines and `%VAR%`
- * never travel through Windows cmd.exe argv (RAD-129).
+ * never travel through Windows cmd.exe argv .
  */
 export async function withGhBodyFile<T>(
   body: string,
@@ -129,7 +129,7 @@ export function githubPrCreateArgs(options: {
   ];
 }
 
-/** `gh pr edit` argv using `--body-file` when body is set (RAD-150). Target is the PR URL from `gh pr view`. */
+/** `gh pr edit` argv using `--body-file` when body is set (). Target is the PR URL from `gh pr view`. */
 export function githubPrEditArgs(options: {
   prUrl: string;
   title?: string;
@@ -157,7 +157,7 @@ function inlineGhBody(args: string[]): string | null {
   return null;
 }
 
-/** Swap inline body flags for `--body-file <path>` (142-R6, RAD-129). */
+/** Swap inline body flags for `--body-file <path>` (142-R6, ). */
 export function replaceGhBodyWithFile(args: string[], bodyFile: string): string[] {
   const bodyIdx = args.indexOf("--body");
   if (bodyIdx >= 0 && bodyIdx + 1 < args.length) {
@@ -352,7 +352,7 @@ export async function ensureRepoGithub(cwd: string): Promise<{
   return { login: bind.login, switched: true, bound: true };
 }
 
-/** Early bind snapshot for create / ready / review (RAD-95). */
+/** Early bind snapshot for create / ready / review (). */
 export type GithubBindStatus = {
   bound: boolean;
   login: string | null;
@@ -389,7 +389,7 @@ export async function describeRepoGithubBind(cwd: string): Promise<GithubBindSta
   };
 }
 
-/** Refuse reviewed until the repo is bound (RAD-95). File bind only — no gh CLI. */
+/** Refuse reviewed until the repo is bound (). File bind only — no gh CLI. */
 export async function requireGithubBindForReviewed(cwd: string): Promise<GithubBindStatus> {
   const status = await describeRepoGithubBind(cwd);
   if (!status.bound) {
