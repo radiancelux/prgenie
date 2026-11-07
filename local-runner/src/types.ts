@@ -112,7 +112,7 @@ export interface JobRecord {
   steerQueue: string[];
   stopRequested: boolean;
   dryRun: boolean;
-  /** Legacy field; merge visibility uses ciStatus.mergedAt + MERGED_HIDE_AFTER_MS. */
+  /** Set while the job lives under `archived/` (dashboard Remove / MCP archive_job); null when live. */
   archivedAt: string | null;
 }
 

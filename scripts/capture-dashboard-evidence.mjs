@@ -106,6 +106,28 @@ const jobs = [
       checkedAt: new Date().toISOString(),
     },
   }),
+  syntheticJob({
+    id: "cccccccc-dddd-eeee-ffff-000000000000",
+    updatedAt: new Date(Date.now() - 1_200_000).toISOString(),
+    stage: "failed",
+    input: {
+      repoPath: "/path/to/synthetic-repo",
+      branch: "feat/synthetic-failed",
+      promptFile: "/tmp/p.md",
+      jobType: "code",
+      title: "Synthetic failed agent with Remove",
+      linearIssue: "ISSUE-902",
+    },
+    repoSlug: "example-org/synthetic-app",
+    prUrl: null,
+    prNumber: null,
+    prIsDraft: null,
+    linearIssue: "ISSUE-902",
+    ticketUrl: null,
+    title: "Synthetic failed agent with Remove",
+    ciStatus: null,
+    error: "synthetic failure",
+  }),
 ];
 
 const logTail = [
@@ -135,7 +157,7 @@ async function renderSnapshot(desktop) {
       window.fetch = async (input) => {
         const url = new URL(String(input), "http://127.0.0.1:9473/");
         if (url.pathname === "/api/jobs/meta")
-          return jsonResponse({ totalOnDisk: jobs.length, mergedHidden: 0 });
+          return jsonResponse({ totalOnDisk: jobs.length, mergedHidden: 0, archived: 2 });
         const single = /^\/api\/jobs\/([^/]+)$/.exec(url.pathname);
         if (single) return jsonResponse({ ...jobs.find((j) => j.id === single[1]), logTail });
         if (url.pathname === "/api/jobs") return jsonResponse(jobs);

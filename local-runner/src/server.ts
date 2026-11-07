@@ -18,7 +18,6 @@ import {
   parseJsonBody,
   parseJsonObject,
   readBoundedBody,
-  redactSecrets,
   safeHandlerMessage,
 } from "./http-request.js";
 
@@ -29,6 +28,18 @@ const TERMINAL_JOB_STAGES = new Set([
   "changes_remaining",
   "stuck",
 ]);
+
+const ARCHIVE_ERROR_STATUS = {
+  invalid_id: 400,
+  not_found: 404,
+  running: 409,
+  collision: 409,
+} as const;
+
+function queryFlag(url: URL, name: string): boolean {
+  const v = url.searchParams.get(name);
+  return v === "1" || v === "true";
+}
 
 function unauthorized(guard: HttpResponseGuard): void {
   guard.json(401, { error: "unauthorized" });
@@ -50,6 +61,25 @@ async function readJsonObject(
     guard.json(body.status, { error: body.error });
     return null;
   }
+  const parsed = parseJsonObject(body.text);
+  if (!parsed.ok) {
+    guard.json(400, { error: parsed.error });
+    return null;
+  }
+  return parsed.value;
+}
+
+/** Like readJsonObject, but an empty body is `{}`. */
+async function readOptionalJsonObject(
+  req: http.IncomingMessage,
+  guard: HttpResponseGuard,
+): Promise<Record<string, unknown> | null> {
+  const body = await readBoundedBody(req);
+  if (!body.ok) {
+    guard.json(body.status, { error: body.error });
+    return null;
+  }
+  if (!body.text.trim()) return {};
   const parsed = parseJsonObject(body.text);
   if (!parsed.ok) {
     guard.json(400, { error: parsed.error });
@@ -82,6 +112,17 @@ async function readMcpMessage(
 
 export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): http.Server {
   const sseClients = new Map<string, Set<http.ServerResponse>>();
+  const listClients = new Set<http.ServerResponse>();
+
+  engine.on("jobs", () => {
+    for (const res of listClients) {
+      try {
+        res.write(`data: ${JSON.stringify({ type: "jobs" })}\n\n`);
+      } catch {
+        /* client gone */
+      }
+    }
+  });
 
   engine.on("event", async (jobId: string) => {
     const clients = sseClients.get(jobId);
@@ -141,12 +182,43 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
         return;
       }
 
+      if (path === "/api/events" && req.method === "GET") {
+        guard.begin({
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        });
+        listClients.add(res);
+        req.on("close", () => {
+          listClients.delete(res);
+        });
+        res.write(": connected\n\n");
+        return;
+      }
+
       if (path === "/api/jobs" && req.method === "GET") {
-        const includeFinished =
-          url.searchParams.get("includeFinished") === "1" ||
-          url.searchParams.get("includeFinished") === "true";
-        const jobs = await engine.list({ includeFinished });
+        const jobs = await engine.list({
+          includeFinished: queryFlag(url, "includeFinished"),
+          includeArchived: queryFlag(url, "includeArchived"),
+        });
         guard.json(200, jobs);
+        return;
+      }
+
+      if (path === "/api/jobs/clear-failed" && req.method === "POST") {
+        const payload = await readOptionalJsonObject(req, guard);
+        if (!payload || guard.started) return;
+        if (
+          payload.includeStuckStopped !== undefined &&
+          typeof payload.includeStuckStopped !== "boolean"
+        ) {
+          guard.json(400, { error: "includeStuckStopped must be a boolean" });
+          return;
+        }
+        const result = await engine.clearFailed({
+          includeStuckStopped: payload.includeStuckStopped === true,
+        });
+        guard.json(200, result);
         return;
       }
 
@@ -350,10 +422,35 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
         return;
       }
 
+      const archiveMatch = path.match(/^\/api\/jobs\/([^/]+)\/archive$/);
+      if (archiveMatch && req.method === "POST") {
+        const result = await engine.archive(archiveMatch[1]);
+        if (!result.ok) {
+          guard.json(ARCHIVE_ERROR_STATUS[result.code], {
+            error: result.error,
+            ...(result.stage ? { stage: result.stage } : {}),
+          });
+          return;
+        }
+        guard.json(200, result);
+        return;
+      }
+
+      const restoreMatch = path.match(/^\/api\/jobs\/([^/]+)\/restore$/);
+      if (restoreMatch && req.method === "POST") {
+        const result = await engine.restore(restoreMatch[1]);
+        if (!result.ok) {
+          guard.json(ARCHIVE_ERROR_STATUS[result.code], { error: result.error });
+          return;
+        }
+        guard.json(200, { ok: true, id: result.id, stage: result.job.stage });
+        return;
+      }
+
       guard.text(404, "not found");
     } catch (err) {
       if (!guard.started) {
-        guard.json(500, { error: redactSecrets(safeHandlerMessage(err)) });
+        guard.json(500, { error: safeHandlerMessage(err) });
       }
     }
   });

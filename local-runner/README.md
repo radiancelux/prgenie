@@ -82,10 +82,12 @@ On startup the runner prints reachable URLs (loopback plus a best-effort LAN IP 
 ### MCP tools
 
 - `start_job` — `repoPath` or `remote`, `branch`, `promptFile` (code jobs), optional **`jobType`** / **`profile`** (`docs` | code), optional **`docsTemplate`** (`marketing` | `policy` | `research`), optional `reviewPromptFile`, `fixPromptFile`, `maxRounds`, `model`, optional **`driver`** (id), `dryRun`, optional `ticketUrl` / `linearIssue` (when omitted, the runner parses `issue-<n>` from the branch name)
-- `list_jobs`
-- `get_job` — status + log tail
+- `list_jobs` — optional `includeArchived` (archived jobs carry `archivedAt`)
+- `get_job` — status + log tail (also resolves archived jobs, read-only)
 - `steer_job` — queue follow-up text for the next agent step
 - `stop_job`
+- `archive_job` — `id`; removes a finished job from the dashboard (see [Removing jobs](#removing-jobs-archive)). Errors while the job is running.
+- `restore_job` — `id`; moves an archived job back. Errors if a live job already uses that id.
 
 ### Job stages
 
@@ -108,6 +110,36 @@ Default implement prompt requires **`gh pr create --draft`**. After **`VERDICT: 
 The jobs table shows **Ticket** (issue id), **PR**, **Ready** (draft/ready), **Status** (CI), **Model**, **Tokens** (summed from cursor-agent `stream-json` usage in the job log), and **Updated**. On narrow screens (~390px) rows become cards. The job detail view shows a **Cursor-style agent transcript** (stream-json), optional raw log toggle, and a **Steer** box that queues follow-up text via the same bearer-protected API as MCP `steer_job`. **Email notifications** and runner defaults live on the **Setup** screen; settings persist in `$PRGENIE_RUNNER_DATA_DIR/settings.json` (legacy `notify-settings.json` migrates on first load). The Resend API key is never shown in the UI — only `RESEND_API_KEY` / `PRGENIE_RUNNER_RESEND_KEY_FILE` on the server. When the dashboard recipient is empty, notify email falls back to `PRGENIE_RUNNER_NOTIFY_EMAIL`. While a job has a PR, the runner polls CI on a modest interval during active stages and until checks settle on terminal jobs. It prefers **`origin pr checks`** when the Origin CLI is authenticated; otherwise it falls back to GitHub **`gh pr view --json statusCheckRollup`**. The CI badge includes the source (`origin` or `github`).
 
 Authenticated API: `GET` / `PATCH /api/settings`, `GET` / `PUT /api/notify-settings` (legacy) with bearer token (same as other `/api/*` routes).
+
+### Removing jobs (archive)
+
+Finished jobs (`failed`, `stuck`, `stopped`, `approved`, `changes_remaining`) show a **Remove** button on the row, the mobile card, and the inline detail panel. Running jobs (`building`, `reviewing`, `fixing`) never do, and the server rejects them too. **Clear failed** removes every `failed` job, and with **Include stuck & stopped** checked it also removes `stuck` and `stopped` jobs. Both actions ask for confirmation first, using the browser's native `confirm()` so it works with touch and keyboard. **Show archived** lists archived jobs with a **Restore** button.
+
+Archiving moves files within the data dir:
+
+```text
+$PRGENIE_RUNNER_DATA_DIR/
+  jobs/<id>.json            live jobs
+  logs/<id>.log
+  archived/jobs/<id>.json   archived jobs (archivedAt set)
+  archived/logs/<id>.log
+```
+
+Restore moves both files back and clears `archivedAt`. It refuses (`409`) if a live job already uses the id. Job ids must match `[A-Za-z0-9_-]` before any file is touched.
+
+Worktrees: archiving removes the job's git worktree only when it is **clean and pushed**, so the branch is free for a new job. A worktree with uncommitted changes or unpushed commits is **kept** and never force-removed. The response then includes a `warning` (shown on the dashboard) with the path to clean up by hand.
+
+| Route                             | Body                               | Result                                                                                       |
+| --------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------- |
+| `POST /api/jobs/:id/archive`      | —                                  | `200 { ok, id, archivedAt, worktree: "removed" \| "kept" \| "none", warning? }`              |
+|                                   |                                    | `409` while running (`{ error, stage }`), `404` unknown id, `400` invalid id                 |
+| `POST /api/jobs/:id/restore`      | —                                  | `200 { ok, id, stage }`; `409` on id collision, `404` not archived                           |
+| `POST /api/jobs/clear-failed`     | `{ "includeStuckStopped"?: bool }` | `200 { ok, stages, archived: [ids], warnings: [{ id, warning }], skipped: [{ id, error }] }` |
+| `GET /api/jobs?includeArchived=1` | —                                  | Live jobs plus archived ones                                                                 |
+| `GET /api/jobs/meta`              | —                                  | `{ totalOnDisk, mergedHidden, archived }`                                                    |
+| `GET /api/events?token=…`         | —                                  | SSE: `data: {"type":"jobs"}` whenever a job is started, archived, or restored                |
+
+The dashboard subscribes to `/api/events`, so other open dashboards drop or re-add rows without a reload. The 8s poll still covers changes made through a separate `mcp` stdio process.
 
 ## Example job
 
@@ -148,4 +180,4 @@ Emails send when notify is **enabled** in the dashboard (or persisted settings),
 
 ## Persistence
 
-Jobs are JSON under `$PRGENIE_RUNNER_DATA_DIR/jobs/`. Runner settings (notify, defaults, drivers, reserved `jobTypes` / `presets` bags) live in `$PRGENIE_RUNNER_DATA_DIR/settings.json`. Restarting `serve` reloads active jobs (`building`, `reviewing`, `fixing`) and continues the loop.
+Jobs are JSON under `$PRGENIE_RUNNER_DATA_DIR/jobs/` (archived ones under `archived/jobs/`, see [Removing jobs](#removing-jobs-archive)). Runner settings (notify, defaults, drivers, reserved `jobTypes` / `presets` bags) live in `$PRGENIE_RUNNER_DATA_DIR/settings.json`. Restarting `serve` reloads active jobs (`building`, `reviewing`, `fixing`) and continues the loop.

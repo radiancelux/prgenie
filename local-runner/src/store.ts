@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { JobInput, JobRecord, StartJobArgs } from "./types.js";
@@ -6,7 +6,18 @@ import { shouldHideMergedJob } from "./ci.js";
 import { resolveJobTarget, normalizeJobType } from "./job-target.js";
 import { isDocsTemplateId } from "./docs-prompts.js";
 import { resolveJobTicket } from "./linear-ticket.js";
-import { jobFile, jobLogFile, jobsDir, logsDir, repoSlugFromPath } from "./paths.js";
+import {
+  archivedJobFile,
+  archivedJobsDir,
+  archivedLogFile,
+  archivedLogsDir,
+  isSafeJobId,
+  jobFile,
+  jobLogFile,
+  jobsDir,
+  logsDir,
+  repoSlugFromPath,
+} from "./paths.js";
 import { resolveJobTitle } from "./job-display.js";
 import { repoOwnerNameFromGitOrigin, repoOwnerNameFromRemoteUrl } from "./repo-display.js";
 import { loadSettings, resolveDefaultDriverId } from "./settings.js";
@@ -25,14 +36,48 @@ async function atomicWriteJson(filePath: string, value: unknown): Promise<void> 
   await rename(tmp, filePath);
 }
 
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function renameIfExists(from: string, to: string): Promise<void> {
+  try {
+    await rename(from, to);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+}
+
 export async function saveJob(dataDir: string, job: JobRecord): Promise<void> {
   job.updatedAt = new Date().toISOString();
+  // Stale in-memory copies (CI poll, worktree cleanup) must not resurrect an archived job.
+  if (await fileExists(archivedJobFile(dataDir, job.id))) return;
   await atomicWriteJson(jobFile(dataDir, job.id), job);
 }
 
 export async function loadJob(dataDir: string, id: string): Promise<JobRecord | null> {
+  if (!isSafeJobId(id)) return null;
+  return readJobFile(jobFile(dataDir, id));
+}
+
+/** Archived job with `archivedAt` and `logPath` pointing at `archived/`. */
+export async function loadArchivedJob(dataDir: string, id: string): Promise<JobRecord | null> {
+  if (!isSafeJobId(id)) return null;
+  const job = await readJobFile(archivedJobFile(dataDir, id));
+  if (!job) return null;
+  job.archivedAt = job.archivedAt || job.updatedAt;
+  job.logPath = archivedLogFile(dataDir, id);
+  return job;
+}
+
+async function readJobFile(filePath: string): Promise<JobRecord | null> {
   try {
-    const raw = await readFile(jobFile(dataDir, id), "utf8");
+    const raw = await readFile(filePath, "utf8");
     const job = JSON.parse(raw) as JobRecord;
     if (job.archivedAt === undefined) job.archivedAt = null;
     if (job.driverId === undefined) job.driverId = "cursor-agent";
@@ -48,29 +93,53 @@ export async function loadJob(dataDir: string, id: string): Promise<JobRecord | 
   }
 }
 
-export async function listJobIds(dataDir: string): Promise<string[]> {
+async function listJsonIds(dir: string): Promise<string[]> {
   try {
-    const names = await readdir(jobsDir(dataDir));
-    return names.filter((n) => n.endsWith(".json")).map((n) => n.replace(/\.json$/, ""));
+    const names = await readdir(dir);
+    return names
+      .filter((n) => n.endsWith(".json"))
+      .map((n) => n.replace(/\.json$/, ""))
+      .filter(isSafeJobId);
   } catch {
     return [];
   }
 }
 
+export async function listJobIds(dataDir: string): Promise<string[]> {
+  return listJsonIds(jobsDir(dataDir));
+}
+
+export async function listArchivedJobIds(dataDir: string): Promise<string[]> {
+  return listJsonIds(archivedJobsDir(dataDir));
+}
+
+function sortNewestFirst(jobs: JobRecord[]): JobRecord[] {
+  return jobs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function listArchivedJobs(dataDir: string): Promise<JobRecord[]> {
+  const jobs: JobRecord[] = [];
+  for (const id of await listArchivedJobIds(dataDir)) {
+    const j = await loadArchivedJob(dataDir, id);
+    if (j) jobs.push(j);
+  }
+  return sortNewestFirst(jobs);
+}
+
 export type ListJobsOptions = { includeArchived?: boolean };
 
-export async function listJobs(dataDir: string, _opts: ListJobsOptions = {}): Promise<JobRecord[]> {
-  const ids = await listJobIds(dataDir);
+/** Live jobs under `jobs/`; archived jobs (`archived/jobs/`) only when `includeArchived`. */
+export async function listJobs(dataDir: string, opts: ListJobsOptions = {}): Promise<JobRecord[]> {
   const jobs: JobRecord[] = [];
-  for (const id of ids) {
+  for (const id of await listJobIds(dataDir)) {
     const j = await loadJob(dataDir, id);
     if (j) jobs.push(j);
   }
-  jobs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  return jobs;
+  if (opts.includeArchived) jobs.push(...(await listArchivedJobs(dataDir)));
+  return sortNewestFirst(jobs);
 }
 
-export type ListJobsForDisplayOptions = { includeFinished?: boolean };
+export type ListJobsForDisplayOptions = { includeFinished?: boolean; includeArchived?: boolean };
 
 /** Jobs shown on the dashboard and via list_jobs (merged PRs drop off after ~1h). */
 export async function listJobsForDisplay(
@@ -79,17 +148,55 @@ export async function listJobsForDisplay(
   opts: ListJobsForDisplayOptions = {},
 ): Promise<JobRecord[]> {
   const jobs = await listJobs(dataDir);
-  if (opts.includeFinished) return jobs;
-  return jobs.filter((j) => !shouldHideMergedJob(j, nowMs));
+  const live = opts.includeFinished ? jobs : jobs.filter((j) => !shouldHideMergedJob(j, nowMs));
+  if (!opts.includeArchived) return live;
+  return sortNewestFirst([...live, ...(await listArchivedJobs(dataDir))]);
 }
 
 export async function jobsDashboardMeta(
   dataDir: string,
   nowMs = Date.now(),
-): Promise<{ totalOnDisk: number; mergedHidden: number }> {
+): Promise<{ totalOnDisk: number; mergedHidden: number; archived: number }> {
   const jobs = await listJobs(dataDir);
   const mergedHidden = jobs.filter((j) => shouldHideMergedJob(j, nowMs)).length;
-  return { totalOnDisk: jobs.length, mergedHidden };
+  const archived = (await listArchivedJobIds(dataDir)).length;
+  return { totalOnDisk: jobs.length, mergedHidden, archived };
+}
+
+/** Move `jobs/<id>.json` and `logs/<id>.log` under `archived/`. Caller checks the stage. */
+export async function moveJobToArchive(dataDir: string, job: JobRecord): Promise<JobRecord> {
+  const dest = archivedJobFile(dataDir, job.id);
+  if (await fileExists(dest)) throw new Error(`job is already archived: ${job.id}`);
+  await mkdir(archivedJobsDir(dataDir), { recursive: true });
+  await mkdir(archivedLogsDir(dataDir), { recursive: true });
+  await rename(jobFile(dataDir, job.id), dest);
+  await renameIfExists(jobLogFile(dataDir, job.id), archivedLogFile(dataDir, job.id));
+  job.archivedAt = new Date().toISOString();
+  job.logPath = archivedLogFile(dataDir, job.id);
+  await atomicWriteJson(dest, job);
+  return job;
+}
+
+export type RestoreJobFilesResult =
+  { ok: true; job: JobRecord } | { ok: false; code: "not_found" | "collision"; error: string };
+
+/** Move an archived job back under `jobs/` and `logs/`; never overwrites a live job. */
+export async function restoreJobFromArchive(
+  dataDir: string,
+  id: string,
+): Promise<RestoreJobFilesResult> {
+  const job = await loadArchivedJob(dataDir, id);
+  if (!job) return { ok: false, code: "not_found", error: "archived job not found" };
+  if ((await fileExists(jobFile(dataDir, id))) || (await fileExists(jobLogFile(dataDir, id)))) {
+    return { ok: false, code: "collision", error: "a live job with this id already exists" };
+  }
+  await ensureDataDirs(dataDir);
+  await rename(archivedJobFile(dataDir, id), jobFile(dataDir, id));
+  await renameIfExists(archivedLogFile(dataDir, id), jobLogFile(dataDir, id));
+  job.archivedAt = null;
+  job.logPath = jobLogFile(dataDir, id);
+  await saveJob(dataDir, job);
+  return { ok: true, job };
 }
 
 export async function createJob(

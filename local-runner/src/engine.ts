@@ -3,10 +3,19 @@ import { CiWatcher } from "./ci-watcher.js";
 import { runJobLoop, jobSnapshot } from "./job-runner.js";
 import { JobControl } from "./job-control.js";
 import {
+  archiveJob,
+  clearFailedJobs,
+  restoreJob,
+  type ArchiveJobResult,
+  type ClearFailedResult,
+  type RestoreJobResult,
+} from "./job-archive.js";
+import {
   createJob,
   jobsDashboardMeta,
   listJobs,
   listJobsForDisplay,
+  loadArchivedJob,
   loadJob,
   saveJob,
 } from "./store.js";
@@ -53,7 +62,17 @@ export class RunnerEngine extends EventEmitter {
       config: this.config,
     });
     this.schedule(job.id);
+    this.emitJobsChanged();
     return job;
+  }
+
+  /** List-level change (job added, archived, restored) for dashboards subscribed to /api/events. */
+  emitJobsChanged(): void {
+    this.emit("jobs");
+  }
+
+  isRunning(jobId: string): boolean {
+    return this.running.has(jobId);
   }
 
   schedule(jobId: string): void {
@@ -78,20 +97,52 @@ export class RunnerEngine extends EventEmitter {
     }
   }
 
-  async list(opts?: { includeFinished?: boolean }): Promise<JobRecord[]> {
+  async list(opts?: {
+    includeFinished?: boolean;
+    includeArchived?: boolean;
+  }): Promise<JobRecord[]> {
     return listJobsForDisplay(this.config.dataDir, Date.now(), {
       includeFinished: opts?.includeFinished,
+      includeArchived: opts?.includeArchived,
     });
   }
 
-  async jobsMeta(): Promise<{ totalOnDisk: number; mergedHidden: number }> {
+  async jobsMeta(): Promise<{ totalOnDisk: number; mergedHidden: number; archived: number }> {
     return jobsDashboardMeta(this.config.dataDir);
   }
 
+  /** Live job, else archived job (read-only transcript). */
   async get(jobId: string) {
-    const job = await loadJob(this.config.dataDir, jobId);
+    const job =
+      (await loadJob(this.config.dataDir, jobId)) ??
+      (await loadArchivedJob(this.config.dataDir, jobId));
     if (!job) return null;
     return jobSnapshot(this.config, job);
+  }
+
+  async archive(jobId: string): Promise<ArchiveJobResult> {
+    const result = await archiveJob(this.config, jobId, {
+      isRunning: (id) => this.isRunning(id),
+      log: (msg) => console.warn(`[archive] ${msg}`),
+    });
+    if (result.ok) this.emitJobsChanged();
+    return result;
+  }
+
+  async restore(jobId: string): Promise<RestoreJobResult> {
+    const result = await restoreJob(this.config, jobId);
+    if (result.ok) this.emitJobsChanged();
+    return result;
+  }
+
+  async clearFailed(opts: { includeStuckStopped?: boolean } = {}): Promise<ClearFailedResult> {
+    const result = await clearFailedJobs(this.config, {
+      includeStuckStopped: opts.includeStuckStopped,
+      isRunning: (id) => this.isRunning(id),
+      log: (msg) => console.warn(`[archive] ${msg}`),
+    });
+    if (result.archived.length) this.emitJobsChanged();
+    return result;
   }
 
   async steer(jobId: string, prompt: string): Promise<JobRecord | null> {

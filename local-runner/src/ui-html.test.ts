@@ -53,7 +53,7 @@ function fixtureJobs() {
       maxRounds: 2,
       model: "composer-2.5",
       driverId: "cursor-agent",
-      worktreePath: null,
+      worktreePath: null as string | null,
       repoSlug: "radiancelux/prgenie",
       prUrl: "https://github.com/radiancelux/prgenie/pull/111",
       prNumber: 111,
@@ -79,7 +79,7 @@ function fixtureJobs() {
       steerQueue: [],
       stopRequested: false,
       dryRun: false,
-      archivedAt: null,
+      archivedAt: null as string | null,
     },
     {
       id: "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
@@ -103,7 +103,7 @@ function fixtureJobs() {
       maxRounds: 2,
       model: "composer-2.5",
       driverId: "cursor-agent",
-      worktreePath: null,
+      worktreePath: null as string | null,
       repoSlug: "example-org/example-business",
       prUrl: null,
       prNumber: null,
@@ -128,7 +128,7 @@ function fixtureJobs() {
       steerQueue: [],
       stopRequested: false,
       dryRun: false,
-      archivedAt: null,
+      archivedAt: null as string | null,
     },
   ];
 }
@@ -195,6 +195,22 @@ class FakeEventSource {
   removeEventListener() {}
 }
 
+/** Per-job transcript streams, in creation order. */
+function jobStreams(): FakeEventSource[] {
+  return FakeEventSource.instances.filter((es) => es.url.startsWith("/api/jobs/"));
+}
+
+/** The dashboard-wide list stream (archive/restore/start from any client). */
+function listStream(): FakeEventSource {
+  const open = FakeEventSource.instances.filter(
+    (es) => es.url.startsWith("/api/events") && es.readyState !== 2,
+  );
+  assert.equal(open.length, 1, "exactly one open list stream");
+  return open[0];
+}
+
+const TERMINAL = new Set(["approved", "failed", "stopped", "changes_remaining", "stuck"]);
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function waitFor(check: () => boolean, label: string): Promise<void> {
@@ -208,7 +224,9 @@ async function waitFor(check: () => boolean, label: string): Promise<void> {
 /** Boots the dashboard in jsdom with stubbed fetch, EventSource, and matchMedia. */
 async function bootDashboard(opts: { jobs?: FixtureJob[]; desktop?: boolean } = {}) {
   const html = runnerUiHtml(9473, ["http://127.0.0.1:9473/"]);
-  const state = { jobs: opts.jobs ?? fixtureJobs() };
+  const state = { jobs: opts.jobs ?? fixtureJobs(), confirmAnswer: true };
+  const requests: Array<{ method: string; path: string; body: unknown }> = [];
+  const confirms: string[] = [];
   const errors: string[] = [];
   let desktop = opts.desktop ?? true;
   const layoutListeners: Array<() => void> = [];
@@ -248,8 +266,41 @@ async function bootDashboard(opts: { jobs?: FixtureJob[]; desktop?: boolean } = 
     if (!String(auth).includes("Bearer")) {
       return jsonResponse("unauthorized", 401);
     }
+    const method = init?.method ?? "GET";
+    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : undefined;
+    if (method !== "GET") requests.push({ method, path: url.pathname, body });
     if (url.pathname === "/api/jobs/meta") {
-      return jsonResponse({ totalOnDisk: state.jobs.length, mergedHidden: 0 });
+      const archived = state.jobs.filter((j) => j.archivedAt).length;
+      return jsonResponse({ totalOnDisk: state.jobs.length - archived, mergedHidden: 0, archived });
+    }
+    const action = /^\/api\/jobs\/([^/]+)\/(archive|restore)$/.exec(url.pathname);
+    if (action && method === "POST") {
+      const job = state.jobs.find((j) => j.id === action[1]);
+      if (!job) return jsonResponse({ error: "job not found" }, 404);
+      if (action[2] === "restore") {
+        job.archivedAt = null;
+        return jsonResponse({ ok: true, id: job.id, stage: job.stage });
+      }
+      if (!TERMINAL.has(job.stage)) {
+        return jsonResponse({ error: "job is still running", stage: job.stage }, 409);
+      }
+      job.archivedAt = new Date().toISOString();
+      const warning = job.worktreePath
+        ? `Worktree kept at ${job.worktreePath} because it has uncommitted changes.`
+        : undefined;
+      return jsonResponse({ ok: true, id: job.id, worktree: warning ? "kept" : "none", warning });
+    }
+    if (url.pathname === "/api/jobs/clear-failed" && method === "POST") {
+      const withStuck = (body as { includeStuckStopped?: boolean }).includeStuckStopped === true;
+      const stages = withStuck ? ["failed", "stuck", "stopped"] : ["failed"];
+      const archived: string[] = [];
+      for (const j of state.jobs) {
+        if (!j.archivedAt && stages.includes(j.stage)) {
+          j.archivedAt = new Date().toISOString();
+          archived.push(j.id);
+        }
+      }
+      return jsonResponse({ ok: true, stages, archived, warnings: [], skipped: [] });
     }
     if (
       url.pathname.startsWith("/api/notify-settings") ||
@@ -265,10 +316,15 @@ async function bootDashboard(opts: { jobs?: FixtureJob[]; desktop?: boolean } = 
         : jsonResponse({}, 404);
     }
     if (url.pathname === "/api/jobs") {
-      return jsonResponse(state.jobs);
+      const withArchived = url.searchParams.get("includeArchived") === "1";
+      return jsonResponse(state.jobs.filter((j) => withArchived || !j.archivedAt));
     }
     return jsonResponse({});
   }) as typeof fetch;
+  window.confirm = (message?: string) => {
+    confirms.push(String(message));
+    return state.confirmAnswer;
+  };
   (window as unknown as { EventSource: typeof FakeEventSource }).EventSource = FakeEventSource;
   (window as unknown as { matchMedia: (q: string) => unknown }).matchMedia = (query: string) => ({
     media: query,
@@ -297,6 +353,16 @@ async function bootDashboard(opts: { jobs?: FixtureJob[]; desktop?: boolean } = 
     doc,
     state,
     errors,
+    requests,
+    confirms,
+    /** Remove/Restore button rendered for a job in the table row or mobile card. */
+    rowAction: (id: string, action: "archive" | "restore") =>
+      doc.querySelector<HTMLButtonElement>(
+        `#jobs tr.job-row[data-id="${id}"] [data-action="${action}"]`,
+      ),
+    cardAction: (id: string, action: "archive" | "restore") =>
+      doc.querySelector<HTMLButtonElement>(`#jobCards [data-id="${id}"] [data-action="${action}"]`),
+    jobsStatus: () => doc.getElementById("jobsStatus")!.textContent ?? "",
     /** Table row or mobile card for a job. */
     row: (id: string) => doc.querySelector<HTMLElement>(`#jobs tr.job-row[data-id="${id}"]`)!,
     card: (id: string) => doc.querySelector<HTMLElement>(`#jobCards [data-id="${id}"]`)!,
@@ -349,7 +415,7 @@ function assertDetailUnderRow(d: Dashboard, id: string) {
   );
   assert.equal(next.dataset.detailFor, id);
   assert.equal(next.cells.length, 1);
-  assert.equal(next.cells[0].colSpan, 11);
+  assert.equal(next.cells[0].colSpan, 12);
   const panel = d.panel();
   assert.equal(panel.parentElement, next.cells[0], "panel lives in the companion row");
   assert.equal(panel.id, `job-detail-${id}`);
@@ -394,8 +460,8 @@ describe("runnerUiHtml inline job detail", () => {
         () => (panel.querySelector("#logSteps")!.textContent ?? "").includes(JOB_A),
         "transcript for A",
       );
-      assert.equal(FakeEventSource.instances.length, 1);
-      assert.match(FakeEventSource.instances[0].url, new RegExp(`/api/jobs/${JOB_A}/stream`));
+      assert.equal(jobStreams().length, 1);
+      assert.match(jobStreams()[0].url, new RegExp(`/api/jobs/${JOB_A}/stream`));
     });
   });
 
@@ -410,7 +476,7 @@ describe("runnerUiHtml inline job detail", () => {
       assertDetailUnderRow(d, JOB_B);
       assertExpanded(d, JOB_B);
       assert.equal(d.panel(), panel, "same panel node is reused");
-      assert.equal(FakeEventSource.instances[0].readyState, 2, "previous stream closed");
+      assert.equal(jobStreams()[0].readyState, 2, "previous stream closed");
       await waitFor(
         () => (panel.querySelector("#logSteps")!.textContent ?? "").includes(JOB_B),
         "transcript for B",
@@ -419,7 +485,7 @@ describe("runnerUiHtml inline job detail", () => {
 
       d.tableToggle(JOB_B).click();
       assertCollapsed(d);
-      assert.equal(FakeEventSource.instances[1].readyState, 2, "stream closed on collapse");
+      assert.equal(jobStreams()[1].readyState, 2, "stream closed on collapse");
     });
   });
 
@@ -451,7 +517,7 @@ describe("runnerUiHtml inline job detail", () => {
       const [a, b] = d.state.jobs;
       const c = { ...b, id: "cccccccc-dddd-eeee-ffff-000000000000", title: "Newest job" };
       d.state.jobs = [c, b, { ...a, stage: "reviewing", reviewRound: 1 }];
-      FakeEventSource.instances[0].emit({ stage: "reviewing", logTail: "live tail line" });
+      jobStreams()[0].emit({ stage: "reviewing", logTail: "live tail line" });
       await waitFor(() => d.doc.querySelectorAll("#jobs tr.job-row").length === 3, "new job row");
 
       const order = [...d.doc.querySelectorAll<HTMLElement>("#jobs > tr")].map(
@@ -491,7 +557,7 @@ describe("runnerUiHtml inline job detail", () => {
       await d.refresh();
       assert.equal(d.doc.querySelectorAll("#jobs tr.job-row").length, 1);
       assertCollapsed(d);
-      assert.equal(FakeEventSource.instances[0].readyState, 2);
+      assert.equal(jobStreams()[0].readyState, 2);
     });
   });
 
@@ -549,6 +615,228 @@ describe("runnerUiHtml jsdom render", () => {
         d.doc.querySelectorAll("#jobCards [role=listitem][data-id]").length,
         rows.length,
       );
+    });
+  });
+});
+
+function stagedJobs(stages: string[]): FixtureJob[] {
+  const [base] = fixtureJobs();
+  const now = Date.now();
+  return stages.map((stage, i) => ({
+    ...base,
+    id: `job-${stage}`,
+    stage,
+    title: `${stage} agent`,
+    createdAt: new Date(now - i * 1000).toISOString(),
+  }));
+}
+
+const RUNNING_STAGES = ["building", "reviewing", "fixing"];
+const TERMINAL_STAGES = ["failed", "stuck", "stopped", "approved", "changes_remaining"];
+
+function rowIds(d: Dashboard): string[] {
+  return [...d.doc.querySelectorAll<HTMLElement>("#jobs tr.job-row")].map((tr) => tr.dataset.id!);
+}
+
+function hasRow(d: Dashboard, id: string): boolean {
+  return d.doc.querySelector(`#jobs tr.job-row[data-id="${id}"]`) !== null;
+}
+
+describe("runnerUiHtml job removal (archive)", () => {
+  it("offers Remove only for terminal stages and never while a job is running", async () => {
+    await withDashboard(
+      { jobs: stagedJobs([...RUNNING_STAGES, ...TERMINAL_STAGES]) },
+      async (d) => {
+        for (const stage of RUNNING_STAGES) {
+          assert.equal(d.rowAction(`job-${stage}`, "archive"), null, `no row Remove for ${stage}`);
+          assert.equal(
+            d.cardAction(`job-${stage}`, "archive"),
+            null,
+            `no card Remove for ${stage}`,
+          );
+        }
+        for (const stage of TERMINAL_STAGES) {
+          for (const btn of [
+            d.rowAction(`job-${stage}`, "archive"),
+            d.cardAction(`job-${stage}`, "archive"),
+          ]) {
+            assert.ok(btn, `Remove for ${stage}`);
+            assert.equal(btn.tagName, "BUTTON");
+            assert.equal(btn.type, "button");
+            assert.match(
+              btn.getAttribute("aria-label") ?? "",
+              new RegExp(`Remove .*${stage} agent`),
+            );
+          }
+        }
+
+        const archiveBtn = d.doc.getElementById("archiveBtn") as HTMLButtonElement;
+        d.tableToggle("job-building").click();
+        assert.ok(archiveBtn.hidden, "panel Remove hidden while building");
+        // The job finishes while its panel is open: Remove appears without reselecting.
+        d.state.jobs[0].stage = "failed";
+        jobStreams()[0].emit({ stage: "failed" });
+        await waitFor(() => !archiveBtn.hidden, "panel Remove after failure");
+        assert.equal(archiveBtn.textContent, "Remove");
+        await waitFor(
+          () => d.rowAction("job-building", "archive") !== null,
+          "row Remove after failure",
+        );
+      },
+    );
+  });
+
+  it("confirms before removing, then archives and closes the inline panel", async () => {
+    const jobs = stagedJobs(["building", "failed"]);
+    jobs[1].worktreePath = "/wt/failed";
+    await withDashboard({ jobs }, async (d) => {
+      d.tableToggle("job-failed").click();
+      assertDetailUnderRow(d, "job-failed");
+      const archiveBtn = d.doc.getElementById("archiveBtn") as HTMLButtonElement;
+      assert.equal(archiveBtn.hidden, false);
+      archiveBtn.focus();
+
+      d.state.confirmAnswer = false;
+      archiveBtn.click();
+      assert.equal(d.confirms.length, 1);
+      assert.match(d.confirms[0], /Remove "ISSUE-319 · failed agent"/);
+      await sleep(30);
+      assert.deepEqual(d.requests, [], "cancelled confirm sends nothing");
+      assert.ok(hasRow(d, "job-failed"));
+
+      d.state.confirmAnswer = true;
+      archiveBtn.click();
+      await waitFor(() => !hasRow(d, "job-failed"), "archived row removed");
+      assert.deepEqual(d.requests, [
+        { method: "POST", path: "/api/jobs/job-failed/archive", body: undefined },
+      ]);
+      assertCollapsed(d);
+      assert.equal(jobStreams()[0].readyState, 2, "transcript stream closed");
+      assert.equal(d.doc.activeElement, d.doc.getElementById("showAllJobs"), "focus falls back");
+      assert.match(d.jobsStatus(), /Removed "ISSUE-319 · failed agent"/);
+      assert.match(d.jobsStatus(), /Worktree kept at \/wt\/failed/);
+    });
+  });
+
+  it("row and card Remove buttons are keyboard-focusable and keep focus on the page", async () => {
+    await withDashboard({ jobs: stagedJobs(["failed", "stopped", "building"]) }, async (d) => {
+      const rowBtn = d.rowAction("job-failed", "archive")!;
+      rowBtn.focus();
+      assert.equal(d.doc.activeElement, rowBtn);
+      rowBtn.click();
+      await waitFor(() => !hasRow(d, "job-failed"), "row removed");
+      assertCollapsed(d);
+      assert.equal(d.doc.activeElement, d.doc.getElementById("showAllJobs"));
+
+      d.setDesktop(false);
+      const cardBtn = d.cardAction("job-stopped", "archive")!;
+      cardBtn.focus();
+      cardBtn.click();
+      await waitFor(
+        () => d.doc.querySelector('#jobCards [data-id="job-stopped"]') === null,
+        "card removed",
+      );
+      assert.equal(d.doc.activeElement, d.doc.getElementById("showAllJobs"));
+      assert.deepEqual(
+        d.requests.map((r) => r.path),
+        ["/api/jobs/job-failed/archive", "/api/jobs/job-stopped/archive"],
+      );
+      assert.equal(d.confirms.length, 2, "each Remove confirms");
+    });
+  });
+
+  it("Clear failed archives failed jobs, and stuck/stopped only when opted in", async () => {
+    const stages = ["failed", "stuck", "stopped", "approved", "building", "changes_remaining"];
+    await withDashboard({ jobs: stagedJobs(stages) }, async (d) => {
+      const clearBtn = d.doc.getElementById("clearFailedBtn") as HTMLButtonElement;
+      clearBtn.click();
+      await waitFor(() => !hasRow(d, "job-failed"), "failed cleared");
+      assert.match(d.confirms[0], /Remove 1 failed agent/);
+      assert.deepEqual(d.requests[0], {
+        method: "POST",
+        path: "/api/jobs/clear-failed",
+        body: { includeStuckStopped: false },
+      });
+      assert.deepEqual(rowIds(d), [
+        "job-stuck",
+        "job-stopped",
+        "job-approved",
+        "job-building",
+        "job-changes_remaining",
+      ]);
+
+      (d.doc.getElementById("clearIncludeStuck") as HTMLInputElement).checked = true;
+      clearBtn.click();
+      await waitFor(() => !hasRow(d, "job-stuck"), "stuck cleared");
+      assert.match(d.confirms[1], /Remove 2 failed, stuck, or stopped agent/);
+      assert.deepEqual(d.requests[1].body, { includeStuckStopped: true });
+      assert.deepEqual(rowIds(d), ["job-approved", "job-building", "job-changes_remaining"]);
+      assert.match(d.jobsStatus(), /Removed 2 agent/);
+
+      clearBtn.click();
+      assert.match(d.jobsStatus(), /No failed, stuck, or stopped agents to clear/);
+      assert.equal(d.requests.length, 2, "nothing to clear sends no request");
+      assert.equal(d.confirms.length, 2);
+    });
+  });
+
+  it("Show archived lists archived jobs with Restore, and Restore brings them back", async () => {
+    const jobs = stagedJobs(["failed", "building"]);
+    jobs[0].archivedAt = new Date().toISOString();
+    await withDashboard({ jobs }, async (d) => {
+      assert.deepEqual(rowIds(d), ["job-building"]);
+      assert.match(d.doc.getElementById("jobsHiddenHint")!.textContent ?? "", /1 archived/);
+
+      const toggle = d.doc.getElementById("showArchived") as HTMLInputElement;
+      toggle.checked = true;
+      toggle.dispatchEvent(new d.window.Event("change"));
+      await waitFor(() => hasRow(d, "job-failed"), "archived row listed");
+      assert.match(d.row("job-failed").textContent ?? "", /Archived/);
+      assert.equal(d.rowAction("job-failed", "archive"), null, "archived rows have no Remove");
+      assert.ok(d.cardAction("job-failed", "restore"));
+
+      d.tableToggle("job-failed").click();
+      const archiveBtn = d.doc.getElementById("archiveBtn") as HTMLButtonElement;
+      assert.equal(archiveBtn.hidden, false);
+      assert.equal(archiveBtn.textContent, "Restore");
+
+      d.rowAction("job-failed", "restore")!.click();
+      await waitFor(() => d.rowAction("job-failed", "archive") !== null, "restored row");
+      assert.deepEqual(d.requests, [
+        { method: "POST", path: "/api/jobs/job-failed/restore", body: undefined },
+      ]);
+      assert.equal(d.confirms.length, 0, "restore is not destructive, no confirm");
+      assert.doesNotMatch(d.row("job-failed").textContent ?? "", /Archived/);
+      assertDetailUnderRow(d, "job-failed");
+      assert.equal(archiveBtn.textContent, "Remove");
+    });
+  });
+
+  it("live list updates drop and re-add rows changed by another dashboard", async () => {
+    await withDashboard({ jobs: stagedJobs(["failed", "building"]) }, async (d) => {
+      assert.match(listStream().url, /^\/api\/events\?token=test-token$/);
+      d.tableToggle("job-failed").click();
+      // Steer is disabled for terminal jobs; any focusable control inside the panel will do.
+      const rawToggle = d.doc.getElementById("showRaw") as HTMLInputElement;
+      rawToggle.focus();
+      assert.equal(d.doc.activeElement, rawToggle);
+
+      d.state.jobs[0].archivedAt = new Date().toISOString();
+      listStream().emit({ type: "jobs" });
+      await waitFor(() => !hasRow(d, "job-failed"), "row dropped after remote archive");
+      assertCollapsed(d);
+      assert.equal(d.doc.activeElement, d.doc.getElementById("showAllJobs"));
+      assert.deepEqual(d.requests, [], "this dashboard sent no archive request");
+
+      d.state.jobs[0].archivedAt = null;
+      listStream().emit({ type: "jobs" });
+      await waitFor(() => hasRow(d, "job-failed"), "row re-added after remote restore");
+      assert.deepEqual(rowIds(d), ["job-failed", "job-building"]);
+
+      const before = listStream();
+      (d.doc.getElementById("saveToken") as HTMLButtonElement).click();
+      assert.equal(before.readyState, 2, "saving the token reconnects the list stream");
+      assert.notEqual(listStream(), before);
     });
   });
 });

@@ -75,13 +75,19 @@ export function runnerUiHtml(
   <h2 id="agentsHeading" class="text-base font-semibold">Agents</h2>
   <div class="jobs-toolbar mb-2 flex flex-wrap items-center gap-3 text-sm">
     <label class="toggle-row flex min-h-11 items-center gap-2"><input type="checkbox" id="showAllJobs" class="h-4 w-4" /> Show finished</label>
+    <label class="toggle-row flex min-h-11 items-center gap-2"><input type="checkbox" id="showArchived" class="h-4 w-4" /> Show archived</label>
+    <div class="flex flex-wrap items-center gap-2">
+      <button type="button" id="clearFailedBtn" class="min-h-11 rounded-md border border-red-900 bg-red-950/40 px-3 py-2 text-red-100">Clear failed</button>
+      <label class="toggle-row flex min-h-11 items-center gap-2"><input type="checkbox" id="clearIncludeStuck" class="h-4 w-4" /> Include stuck &amp; stopped</label>
+    </div>
     <span class="meta text-zinc-500" id="jobsHiddenHint"></span>
     <span class="meta text-zinc-500" id="jobsSelectHint">Select an agent to open its transcript, steer, and stop controls.</span>
   </div>
+  <div id="jobsStatus" class="meta mb-2 min-h-5 text-sm text-zinc-400 wrap-anywhere" role="status" aria-live="polite"></div>
   <div id="jobCards" class="flex flex-col gap-3 md:hidden" role="list" aria-labelledby="agentsHeading"></div>
   <div class="hidden overflow-x-auto md:block">
   <table class="w-full border-collapse text-sm" aria-labelledby="agentsHeading">
-    <thead class="text-left text-zinc-400"><tr class="border-b border-zinc-800"><th class="p-2">Agent</th><th class="p-2">Repo</th><th class="p-2">Stage</th><th class="p-2">Round</th><th class="p-2">Ticket</th><th class="p-2">PR</th><th class="p-2">Ready</th><th class="p-2">Status</th><th class="p-2">Model</th><th class="p-2">Tokens</th><th class="p-2">Updated</th></tr></thead>
+    <thead class="text-left text-zinc-400"><tr class="border-b border-zinc-800"><th class="p-2">Agent</th><th class="p-2">Repo</th><th class="p-2">Stage</th><th class="p-2">Round</th><th class="p-2">Ticket</th><th class="p-2">PR</th><th class="p-2">Ready</th><th class="p-2">Status</th><th class="p-2">Model</th><th class="p-2">Tokens</th><th class="p-2">Updated</th><th class="p-2"><span class="sr-only">Actions</span></th></tr></thead>
     <tbody id="jobs"></tbody>
   </table>
   </div>
@@ -106,6 +112,7 @@ export function runnerUiHtml(
         <textarea id="steerPrompt" rows="2" class="min-h-14 w-full flex-[1_1_100%] rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base" placeholder="Add guidance… Enter to send, Shift+Enter for newline"></textarea>
         <button type="button" class="primary min-h-11 flex-1 rounded-md border border-sky-700 bg-sky-900/50 px-4 py-2 sm:flex-none" id="steerBtn">Steer</button>
         <button type="button" class="danger min-h-11 flex-1 rounded-md border border-red-800 bg-red-950/60 px-4 py-2 sm:flex-none" id="stopBtn">Stop</button>
+        <button type="button" class="min-h-11 flex-1 rounded-md border border-zinc-600 bg-zinc-800 px-4 py-2 sm:flex-none" id="archiveBtn" data-action="archive" hidden>Remove</button>
       </div>
       <div id="steerStatus" class="mt-1 min-h-5 text-sm text-zinc-400" role="status" aria-live="polite"></div>
     </div>
@@ -123,6 +130,7 @@ export function runnerUiHtml(
     document.getElementById("saveToken").onclick = () => {
       localStorage.setItem(tokenKey, tokenEl.value);
       refresh();
+      connectListEvents();
       void loadNotifySettingsUi();
     };
     const notifyEnabledEl = document.getElementById("notifyEnabled");
@@ -192,12 +200,24 @@ export function runnerUiHtml(
       localStorage.setItem(showAllJobsKey, showAllJobsEl.checked ? "1" : "0");
       void refresh();
     };
+    const showArchivedKey = "prgenie_runner_show_archived";
+    const showArchivedEl = document.getElementById("showArchived");
+    showArchivedEl.checked = localStorage.getItem(showArchivedKey) === "1";
+    showArchivedEl.onchange = () => {
+      localStorage.setItem(showArchivedKey, showArchivedEl.checked ? "1" : "0");
+      void refresh();
+    };
 
-    const TERMINAL_STAGES = new Set(["approved", "failed", "stopped", "changes_remaining"]);
+    // Mirrors the server: Remove (archive) is only offered for these; building/reviewing/fixing never.
+    const TERMINAL_STAGES = new Set(["approved", "failed", "stopped", "changes_remaining", "stuck"]);
     const steerEl = document.getElementById("steerPrompt");
     const steerBtn = document.getElementById("steerBtn");
     const stopBtn = document.getElementById("stopBtn");
+    const archiveBtn = document.getElementById("archiveBtn");
     const steerStatus = document.getElementById("steerStatus");
+    const jobsStatus = document.getElementById("jobsStatus");
+    const clearFailedBtn = document.getElementById("clearFailedBtn");
+    const clearIncludeStuckEl = document.getElementById("clearIncludeStuck");
 
     function authHeaders(json) {
       const t = tokenEl.value || localStorage.getItem(tokenKey);
@@ -209,7 +229,7 @@ export function runnerUiHtml(
     let selectedJobStage = null;
     let es = null;
     let lastJobs = [];
-    let lastJobsMeta = { totalOnDisk: 0, mergedHidden: 0 };
+    let lastJobsMeta = { totalOnDisk: 0, mergedHidden: 0, archived: 0 };
 
     function fmtUpdated(iso) {
       const r = dashFmt.formatRelativeTime(iso, Date.now());
@@ -263,6 +283,11 @@ export function runnerUiHtml(
       steerEl.disabled = disabled;
       steerBtn.disabled = disabled;
       stopBtn.disabled = !selected || TERMINAL_STAGES.has(selectedJobStage || "");
+      const picked = selected ? lastJobs.find((j) => j.id === selected) : null;
+      const archived = Boolean(picked && picked.archivedAt);
+      archiveBtn.hidden = !selected || (!archived && !TERMINAL_STAGES.has(selectedJobStage || ""));
+      archiveBtn.dataset.action = archived ? "restore" : "archive";
+      archiveBtn.textContent = archived ? "Restore" : "Remove";
     }
 
     function fmtTokens(u) {
@@ -339,7 +364,7 @@ export function runnerUiHtml(
     const detailRowEl = document.createElement("tr");
     detailRowEl.className = "job-detail-row";
     const detailCellEl = document.createElement("td");
-    detailCellEl.colSpan = 11;
+    detailCellEl.colSpan = 12;
     detailCellEl.className = "job-detail-cell border-b border-zinc-800 bg-zinc-900/40 p-3";
     detailRowEl.appendChild(detailCellEl);
     // Tailwind md: breakpoint — the table is shown at and above it, cards below it.
@@ -411,7 +436,32 @@ export function runnerUiHtml(
       "job-toggle group flex min-h-11 w-full items-start gap-2 rounded-md text-left text-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500";
     const TOGGLE_INNER =
       '<span aria-hidden="true" class="job-chevron mt-0.5 inline-block w-3 shrink-0 text-zinc-500 transition-transform group-aria-expanded:rotate-90 group-aria-expanded:text-sky-400">▸</span><span class="job-toggle-label min-w-0 flex-1"></span>';
-    const CELL_LABELS = ["Agent", "Repo", "Stage", "Round", "Ticket", "PR", "Ready", "Status", "Model", "Tokens", "Updated"];
+    const CELL_LABELS = ["Agent", "Repo", "Stage", "Round", "Ticket", "PR", "Ready", "Status", "Model", "Tokens", "Updated", "Actions"];
+    const ACTIONS_CELL = CELL_LABELS.length - 1;
+    const ACTION_BTN_CLASS =
+      "job-action min-h-11 rounded-md border px-3 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500";
+
+    function escapeAttr(s) {
+      return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+    }
+
+    /** Remove for terminal jobs, Restore for archived ones, nothing while the job is running. */
+    function fmtActions(j) {
+      const label = escapeAttr(dashFmt.jobAgentDisplayLabel(j).label);
+      if (j.archivedAt) {
+        return '<button type="button" data-action="restore" class="' + ACTION_BTN_CLASS + ' border-zinc-600 bg-zinc-800 text-zinc-100" aria-label="Restore ' + label + '">Restore</button>';
+      }
+      if (!TERMINAL_STAGES.has(j.stage)) return "";
+      return '<button type="button" data-action="archive" class="' + ACTION_BTN_CLASS + ' border-red-900 bg-red-950/40 text-red-100" aria-label="Remove ' + label + '">Remove</button>';
+    }
+
+    function onActionClick(e, id) {
+      const btn = e.target.closest("[data-action]");
+      if (!btn) return;
+      e.stopPropagation();
+      if (btn.dataset.action === "restore") void restoreJobUi(id);
+      else void archiveJobUi(id);
+    }
 
     function createJobEls(id) {
       const tr = document.createElement("tr");
@@ -431,25 +481,33 @@ export function runnerUiHtml(
       card.setAttribute("role", "listitem");
       card.dataset.id = id;
       card.innerHTML =
-        '<button type="button" class="' + TOGGLE_CLASS + '">' + TOGGLE_INNER + "</button>" +
+        '<div class="flex items-start gap-2"><button type="button" class="' + TOGGLE_CLASS + '">' + TOGGLE_INNER + '</button><div class="job-card-actions shrink-0"></div></div>' +
         '<details class="job-card-more mt-2 text-sm text-zinc-300"><summary class="cursor-pointer text-zinc-500">More</summary><div class="job-card-meta mt-2 grid gap-1"></div></details>';
       const toggles = [tr.querySelector(".job-toggle"), card.querySelector(".job-toggle")];
       toggles.forEach((b) => b.addEventListener("click", () => toggleJob(id)));
+      const cells = [...tr.children];
+      const cardActions = card.querySelector(".job-card-actions");
+      cells[ACTIONS_CELL].addEventListener("click", (e) => onActionClick(e, id));
+      cardActions.addEventListener("click", (e) => onActionClick(e, id));
       return {
         tr,
-        cells: [...tr.children],
+        cells,
         card,
         toggles,
         cardLabel: card.querySelector(".job-toggle-label"),
         cardMeta: card.querySelector(".job-card-meta"),
+        cardActions,
       };
     }
 
     function updateJobEls(els, j) {
       const stageLabel = dashFmt.dashboardStageLabel(j);
       const pr = j.prUrl ? '<a class="text-sky-400" href="' + j.prUrl + '" target="_blank" rel="noopener">PR</a>' : "—";
+      const archivedBadge = j.archivedAt
+        ? ' <span class="job-archived-badge ml-1 rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400">Archived</span>'
+        : "";
       const values = [
-        fmtAgent(j),
+        fmtAgent(j) + archivedBadge,
         fmtRepo(j),
         stageLabel,
         j.reviewRound + "/" + j.maxRounds,
@@ -460,9 +518,13 @@ export function runnerUiHtml(
         j.model || "—",
         fmtTokens(j.tokenUsage),
         fmtUpdated(j.updatedAt),
+        fmtActions(j),
       ];
       setHtml(els.cells[0].querySelector(".job-toggle-label"), values[0]);
       for (let i = 1; i < values.length; i++) setHtml(els.cells[i], values[i]);
+      setHtml(els.cardActions, values[ACTIONS_CELL]);
+      els.tr.classList.toggle("opacity-60", Boolean(j.archivedAt));
+      els.card.classList.toggle("opacity-60", Boolean(j.archivedAt));
       els.cells[7].dataset.label = dashFmt.isDocsJobRecord(j) ? "Doc checks" : "Status";
       setHtml(
         els.cardLabel,
@@ -511,19 +573,33 @@ export function runnerUiHtml(
     function showJobsMessage(html) {
       rowEls.clear();
       placeDetail();
-      tbodyEl.innerHTML = '<tr><td colspan="11" class="empty-state p-3 text-zinc-400">' + html + "</td></tr>";
+      tbodyEl.innerHTML = '<tr><td colspan="12" class="empty-state p-3 text-zinc-400">' + html + "</td></tr>";
       cardsEl.innerHTML = '<div role="listitem" class="empty-state rounded-xl border border-zinc-800 p-3 text-sm text-zinc-400">' + html + "</div>";
     }
 
+    /** A removed row (e.g. its Remove button was focused) must not drop focus to <body>. */
     function renderJobTable(jobs) {
+      const active = document.activeElement;
+      renderJobList(jobs);
+      const now = document.activeElement;
+      if (active && active !== document.body && (!now || now === document.body)) {
+        showAllJobsEl.focus({ preventScroll: true });
+      }
+    }
+
+    function renderJobList(jobs) {
       const showFinished = showAllJobsEl.checked;
-      const staleHidden = showFinished ? 0 : jobs.filter((j) => dashFmt.shouldHideStaleJob(j)).length;
-      const visible = showFinished ? jobs : jobs.filter((j) => !dashFmt.shouldHideStaleJob(j));
+      const isStale = (j) => !j.archivedAt && dashFmt.shouldHideStaleJob(j);
+      const staleHidden = showFinished ? 0 : jobs.filter(isStale).length;
+      const visible = showFinished ? jobs : jobs.filter((j) => !isStale(j));
       const hintParts = [];
       if (!showFinished && lastJobsMeta.mergedHidden > 0) {
         hintParts.push("(" + lastJobsMeta.mergedHidden + " finished hidden)");
       }
       if (staleHidden > 0) hintParts.push("(" + staleHidden + " stale hidden)");
+      if (!showArchivedEl.checked && lastJobsMeta.archived > 0) {
+        hintParts.push("(" + lastJobsMeta.archived + " archived)");
+      }
       jobsHiddenHint.textContent = hintParts.join(" ");
       if (!visible.length) {
         if (selected) collapseDetail();
@@ -582,7 +658,10 @@ export function runnerUiHtml(
       if (metaRes.ok) {
         lastJobsMeta = await metaRes.json();
       }
-      const jobsPath = showAllJobsEl.checked ? "/api/jobs?includeFinished=1" : "/api/jobs";
+      const params = [];
+      if (showAllJobsEl.checked) params.push("includeFinished=1");
+      if (showArchivedEl.checked) params.push("includeArchived=1");
+      const jobsPath = "/api/jobs" + (params.length ? "?" + params.join("&") : "");
       const res = await fetch(jobsPath, { headers: authHeaders() });
       if (seq !== refreshSeq) return;
       if (res.status === 401) {
@@ -713,8 +792,112 @@ export function runnerUiHtml(
       }
     }
 
+    function jobLabelFor(id) {
+      const j = lastJobs.find((x) => x.id === id);
+      return j ? dashFmt.jobAgentDisplayLabel(j).label : id.slice(0, 8);
+    }
+
+    async function postJobAction(path, body) {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: authHeaders(body !== undefined),
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+      const data = await res.json().catch(() => ({}));
+      return { res, data };
+    }
+
+    async function archiveJobUi(id) {
+      const label = jobLabelFor(id);
+      const ok = window.confirm(
+        'Remove "' + label + '" from the dashboard? Its job record and log move to the archive (use Show archived to restore). A clean worktree is deleted; one with uncommitted changes is kept.',
+      );
+      if (!ok) return;
+      jobsStatus.textContent = "Removing…";
+      try {
+        const { res, data } = await postJobAction("/api/jobs/" + encodeURIComponent(id) + "/archive");
+        if (!res.ok) {
+          jobsStatus.textContent = "Remove failed: " + (data.error || res.status) + ".";
+          return;
+        }
+        jobsStatus.textContent = 'Removed "' + label + '".' + (data.warning ? " " + data.warning : "");
+      } catch {
+        jobsStatus.textContent = "Remove failed (network).";
+        return;
+      }
+      await refresh();
+    }
+
+    async function restoreJobUi(id) {
+      const label = jobLabelFor(id);
+      jobsStatus.textContent = "Restoring…";
+      try {
+        const { res, data } = await postJobAction("/api/jobs/" + encodeURIComponent(id) + "/restore");
+        if (!res.ok) {
+          jobsStatus.textContent = "Restore failed: " + (data.error || res.status) + ".";
+          return;
+        }
+        jobsStatus.textContent = 'Restored "' + label + '".';
+      } catch {
+        jobsStatus.textContent = "Restore failed (network).";
+        return;
+      }
+      await refresh();
+    }
+
+    async function clearFailedUi() {
+      const includeStuckStopped = clearIncludeStuckEl.checked;
+      const stages = includeStuckStopped ? ["failed", "stuck", "stopped"] : ["failed"];
+      const count = lastJobs.filter((j) => !j.archivedAt && stages.includes(j.stage)).length;
+      const what = includeStuckStopped ? "failed, stuck, or stopped" : "failed";
+      if (!count) {
+        jobsStatus.textContent = "No " + what + " agents to clear.";
+        return;
+      }
+      const ok = window.confirm(
+        "Remove " + count + " " + what + " agent(s) from the dashboard? They move to the archive. Clean worktrees are deleted; ones with uncommitted changes are kept.",
+      );
+      if (!ok) return;
+      jobsStatus.textContent = "Clearing…";
+      try {
+        const { res, data } = await postJobAction("/api/jobs/clear-failed", { includeStuckStopped });
+        if (!res.ok) {
+          jobsStatus.textContent = "Clear failed: " + (data.error || res.status) + ".";
+          return;
+        }
+        const parts = ["Removed " + (data.archived || []).length + " agent(s)."];
+        for (const w of data.warnings || []) parts.push(w.warning);
+        if ((data.skipped || []).length) parts.push(data.skipped.length + " skipped (still running).");
+        jobsStatus.textContent = parts.join(" ");
+      } catch {
+        jobsStatus.textContent = "Clear failed (network).";
+        return;
+      }
+      await refresh();
+    }
+
+    let listEs = null;
+    /** Other dashboards archive/restore/start jobs; refresh the list when the server says so. */
+    function connectListEvents() {
+      if (listEs) listEs.close();
+      listEs = null;
+      const t = tokenEl.value || localStorage.getItem(tokenKey);
+      if (!t || typeof EventSource !== "function") return;
+      const stream = new EventSource("/api/events?token=" + encodeURIComponent(t));
+      listEs = stream;
+      stream.onmessage = () => {
+        if (listEs === stream) void refresh();
+      };
+    }
+
     steerBtn.onclick = () => void steerJob();
     stopBtn.onclick = () => void stopJob();
+    archiveBtn.onclick = () => {
+      if (!selected) return;
+      if (archiveBtn.dataset.action === "restore") void restoreJobUi(selected);
+      else void archiveJobUi(selected);
+    };
+    clearFailedBtn.onclick = () => void clearFailedUi();
     steerEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
@@ -780,6 +963,7 @@ export function runnerUiHtml(
 
     updateSteerUi();
     refresh();
+    connectListEvents();
     void loadNotifySettingsUi();
     setInterval(refresh, 8000);
     setInterval(() => { if (lastJobs.length) renderJobTable(lastJobs); }, 30000);
