@@ -258,6 +258,32 @@ test("groupThreadsByRound splits on Review requested roots", () => {
   );
 });
 
+test("groupThreadsByRound ignores verdict-only roots in open counts", () => {
+  const mk = (
+    id: string,
+    body: string,
+    role: "human" | "agent" | "reviewer",
+    status: "open" | "addressed" | "resolved" = "open",
+  ) => ({
+    id,
+    body,
+    role,
+    status,
+    author: role,
+    createdAt: "2026-09-22T00:00:00.000Z",
+  });
+  const rounds = groupThreadsByRound(
+    commentThreads([
+      mk("c-rr1", "Review requested.", "agent", "resolved"),
+      mk("c-f1", "Missing tests.", "reviewer", "open"),
+      mk("c-v1", "VERDICT: CLEAN", "reviewer", "resolved"),
+      mk("c-v2", "Review cleared. Steward will run the export gate.", "reviewer", "resolved"),
+    ]),
+  );
+  assert.equal(rounds[0]!.openCount, 1);
+  assert.equal(rounds[0]!.resolvedCount, 0);
+});
+
 test("groupThreadsByRound keeps pre-review comments in round 1", () => {
   const mk = (
     id: string,

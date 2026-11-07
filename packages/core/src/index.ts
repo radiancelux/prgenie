@@ -130,6 +130,8 @@ export {
   hasCommitsAheadOfBase,
   isArchivedPr,
   isFindingComment,
+  isActionableFindingComment,
+  isVerdictOnlyBody,
   isReviewRequestBody,
   listCorruptLocalPrFiles,
   listLocalPrs,

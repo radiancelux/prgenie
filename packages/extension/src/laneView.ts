@@ -11,6 +11,7 @@ import {
   clearArchivedLocalPrs,
   commentThreads,
   groupThreadsByRound,
+  normalizeComment,
   completeLocalPrReview,
   consoleDir,
   createLocalPr,
@@ -83,10 +84,10 @@ import {
 import {
   STATUS_PANEL_TITLE,
   decideStatusPanelPaint,
-  exportBusyHelper,
   statusPanelGuidanceForLoop,
   statusPanelIdleBody,
 } from "./statusPanel.js";
+import { RENDER_CI_CARD_BODY, formatExportGateBusyReason } from "./ciProgressView.js";
 
 type Surface = "lane" | "panel";
 
@@ -126,6 +127,7 @@ type ClientMessage =
       logPath?: string;
       elapsedMs?: number;
       reason?: string;
+      command?: string;
     }
   | { type: "toggleArchive" }
   | { type: "clearArchived" }
@@ -168,6 +170,8 @@ type LiveProgress = {
   checks?: LiveCheck[];
   selectionReason?: string;
   cwd?: string;
+  /** Wall clock for export/gate CI — drives overall elapsed in the CI card. */
+  startedAtMs?: number;
 };
 
 type Snapshot = {
@@ -242,6 +246,7 @@ export class LaneHub implements vscode.Disposable {
     onStart: (id) => {
       if (this.exportBusy) return;
       this.ciSnap = emptyCiProgressSnapshot();
+      this.progressRunStartedAt = undefined;
       this.setLiveProgress({
         id,
         kind: "gate",
@@ -279,6 +284,7 @@ export class LaneHub implements vscode.Disposable {
   });
   private exportReadyPromptInFlight = false;
   private liveProgress: LiveProgress | null = null;
+  private progressRunStartedAt: number | undefined;
   private ciSnap = emptyCiProgressSnapshot();
   private exportBusy = false;
   /** Loop id currently exporting — keeps selection/visual primary stable (). */
@@ -443,6 +449,9 @@ export class LaneHub implements vscode.Disposable {
 
   private emitProgress(kind: "gate" | "export", id: string, event: ProgressEvent): void {
     this.ciSnap = applyCiProgressEvent(this.ciSnap, event);
+    if (event.phase === "ci" && this.progressRunStartedAt == null) {
+      this.progressRunStartedAt = Date.now();
+    }
     this.setLiveProgress({
       id,
       kind,
@@ -459,6 +468,7 @@ export class LaneHub implements vscode.Disposable {
       checks: this.ciSnap.checks,
       selectionReason: this.ciSnap.selectionReason,
       cwd: this.ciSnap.cwd,
+      startedAtMs: this.progressRunStartedAt,
     });
   }
 
@@ -469,6 +479,7 @@ export class LaneHub implements vscode.Disposable {
 
   private clearLiveProgress(): void {
     this.liveProgress = null;
+    this.progressRunStartedAt = undefined;
     this.postLiveProgress();
   }
 
@@ -507,6 +518,7 @@ export class LaneHub implements vscode.Disposable {
       const ac = new AbortController();
       this.exportAbort = ac;
       this.ciSnap = emptyCiProgressSnapshot();
+      this.progressRunStartedAt = undefined;
       // : distinguish re-running gate CI vs reusing a green gate vs push/create PR.
       const reuseGreenGate = Boolean(
         pr &&
@@ -764,6 +776,7 @@ export class LaneHub implements vscode.Disposable {
           logPath: msg.logPath ?? "",
           elapsedMs: msg.elapsedMs,
           reason: msg.reason ?? "",
+          command: msg.command ?? "",
         });
       }
       return;
@@ -1187,7 +1200,11 @@ export class LaneHub implements vscode.Disposable {
           selectedId: this.selectedId ?? null,
           files,
           threads: selected ? commentThreads(selected.comments) : [],
-          rounds: selected ? groupThreadsByRound(commentThreads(selected.comments)) : [],
+          rounds: selected
+            ? groupThreadsByRound(
+                commentThreads((selected.comments ?? []).map((c) => normalizeComment(c))),
+              )
+            : [],
           repo: path.basename(root),
           freshIds,
           watching: true,
@@ -1325,6 +1342,10 @@ function sharedCss(): string {
       font-size: 11px;
     }
     .ci-card-why { color: var(--vscode-descriptionForeground); margin-bottom: 6px; }
+    .ci-card-summary { font-weight: 600; margin-bottom: 4px; }
+    .ci-card-slot { margin-bottom: 6px; font-size: 10px; white-space: pre-wrap; overflow-wrap: break-word; }
+    .ci-check.waiting .name { color: var(--vscode-editorWarning-foreground, #e2b203); }
+    .ci-check.running .name, .ci-check.start .name { color: var(--vscode-editorWarning-foreground, #e2b203); }
     .ci-checks { list-style: none; margin: 0; padding: 0; }
     .ci-check {
       display: flex; gap: 8px; align-items: baseline;
@@ -1436,6 +1457,7 @@ function ciUiScript(): string {
         title.textContent = name + " — " + state;
         const parts = [];
         if (detail.reason) parts.push("Why selected: " + detail.reason);
+        if (detail.command) parts.push("Command: " + detail.command);
         if (detail.elapsedMs != null) parts.push("Elapsed: " + formatElapsed(detail.elapsedMs));
         if (detail.excerpt) parts.push("Excerpt:\\n" + detail.excerpt);
         if (detail.log) parts.push("Log:\\n" + detail.log);
@@ -1466,61 +1488,7 @@ function ciUiScript(): string {
       });
       return { open, close };
     }
-    function renderCiCard(host, progress, plan, stored, storedCwd) {
-      if (!host) return;
-      const planReason = plan && plan.reason
-        ? (Array.isArray(plan.reason) ? plan.reason.join("; ") : plan.reason)
-        : "";
-      const reason = (progress && progress.selectionReason) || planReason || "";
-      const cwdLine = (progress && progress.cwd) || storedCwd || "";
-      const live = (progress && progress.checks) || [];
-      const names = (live.length ? live.map((c) => c.name) : null)
-        || (plan && plan.checks)
-        || (stored && stored.map((c) => c.name))
-        || [];
-      if (!names.length && !reason && !cwdLine && !(progress && (progress.state === "start" || progress.phase === "ci"))) {
-        host.hidden = true;
-        host.innerHTML = "";
-        return;
-      }
-      host.hidden = false;
-      const rows = names.length ? names : ["(waiting)"];
-      const byName = {};
-      for (const row of live) byName[row.name] = row;
-      for (const row of stored || []) {
-        if (!byName[row.name]) byName[row.name] = {
-          name: row.name,
-          state: row.skipped ? "skip" : (row.passed ? "pass" : "fail"),
-          elapsedMs: row.elapsedMs,
-          message: row.excerpt,
-          logPath: row.logPath,
-          reason: row.reason,
-        };
-      }
-      let html = '<div class="ci-card-why">' + escapeHtml(reason || "CI checks") + "</div>";
-      if (cwdLine) {
-        html += '<div class="ci-card-cwd muted">Cwd: ' + escapeHtml(cwdLine) + "</div>";
-      }
-      html += "<ul class='ci-checks'>";      for (const name of rows) {
-        const row = byName[name] || { name, state: progress && !progress.cancelled ? "queued" : "unknown" };
-        const st = row.state || "queued";
-        const elapsed = row.elapsedMs != null ? " · " + formatElapsed(row.elapsedMs) : "";
-        html += '<li><button type="button" class="ci-check ' + escapeHtml(st) + '" data-check="' + escapeHtml(name) + '" data-state="' + escapeHtml(st) + '" data-excerpt="' + escapeHtml(row.message || "") + '" data-log="' + escapeHtml(row.logPath || "") + '" data-elapsed="' + (row.elapsedMs != null ? row.elapsedMs : "") + '" data-reason="' + escapeHtml(row.reason || reason || "") + '"><span class="st">' + escapeHtml(st) + '</span><span class="name">' + escapeHtml(name) + "</span><span class='muted'>" + elapsed + "</span></button></li>";
-      }
-      html += "</ul>";
-      host.innerHTML = html;
-      for (const btn of host.querySelectorAll(".ci-check[data-check]")) {
-        btn.onclick = () => vscode.postMessage({
-          type: "openCiDetail",
-          check: btn.getAttribute("data-check"),
-          state: btn.getAttribute("data-state"),
-          excerpt: btn.getAttribute("data-excerpt"),
-          logPath: btn.getAttribute("data-log") || undefined,
-          elapsedMs: btn.getAttribute("data-elapsed") ? Number(btn.getAttribute("data-elapsed")) : undefined,
-          reason: btn.getAttribute("data-reason") || undefined,
-        });
-      }
-    }
+    ${RENDER_CI_CARD_BODY}
   `;
 }
 
@@ -2279,10 +2247,16 @@ function panelHtml(webview: vscode.Webview): string {
       margin: 0; padding: 8px 10px; color: var(--vscode-descriptionForeground); flex: none;
     }
     .summary {
-      flex: none; max-height: 30%; overflow: auto;
+      flex: none;
       border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, transparent));
     }
     .summary .pad { padding: 0 10px 8px; }
+    #sum {
+      min-height: 72px;
+      max-height: 40vh;
+      overflow-y: auto;
+      resize: vertical;
+    }
     .file {
       display: flex; gap: 8px; padding: 4px 10px; cursor: pointer; font-size: 12px;
       min-width: 0;
@@ -2354,9 +2328,12 @@ function panelHtml(webview: vscode.Webview): string {
     }
     .hint { font-size: 11px; margin: 0 0 8px; }
     textarea {
-      width: 100%; box-sizing: border-box; min-height: 64px; resize: vertical;
+      width: 100%; box-sizing: border-box; min-height: 64px;
       background: var(--vscode-input-background); color: var(--vscode-input-foreground);
       border: 1px solid var(--vscode-input-border, transparent); padding: 6px;
+    }
+    .thread .who .thread-actions {
+      display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-left: auto;
     }
     .composer { padding: 8px 10px; flex: none; }
     .empty { padding: 16px 12px; }
@@ -2371,11 +2348,15 @@ function panelHtml(webview: vscode.Webview): string {
     bindCiModal();
     const COMPOSER_HINT = ${JSON.stringify(HUMAN_EXPORT_COMPOSER_HINT)};
     const EXPORT_PRIMARY = ${JSON.stringify(HUMAN_EXPORT_PRIMARY_ACTION)};
-    // Injected from statusPanel.exportBusyHelper (single source of truth — ).
-    const EXPORT_BUSY_TEMPLATE = ${JSON.stringify(exportBusyHelper("{{STEP}}"))};
-    function exportBusyHintFor(step) {
-      const label = (step && String(step).trim()) || "export in progress";
-      return EXPORT_BUSY_TEMPLATE.split("{{STEP}}").join(label);
+    const formatExportGateBusyReason = ${formatExportGateBusyReason.toString()};
+    function exportBusyHintFor(step, progress, plan, stored) {
+      return formatExportGateBusyReason({
+        step: step,
+        progress: progress,
+        plan: plan,
+        stored: stored,
+        nowMs: Date.now(),
+      });
     }
     let layoutId = null;
     let serverSum = "";
@@ -2384,6 +2365,7 @@ function panelHtml(webview: vscode.Webview): string {
     let liveProgress = null;
     let lastSelected = null;
     let lastMsg = null;
+    let lastRoundSignature = "";
     function esc(s) {
       return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
     }
@@ -2528,14 +2510,17 @@ function panelHtml(webview: vscode.Webview): string {
       const action = archivedView
         ? ""
         : st === "open" && (c.role === "human" || c.role === "reviewer")
-          ? '<button type="button" class="address success" data-cid="' + esc(c.id) + '" title="Mark addressed">Addressed</button>'
+          ? '<button type="button" class="address success" data-cid="' + esc(c.id) + '" title="Implementor: mark work addressed">Mark addressed</button>'
           : st === "addressed"
-            ? '<button type="button" class="resolve resolve-btn" data-cid="' + esc(c.id) + '" title="Resolve finding">Resolve</button>'
+            ? '<button type="button" class="resolve resolve-btn" data-cid="' + esc(c.id) + '" title="Reviewer: resolve finding">Resolve</button>'
             : "";
+      const actions = (manage || action)
+        ? '<span class="thread-actions">' + manage + action + "</span>"
+        : "";
       const replies = (t.replies || []).map((r) =>
         '<div class="reply"><div class="who muted"><span class="role">' + esc(roleLabel(r.role)) + "</span>" + esc(r.author || "agent") + " · " + esc(new Date(r.createdAt).toLocaleString()) + '</div><div class="body">' + esc(r.body) + "</div></div>"
       ).join("");
-      return '<div class="thread ' + esc(st) + '"><div class="who muted"><span class="role">' + esc(roleLabel(c.role)) + '</span><span class="role ' + esc(st) + '">' + esc(st === "open" ? "open — needs action" : st) + "</span>" + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + loc + manage + action + '</div><div class="body">' + esc(c.body) + "</div>" + (replies ? '<div class="replies">' + replies + "</div>" : "") + "</div>";
+      return '<div class="thread ' + esc(st) + '"><div class="who muted"><span class="role">' + esc(roleLabel(c.role)) + '</span><span class="role ' + esc(st) + '">' + esc(st === "open" ? "open — needs action" : st) + "</span>" + esc(c.author || "reviewer") + " · " + esc(new Date(c.createdAt).toLocaleString()) + loc + actions + '</div><div class="body">' + esc(c.body) + "</div>" + (replies ? '<div class="replies">' + replies + "</div>" : "") + "</div>";
     }
     function setTextarea(el, next) {
       if (!el || document.activeElement === el || el.value === next) return;
@@ -2594,7 +2579,7 @@ function panelHtml(webview: vscode.Webview): string {
         }
         if (progress && !progress.cancelled) {
           ship.disabled = true;
-          const helper = exportBusyHintFor(progress.step);
+          const helper = exportBusyHintFor(progress.step, progress, msg.ciPlan, msg.ciChecks);
           ship.title = helper;
           if (busyHint) {
             busyHint.hidden = false;
@@ -2757,6 +2742,24 @@ function panelHtml(webview: vscode.Webview): string {
       const reuse = layoutId === selected.id && root.querySelector("#sum") && root.querySelector("#cmt") && root.querySelector("#clist") && root.querySelector("#flist");
       const files = msg.files || [];
       const rounds = msg.rounds || [];
+      const roundSignature = selected.id + ":" + rounds.map(function (r) {
+        return r.round + "/" + r.openCount + "/" + r.resolvedCount;
+      }).join("|");
+      if (roundSignature !== lastRoundSignature) {
+        const state = vscode.getState() || {};
+        const all = Object.assign({}, state.roundCollapsed || {});
+        const prev = all[selected.id];
+        if (prev && rounds.length) {
+          const next = {};
+          for (const r of rounds) {
+            const key = String(r.round);
+            if (Object.prototype.hasOwnProperty.call(prev, key)) next[key] = prev[key];
+          }
+          all[selected.id] = next;
+          vscode.setState(Object.assign({}, state, { roundCollapsed: all }));
+        }
+        lastRoundSignature = roundSignature;
+      }
       const where = selected.worktreePath ? "worktree" : "head";
       const fileHtml = files.map((f) => {
         const st = stLabel(f.status);
@@ -2777,6 +2780,7 @@ function panelHtml(webview: vscode.Webview): string {
           }).join("")
         : '<p class="muted empty">No comments yet</p>';
       if (!reuse) {
+        if (layoutId !== selected.id) lastRoundSignature = "";
         paintedFiles = "";
         paintedComments = "";
         root.innerHTML = [

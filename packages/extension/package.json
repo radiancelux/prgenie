@@ -86,7 +86,12 @@
       },
       {
         "command": "prgenie.openLane",
-        "title": "PR Genie: Open Local PRs"
+        "title": "PR Genie: Show Local PRs"
+      },
+      {
+        "command": "prgenie.openPanel",
+        "title": "PR Genie: Show Panel",
+        "category": "PR Genie"
       },
       {
         "command": "prgenie.switchLoop",
