@@ -1,7 +1,7 @@
 import type { RunnerConfig } from "./config.js";
 import type { JobInput, JobRecord } from "./types.js";
 import { BUILTIN_FIX_MODEL } from "./runner-policy.js";
-import { resolveDefaultModel, type RunnerSettings, type StageModelDefaults } from "./settings.js";
+import type { RunnerSettings, StageModelDefaults } from "./settings.js";
 import { ValidationError } from "./validation-error.js";
 
 export type ResolvedStageModels = {
@@ -33,18 +33,23 @@ export function normalizeStageModels(
   };
 }
 
-function resolveOne(
-  explicit: string | undefined,
-  inherited: string,
-  source: ModelSource,
-): { value: string; source: ModelSource } {
-  const v = explicit?.trim();
-  if (v) return { value: v, source: "job" };
-  return { value: inherited, source };
+type ModelCandidate = readonly [value: string | null | undefined, source: ModelSource];
+
+type ResolvedModel = { value: string; source: ModelSource };
+
+function firstModel(candidates: ModelCandidate[], fallback: ResolvedModel): ResolvedModel {
+  for (const [value, source] of candidates) {
+    const v = value?.trim();
+    if (v) return { value: v, source };
+  }
+  return fallback;
 }
 
 /**
- * Resolve per-stage models at job creation. Legacy single `model` applies to all stages when set.
+ * Resolve per-stage models at job creation. Each stage takes the first value set, in order:
+ * request `stageModels[stage]`, request `model` (legacy, every stage), settings
+ * `stageModels[stage]`, the stage default (build: settings `defaultModel`; review: the settings
+ * build model; fix: `auto` on drivers that support it, else the build model), then the env model.
  */
 export function resolveStageModelsForJob(
   config: RunnerConfig,
@@ -52,50 +57,54 @@ export function resolveStageModelsForJob(
   input: JobInput,
   driverId: string,
 ): ResolvedStageModelsWithSources {
-  const envBuild = resolveDefaultModel(config, settings);
+  const supportsAuto = driverSupportsAuto(driverId);
+  const requested = input.stageModels;
+  const requestAll = input.model;
   const defaults = settings.stageModels;
-  const settingsBuild = defaults.build?.trim() || settings.defaultModel?.trim() || envBuild;
-  const settingsReview = defaults.review?.trim() || settingsBuild;
-  const configuredFix = defaults.fix?.trim() || BUILTIN_FIX_MODEL;
-  const settingsFix =
-    configuredFix === "auto" && !driverSupportsAuto(driverId) ? settingsBuild : configuredFix;
+  const env: ResolvedModel = { value: config.defaultModel, source: "env" };
 
-  if (input.model?.trim()) {
-    const m = input.model.trim();
-    return {
-      build: m,
-      review: m,
-      fix: m,
-      sources: { build: "job", review: "job", fix: "job" },
-    };
-  }
+  const settingsBuild: ModelCandidate[] = [
+    [defaults.build, "settings"],
+    [settings.defaultModel, "settings"],
+  ];
+  const build = firstModel([[requested?.build, "job"], [requestAll, "job"], ...settingsBuild], env);
+  const review = firstModel(
+    [
+      [requested?.review, "job"],
+      [requestAll, "job"],
+      [defaults.review, "settings"],
+      ...settingsBuild,
+    ],
+    env,
+  );
+  const settingsFix = defaults.fix?.trim();
+  const fix = firstModel(
+    [
+      [requested?.fix, "job"],
+      [requestAll, "job"],
+      [settingsFix === "auto" && !supportsAuto ? null : settingsFix, "settings"],
+      [supportsAuto ? BUILTIN_FIX_MODEL : null, "builtin"],
+    ],
+    build,
+  );
 
-  const explicit = input.stageModels;
-  const buildR = resolveOne(explicit?.build, settingsBuild, "settings");
-  const reviewR = resolveOne(explicit?.review, settingsReview, "settings");
-  const fixR = resolveOne(explicit?.fix, settingsFix, "settings");
-
-  for (const pair of [
-    ["fix", fixR.value],
-    ["build", buildR.value],
-    ["review", reviewR.value],
+  for (const [stage, model] of [
+    ["fix", fix.value],
+    ["build", build.value],
+    ["review", review.value],
   ] as const) {
-    if (pair[1] === "auto" && !driverSupportsAuto(driverId)) {
+    if (model === "auto" && !supportsAuto) {
       throw new ValidationError(
-        `driver ${driverId} does not support model "auto" for ${pair[0]} stage`,
+        `driver ${driverId} does not support model "auto" for ${stage} stage`,
       );
     }
   }
 
   return {
-    build: buildR.value,
-    review: reviewR.value,
-    fix: fixR.value,
-    sources: {
-      build: buildR.source === "job" ? "job" : settings.defaultModel ? "settings" : "env",
-      review: reviewR.source === "job" ? "job" : "settings",
-      fix: fixR.source === "job" ? "job" : "settings",
-    },
+    build: build.value,
+    review: review.value,
+    fix: fix.value,
+    sources: { build: build.source, review: review.source, fix: fix.source },
   };
 }
 

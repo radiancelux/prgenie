@@ -17,7 +17,20 @@ export const RUNNER_MCP_TOOLS = [
         reviewPromptFile: { type: "string" },
         fixPromptFile: { type: "string" },
         maxRounds: { type: "number" },
-        model: { type: "string" },
+        model: {
+          type: "string",
+          description: "Model for every stage (legacy); a stageModels entry wins for its stage",
+        },
+        stageModels: {
+          type: "object",
+          description:
+            "Per-stage models; each wins over model, Setup defaults and PRGENIE_RUNNER_MODEL. Fix defaults to auto on cursor-agent.",
+          properties: {
+            build: { type: "string" },
+            review: { type: "string" },
+            fix: { type: "string" },
+          },
+        },
         driver: {
           type: "string",
           description: "Agent driver id (cursor-agent, claude-code, local-model)",
@@ -26,6 +39,12 @@ export const RUNNER_MCP_TOOLS = [
         ticketUrl: {
           type: "string",
           description: "Linear issue URL (optional; inferred from branch RAD-n when omitted)",
+        },
+        ticketUrls: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Tickets the job covers (http(s) URLs, at most 10); ticketUrl, when set, stays primary",
         },
         linearIssue: {
           type: "string",

@@ -984,3 +984,150 @@ describe("runnerUiHtml job removal (archive)", () => {
     });
   });
 });
+
+const ISSUES = "https://github.com/example-org/example-app/issues";
+
+/** Zero, one, and several tickets on otherwise identical jobs. */
+function ticketJobs(): FixtureJob[] {
+  const [base] = fixtureJobs();
+  const job = (id: string, fields: Record<string, unknown>) =>
+    ({ ...base, id, linearIssue: null, ...fields }) as unknown as FixtureJob;
+  return [
+    job("job-none", { title: "No ticket on this agent", ticketUrl: null }),
+    job("job-one", { title: "#142 Continue existing job", ticketUrl: `${ISSUES}/142` }),
+    job("job-many", {
+      title: "#143 #144 npm package stdio MCP and setup docs",
+      ticketUrl: `${ISSUES}/143`,
+      ticketUrls: [`${ISSUES}/143`, `${ISSUES}/150`],
+    }),
+    job("job-unsafe", { title: "Unsafe ticket", ticketUrl: "javascript:alert(1)" }),
+  ];
+}
+
+describe("runnerUiHtml mobile card header tickets", () => {
+  const header = (d: Dashboard, id: string) => d.card(id).querySelector(".job-card-header")!;
+
+  it("gives the title the full width: two lines, then an ellipsis", async () => {
+    await withDashboard({ desktop: false, jobs: ticketJobs() }, async (d) => {
+      for (const id of ["job-none", "job-one", "job-many"]) {
+        const title = d.card(id).querySelector<HTMLElement>(".job-card-title")!;
+        assert.ok(title.closest(".job-toggle"), "title lives in the expand toggle");
+        for (const c of ["line-clamp-2", "wrap-anywhere"]) {
+          assert.ok(title.classList.contains(c), `${id} title has ${c}`);
+        }
+        const classes = [...title.classList].join(" ");
+        assert.doesNotMatch(classes, /\btruncate\b|max-w-/, `${id} title is not width-capped`);
+        assert.equal(title.getAttribute("title"), title.textContent, "full title on hover");
+        const toggle = d.cardToggle(id);
+        assert.ok(toggle.classList.contains("min-w-0"), "toggle may shrink beside the icons");
+      }
+      assert.equal(
+        d.card("job-many").querySelector(".job-card-title")!.textContent,
+        "#143 #144 npm package stdio MCP and setup docs",
+      );
+    });
+  });
+
+  it("renders no ticket control without a ticket (or with a non-http link)", async () => {
+    await withDashboard({ desktop: false, jobs: ticketJobs() }, async (d) => {
+      for (const id of ["job-none", "job-unsafe"]) {
+        const tickets = header(d, id).querySelector(".job-card-tickets")!;
+        assert.equal(tickets.children.length, 0, `${id} has no ticket control`);
+        assert.ok(tickets.classList.contains("empty:hidden"));
+        assert.equal(d.card(id).querySelector("a[href^='javascript']"), null);
+      }
+      assert.equal(d.row("job-unsafe").querySelector("a[href^='javascript']"), null);
+    });
+  });
+
+  it("links one ticket from a 44px icon beside the title, not in More", async () => {
+    await withDashboard({ desktop: false, jobs: ticketJobs() }, async (d) => {
+      const links = header(d, "job-one").querySelectorAll<HTMLAnchorElement>(".job-card-tickets a");
+      assert.equal(links.length, 1);
+      const link = links[0];
+      assert.equal(link.href, `${ISSUES}/142`);
+      assert.equal(link.target, "_blank");
+      assert.match(link.rel, /\bnoopener\b/);
+      assert.equal(link.getAttribute("aria-label"), "Open ticket #142");
+      assert.ok(link.classList.contains("size-11"), "44px tap target");
+      assert.equal(link.querySelector("svg")?.getAttribute("aria-hidden"), "true");
+      assert.equal(link.closest(".job-toggle"), null, "link is not nested in the toggle button");
+      assert.equal(
+        link.compareDocumentPosition(d.cardToggle("job-one")) & 2,
+        2,
+        "icon follows the title",
+      );
+      const more = d.card("job-one").querySelector(".job-card-more")!;
+      assert.equal(
+        more.querySelector("a[href*='/issues/']"),
+        null,
+        "More no longer has the ticket",
+      );
+      assert.doesNotMatch(more.textContent ?? "", /ticket/i);
+
+      link.click();
+      assertExpanded(d, null);
+    });
+  });
+
+  it("opens a keyboard-usable list for several tickets", async () => {
+    await withDashboard({ desktop: false, jobs: ticketJobs() }, async (d) => {
+      const tickets = header(d, "job-many").querySelector(".job-card-tickets")!;
+      const btn = tickets.querySelector<HTMLButtonElement>("button[data-ticket-menu]")!;
+      assert.ok(btn, "one icon button for several tickets");
+      assert.equal(btn.type, "button");
+      assert.ok(btn.classList.contains("size-11"), "44px tap target");
+      assert.equal(btn.getAttribute("aria-label"), "Show tickets #143, #150, #144");
+      assert.equal(btn.getAttribute("aria-expanded"), "false");
+      const list = d.doc.getElementById(btn.getAttribute("aria-controls")!)!;
+      assert.ok(list.hidden, "list starts closed");
+      assert.ok(list.classList.contains("inset-x-0"), "list spans the header, never off-screen");
+
+      btn.focus();
+      btn.click();
+      assert.equal(btn.getAttribute("aria-expanded"), "true");
+      assert.equal(list.hidden, false);
+      assertExpanded(d, null);
+      const links = [...list.querySelectorAll<HTMLAnchorElement>("a")];
+      assert.deepEqual(
+        links.map((a) => a.href),
+        [`${ISSUES}/143`, `${ISSUES}/150`, `${ISSUES}/144`],
+      );
+      for (const a of links) {
+        assert.equal(a.target, "_blank");
+        assert.ok(a.classList.contains("min-h-11"), "44px rows");
+        assert.match(a.textContent ?? "", /^Open ticket #\d+https:\/\//, "label plus full URL");
+      }
+
+      links[1].focus();
+      links[1].dispatchEvent(
+        new d.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+      assert.ok(list.hidden, "Escape closes the list");
+      assert.equal(d.doc.activeElement, btn, "focus returns to the icon button");
+
+      btn.click();
+      d.doc.body.dispatchEvent(new d.window.MouseEvent("click", { bubbles: true }));
+      assert.ok(list.hidden, "clicking elsewhere closes the list");
+
+      btn.click();
+      await d.refresh();
+      assert.equal(list.isConnected && !list.hidden, true, "a re-render keeps the list open");
+    });
+  });
+
+  it("lists every ticket in the table Ticket column", async () => {
+    await withDashboard({ jobs: ticketJobs() }, async (d) => {
+      const cell = (id: string) => d.row(id).querySelector('[data-label="Ticket"]')!;
+      assert.equal(cell("job-none").textContent, "—");
+      assert.deepEqual(
+        [...cell("job-many").querySelectorAll("a")].map((a) => a.textContent),
+        ["#143", "#150", "#144"],
+      );
+      assert.equal(
+        cell("job-one").querySelector("a")!.getAttribute("aria-label"),
+        "Open ticket #142",
+      );
+    });
+  });
+});

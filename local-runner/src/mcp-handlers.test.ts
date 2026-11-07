@@ -14,6 +14,16 @@ describe("start_job MCP schema", () => {
     assert.ok(props.docsTemplate);
     assert.ok(props.title);
   });
+
+  it("advertises per-stage models so MCP clients can send an explicit fix model", () => {
+    const tool = RUNNER_MCP_TOOLS.find((t) => t.name === "start_job");
+    const props = tool!.inputSchema.properties as Record<
+      string,
+      { type: string; properties?: Record<string, unknown> }
+    >;
+    assert.equal(props.stageModels.type, "object");
+    assert.deepEqual(Object.keys(props.stageModels.properties ?? {}), ["build", "review", "fix"]);
+  });
 });
 
 describe("start_job validation", () => {

@@ -89,17 +89,15 @@ const jobs = [
       promptFile: "",
       jobType: "docs",
       docsTemplate: "marketing",
-      title: "Synthetic docs agent below the expanded row",
-      linearIssue: "ISSUE-901",
-      ticketUrl: "https://example.com/issue/ISSUE-901/synthetic-docs",
+      title: "Synthetic docs agent without a ticket",
     },
     repoSlug: "example-org/synthetic-docs",
     prUrl: null,
     prNumber: null,
     prIsDraft: null,
-    linearIssue: "ISSUE-901",
-    ticketUrl: "https://example.com/issue/ISSUE-901/synthetic-docs",
-    title: "Synthetic docs agent below the expanded row",
+    linearIssue: null,
+    ticketUrl: null,
+    title: "Synthetic docs agent without a ticket",
     ciStatus: {
       status: "success",
       summary: "ok",
@@ -116,16 +114,21 @@ const jobs = [
       branch: "feat/synthetic-failed",
       promptFile: "/tmp/p.md",
       jobType: "code",
-      title: "Synthetic failed agent with Remove",
-      linearIssue: "ISSUE-902",
+      title: "#902 #904 Synthetic failed agent with Remove and several tickets",
+      ticketUrl: "https://github.com/example-org/synthetic-app/issues/902",
+      ticketUrls: ["https://github.com/example-org/synthetic-app/issues/903"],
     },
     repoSlug: "example-org/synthetic-app",
     prUrl: null,
     prNumber: null,
     prIsDraft: null,
-    linearIssue: "ISSUE-902",
-    ticketUrl: null,
-    title: "Synthetic failed agent with Remove",
+    linearIssue: null,
+    ticketUrl: "https://github.com/example-org/synthetic-app/issues/902",
+    ticketUrls: [
+      "https://github.com/example-org/synthetic-app/issues/902",
+      "https://github.com/example-org/synthetic-app/issues/903",
+    ],
+    title: "#902 #904 Synthetic failed agent with Remove and several tickets",
     ciStatus: null,
     error: "synthetic failure",
   }),
@@ -182,6 +185,8 @@ async function renderSnapshot(desktop) {
   const container = desktop ? "#jobs" : "#jobCards";
   doc.querySelector(`${container} [data-id="${jobs[0].id}"] .job-toggle`)?.click();
   await setTimeout(200);
+  if (!desktop)
+    doc.querySelector(`#jobCards [data-id="${jobs[2].id}"] [data-ticket-menu]`)?.click();
   for (const s of doc.querySelectorAll("script")) s.remove();
   const out = dom.serialize();
   dom.window.close();
@@ -199,6 +204,7 @@ writeFileSync(mobileSnapPath, mobileSnapshot);
 const shots = [
   { width: 360, file: mobileSnapPath },
   { width: 390, file: mobileSnapPath },
+  { width: 460, file: mobileSnapPath },
   { width: 768, file: mobileSnapPath },
   { width: 1024, file: snapPath },
   { width: 1280, file: snapPath },
