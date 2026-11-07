@@ -87,7 +87,7 @@ import {
   statusPanelGuidanceForLoop,
   statusPanelIdleBody,
 } from "./statusPanel.js";
-import { RENDER_CI_CARD_BODY, formatExportGateBusyReason } from "./ciProgressView.js";
+import { RENDER_CI_CARD_BODY } from "./ciProgressView.js";
 
 type Surface = "lane" | "panel";
 
@@ -2348,7 +2348,6 @@ function panelHtml(webview: vscode.Webview): string {
     bindCiModal();
     const COMPOSER_HINT = ${JSON.stringify(HUMAN_EXPORT_COMPOSER_HINT)};
     const EXPORT_PRIMARY = ${JSON.stringify(HUMAN_EXPORT_PRIMARY_ACTION)};
-    const formatExportGateBusyReason = ${formatExportGateBusyReason.toString()};
     function exportBusyHintFor(step, progress, plan, stored) {
       return formatExportGateBusyReason({
         step: step,

@@ -356,4 +356,17 @@ export const RENDER_CI_CARD_BODY = `
       })(host.querySelectorAll(".ci-check[data-check]")[bi]);
     }
   }
+  function formatExportGateBusyReason(input) {
+    var nowMs = input.nowMs != null ? input.nowMs : Date.now();
+    var model = buildCiCardModel(input.progress, input.plan, input.stored, undefined, nowMs);
+    var step = (input.step && String(input.step).trim()) || "export in progress";
+    if (!model.show || model.rows.length === 0) {
+      return "Open on GitHub unavailable — " + step;
+    }
+    var summary = model.summaryLine || "";
+    if (summary) {
+      return "Open on GitHub unavailable — " + step + " (" + summary + ")";
+    }
+    return "Open on GitHub unavailable — " + step;
+  }
 `;

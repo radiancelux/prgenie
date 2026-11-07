@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  RENDER_CI_CARD_BODY,
   buildCiCardModel,
   formatCiProgressSummaryLine,
   formatExportGateBusyReason,
@@ -63,6 +64,15 @@ describe("ciProgressView", () => {
     const failed = model.rows.find((r) => r.name === "lint");
     assert.equal(failed?.state, "fail");
     assert.ok(failed?.logPath);
+  });
+
+  it("webview CI script defines gate busy reason via positional buildCiCardModel", () => {
+    assert.match(RENDER_CI_CARD_BODY, /function formatExportGateBusyReason/);
+    assert.doesNotMatch(RENDER_CI_CARD_BODY, /buildCiCardModel\(\{/);
+    assert.match(
+      RENDER_CI_CARD_BODY,
+      /buildCiCardModel\(input\.progress,\s*input\.plan,\s*input\.stored/,
+    );
   });
 
   it("formats export gate disabled reason from live progress", () => {
