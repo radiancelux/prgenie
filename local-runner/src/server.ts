@@ -34,7 +34,14 @@ const TERMINAL_JOB_STAGES = new Set([
   "stopped",
   "changes_remaining",
   "stuck",
+  "interrupted",
 ]);
+
+export type HttpServerHooks = {
+  onGracefulShutdown?: () => Promise<void>;
+  /** Test hook: avoid killing the process during integration tests. */
+  onProcessExit?: (code: number) => void;
+};
 
 const ARCHIVE_ERROR_STATUS = {
   invalid_id: 400,
@@ -164,7 +171,11 @@ async function readMcpMessage(
   return value as { id?: unknown; method?: string; params?: Record<string, unknown> };
 }
 
-export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): http.Server {
+export function startHttpServer(
+  config: RunnerConfig,
+  engine: RunnerEngine,
+  hooks: HttpServerHooks = {},
+): http.Server {
   const sseClients = new Map<string, Set<http.ServerResponse>>();
   const listClients = new Set<http.ServerResponse>();
 
@@ -425,6 +436,20 @@ export function startHttpServer(config: RunnerConfig, engine: RunnerEngine): htt
         if (!payload || guard.started) return;
         const reply = await handleContinueJobRequest(engine, continueMatch[1], payload);
         guard.json(reply.status, reply.body);
+        return;
+      }
+
+      if (path === "/api/runner/restart" && req.method === "POST") {
+        const preview = await engine.prepareRestart();
+        guard.json(200, preview);
+        const exit = hooks.onProcessExit ?? ((code: number) => process.exit(code));
+        setImmediate(() => {
+          void (async () => {
+            engine.ciWatcher.stop();
+            await hooks.onGracefulShutdown?.();
+            exit(0);
+          })();
+        });
         return;
       }
 

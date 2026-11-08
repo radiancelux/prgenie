@@ -21,6 +21,7 @@ export const CONTINUE_TERMINAL_STAGES = new Set([
   "stuck",
   "stopped",
   "failed",
+  "interrupted",
 ]);
 
 export type ContinueJobErrorCode =

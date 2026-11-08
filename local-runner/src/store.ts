@@ -85,6 +85,9 @@ export async function saveJob(dataDir: string, job: JobRecord): Promise<void> {
       if (await fileExists(archivedJobFile(dataDir, job.id))) return;
     } else {
       job.ciStatus = mergeCiStatus(onDisk.ciStatus, job.ciStatus);
+      if (onDisk.worker && !job.worker) {
+        job.worker = onDisk.worker;
+      }
       // Only a copy older than disk merges errors; an up-to-date writer may clear `error`.
       if (onDisk.updatedAt > (loadedAt ?? "")) {
         job.error = mergeJobErrors(onDisk.error, job.error);

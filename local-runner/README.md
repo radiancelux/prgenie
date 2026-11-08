@@ -90,7 +90,8 @@ On startup the runner prints reachable URLs (loopback plus a best-effort LAN IP 
 - `stop_job`
 - `archive_job` — `id`; removes a finished job from the dashboard (see [Removing jobs](#removing-jobs-archive)). Errors while the job is running.
 - `restore_job` — `id`; moves an archived job back. Errors if a live job already uses that id.
-- `continue_job` — `id`, optional `prompt` / `promptFile`, `extraRounds` (default 1), optional `model` (fix stage). Runs additional fix→review round(s) on a **terminal** job (`approved`, `changes_remaining`, `stuck`, `stopped`, `failed`). Refuses archived jobs (restore first) and branches held by another active job.
+- `continue_job` — `id`, optional `prompt` / `promptFile`, `extraRounds` (default 1), optional `model` (fix stage). Runs additional fix→review round(s) on a **terminal** job (`approved`, `changes_remaining`, `stuck`, `stopped`, `failed`, `interrupted`). Refuses archived jobs (restore first) and branches held by another active job.
+- `restart_runner` — adoption preview for graceful HTTP restart (pair with `prgenie restart` or `POST /api/runner/restart`).
 - `settings` — read (no args) or patch runner defaults (same shape as `PATCH /api/settings`).
 
 ### Job stages
@@ -189,4 +190,18 @@ Emails send when notify is **enabled** in the dashboard (or persisted settings),
 
 ## Persistence
 
-Jobs are JSON under `$PRGENIE_RUNNER_DATA_DIR/jobs/` (archived ones under `archived/jobs/`, see [Removing jobs](#removing-jobs-archive)). Runner settings (notify, defaults, drivers, reserved `jobTypes` / `presets` bags) live in `$PRGENIE_RUNNER_DATA_DIR/settings.json`. Restarting `serve` reloads active jobs (`building`, `reviewing`, `fixing`) and continues the loop.
+Jobs are JSON under `$PRGENIE_RUNNER_DATA_DIR/jobs/` (archived ones under `archived/jobs/`, see [Removing jobs](#removing-jobs-archive)). Runner settings (notify, defaults, drivers, reserved `jobTypes` / `presets` bags) live in `$PRGENIE_RUNNER_DATA_DIR/settings.json`.
+
+## Restart and upgrade while jobs run
+
+HTTP `serve` runs each active job in a **detached `job-worker` process** (own PID, logs on disk). Upgrading `main` no longer requires waiting for every slot to drain: rebuild, then restart the HTTP front-end; workers keep running through the relaunch.
+
+| Action | CLI | MCP | HTTP |
+| ------ | --- | --- | ---- |
+| Graceful shutdown + relaunch helper | `prgenie restart` (`--build` runs `pnpm build` first) | `restart_runner` (preview adopt/interrupt lists; pair with `prgenie restart` or your supervisor) | `POST /api/runner/restart` (responds then exits **only** the HTTP/MCP server) |
+
+**Flow:** `POST /api/runner/restart` or `prgenie restart` stops the HTTP server without killing detached workers. The next `prgenie serve` (or the relaunch that `prgenie restart` spawns) **re-adopts** live worker PIDs, keeps tailing logs, and leaves the stage machine + watchdog in the worker process. If a worker died during the gap, the job is marked **`interrupted`** (dashboard + JSON) and can be resumed with `continue_job` / `POST …/continue` — never silently dropped.
+
+**Idle restart** (no `building` / `reviewing` / `fixing` jobs) behaves as before.
+
+Env: `PRGENIE_RUNNER_ROLE=serve` (set automatically by `prgenie serve`). Stdio `mcp` still runs jobs **inline** (`PRGENIE_RUNNER_INLINE_JOBS=1` inside workers). Do not point restart helpers at a production port (default `9473`) from tests or automation without an isolated `PRGENIE_RUNNER_DATA_DIR` and port.

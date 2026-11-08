@@ -142,7 +142,7 @@ export const RUNNER_MCP_TOOLS = [
   {
     name: "continue_job",
     description:
-      "Run additional fix→review round(s) on a terminal job (approved, changes_remaining, stuck, stopped, or failed).",
+      "Run additional fix→review round(s) on a terminal job (approved, changes_remaining, stuck, stopped, failed, or interrupted).",
     inputSchema: {
       type: "object",
       properties: {
@@ -154,6 +154,12 @@ export const RUNNER_MCP_TOOLS = [
       },
       required: ["id"],
     },
+  },
+  {
+    name: "restart_runner",
+    description:
+      "Graceful runner restart: HTTP server exits so you can rebuild/relaunch; in-flight jobs keep running in detached workers and are re-adopted on the next serve.",
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "settings",
@@ -208,6 +214,7 @@ const RUNNER_TOOL_HANDLERS: Record<string, ToolHandler> = {
     return { ok: true, id: result.id, stage: result.job.stage };
   },
   continue_job: (engine, args) => engine.continueJob({ ...normalizeContinueJobArgs(args) }),
+  restart_runner: async (engine) => engine.prepareRestart(),
   settings: async (engine, args) => {
     const dataDir = engine.config.dataDir;
     const hasPatch =

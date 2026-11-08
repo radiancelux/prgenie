@@ -39,8 +39,23 @@ import {
 import { ContinueJobError, continueJobFromRaw } from "./job-continue.js";
 import { normalizeStartJobArgs, ValidationError } from "./settings-validation.js";
 import { resolveJobTarget } from "./job-target.js";
+import { markJobInterrupted } from "./job-interrupted.js";
+import {
+  persistJobWorker,
+  spawnDetachedJobWorker,
+  touchJobWorker,
+} from "./job-worker-spawn.js";
+import { waitForWorkerExit, workerLooksAlive } from "./job-worker-monitor.js";
+import { inspectRestartState } from "./runner-restart.js";
 
 const ACTIVE_STAGES = new Set(["building", "reviewing", "fixing"]);
+
+function useDetachedJobWorkers(): boolean {
+  if (process.env.PRGENIE_RUNNER_INLINE_JOBS === "1") return false;
+  if (process.env.PRGENIE_RUNNER_DETACHED_JOBS === "1") return true;
+  const role = process.env.PRGENIE_RUNNER_ROLE?.trim();
+  return role === "serve";
+}
 
 export class RunnerEngine extends EventEmitter {
   private running = new Map<string, Promise<void>>();
@@ -81,9 +96,17 @@ export class RunnerEngine extends EventEmitter {
     await clearStaleSettlingMarkers(this.config.dataDir);
     const jobs = await listJobs(this.config.dataDir);
     for (const job of jobs) {
-      if (ACTIVE_STAGES.has(job.stage) && !job.stopRequested && !job.queueState?.queued) {
-        this.schedule(job.id);
+      if (!ACTIVE_STAGES.has(job.stage) || job.stopRequested || job.queueState?.queued) continue;
+      if (workerLooksAlive(job.worker)) {
+        this.scheduleWorkerWatch(job.id, job.worker!);
+        continue;
       }
+      if (job.worker && !workerLooksAlive(job.worker)) {
+        await markJobInterrupted(this.config, job.id, "worker_exit");
+        this.emitJobsChanged();
+        continue;
+      }
+      this.schedule(job.id);
     }
     await this.drainQueue();
     if (this.watchCi) this.ciWatcher.start();
@@ -159,13 +182,64 @@ export class RunnerEngine extends EventEmitter {
 
   schedule(jobId: string): void {
     if (this.running.has(jobId)) return;
-    const p = this.runOne(jobId).finally(() => {
+    const p = (useDetachedJobWorkers() ? this.runOneDetached(jobId) : this.runOneInline(jobId)).finally(
+      () => {
+        this.running.delete(jobId);
+      },
+    );
+    this.running.set(jobId, p);
+  }
+
+  private scheduleWorkerWatch(jobId: string, worker: NonNullable<JobRecord["worker"]>): void {
+    if (this.running.has(jobId)) return;
+    const p = this.watchDetachedWorker(jobId, worker).finally(() => {
       this.running.delete(jobId);
+      void this.drainQueue();
     });
     this.running.set(jobId, p);
   }
 
-  private async runOne(jobId: string): Promise<void> {
+  private async watchDetachedWorker(
+    jobId: string,
+    worker: NonNullable<JobRecord["worker"]>,
+  ): Promise<void> {
+    const outcome = await waitForWorkerExit(worker);
+    if (outcome === "timeout") {
+      await markJobInterrupted(this.config, jobId, "adoption_failed", "worker watchdog timeout");
+      this.emitJobsChanged();
+      return;
+    }
+    const job = await loadJob(this.config.dataDir, jobId);
+    if (job && ACTIVE_STAGES.has(job.stage) && !job.stopRequested) {
+      await markJobInterrupted(this.config, jobId, "worker_exit", "stage did not settle");
+      this.emitJobsChanged();
+    }
+  }
+
+  private async runOneDetached(jobId: string): Promise<void> {
+    const loaded = await loadJob(this.config.dataDir, jobId);
+    if (!loaded) return;
+    if (workerLooksAlive(loaded.worker)) {
+      this.scheduleWorkerWatch(jobId, loaded.worker!);
+      return;
+    }
+    const { pid } = spawnDetachedJobWorker(this.config, jobId);
+    const job = await touchJobWorker(this.config, jobId, pid);
+    if (!job?.worker) return;
+    const outcome = await waitForWorkerExit(job.worker);
+    if (outcome === "timeout") {
+      await markJobInterrupted(this.config, jobId, "adoption_failed");
+      this.emitJobsChanged();
+      return;
+    }
+    const finalJob = await loadJob(this.config.dataDir, jobId);
+    if (finalJob && ACTIVE_STAGES.has(finalJob.stage) && !finalJob.stopRequested) {
+      await markJobInterrupted(this.config, jobId, "worker_exit", "stage did not settle");
+    }
+    this.emitJobsChanged();
+  }
+
+  private async runOneInline(jobId: string): Promise<void> {
     const job = await loadJob(this.config.dataDir, jobId);
     if (!job) return;
     const control = this.controlFor(job);
@@ -180,8 +254,18 @@ export class RunnerEngine extends EventEmitter {
     } finally {
       await clearJobSettling(this.config.dataDir, jobId);
       this.jobControls.delete(jobId);
+      await persistJobWorker(this.config, job, null);
       await this.drainQueue();
     }
+  }
+
+  async prepareRestart(): Promise<Awaited<ReturnType<typeof inspectRestartState>>> {
+    const preview = await inspectRestartState(this.config);
+    for (const id of preview.interruptedJobIds) {
+      await markJobInterrupted(this.config, id, "worker_exit");
+    }
+    if (preview.interruptedJobIds.length) this.emitJobsChanged();
+    return preview;
   }
 
   async list(opts?: {
@@ -305,6 +389,14 @@ export class RunnerEngine extends EventEmitter {
       return loaded;
     });
     this.jobControls.get(jobId)?.requestStop();
+    const worker = job?.worker;
+    if (workerLooksAlive(worker) && worker) {
+      try {
+        process.kill(worker.pid, "SIGTERM");
+      } catch {
+        // already exited
+      }
+    }
     if (job?.stage === "stopped") this.emitJobsChanged();
     return job;
   }

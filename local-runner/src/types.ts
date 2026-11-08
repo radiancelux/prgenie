@@ -6,7 +6,14 @@ export type JobStage =
   | "changes_remaining"
   | "stuck"
   | "failed"
-  | "stopped";
+  | "stopped"
+  | "interrupted";
+
+export type JobWorkerState = {
+  pid: number;
+  hostname: string;
+  startedAt: string;
+};
 
 export type JobProfile = "code" | "docs";
 
@@ -164,6 +171,8 @@ export interface JobRecord {
   logPath: string;
   steerQueue: string[];
   stopRequested: boolean;
+  /** Detached `job-worker` process executing this job (survives HTTP server restart). */
+  worker?: JobWorkerState;
   dryRun: boolean;
   /** Set while the job lives under `archived/` (dashboard Remove / MCP archive_job); null when live. */
   archivedAt: string | null;
