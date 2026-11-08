@@ -1227,6 +1227,7 @@ describe("runnerUiHtml new agent prompt file (#155)", () => {
         jobType: "code",
         repoPath: "/home/me/repo",
         promptFile: "/home/me/prompt.md",
+        dryRun: false,
       });
     });
   });
