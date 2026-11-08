@@ -513,7 +513,8 @@ describe("live runner restart (detached workers)", () => {
     assert.equal(res.maxRounds, 1, "a build resume spends no extra rounds");
     await waitUntil(async () => (await loadJob(dataDir, jobId))?.stage === "approved", "resume");
     const done = await loadJob(dataDir, jobId);
-    assert.ok(done?.prUrl, "build stage ran and linked a PR");
+    assert.equal(done?.stage, "approved");
+    assert.equal(done?.prUrl, null, "dry-run resume does not fabricate a GitHub PR URL");
     assert.equal(done?.continueHistory?.[0].resumedStage, "building");
     assert.equal(done?.continueHistory?.[0].prompt, "pick up where you left off");
     assert.deepEqual(done?.steerQueue, [], "the build stage consumed the resume prompt");

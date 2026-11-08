@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -106,7 +108,7 @@ const INITIALIZE = {
   },
 };
 
-function startJobCall(id: string | number, repoPath: string) {
+function startJobCall(id: string | number, repoPath: string, promptFile: string): Wire {
   return {
     jsonrpc: "2.0",
     id,
@@ -115,13 +117,24 @@ function startJobCall(id: string | number, repoPath: string) {
       name: "start_job",
       arguments: {
         branch: "chore/mcp-protocol-dry-run",
-        promptFile: "/tmp/prompt.md",
+        promptFile,
         repoPath,
         dryRun: true,
         maxRounds: 1,
       },
     },
   };
+}
+
+const execFileAsync = promisify(execFile);
+
+async function smokeGitRepo(): Promise<{ repoPath: string; promptFile: string }> {
+  const repoPath = await mkdtemp(path.join(os.tmpdir(), "lr-mcp-protocol-repo-"));
+  await execFileAsync("git", ["-C", repoPath, "init", "-b", "main"]);
+  await execFileAsync("git", ["-C", repoPath, "commit", "--allow-empty", "-m", "init"]);
+  const promptFile = path.join(repoPath, "README.md");
+  await writeFile(promptFile, "# smoke\n", "utf8");
+  return { repoPath, promptFile };
 }
 
 describe("MCP JSON-RPC envelope (handleMcpJsonRpc)", () => {
@@ -196,6 +209,7 @@ describe("MCP stdio round trip (in-process framing)", () => {
   it("initialize → tools/list → tools/call over NDJSON is spec compliant", async () => {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-mcp-rt-"));
     await ensureDataDirs(dataDir);
+    const smoke = await smokeGitRepo();
     const e = new RunnerEngine(cfg(dataDir), { watchCi: false });
     await e.init();
 
@@ -210,7 +224,7 @@ describe("MCP stdio round trip (in-process framing)", () => {
     send(INITIALIZE);
     send({ jsonrpc: "2.0", method: "notifications/initialized" });
     send({ jsonrpc: "2.0", id: "list-1", method: "tools/list" });
-    send(startJobCall(3, dataDir));
+    send(startJobCall(3, smoke.repoPath, smoke.promptFile));
     send({ jsonrpc: "2.0", id: 4, method: "ping" });
     input.write("{not json}\n");
     input.end();
@@ -290,6 +304,7 @@ describe("MCP stdio round trip (built runner.cjs subprocess)", () => {
     { skip: !existsSync(runner) && "run pnpm build first" },
     async () => {
       const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-mcp-proc-"));
+      const smoke = await smokeGitRepo();
       const child = spawn(process.execPath, [runner, "mcp"], {
         env: {
           ...process.env,
@@ -315,7 +330,9 @@ describe("MCP stdio round trip (built runner.cjs subprocess)", () => {
         assertResponse(list, "tools");
         assertToolsListResult(list);
 
-        const call = await rpc.request(startJobCall(42, dataDir));
+        const call = await rpc.request(
+          startJobCall(42, smoke.repoPath, smoke.promptFile) as { id: string | number } & Wire,
+        );
         assertResponse(call, 42);
         const jobId = assertToolCallResult(call);
 

@@ -24,6 +24,14 @@ describe("runnerUiHtml inline scripts", () => {
     assert.doesNotMatch(html, /start a new job instead/);
   });
 
+  it("exposes dry-run controls and badges in the New agent form", () => {
+    const html = runnerUiHtml(8765, ["http://127.0.0.1:8765/"]);
+    assert.match(html, /id="newJobDryRun"/);
+    assert.match(html, /job-dry-run-badge/);
+    assert.match(html, /envDryRunDefault/);
+    assert.match(html, /Simulated/);
+  });
+
   it("emits JavaScript that parses in vm.Script", () => {
     const html = runnerUiHtml(8765, ["http://127.0.0.1:8765/"]);
     const scripts = inlineScriptBodies(html);

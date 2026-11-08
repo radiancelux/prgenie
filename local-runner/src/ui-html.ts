@@ -70,6 +70,7 @@ export function runnerUiHtml(
     <label id="newJobPromptLabel" class="mt-2 block text-sm text-zinc-400">Prompt file (code jobs)
       <input id="newJobPrompt" placeholder="/path/to/prompt.md" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2" />
     </label>
+    <label class="toggle-row mt-2 flex min-h-11 items-center gap-2 text-sm text-zinc-400"><input type="checkbox" id="newJobDryRun" class="h-4 w-4" /> Dry run (no real agent or git worktree; still checks your setup)</label>
     <button type="button" id="startJobBtn" class="primary mt-3 min-h-11 w-full rounded-md border border-sky-700 bg-sky-900/50 px-4 py-2 font-medium text-sky-100 sm:w-auto">Start agent</button>
     <div id="newJobStatus" class="meta mt-1 min-h-5 text-sm text-zinc-400" role="status" aria-live="polite"></div>
   </section>
@@ -145,6 +146,20 @@ export function runnerUiHtml(
     const notifyEnabledEl = document.getElementById("notifyEnabled");
     const notifyRecipientEl = document.getElementById("notifyRecipient");
     const notifyStatus = document.getElementById("notifyStatus");
+
+    async function loadRunnerDefaultsUi() {
+      try {
+        const res = await fetch("/api/settings", { headers: authHeaders() });
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        const dry = document.getElementById("newJobDryRun");
+        if (dry && typeof data.envDryRunDefault === "boolean") {
+          dry.checked = data.envDryRunDefault;
+        }
+      } catch {
+        // dashboard still works without defaults
+      }
+    }
 
     async function loadNotifySettingsUi() {
       const res = await fetch("/api/notify-settings", { headers: authHeaders() });
@@ -274,7 +289,28 @@ export function runnerUiHtml(
       return '<span class="' + cls + '"' + tip + aria + ' data-label="' + colLabel + '">' + label + '</span>';
     }
 
+    function fmtDryRunBadge(j) {
+      if (!j || !j.dryRun) return "";
+      return '<span class="job-dry-run-badge ml-1 rounded-full border border-violet-700/60 bg-violet-950/50 px-2 py-0.5 text-xs text-violet-200">Dry run</span>';
+    }
+
+    function fmtPrCell(j) {
+      if (j.dryRun) {
+        return '<span class="text-zinc-500" title="Dry run — no GitHub PR">Simulated</span>';
+      }
+      if (!j.prUrl) return "—";
+      return '<a class="text-sky-400" href="' + j.prUrl + '" target="_blank" rel="noopener">PR</a>';
+    }
+
+    function fmtPreflightWarnings(j) {
+      const list = j && j.preflightWarnings;
+      if (!list || !list.length) return "";
+      const items = list.map((w) => "<li>" + escapeAttr(w) + "</li>").join("");
+      return '<div class="preflight-warnings mt-2 rounded-md border border-amber-900/50 bg-amber-950/30 p-2 text-xs text-amber-100"><p class="font-medium">Preflight warnings</p><ul class="mt-1 list-disc pl-4">' + items + "</ul></div>";
+    }
+
     function fmtPrDraft(j) {
+      if (j.dryRun) return "—";
       if (!j.prUrl) return "—";
       if (j.prIsDraft === true) return '<span class="' + dashFmt.PR_DRAFT_BADGE_CLASS.draft + '">Draft</span>';
       if (j.prIsDraft === false) return '<span class="' + dashFmt.PR_DRAFT_BADGE_CLASS.ready + '">Ready</span>';
@@ -495,7 +531,10 @@ export function runnerUiHtml(
       const stage = j
         ? '<span class="rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-300">' + dashFmt.dashboardStageLabel(j) + "</span>"
         : "";
-      setHtml(document.getElementById("detailStatus"), j ? stage + fmtAgentWait(j) + fmtStatus(j, j.ciStatus) : "");
+      setHtml(
+        document.getElementById("detailStatus"),
+        j ? stage + fmtDryRunBadge(j) + fmtAgentWait(j) + fmtStatus(j, j.ciStatus) + fmtPreflightWarnings(j) : "",
+      );
     }
 
     const tbodyEl = document.getElementById("jobs");
@@ -648,12 +687,12 @@ export function runnerUiHtml(
 
     function updateJobEls(els, j) {
       const stageLabel = dashFmt.dashboardStageLabel(j);
-      const pr = j.prUrl ? '<a class="text-sky-400" href="' + j.prUrl + '" target="_blank" rel="noopener">PR</a>' : "—";
+      const pr = fmtPrCell(j);
       const archivedBadge = j.archivedAt
         ? ' <span class="job-archived-badge ml-1 rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400">Archived</span>'
         : "";
       const values = [
-        fmtAgent(j) + archivedBadge,
+        fmtAgent(j) + fmtDryRunBadge(j) + archivedBadge,
         fmtRepo(j),
         stageLabel,
         j.reviewRound + "/" + j.maxRounds,
@@ -674,7 +713,7 @@ export function runnerUiHtml(
       els.cells[7].dataset.label = dashFmt.isDocsJobRecord(j) ? "Doc checks" : "Status";
       setHtml(
         els.cardLabel,
-        fmtCardTitle(j) + '<span class="meta mt-1 block text-sm text-zinc-400 wrap-anywhere">' + values[1] + " · " + stageLabel + archivedBadge + "</span>",
+        fmtCardTitle(j) + fmtDryRunBadge(j) + '<span class="meta mt-1 block text-sm text-zinc-400 wrap-anywhere">' + values[1] + " · " + stageLabel + archivedBadge + "</span>",
       );
       setHtml(els.cardTickets, fmtCardTickets(j));
       setHtml(els.cardMeta, pr + " · " + values[6] + " · " + values[7]);
@@ -1122,6 +1161,7 @@ export function runnerUiHtml(
         branch: document.getElementById("newJobBranch").value.trim(),
         jobType,
         repoPath: document.getElementById("newJobRepo").value.trim() || undefined,
+        dryRun: document.getElementById("newJobDryRun").checked,
       };
       if (jobType === "docs") {
         body.docsTemplate = document.getElementById("newJobTemplate").value;
@@ -1158,6 +1198,7 @@ export function runnerUiHtml(
     updateSteerUi();
     refresh();
     connectListEvents();
+    void loadRunnerDefaultsUi();
     void loadNotifySettingsUi();
     setInterval(refresh, 8000);
     setInterval(() => { if (lastJobs.length) renderJobTable(lastJobs); }, 30000);

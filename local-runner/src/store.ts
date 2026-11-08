@@ -131,11 +131,13 @@ export async function patchJob(
   id: string,
   mutate: (job: JobRecord) => void,
 ): Promise<JobRecord | null> {
-  const fresh = await loadJob(dataDir, id);
-  if (!fresh) return null;
-  mutate(fresh);
-  await saveJob(dataDir, fresh);
-  return fresh;
+  return withStoreLock(dataDir, async () => {
+    const fresh = await loadJob(dataDir, id);
+    if (!fresh) return null;
+    mutate(fresh);
+    await saveJob(dataDir, fresh);
+    return fresh;
+  });
 }
 
 export async function loadJob(dataDir: string, id: string): Promise<JobRecord | null> {
@@ -323,6 +325,7 @@ export async function createJob(
     dryRun: boolean;
     driverId?: string;
     config: RunnerConfig;
+    preflightWarnings?: string[];
   },
 ): Promise<JobRecord> {
   await ensureDataDirs(dataDir);
@@ -457,6 +460,9 @@ export async function createJob(
     steerQueue: [],
     stopRequested: false,
     dryRun: args.dryRun ?? defaults.dryRun,
+    ...(defaults.preflightWarnings?.length
+      ? { preflightWarnings: defaults.preflightWarnings }
+      : {}),
     archivedAt: null,
   };
   await saveJob(dataDir, job);

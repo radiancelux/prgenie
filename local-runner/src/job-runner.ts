@@ -41,6 +41,8 @@ import { modelForActiveStage, recordActualModel } from "./job-models.js";
 import { setJobError } from "./job-error.js";
 import { parseWatchdogPolicy } from "./runner-policy.js";
 import { resolvePostBuildNoPr } from "./job-pr-policy.js";
+import { diagnosePrSetupIssues, enrichNoPrGuardMessage } from "./job-preflight.js";
+import { maybeCleanupJobWorktree } from "./worktree-cleanup.js";
 
 export type JobCallbacks = {
   onEvent?: (jobId: string, event: JobEvent) => void;
@@ -300,9 +302,10 @@ async function runFixStage(
   const fixDefault = isDocsJob(job) ? resolveDocsFixPrompt() : DEFAULT_FIX_PROMPT;
   const fixPrompt = await readPromptFile(job.input.fixPromptFile ?? "", fixDefault);
   const fixSteer = control.drainSteer();
+  const prLabel = job.dryRun ? "(dry run — simulated PR)" : String(job.prUrl);
   const fixFull = fixSteer
-    ? `${fixPrompt}\n\nPR: ${job.prUrl}\n\n--- steer ---\n${fixSteer}`
-    : `${fixPrompt}\n\nPR: ${job.prUrl}`;
+    ? `${fixPrompt}\n\nPR: ${prLabel}\n\n--- steer ---\n${fixSteer}`
+    : `${fixPrompt}\n\nPR: ${prLabel}`;
 
   const fixRun = await runAgentStage(
     runner,
@@ -391,6 +394,11 @@ export async function runJobLoop(
   };
 
   try {
+    if (job.preflightWarnings?.length) {
+      for (const line of job.preflightWarnings) {
+        emit(callbacks, job, { type: "log", line: `[preflight] ${line}` });
+      }
+    }
     const settings = await loadSettings(config.dataDir);
     const baseSettings = baseRefSettingsForJob(job, settings);
     const driverEntry =
@@ -421,7 +429,9 @@ export async function runJobLoop(
       job.worktreePath = repoRoot;
       await persistJob(config, job, control);
     } else {
-      wt = await ensureWorktree(repoRoot, job.id, job.input.branch, baseSettings);
+      wt = await ensureWorktree(repoRoot, job.id, job.input.branch, baseSettings, {
+        dataDir: config.dataDir,
+      });
       job.worktreePath = wt;
       await persistJob(config, job, control);
     }
@@ -477,34 +487,35 @@ export async function runJobLoop(
         return;
       }
 
-      let pr = await findPrForBranch(wt, job.input.branch);
-      if (job.dryRun && !pr) {
-        pr = { url: "https://github.com/example/example/pull/1", number: 1 };
-      }
+      const pr = job.dryRun ? null : await findPrForBranch(wt, job.input.branch);
       if (!pr) {
-        const noPr = resolvePostBuildNoPr(job.input);
-        if (noPr.kind === "complete") {
-          job.error = null;
-          await setStage(config, job, "approved", control, callbacks);
-          await notify(
-            config,
-            job,
-            `Job finished (no PR): ${job.input.branch}`,
-            callbacks?.fetchImpl,
-          );
-          emit(callbacks, job, { type: "done", stage: "approved" });
+        if (!job.dryRun) {
+          const noPr = resolvePostBuildNoPr(job.input);
+          if (noPr.kind === "complete") {
+            job.error = null;
+            await setStage(config, job, "approved", control, callbacks);
+            await notify(
+              config,
+              job,
+              `Job finished (no PR): ${job.input.branch}`,
+              callbacks?.fetchImpl,
+            );
+            emit(callbacks, job, { type: "done", stage: "approved" });
+            return;
+          }
+          const diagnosis = await diagnosePrSetupIssues(repoRoot);
+          job.error = enrichNoPrGuardMessage(noPr.error, diagnosis);
+          await setStage(config, job, "stuck", control, callbacks);
           return;
         }
-        job.error = noPr.error;
-        await setStage(config, job, "stuck", control, callbacks);
-        return;
+      } else {
+        job.prUrl = pr.url;
+        job.prNumber = pr.number;
+        await persistJob(config, job, control);
+        emit(callbacks, job, { type: "pr", url: pr.url });
+        callbacks?.onPrLinked?.(job.id);
+        await notify(config, job, `PR opened/updated: ${job.input.branch}`, callbacks?.fetchImpl);
       }
-      job.prUrl = pr.url;
-      job.prNumber = pr.number;
-      await persistJob(config, job, control);
-      emit(callbacks, job, { type: "pr", url: pr.url });
-      callbacks?.onPrLinked?.(job.id);
-      await notify(config, job, `PR opened/updated: ${job.input.branch}`, callbacks?.fetchImpl);
     }
 
     if (!(await ensurePushedBeforeReview(config, job, wt, control, callbacks))) return;
@@ -543,9 +554,10 @@ export async function runJobLoop(
       const reviewFallback = isDocsJob(job) ? DOCS_REVIEW_PROMPT : DEFAULT_REVIEW_PROMPT;
       const reviewPrompt = await readPromptFile(job.input.reviewPromptFile ?? "", reviewFallback);
       const reviewSteer = control.drainSteer();
+      const prLabel = job.dryRun ? "(dry run — simulated PR)" : String(job.prUrl);
       const reviewFull = reviewSteer
-        ? `${reviewPrompt}\n\nPR: ${job.prUrl}\n\n--- steer ---\n${reviewSteer}`
-        : `${reviewPrompt}\n\nPR: ${job.prUrl}`;
+        ? `${reviewPrompt}\n\nPR: ${prLabel}\n\n--- steer ---\n${reviewSteer}`
+        : `${reviewPrompt}\n\nPR: ${prLabel}`;
 
       const reviewRun = await runAgentStage(
         runner,
@@ -667,6 +679,10 @@ export async function runJobLoop(
     job.error = setJobError(job.error, err instanceof Error ? err.message : String(err));
     await setStage(config, job, "failed", control, callbacks);
     await notify(config, job, `Job failed: ${job.input.branch}`, callbacks?.fetchImpl, "failed");
+  } finally {
+    if (!job.dryRun && job.worktreePath && (job.stage === "failed" || job.stage === "stopped")) {
+      await maybeCleanupJobWorktree(config, job);
+    }
   }
 }
 

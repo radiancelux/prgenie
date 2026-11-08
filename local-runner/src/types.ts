@@ -206,6 +206,8 @@ export interface JobRecord {
    */
   worker?: JobWorkerState | null;
   dryRun: boolean;
+  /** Dry-run preflight gaps (#158); real jobs block before create. */
+  preflightWarnings?: string[];
   /** Set while the job lives under `archived/` (dashboard Remove / MCP archive_job); null when live. */
   archivedAt: string | null;
   /** Extra fix→review rounds started via continue_job / POST continue. */
