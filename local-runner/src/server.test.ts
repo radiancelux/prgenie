@@ -472,6 +472,14 @@ describe("PATCH /api/settings validation", () => {
       { expectedRevision: "1" },
       "expectedRevision must be a non-negative integer",
     ],
+    [
+      "jobTypes.compute.watchdog low inactivity",
+      {
+        jobTypes: { compute: { watchdog: { inactivityMs: 1_000 } } },
+      },
+      "watchdog.inactivityMs must be between 60000 and 3600000",
+    ],
+    ["jobTypes not object", { jobTypes: "docs" }, "jobTypes must be an object"],
   ];
 
   it("returns 400 with the validation message for each invalid field", async () => {
@@ -493,6 +501,19 @@ describe("PATCH /api/settings validation", () => {
     }
   });
 
+  it("GET /setup serves runner policy form (#145)", async () => {
+    const s = await startTestServer();
+    try {
+      const res = await httpRequest(s.port, "GET", "/setup");
+      assert.equal(res.status, 200);
+      assert.match(res.body, /id="defaultMaxRounds"/);
+      assert.match(res.body, /id="computeWatchdogStageCapMs"/);
+      assert.match(res.body, /your-org\/your-docs-repo/);
+    } finally {
+      await s.close();
+    }
+  });
+
   it("round-trips a valid PATCH", async () => {
     const s = await startTestServer();
     try {
@@ -504,6 +525,11 @@ describe("PATCH /api/settings validation", () => {
           watchdog: { inactivityMs: 120_000, recoveryAttempts: 2 },
           stageModels: { review: "review-model" },
           notifyEvents: { onStuck: false },
+          jobTypes: {
+            compute: {
+              watchdog: { inactivityMs: 180_000, stageCapMs: 7_200_000, recoveryAttempts: 0 },
+            },
+          },
         }),
       });
       assert.equal(res.status, 200);
@@ -527,6 +553,10 @@ describe("PATCH /api/settings validation", () => {
       assert.equal(got.stageModels.review, "review-model");
       assert.equal(got.notifyEvents.onStuck, false);
       assert.equal(got.notifyEvents.onFailed, true);
+      const computeWd = (
+        got as { jobTypes?: { compute?: { watchdog?: { inactivityMs: number } } } }
+      ).jobTypes?.compute?.watchdog;
+      assert.equal(computeWd?.inactivityMs, 180_000);
 
       const stale = await httpRequest(s.port, "PATCH", "/api/settings", {
         token: TOKEN,
