@@ -10,12 +10,12 @@ Requires **Node.js 22+**, **git**, **GitHub CLI (`gh`)**, and **`cursor-agent`**
 
 Use **PowerShell** (or Windows Terminal). After **each** install below, open a **new** window so `PATH` refreshes.
 
-| Tool | Install | Verify |
-| ---- | ------- | ------ |
-| Node 22+ | `winget install OpenJS.NodeJS.LTS` | `node -v` |
-| Git + Git Bash | `winget install --id Git.Git` | `git --version` |
-| GitHub CLI | `winget install --id GitHub.cli` | `gh auth login` |
-| Cursor CLI | `irm 'https://cursor.com/install?win32=true' \| iex` | `cursor-agent login` |
+| Tool           | Install                                              | Verify               |
+| -------------- | ---------------------------------------------------- | -------------------- |
+| Node 22+       | `winget install OpenJS.NodeJS.LTS`                   | `node -v`            |
+| Git + Git Bash | `winget install --id Git.Git`                        | `git --version`      |
+| GitHub CLI     | `winget install --id GitHub.cli`                     | `gh auth login`      |
+| Cursor CLI     | `irm 'https://cursor.com/install?win32=true' \| iex` | `cursor-agent login` |
 
 The Cursor CLI installer requires **Git for Windows with Git Bash**. If setup still complains Git Bash is missing even after installing Git, `bash` may resolve to the WSL stub in `WindowsApps`. Prepend Git’s bin directory for that session:
 
@@ -244,15 +244,15 @@ The **npm package** (this README) is the runner. **`prgenie list` / `create` / `
 
 ## Troubleshooting
 
-| Symptom                             | What to do                                                                                                                                                                                              |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`spawn npx ENOENT` (MCP host)**   | GUI apps often lack shell PATH. Use `npm install -g prgenie`, then `"command": "prgenie", "args": ["mcp"]`, or set `command` to the absolute path from `which npx` / `where npx`. Restart the MCP host. |
-| **`gh` not authenticated**          | Run `gh auth login`; re-run `prgenie doctor`. Jobs need `gh` for PR/CI.                                                                                                                                 |
+| Symptom                             | What to do                                                                                                                                                                                                                                                                              |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`spawn npx ENOENT` (MCP host)**   | GUI apps often lack shell PATH. Use `npm install -g prgenie`, then `"command": "prgenie", "args": ["mcp"]`, or set `command` to the absolute path from `which npx` / `where npx`. Restart the MCP host.                                                                                 |
+| **`gh` not authenticated**          | Run `gh auth login`; re-run `prgenie doctor`. Jobs need `gh` for PR/CI.                                                                                                                                                                                                                 |
 | **`cursor-agent` missing**          | **Windows (PowerShell):** `irm 'https://cursor.com/install?win32=true' \| iex` (needs Git for Windows + Git Bash). **macOS/Linux:** `curl https://cursor.com/install -fsS \| bash`. Open a new terminal, then `cursor-agent login`. Or pick another driver in `settings` after `serve`. |
-| **Branch held by another worktree** | Another job or git worktree uses that branch. Stop/archive the other job or pick a new branch.                                                                                                          |
-| **Model unavailable on your plan**  | Override `model` in `start_job` or set defaults via `settings` / Setup UI.                                                                                                                              |
-| **Job stuck (watchdog)**            | Check dashboard logs; `stop_job`, then `archive_job`. Tune watchdog via `settings` or Setup.                                                                                                            |
-| **Notify saved but no email**       | Confirm `RESEND_API_KEY` + verified `PRGENIE_RUNNER_FROM_EMAIL`, restart `serve`, recipient set.                                                                                                        |
+| **Branch held by another worktree** | Another job or git worktree uses that branch. Stop/archive the other job or pick a new branch.                                                                                                                                                                                          |
+| **Model unavailable on your plan**  | Override `model` in `start_job` or set defaults via `settings` / Setup UI.                                                                                                                                                                                                              |
+| **Job stuck (watchdog)**            | Check dashboard logs; `stop_job`, then `archive_job`. Tune watchdog via `settings` or Setup.                                                                                                                                                                                            |
+| **Notify saved but no email**       | Confirm `RESEND_API_KEY` + verified `PRGENIE_RUNNER_FROM_EMAIL`, restart `serve`, recipient set.                                                                                                                                                                                        |
 
 ## Environment
 

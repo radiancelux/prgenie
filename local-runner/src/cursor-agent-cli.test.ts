@@ -98,11 +98,7 @@ describe("resolveCursorAgentBinary", () => {
 describe("buildCursorAgentSpawn", () => {
   it("wraps .ps1 with powershell.exe -File and passes argv safely", () => {
     const spaced = "C:\\Program Files\\cursor-agent\\cursor-agent.ps1";
-    const spec = buildCursorAgentSpawn(
-      spaced,
-      ["-p", "--force", "hello world"],
-      "win32",
-    );
+    const spec = buildCursorAgentSpawn(spaced, ["-p", "--force", "hello world"], "win32");
     assert.equal(spec.command, "powershell.exe");
     assert.deepEqual(spec.args, [
       "-NoProfile",
@@ -124,9 +120,12 @@ describe("buildCursorAgentSpawn", () => {
 
   it("lists fallback candidates in install order", () => {
     const local = "C:\\L";
-    assert.deepEqual(windowsCursorAgentFallbackCandidates({ LOCALAPPDATA: local }, "cursor-agent"), [
-      path.join(local, "cursor-agent", "cursor-agent.ps1"),
-      path.join(local, "cursor-agent", "agent.ps1"),
-    ]);
+    assert.deepEqual(
+      windowsCursorAgentFallbackCandidates({ LOCALAPPDATA: local }, "cursor-agent"),
+      [
+        path.join(local, "cursor-agent", "cursor-agent.ps1"),
+        path.join(local, "cursor-agent", "agent.ps1"),
+      ],
+    );
   });
 });
