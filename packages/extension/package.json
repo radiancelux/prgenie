@@ -2,7 +2,7 @@
   "name": "prgenie",
   "displayName": "PR Genie",
   "description": "Local pull requests for agent work. GitHub when you say so.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "prgenie",
   "license": "MIT",
   "repository": {
