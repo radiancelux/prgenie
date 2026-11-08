@@ -12,7 +12,12 @@ import {
 } from "./github.js";
 import { resolveReviewVerdict } from "./review-verdict.js";
 import { JobControl } from "./job-control.js";
-import { DEFAULT_FIX_PROMPT, DEFAULT_IMPLEMENT_PROMPT, DEFAULT_REVIEW_PROMPT } from "./prompts.js";
+import {
+  DEFAULT_FIX_PROMPT,
+  DEFAULT_IMPLEMENT_PROMPT,
+  DEFAULT_REVIEW_PROMPT,
+  DRY_RUN_PLACEHOLDER_PROMPT,
+} from "./prompts.js";
 import {
   isDocsTemplateId,
   DOCS_REVIEW_PROMPT,
@@ -40,8 +45,10 @@ import { trackShellToolLine, type ShellToolTracker } from "./stream-json-log.js"
 import { modelForActiveStage, recordActualModel } from "./job-models.js";
 import { setJobError } from "./job-error.js";
 import { parseWatchdogPolicy } from "./runner-policy.js";
-import { resolvePostBuildNoPr } from "./job-pr-policy.js";
+import { jobExpectsPr, resolvePostBuildNoPr } from "./job-pr-policy.js";
 import { diagnosePrSetupIssues, enrichNoPrGuardMessage } from "./job-preflight.js";
+import { ensureDraftPrAfterBuild } from "./post-build-pr.js";
+import { git as defaultGit, gh as defaultGh } from "./github.js";
 import { maybeCleanupJobWorktree } from "./worktree-cleanup.js";
 
 export type JobCallbacks = {
@@ -260,6 +267,11 @@ async function runnerLog(cb: JobCallbacks | undefined, job: JobRecord, line: str
   emit(cb, job, { type: "log", line });
 }
 
+function isTransientPersistError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /EPERM|EBUSY|EACCES|Failed to rename temp JSON/i.test(msg);
+}
+
 async function persistJob(
   config: RunnerConfig,
   job: JobRecord,
@@ -268,7 +280,16 @@ async function persistJob(
   JobControl.syncSteerQueueForPersist(job, control);
   const usage = await sumTokenUsageFromLog(job.logPath);
   if (usage) job.tokenUsage = usage;
-  await saveJob(config.dataDir, job);
+  try {
+    await saveJob(config.dataDir, job);
+  } catch (err) {
+    if (!isTransientPersistError(err)) throw err;
+    await appendFile(
+      job.logPath,
+      `[runner] job state write retry failed: ${err instanceof Error ? err.message : String(err)}\n`,
+      "utf8",
+    ).catch(() => undefined);
+  }
 }
 
 async function setStage(
@@ -443,6 +464,8 @@ export async function runJobLoop(
         const template = isDocsTemplateId(job.input.docsTemplate) ? job.input.docsTemplate : null;
         const fallback = resolveDocsImplementPrompt(template);
         prompt = await readPromptFile(job.input.promptFile, fallback);
+      } else if (job.dryRun && !job.input.promptFile?.trim()) {
+        prompt = DRY_RUN_PLACEHOLDER_PROMPT;
       } else {
         prompt = await readPromptFile(job.input.promptFile, DEFAULT_IMPLEMENT_PROMPT);
       }
@@ -487,7 +510,31 @@ export async function runJobLoop(
         return;
       }
 
-      const pr = job.dryRun ? null : await findPrForBranch(wt, job.input.branch);
+      let pr = job.dryRun ? null : await findPrForBranch(wt, job.input.branch);
+      if (!pr && !job.dryRun && jobExpectsPr(job.input)) {
+        const ensured = await ensureDraftPrAfterBuild(
+          {
+            cwd: wt,
+            branch: job.input.branch,
+            title: job.title || job.input.branch,
+          },
+          { git: defaultGit, gh: defaultGh },
+        );
+        if (ensured.ok) {
+          pr = ensured.pr;
+          await appendFile(
+            job.logPath,
+            `[runner] opened draft PR after build: ${pr.url}\n`,
+            "utf8",
+          ).catch(() => undefined);
+        } else {
+          await appendFile(
+            job.logPath,
+            `[runner] could not open PR after build: ${ensured.error}\n`,
+            "utf8",
+          ).catch(() => undefined);
+        }
+      }
       if (!pr) {
         if (!job.dryRun) {
           const noPr = resolvePostBuildNoPr(job.input);

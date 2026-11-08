@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { childProcessSpawnOptions } from "./spawn-options.js";
 import { access, readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import {
@@ -47,7 +48,11 @@ function nodeMajor(): number {
 
 async function defaultExecGh(args: string[]): Promise<GhExecResult> {
   try {
-    const { stdout, stderr } = await execFileAsync("gh", args, { timeout: 15_000 });
+    const { stdout, stderr } = await execFileAsync(
+      "gh",
+      args,
+      childProcessSpawnOptions({ timeout: 15_000 }),
+    );
     return { stdout, stderr, code: 0 };
   } catch (err) {
     const e = err as { code?: number; stdout?: string; stderr?: string; message?: string };
@@ -109,7 +114,11 @@ export function parseGhAuthStatus(result: GhExecResult): RunnerDoctorCheck {
 
 async function checkGit(): Promise<RunnerDoctorCheck> {
   try {
-    const { stdout } = await execFileAsync("git", ["--version"], { timeout: 5_000 });
+    const { stdout } = await execFileAsync(
+      "git",
+      ["--version"],
+      childProcessSpawnOptions({ timeout: 5_000 }),
+    );
     return { id: "git", ok: true, summary: stdout.trim() };
   } catch {
     return {

@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
+import { childProcessSpawnOptions } from "./spawn-options.js";
 
 export type GhResult = { code: number; stdout: string; stderr: string };
 
 /** Spawn a CLI; never rejects — ENOENT and other spawn errors resolve as code 1. */
 export function spawnCommand(cmd: string, cwd: string, args: string[]): Promise<GhResult> {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { cwd, env: process.env });
+    const child = spawn(cmd, args, childProcessSpawnOptions({ cwd, env: process.env }));
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -14,10 +15,10 @@ export function spawnCommand(cmd: string, cwd: string, args: string[]): Promise<
       settled = true;
       resolve({ code, stdout, stderr });
     };
-    child.stdout.on("data", (d) => {
+    child.stdout?.on("data", (d) => {
       stdout += d.toString();
     });
-    child.stderr.on("data", (d) => {
+    child.stderr?.on("data", (d) => {
       stderr += d.toString();
     });
     child.on("error", (err) => {

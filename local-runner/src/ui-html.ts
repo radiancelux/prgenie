@@ -1187,14 +1187,21 @@ export function runnerUiHtml(
 
     function syncNewJobForm() {
       const docs = newJobTypeEl.value === "docs";
+      const dryRun = document.getElementById("newJobDryRun").checked;
       newJobDocsRow.style.display = docs ? "flex" : "none";
       newJobDocsRow.classList.toggle("hidden", !docs);
-      newJobPromptLabelText.textContent = docs
-        ? "Prompt file (optional — uses template if empty)"
-        : "Prompt file (code jobs)";
-      newJobPromptEl.required = !docs;
+      if (docs) {
+        newJobPromptLabelText.textContent = "Prompt file (optional — uses template if empty)";
+      } else if (dryRun) {
+        newJobPromptLabelText.textContent =
+          "Prompt file (optional for dry run — uses built-in placeholder)";
+      } else {
+        newJobPromptLabelText.textContent = "Prompt file (code jobs)";
+      }
+      newJobPromptEl.required = !docs && !dryRun;
     }
     newJobTypeEl.onchange = syncNewJobForm;
+    document.getElementById("newJobDryRun").onchange = syncNewJobForm;
     syncNewJobForm();
 
     document.getElementById("startJobBtn").onclick = async () => {
@@ -1216,7 +1223,11 @@ export function runnerUiHtml(
         newJobStatus.textContent = "Branch is required.";
         return;
       }
-      if ((jobType === "code" || jobType === "compute") && !body.promptFile) {
+      if (
+        (jobType === "code" || jobType === "compute") &&
+        !body.promptFile &&
+        !body.dryRun
+      ) {
         newJobStatus.textContent = "Prompt file is required for " + jobType + " jobs.";
         return;
       }

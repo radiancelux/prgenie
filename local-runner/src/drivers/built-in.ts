@@ -7,7 +7,9 @@ import type {
   AgentDriverRunOptions,
   AgentDriverRunResult,
 } from "./driver-types.js";
-import { buildCursorAgentSpawn, resolveCursorAgentBinary } from "../cursor-agent-cli.js";
+import { resolveCursorAgentBinary } from "../cursor-agent-cli.js";
+import { planCursorAgentSpawn } from "../agent-prompt-delivery.js";
+import { childProcessSpawnOptions } from "../spawn-options.js";
 import { binaryOnPath, escalatingKill } from "./driver-types.js";
 import { WATCHDOG_CHILD_GRACE_MS } from "../runner-policy.js";
 
@@ -17,6 +19,7 @@ async function runSpawnedCli(
   opts: AgentDriverRunOptions,
   hooks: { onLine: (line: string) => void; appendLog: (text: string) => Promise<void> },
   outputFormat: "stream-json" | "text",
+  stdinText?: string,
 ): Promise<{ result: Promise<AgentDriverRunResult>; handle: AgentDriverHandle }> {
   let child: ChildProcess | null = null;
   const baseHandle = escalatingKill(() => child, WATCHDOG_CHILD_GRACE_MS);
@@ -27,11 +30,20 @@ async function runSpawnedCli(
   };
 
   const result = new Promise<AgentDriverRunResult>((resolve, reject) => {
-    child = spawn(binary, args, {
-      cwd: opts.cwd,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const stdinMode = stdinText !== undefined ? "pipe" : "ignore";
+    child = spawn(
+      binary,
+      args,
+      childProcessSpawnOptions({
+        cwd: opts.cwd,
+        env: process.env,
+        stdio: [stdinMode, "pipe", "pipe"],
+      }),
+    );
+    if (stdinText !== undefined && child.stdin) {
+      child.stdin.write(stdinText, "utf8");
+      child.stdin.end();
+    }
 
     const onAbort = () => handle.kill();
     opts.signal?.addEventListener("abort", onAbort, { once: true });
@@ -106,19 +118,9 @@ export const cursorAgentDriver: AgentDriver = {
       };
     }
 
-    const args = [
-      "-p",
-      "--force",
-      "--trust",
-      "--model",
-      opts.model,
-      "--output-format",
-      outputFormat,
-      opts.prompt,
-    ];
     const spawnBinary = resolved ?? binary;
-    const spawn = buildCursorAgentSpawn(spawnBinary, args);
-    return runSpawnedCli(spawn.command, spawn.args, opts, hooks, outputFormat);
+    const planned = planCursorAgentSpawn(spawnBinary, opts.model, outputFormat, opts.prompt);
+    return runSpawnedCli(planned.command, planned.args, opts, hooks, outputFormat, planned.stdin);
   },
   steer(_prompt, hooks) {
     void hooks.appendLog(
@@ -148,16 +150,33 @@ export const claudeCodeDriver: AgentDriver = {
       };
     }
 
-    const args = [
-      "-p",
-      opts.prompt,
-      "--model",
-      opts.model,
-      "--output-format",
+    const multiline = /[\r\n]/.test(opts.prompt);
+    const args = multiline
+      ? [
+          "-p",
+          "--model",
+          opts.model,
+          "--output-format",
+          outputFormat,
+          "--dangerously-skip-permissions",
+        ]
+      : [
+          "-p",
+          opts.prompt,
+          "--model",
+          opts.model,
+          "--output-format",
+          outputFormat,
+          "--dangerously-skip-permissions",
+        ];
+    return runSpawnedCli(
+      binary,
+      args,
+      opts,
+      hooks,
       outputFormat,
-      "--dangerously-skip-permissions",
-    ];
-    return runSpawnedCli(binary, args, opts, hooks, outputFormat);
+      multiline ? opts.prompt : undefined,
+    );
   },
   steer(_prompt, hooks) {
     void hooks.appendLog(
@@ -194,11 +213,15 @@ export const localModelDriver: AgentDriver = {
     const handle = escalatingKill(() => child, WATCHDOG_CHILD_GRACE_MS);
 
     const result = new Promise<AgentDriverRunResult>((resolve, reject) => {
-      child = spawn(binary, args, {
-        cwd: opts.cwd,
-        env,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      child = spawn(
+        binary,
+        args,
+        childProcessSpawnOptions({
+          cwd: opts.cwd,
+          env,
+          stdio: ["ignore", "pipe", "pipe"],
+        }),
+      );
       const onAbort = () => handle.kill();
       opts.signal?.addEventListener("abort", onAbort, { once: true });
       let output = "";

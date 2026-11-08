@@ -99,7 +99,7 @@ export async function handleStartJobRequest(
   payload: Record<string, unknown>,
 ): Promise<{ status: number; body: unknown }> {
   try {
-    return { status: 201, body: await engine.startJob(normalizeStartJobArgs(payload)) };
+    return { status: 201, body: await engine.startJob(payload) };
   } catch (err) {
     return { status: errorStatus(err), body: { error: safeHandlerMessage(err) } };
   }

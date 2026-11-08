@@ -34,6 +34,17 @@ const createDefaults = (dataDir: string) => ({
 });
 
 describe("job store", () => {
+  it("allows dry-run code jobs without a prompt file", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-store-dry-"));
+    const job = await createJob(
+      dataDir,
+      { repoPath: "/tmp/repo", branch: "feat/dry", dryRun: true },
+      createDefaults(dataDir),
+    );
+    assert.equal(job.input.promptFile, "");
+    assert.equal(job.dryRun, true);
+  });
+
   it("persists jobs across reload", async () => {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-store-"));
     const job = await createJob(

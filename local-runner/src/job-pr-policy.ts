@@ -8,11 +8,14 @@ export function jobExpectsPr(input: Pick<JobInput, "expectPr">): boolean {
 export type PostBuildNoPrResolution =
   { kind: "stuck"; error: string } | { kind: "complete"; error: null };
 
+export const NO_PR_GUARD_MESSAGE =
+  "No GitHub PR for branch after build (local diff guard). The runner could not commit, push, and open a draft PR. Use continue_job or add git instructions to your prompt.";
+
 export function resolvePostBuildNoPr(input: Pick<JobInput, "expectPr">): PostBuildNoPrResolution {
   if (jobExpectsPr(input)) {
     return {
       kind: "stuck",
-      error: "No GitHub PR for branch — local-only diff guard",
+      error: NO_PR_GUARD_MESSAGE,
     };
   }
   return { kind: "complete", error: null };

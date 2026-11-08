@@ -1,6 +1,7 @@
-import { access, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { cleanupOrphanedJsonTemps, readUtf8WithRetry, writeJsonFile } from "./json-file.js";
 import type { JobInput, JobRecord, JobWorkerState, StartJobArgs } from "./types.js";
 import { shouldHideMergedJob } from "./ci.js";
 import { resolveJobTarget, normalizeJobType, type ResolvedJobTarget } from "./job-target.js";
@@ -30,16 +31,16 @@ import type { CiStatusInfo } from "./types.js";
 import { withStoreLock } from "./store-lock.js";
 
 export async function ensureDataDirs(dataDir: string): Promise<void> {
-  await mkdir(jobsDir(dataDir), { recursive: true });
+  const jd = jobsDir(dataDir);
+  await mkdir(jd, { recursive: true });
   await mkdir(logsDir(dataDir), { recursive: true });
+  await cleanupOrphanedJsonTemps(jd);
 }
 
 async function atomicWriteJson(filePath: string, value: unknown): Promise<void> {
   const dir = path.dirname(filePath);
   await mkdir(dir, { recursive: true });
-  const tmp = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await rename(tmp, filePath);
+  await writeJsonFile(filePath, value);
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
@@ -160,7 +161,8 @@ async function readJobFile(
   opts: { keepWorkerNull?: boolean } = {},
 ): Promise<JobRecord | null> {
   try {
-    const raw = await readFile(filePath, "utf8");
+    const raw = await readUtf8WithRetry(filePath);
+    if (!raw) return null;
     const job = JSON.parse(raw) as JobRecord;
     if (job.archivedAt === undefined) job.archivedAt = null;
     if (job.driverId === undefined) job.driverId = "cursor-agent";
@@ -338,8 +340,9 @@ export async function createJob(
   const id = randomUUID();
   const docsTemplate =
     args.docsTemplate && isDocsTemplateId(args.docsTemplate) ? args.docsTemplate : undefined;
+  const effectiveDryRun = args.dryRun ?? defaults.dryRun;
   const promptFile = args.promptFile?.trim() || (jobType === "docs" ? "" : "");
-  if ((jobType === "code" || jobType === "compute") && !promptFile) {
+  if ((jobType === "code" || jobType === "compute") && !promptFile && !effectiveDryRun) {
     throw new ValidationError("promptFile is required for code and compute jobs");
   }
   if (jobType === "docs" && !promptFile && !docsTemplate) {
@@ -471,6 +474,7 @@ export async function createJob(
 
 export async function readLogTail(logPath: string, maxBytes = 32_768): Promise<string> {
   try {
+    const { readFile } = await import("node:fs/promises");
     const buf = await readFile(logPath);
     if (buf.length <= maxBytes) return buf.toString("utf8");
     return buf.subarray(buf.length - maxBytes).toString("utf8");

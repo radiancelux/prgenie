@@ -66,21 +66,8 @@ describe("start_job validation", () => {
     });
     assert.deepEqual(captured, {
       branch: "docs/foo",
-      promptFile: undefined,
-      reviewPromptFile: undefined,
-      fixPromptFile: undefined,
-      maxRounds: undefined,
-      model: undefined,
-      driver: undefined,
-      dryRun: undefined,
-      ticketUrl: undefined,
-      linearIssue: undefined,
-      repoPath: undefined,
-      remote: undefined,
       jobType: "docs",
       docsTemplate: "policy",
-      title: undefined,
-      stageModels: undefined,
     });
   });
 });
