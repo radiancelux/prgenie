@@ -783,7 +783,10 @@ export function runnerUiHtml(
     function renderJobList(jobs) {
       const showFinished = showAllJobsEl.checked;
       const isStale = (j) => !j.archivedAt && dashFmt.shouldHideStaleJob(j);
-      const keepVisible = (j) => showFinished || sessionStartedJobIds.has(j.id) || !isStale(j);
+      const keepVisible = (j) => {
+        if (j.archivedAt && !showArchivedEl.checked) return false;
+        return showFinished || sessionStartedJobIds.has(j.id) || !isStale(j);
+      };
       const staleHidden = showFinished ? 0 : jobs.filter((j) => isStale(j) && !sessionStartedJobIds.has(j.id)).length;
       const visible = jobs.filter(keepVisible);
       const hintParts = [];
@@ -877,10 +880,16 @@ export function runnerUiHtml(
       let jobs = await res.json();
       if (seq !== refreshSeq) return;
       for (const id of sessionStartedJobIds) {
+        if (seq !== refreshSeq) return;
         if (jobs.some((j) => j.id === id)) continue;
         const one = await fetch("/api/jobs/" + encodeURIComponent(id), { headers: authHeaders() });
-        if (one.ok) jobs.push(await one.json());
+        if (seq !== refreshSeq) return;
+        if (!one.ok) continue;
+        const row = await one.json();
+        if (row.archivedAt && !showArchivedEl.checked) continue;
+        jobs.push(row);
       }
+      if (seq !== refreshSeq) return;
       lastJobs = jobs;
       for (const id of sessionStartedJobIds) {
         const j = jobs.find((row) => row.id === id);
@@ -892,6 +901,7 @@ export function runnerUiHtml(
           }
         }
       }
+      if (seq !== refreshSeq) return;
       renderJobTable(lastJobs);
     }
 
@@ -1047,6 +1057,7 @@ export function runnerUiHtml(
           return;
         }
         jobsStatus.textContent = 'Removed "' + label + '".' + (data.warning ? " " + data.warning : "");
+        sessionStartedJobIds.delete(id);
       } catch {
         jobsStatus.textContent = "Remove failed (network).";
         return;

@@ -1258,6 +1258,33 @@ describe("runnerUiHtml session-started jobs (#188)", () => {
       },
     );
   });
+
+  it("hides a session-started job after Remove when Show archived is off", async () => {
+    await withDashboard(
+      { jobs: [], showFinishedDefault: false, postCreatesMergedHidden: true },
+      async (d) => {
+        const id = "new-job-id-12345678";
+        (d.doc.getElementById("newJobBranch") as HTMLInputElement).value = "chore/dry";
+        (d.doc.getElementById("newJobRepo") as HTMLInputElement).value = "/home/me/repo";
+        (d.doc.getElementById("newJobPrompt") as HTMLInputElement).value = "/home/me/prompt.md";
+        (d.doc.getElementById("newJobDryRun") as HTMLInputElement).checked = true;
+        (d.doc.getElementById("startJobBtn") as HTMLButtonElement).click();
+        await waitFor(
+          () => d.doc.querySelector(`#jobs tr.job-row[data-id="${id}"]`) !== null,
+          "session-started job visible",
+        );
+        const removeBtn = d.rowAction(id, "archive");
+        assert.ok(removeBtn, "Remove available for fast-finished dry run");
+        removeBtn!.click();
+        await waitFor(() => d.confirms.length > 0, "confirm Remove");
+        assert.equal(d.state.confirmAnswer, true);
+        await waitFor(
+          () => d.doc.querySelector(`#jobs tr.job-row[data-id="${id}"]`) === null,
+          "archived job hidden",
+        );
+      },
+    );
+  });
 });
 
 describe("runnerUiHtml new agent prompt file (#155)", () => {
