@@ -270,7 +270,8 @@ export function runnerUiHtml(
     let es = null;
     let lastJobs = [];
     let lastJobsMeta = { totalOnDisk: 0, mergedHidden: 0, archived: 0 };
-    /** Jobs started from this dashboard session stay visible until Show finished would hide them. */
+    /** Jobs started from this dashboard session stay visible until Show finished would hide them.
+     *  In-memory only: a full page reload drops these pins. */
     const sessionStartedJobIds = new Set();
 
     function fmtUpdated(iso) {
