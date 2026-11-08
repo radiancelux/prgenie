@@ -41,6 +41,8 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for CI commands (`pnpm test`, `pnpm li
 
 These commands are **`packages/cli`** (`pnpm cli …` or `node packages/cli/dist/prgenie.cjs`). They are **not** on the npm `prgenie` package (runner: `init`, `doctor`, `mcp`, `serve`, `config`).
 
+The block below lists the common commands only. The full command list that used to live in the root README is in `pnpm cli --help`, and each command has its own `--help`.
+
 ```text
 prgenie create [--title t] [--body "summary"] [--base main] [--head branch]
 prgenie attach <pr-url|branch>
