@@ -9,7 +9,7 @@ PR Genie gives you a **git-native review lane** before anything hits GitHub: bra
 | You want…                                                                                         | Install                                                                                        | MCP server id      | `prgenie` means…                                                    |
 | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------- |
 | **Automated implement → PR → review loop** on a workstation (MCP `start_job`, optional dashboard) | [npm `prgenie`](packages/npm-prgenie/README.md) (`npx -y prgenie` or `npm install -g prgenie`) | `prgenie-runner`   | Runner: `init`, `doctor`, `mcp`, `serve`, `config`                  |
-| **Cursor steward + local PR sidebar** (human review, export gate, no push until you say so)       | Monorepo [plugin + extension](#install-from-source-cursor-plugin-and-extension)                | `prgenie` (plugin) | Monorepo CLI: `create`, `list`, `steward`, `export`, … (`pnpm cli`) |
+| **Cursor steward + local PR sidebar** (human review, export gate, no push until you say so)       | Monorepo [plugin + extension](#install-from-source-monorepo-cursor-plugin-extension)           | `prgenie` (plugin) | Monorepo CLI: `create`, `list`, `steward`, `export`, … (`pnpm cli`) |
 
 - The **Local PRs** sidebar (extension) lists **git-native local PRs** from the plugin/monorepo CLI. It does **not** show npm runner jobs started via `prgenie mcp` or the HTTP dashboard — use the [runner dashboard](packages/npm-prgenie/README.md#optional-http-dashboard) for those.
 - `prgenie doctor` and `prgenie mcp` behave differently per binary (runner vs plugin CLI). Run doctor from the install you care about.
@@ -27,7 +27,7 @@ Requires **Node.js 22+**, **git**, **GitHub CLI (`gh`)**, and **Cursor** with th
 
 Subagent auto-capture is **off by default** (`PRGENIE_CAPTURE_SUBAGENT=1` to draft a loop when a coding subagent commits). There is **no** inbox/queue listen flywheel — use `/steward` only.
 
-**UI cues:** Local PRs sidebar (extension) is your watch list; loop **STATUS** follows `draft` → `ready` → `reviewed` / `changes_requested` → `approved` after export. Runner jobs use the web dashboard instead:
+**UI cues:** Local PRs sidebar (extension) is your watch list. Loop **STATUS** goes `draft` → `ready` → `changes_requested` or `reviewed` → `approved`. The loop stays `ready` while the reviewer files findings; `complete_review` then sets `changes_requested` (open findings) or `reviewed` (review cleared), and addressing the last finding returns it to `ready` for another pass. After a clear review the steward runs the export gate, and `/export` sets `approved`. Full lifecycle, including `review_interrupted` and head drift: [Local PR lifecycle](docs/architecture.md#local-pr-lifecycle). Runner jobs use the web dashboard instead:
 
 ![Runner dashboard (npm path)](docs/runner-dashboard-evidence/dashboard-1280px.png)
 
