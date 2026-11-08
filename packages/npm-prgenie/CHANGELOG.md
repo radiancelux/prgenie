@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6 — 2026-11-08
+
+- Fix `prgenie --version` reporting 0.1.4 in the 0.1.5 package (stale bundle was published).
+- Publishing now always rebuilds the bundle (`prepack`) and fails if `runner.cjs --version` differs from `package.json`.
+
 ## 0.1.5 — 2026-11-08
 
 - Windows: resolve `cursor-agent` `.ps1` installs for doctor and the default driver; shared spawn via `powershell.exe -File` (#184).

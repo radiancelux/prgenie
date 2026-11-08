@@ -1,6 +1,6 @@
 {
   "name": "prgenie",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "PR Genie local runner — MCP stdio job loop (implement → PR → review → fix)",
   "license": "MIT",
   "repository": {
@@ -17,6 +17,9 @@
   },
   "bin": {
     "prgenie": "./runner.cjs"
+  },
+  "scripts": {
+    "prepack": "cd ../.. && pnpm build && node scripts/verify-runner-version.mjs"
   },
   "files": [
     "runner.cjs",

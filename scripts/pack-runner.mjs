@@ -11,7 +11,12 @@ if (!existsSync(bundle)) {
   execFileSync("pnpm", ["build"], { cwd: root, stdio: "inherit", timeout: 300_000 });
 }
 
-const out = execFileSync("npm", ["pack", "--dry-run", "--json"], {
+execFileSync(process.execPath, [path.join(root, "scripts/verify-runner-version.mjs")], {
+  stdio: "inherit",
+  timeout: 60_000,
+});
+
+const out = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
   cwd: npmDir,
   encoding: "utf8",
   timeout: 60_000,
