@@ -169,9 +169,8 @@ function parseNotifyEvents(raw: Partial<NotifyEventSettings> | undefined): Notif
 async function atomicWriteJson(filePath: string, value: unknown): Promise<void> {
   const dir = path.dirname(filePath);
   await mkdir(dir, { recursive: true });
-  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await rename(tmp, filePath);
+  const { writeJsonFile } = await import("./json-file.js");
+  await writeJsonFile(filePath, value);
 }
 
 function normalizeDriverEntry(raw: Partial<DriverEntry>): DriverEntry | null {

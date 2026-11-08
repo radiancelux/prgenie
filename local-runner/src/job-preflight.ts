@@ -1,5 +1,6 @@
 import { access } from "node:fs/promises";
 import { execFile } from "node:child_process";
+import { childProcessSpawnOptions } from "./spawn-options.js";
 import { promisify } from "node:util";
 import type { RunnerSettings } from "./settings.js";
 import { findDriverEntry } from "./settings.js";
@@ -43,7 +44,11 @@ export function formatJobPreflightErrors(issues: JobPreflightIssue[]): string {
 
 async function defaultGhAuthStatus(): Promise<"ok" | "missing" | "not_logged_in" | "error"> {
   try {
-    const { stdout, stderr } = await execFileAsync("gh", ["auth", "status"], { timeout: 15_000 });
+    const { stdout, stderr } = await execFileAsync(
+      "gh",
+      ["auth", "status"],
+      childProcessSpawnOptions({ timeout: 15_000 }),
+    );
     const text = `${stdout}${stderr}`;
     if (/logged in to/i.test(text)) return "ok";
     return "not_logged_in";

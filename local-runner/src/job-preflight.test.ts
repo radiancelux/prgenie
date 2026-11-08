@@ -108,7 +108,7 @@ describe("job start preflight", () => {
   });
 
   it("enriches no-PR stuck text with likely causes", () => {
-    const msg = enrichNoPrGuardMessage("No GitHub PR for branch — local-only diff guard", {
+    const msg = enrichNoPrGuardMessage("No GitHub PR for branch after build (local diff guard).", {
       hints: ['repo has no "origin" remote', "gh is not installed"],
     });
     assert.match(msg, /likely:/);

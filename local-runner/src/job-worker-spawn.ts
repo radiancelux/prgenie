@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { childProcessSpawnOptions } from "./spawn-options.js";
 import { randomUUID } from "node:crypto";
 import type { RunnerConfig } from "./config.js";
 
@@ -54,11 +55,15 @@ export type SpawnedJobWorker = {
 export function spawnDetachedJobWorker(config: RunnerConfig, jobId: string): SpawnedJobWorker {
   const { command, args } = runnerArgvForJobWorker(jobId);
   const token = randomUUID();
-  const child = spawn(command, args, {
-    detached: true,
-    stdio: "ignore",
-    env: workerEnv(config, token),
-  });
+  const child = spawn(
+    command,
+    args,
+    childProcessSpawnOptions({
+      detached: true,
+      stdio: "ignore",
+      env: workerEnv(config, token),
+    }),
+  );
   const exited = new Promise<number | null>((resolve) => {
     child.once("exit", (code) => resolve(code));
     child.once("error", () => resolve(null));

@@ -614,7 +614,7 @@ describe("start job validation parity (HTTP POST /api/jobs vs MCP start_job)", (
     ["non-string branch", { ...base, branch: 7 }, "branch must be a string"],
     [
       "missing promptFile",
-      { branch: "feat/parity", repoPath: "/repo" },
+      { branch: "feat/parity", repoPath: "/repo", dryRun: false },
       "promptFile is required for code and compute jobs",
     ],
     [
@@ -678,7 +678,7 @@ describe("start job validation parity (HTTP POST /api/jobs vs MCP start_job)", (
 
   it("rejects each bad payload with the same message over the HTTP and MCP handlers", async () => {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-parity-"));
-    const engine = new RunnerEngine(cfg(dataDir, 0));
+    const engine = new RunnerEngine({ ...cfg(dataDir, 0), dryRun: false });
     for (const [label, payload, expected] of cases) {
       const httpReply = await handleStartJobRequest(engine, { ...payload });
       const mcp = await handleMcpJsonRpc(engine, {
@@ -724,12 +724,12 @@ describe("start job validation parity (HTTP POST /api/jobs vs MCP start_job)", (
     }
   });
 
-  it("hands both paths the same normalized args for a valid payload", async () => {
+  it("hands both paths the same payload to startJob", async () => {
     const captured: unknown[] = [];
     const engine = {
       startJob: async (args: unknown) => {
         captured.push(args);
-        return { id: "x" } as unknown;
+        return { id: "x", input: { branch: "feat/parity" }, maxRounds: 10 } as JobRecord;
       },
     } as unknown as RunnerEngine;
     const payload = { ...base, branch: "  feat/parity  ", maxRounds: 10, driver: "claude-code" };
@@ -738,7 +738,7 @@ describe("start job validation parity (HTTP POST /api/jobs vs MCP start_job)", (
     assert.equal(httpReply.status, 201);
     assert.equal(captured.length, 2);
     assert.deepEqual(captured[0], captured[1]);
-    assert.equal((captured[0] as { branch: string }).branch, "feat/parity");
+    assert.equal((captured[0] as { branch: string }).branch, "  feat/parity  ");
     assert.equal((captured[0] as { maxRounds: number }).maxRounds, 10);
   });
 

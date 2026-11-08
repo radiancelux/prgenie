@@ -184,7 +184,12 @@ export function validateStageModel(
  * Single validator for job start input (HTTP POST /api/jobs, MCP start_job, engine.startJob).
  * Every bounded/enum field is checked here so no caller can bypass it.
  */
-export function normalizeStartJobArgs(raw: Record<string, unknown>): StartJobArgs {
+export type NormalizeStartJobOptions = { defaultDryRun?: boolean };
+
+export function normalizeStartJobArgs(
+  raw: Record<string, unknown>,
+  opts: NormalizeStartJobOptions = {},
+): StartJobArgs {
   const branchRaw = raw.branch;
   if (branchRaw !== undefined && branchRaw !== null && typeof branchRaw !== "string") {
     throw new ValidationError("branch must be a string");
@@ -230,7 +235,8 @@ export function normalizeStartJobArgs(raw: Record<string, unknown>): StartJobArg
   }
 
   const isDocs = jobType === "docs" || profile === "docs";
-  if (!isDocs && !promptFile?.trim()) {
+  const effectiveDryRun = dryRun === true || (dryRun !== false && Boolean(opts.defaultDryRun));
+  if (!isDocs && !promptFile?.trim() && !effectiveDryRun) {
     throw new ValidationError("promptFile is required for code and compute jobs");
   }
   let watchdog: StartJobArgs["watchdog"];
