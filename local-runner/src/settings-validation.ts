@@ -28,7 +28,7 @@ export { ValidationError };
 
 const EXECUTABLE_DRIVERS = new Set(listBuiltInDriverIds());
 
-const JOB_PROFILES: readonly JobProfile[] = ["code", "docs"];
+const JOB_PROFILES: readonly JobProfile[] = ["code", "docs", "compute"];
 const DOCS_TEMPLATES: readonly NonNullable<StartJobArgs["docsTemplate"]>[] = [
   "marketing",
   "policy",
@@ -230,7 +230,11 @@ export function normalizeStartJobArgs(raw: Record<string, unknown>): StartJobArg
 
   const isDocs = jobType === "docs" || profile === "docs";
   if (!isDocs && !promptFile?.trim()) {
-    throw new ValidationError("promptFile is required for code jobs");
+    throw new ValidationError("promptFile is required for code and compute jobs");
+  }
+  let watchdog: StartJobArgs["watchdog"];
+  if (raw.watchdog !== undefined && raw.watchdog !== null) {
+    watchdog = validateWatchdogPatch(raw.watchdog);
   }
   if (isDocs && !promptFile?.trim() && !docsTemplate) {
     throw new ValidationError("docs jobs need docsTemplate or promptFile");
@@ -256,6 +260,7 @@ export function normalizeStartJobArgs(raw: Record<string, unknown>): StartJobArg
   if (profile) args.profile = profile;
   if (docsTemplate) args.docsTemplate = docsTemplate;
   if (ticketUrls) args.ticketUrls = ticketUrls;
+  if (watchdog) args.watchdog = watchdog;
   return args;
 }
 

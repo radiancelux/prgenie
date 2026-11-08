@@ -70,6 +70,32 @@ describe("stage watchdog", () => {
     assert.equal(isMeaningfulAgentLine(""), false);
   });
 
+  it("pollActivity counts as agent progress for inactivity", async () => {
+    let now = 0;
+    const res = await runAgentWithWatchdog(
+      {
+        policy: { inactivityMs: 40, stageCapMs: 60_000, recoveryAttempts: 0 },
+        now: () => now,
+        tickMs: 10,
+        childGraceMs: 1,
+        killChild: () => undefined,
+        pollActivity: () => {
+          now += 15;
+          return true;
+        },
+      },
+      async () => {
+        const deadline = now + 120;
+        while (now < deadline) {
+          await new Promise((r) => setTimeout(r, 5));
+          now += 10;
+        }
+        return { code: 0, output: "ok" };
+      },
+    );
+    assert.equal(res.ok, true);
+  });
+
   it("InactivityTracker notes meaningful lines", () => {
     let t = 0;
     const tracker = new InactivityTracker(() => t, 0);

@@ -57,13 +57,19 @@ export const RUNNER_MCP_TOOLS = [
         },
         jobType: {
           type: "string",
-          enum: ["code", "docs"],
-          description: "code (default) or docs for business/policy Markdown PRs",
+          enum: ["code", "docs", "compute"],
+          description:
+            "code (default), docs for business/policy Markdown PRs, or compute for long CPU-bound tool runs",
         },
         profile: {
           type: "string",
-          enum: ["code", "docs"],
+          enum: ["code", "docs", "compute"],
           description: "Alias for jobType",
+        },
+        watchdog: {
+          type: "object",
+          description:
+            "Optional per-job watchdog override (inactivityMs, stageCapMs, recoveryAttempts); frozen at start",
         },
         docsTemplate: {
           type: "string",

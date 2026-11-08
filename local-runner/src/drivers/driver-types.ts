@@ -20,6 +20,8 @@ export interface AgentDriverRunResult {
 
 export interface AgentDriverHandle {
   kill(): void;
+  /** Root agent child pid while the driver process is running. */
+  agentPid?: () => number | null;
 }
 
 export interface AgentDriver {

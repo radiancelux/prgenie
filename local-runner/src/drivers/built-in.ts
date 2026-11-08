@@ -18,7 +18,12 @@ async function runSpawnedCli(
   outputFormat: "stream-json" | "text",
 ): Promise<{ result: Promise<AgentDriverRunResult>; handle: AgentDriverHandle }> {
   let child: ChildProcess | null = null;
-  const handle = escalatingKill(() => child, WATCHDOG_CHILD_GRACE_MS);
+  const baseHandle = escalatingKill(() => child, WATCHDOG_CHILD_GRACE_MS);
+  const handle: AgentDriverHandle = {
+    kill: () => baseHandle.kill(),
+    agentPid: () =>
+      child && child.exitCode === null && child.signalCode === null ? (child.pid ?? null) : null,
+  };
 
   const result = new Promise<AgentDriverRunResult>((resolve, reject) => {
     child = spawn(binary, args, {

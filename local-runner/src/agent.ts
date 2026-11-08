@@ -13,6 +13,12 @@ export interface AgentRunOptions extends Omit<AgentDriverRunOptions, "driver"> {
 
 export class AgentRunner extends EventEmitter {
   private killFn: (() => void) | null = null;
+  private agentPidFn: (() => number | null) | null = null;
+
+  /** Pid of the spawned agent CLI while a stage is in flight. */
+  agentRootPid(): number | null {
+    return this.agentPidFn?.() ?? null;
+  }
 
   async run(opts: AgentRunOptions): Promise<AgentDriverRunResult> {
     const driver = getAgentDriver(opts.driverId);
@@ -28,11 +34,15 @@ export class AgentRunner extends EventEmitter {
     const { result, handle } = await driver.start({ ...opts, driver: opts.driverEntry }, hooks);
     const kill = () => handle.kill();
     this.killFn = kill;
+    this.agentPidFn = handle.agentPid ?? (() => null);
     try {
       return await result;
     } finally {
       // An abandoned run can settle after its retry started; keep the retry's kill hook.
-      if (this.killFn === kill) this.killFn = null;
+      if (this.killFn === kill) {
+        this.killFn = null;
+        this.agentPidFn = null;
+      }
     }
   }
 

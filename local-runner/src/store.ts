@@ -4,6 +4,7 @@ import path from "node:path";
 import type { JobInput, JobRecord, JobWorkerState, StartJobArgs } from "./types.js";
 import { shouldHideMergedJob } from "./ci.js";
 import { resolveJobTarget, normalizeJobType, type ResolvedJobTarget } from "./job-target.js";
+import { resolveJobWatchdogSnapshot } from "./job-type-watchdog.js";
 import { ValidationError } from "./validation-error.js";
 import { isDocsTemplateId } from "./docs-prompts.js";
 import { resolveJobTicket } from "./linear-ticket.js";
@@ -335,8 +336,8 @@ export async function createJob(
   const docsTemplate =
     args.docsTemplate && isDocsTemplateId(args.docsTemplate) ? args.docsTemplate : undefined;
   const promptFile = args.promptFile?.trim() || (jobType === "docs" ? "" : "");
-  if (jobType === "code" && !promptFile) {
-    throw new ValidationError("promptFile is required for code jobs");
+  if ((jobType === "code" || jobType === "compute") && !promptFile) {
+    throw new ValidationError("promptFile is required for code and compute jobs");
   }
   if (jobType === "docs" && !promptFile && !docsTemplate) {
     throw new ValidationError("docs jobs need docsTemplate or promptFile");
@@ -413,18 +414,21 @@ export async function createJob(
       review: stageResolved.review,
       fix: stageResolved.fix,
     },
-    effectiveSnapshot: {
-      maxRounds: args.maxRounds ?? resolveDefaultMaxRounds(settings),
-      stageModels: {
-        build: stageResolved.build,
-        review: stageResolved.review,
-        fix: stageResolved.fix,
-      },
-      baseRef: settings.defaultBaseBranch,
-      watchdogInactivityMs: settings.watchdog.inactivityMs,
-      watchdogStageCapMs: settings.watchdog.stageCapMs,
-      watchdogRecoveryAttempts: settings.watchdog.recoveryAttempts,
-    },
+    effectiveSnapshot: (() => {
+      const wd = resolveJobWatchdogSnapshot(jobType, settings, args.watchdog);
+      return {
+        maxRounds: args.maxRounds ?? resolveDefaultMaxRounds(settings),
+        stageModels: {
+          build: stageResolved.build,
+          review: stageResolved.review,
+          fix: stageResolved.fix,
+        },
+        baseRef: settings.defaultBaseBranch,
+        watchdogInactivityMs: wd.inactivityMs,
+        watchdogStageCapMs: wd.stageCapMs,
+        watchdogRecoveryAttempts: wd.recoveryAttempts,
+      };
+    })(),
     watchdog: {
       lastActivityAt: null,
       stageStartedAt: null,

@@ -1131,3 +1131,50 @@ describe("runnerUiHtml mobile card header tickets", () => {
     });
   });
 });
+
+const RUNNING_SHELL_LOG = [
+  "--- agent (stream-json) ---",
+  '{"type":"tool_call","subtype":"started","tool_call":{"shellToolCall":{"args":{"command":"blender -b --python run.py"}}}}',
+].join("\n");
+
+function runningShellJob(): FixtureJob {
+  const base = fixtureJobs()[0];
+  return {
+    ...base,
+    stage: "building",
+    runtime: {
+      waitMode: "command",
+      command: {
+        summary: "blender -b --python run.py",
+        startedAt: new Date(Date.now() - 760_000).toISOString(),
+        processLabel: "blender (270% CPU)",
+      },
+    },
+  } as FixtureJob;
+}
+
+describe("runnerUiHtml long-running shell command", () => {
+  for (const viewportWidth of [360, 460]) {
+    it(`shows elapsed running meta at ${viewportWidth}px`, async () => {
+      await withDashboard(
+        { jobs: [runningShellJob()], viewportWidth, desktop: false, logTail: RUNNING_SHELL_LOG },
+        async (d) => {
+          d.cardToggle(JOB_A).click();
+          await waitFor(
+            () => Boolean(d.panel().querySelector(".agent-tool-running-meta")),
+            "running meta",
+          );
+          const meta = d.panel().querySelector(".agent-tool-running-meta")!;
+          assert.match(meta.textContent ?? "", /running .+blender/);
+          assert.match(d.panel().textContent ?? "", /waiting on command/);
+          for (const c of ["min-w-0", "max-w-full", "wrap-anywhere"]) {
+            assert.ok(
+              d.panel().classList.contains(c),
+              `detail panel has ${c} at ${viewportWidth}px`,
+            );
+          }
+        },
+      );
+    });
+  }
+});

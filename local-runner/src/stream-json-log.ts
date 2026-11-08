@@ -157,9 +157,80 @@ export type AgentLogBlock =
       phase: "started" | "completed" | "failed";
       error?: string;
       resultDetail?: string;
+      recovered?: boolean;
+      startedAtMs?: number;
     }
   | { kind: "plain"; text: string }
   | { kind: "error"; text: string };
+
+export type ShellToolTracker = {
+  open: { summary: string; detail: string; startedAtMs: number } | null;
+};
+
+/** Track the in-flight shell tool_call from stream-json lines (watchdog + dashboard hints). */
+export function trackShellToolLine(
+  tracker: ShellToolTracker,
+  line: string,
+  nowMs = Date.now(),
+): void {
+  const t = line.trim();
+  if (!t.startsWith("{")) return;
+  let ev: Record<string, unknown>;
+  try {
+    ev = JSON.parse(t) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+  if (ev.type !== "tool_call") return;
+  const tc = ev.tool_call as Record<string, unknown> | undefined;
+  if (!tc) return;
+  const { kind, args } = toolPayload(tc);
+  if (kind !== "shell") return;
+  const subtype = String(ev.subtype ?? "");
+  if (subtype === "started") {
+    const summary = summarizeToolArgs("shell", args);
+    const detail = typeof args.command === "string" ? args.command : summary;
+    tracker.open = { summary, detail, startedAtMs: nowMs };
+  } else if (subtype === "completed") {
+    tracker.open = null;
+  }
+}
+
+export function formatElapsedCompact(ms: number): string {
+  const sec = Math.max(0, Math.floor(ms / 1000));
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m < 60) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
+}
+
+/** Mark tool failures that were followed by later progress as recovered (dim in UI). */
+export function annotateRecoveredToolFailures(blocks: AgentLogBlock[]): void {
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    if (b.kind !== "tool" || b.phase !== "failed") continue;
+    for (let j = i + 1; j < blocks.length; j++) {
+      const later = blocks[j];
+      if (later.kind === "prose" || (later.kind === "tool" && later.phase !== "failed")) {
+        b.recovered = true;
+        break;
+      }
+    }
+  }
+}
+
+export type AgentLogHtmlOptions = {
+  nowMs?: number;
+  runningCommand?: {
+    summary: string;
+    detail?: string;
+    startedAt: string;
+    processLabel?: string;
+  };
+};
 
 export function parseAgentLogBlocks(raw: string): AgentLogBlock[] | null {
   if (!raw.trim()) return [];
@@ -239,6 +310,7 @@ export function parseAgentLogBlocks(raw: string): AgentLogBlock[] | null {
           summary: argSummary,
           detail,
           phase: "started",
+          startedAtMs: Date.now(),
         });
         continue;
       }
@@ -289,6 +361,7 @@ export function parseAgentLogBlocks(raw: string): AgentLogBlock[] | null {
   }
 
   flushThinking();
+  annotateRecoveredToolFailures(blocks);
   return blocks;
 }
 
@@ -344,12 +417,21 @@ export function formatAgentLogTail(raw: string): string {
   return lines.join("\n\n");
 }
 
-export function formatAgentLogTailHtml(raw: string): string {
+export function formatAgentLogTailHtml(raw: string, opts: AgentLogHtmlOptions = {}): string {
   const blocks = parseAgentLogBlocks(raw);
   if (blocks === null) {
     return `<pre class="agent-pass-through">${escapeHtml(raw)}</pre>`;
   }
   if (!blocks.length) return "";
+  const nowMs = opts.nowMs ?? Date.now();
+  let lastOpenShellIdx = -1;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const x = blocks[i];
+    if (x.kind === "tool" && x.name === "shell" && x.phase === "started") {
+      lastOpenShellIdx = i;
+      break;
+    }
+  }
 
   const parts: string[] = [];
   let turnOpen = false;
@@ -385,7 +467,7 @@ export function formatAgentLogTailHtml(raw: string): string {
         const summary = b.summary
           ? `<span class="agent-tool-summary">${escapeHtml(b.summary)}</span>`
           : "";
-        const openAttr = b.phase === "failed" ? " open" : "";
+        const openAttr = b.phase === "failed" && !b.recovered ? " open" : "";
         const detailBlock = b.detail
           ? `<pre class="agent-tool-body">${escapeHtml(b.detail)}</pre>`
           : "";
@@ -396,9 +478,28 @@ export function formatAgentLogTailHtml(raw: string): string {
         const errBlock = b.error
           ? `<div class="agent-tool-error">${escapeHtml(b.error)}</div>`
           : "";
-        const failedCls = b.phase === "failed" ? " agent-tool-failed" : "";
+        let failedCls = b.phase === "failed" ? " agent-tool-failed" : "";
+        if (b.recovered) failedCls += " agent-tool-failed-recovered";
+        let runningMeta = "";
+        const isOpenShell =
+          b.kind === "tool" &&
+          b.name === "shell" &&
+          b.phase === "started" &&
+          blocks.indexOf(b) === lastOpenShellIdx;
+        if (isOpenShell) {
+          const cmd = opts.runningCommand;
+          const startedMs = cmd?.startedAt ? Date.parse(cmd.startedAt) : (b.startedAtMs ?? nowMs);
+          const elapsed = formatElapsedCompact(
+            nowMs - (Number.isNaN(startedMs) ? nowMs : startedMs),
+          );
+          const proc =
+            cmd?.processLabel?.trim() ||
+            (cmd?.detail ? truncate(cmd.detail, 48) : b.summary ? truncate(b.summary, 48) : "");
+          const procPart = proc ? ` · ${escapeHtml(proc)}` : "";
+          runningMeta = `<div class="agent-tool-running-meta" data-running-shell="1">running ${escapeHtml(elapsed)}${procPart}</div>`;
+        }
         parts.push(
-          `<details class="agent-tool-step${failedCls}"${openAttr}><summary><span class="agent-tool-step-label">${stepLabel}</span>${summary}</summary>${detailBlock}${resultBlock}${errBlock}</details>`,
+          `<details class="agent-tool-step${failedCls}"${openAttr}><summary><span class="agent-tool-step-label">${stepLabel}</span>${summary}</summary>${runningMeta}${detailBlock}${resultBlock}${errBlock}</details>`,
         );
         break;
       }
@@ -441,6 +542,8 @@ export function streamJsonLogBrowserScript(): string {
     escapeHtml,
     toolDetailLine,
     formatProseHtml,
+    annotateRecoveredToolFailures,
+    formatElapsedCompact,
     parseAgentLogBlocks,
     formatAgentLogTail,
     formatAgentLogTailHtml,
