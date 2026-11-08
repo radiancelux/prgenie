@@ -67,7 +67,8 @@ export function runnerUiHtml(
     <label class="mt-2 block text-sm text-zinc-400">Repo path override (optional)
       <input id="newJobRepo" placeholder="Local clone path on this machine" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2" />
     </label>
-    <label id="newJobPromptLabel" class="mt-2 block text-sm text-zinc-400">Prompt file (code jobs)
+    <label id="newJobPromptLabel" class="mt-2 block text-sm text-zinc-400">
+      <span id="newJobPromptLabelText">Prompt file (code jobs)</span>
       <input id="newJobPrompt" placeholder="/path/to/prompt.md" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2" />
     </label>
     <button type="button" id="startJobBtn" class="primary mt-3 min-h-11 w-full rounded-md border border-sky-700 bg-sky-900/50 px-4 py-2 font-medium text-sky-100 sm:w-auto">Start agent</button>
@@ -1101,7 +1102,7 @@ export function runnerUiHtml(
 
     const newJobTypeEl = document.getElementById("newJobType");
     const newJobDocsRow = document.getElementById("newJobDocsRow");
-    const newJobPromptLabel = document.getElementById("newJobPromptLabel");
+    const newJobPromptLabelText = document.getElementById("newJobPromptLabelText");
     const newJobPromptEl = document.getElementById("newJobPrompt");
     const newJobStatus = document.getElementById("newJobStatus");
 
@@ -1109,7 +1110,9 @@ export function runnerUiHtml(
       const docs = newJobTypeEl.value === "docs";
       newJobDocsRow.style.display = docs ? "flex" : "none";
       newJobDocsRow.classList.toggle("hidden", !docs);
-      newJobPromptLabel.textContent = docs ? "Prompt file (optional — uses template if empty)" : "Prompt file (code jobs)";
+      newJobPromptLabelText.textContent = docs
+        ? "Prompt file (optional — uses template if empty)"
+        : "Prompt file (code jobs)";
       newJobPromptEl.required = !docs;
     }
     newJobTypeEl.onchange = syncNewJobForm;
