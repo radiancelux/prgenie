@@ -78,7 +78,7 @@ Human merges on GitHub (no auto-merge in runner)
 ### Negative / tradeoffs
 
 - Requires a **long-lived runner process**, `PRGENIE_RUNNER_TOKEN`, `gh auth`, and Cursor CLI (`cursor-agent`) on the workstation.
-- Loses the **fully local** loop until first `gh pr create`; no-PR completion is **`stuck`**, not reviewed.
+- Loses the **fully local** loop until first `gh pr create`; without `expectPr: false`, no-PR completion is **`stuck`**, not reviewed.
 - Steward/Task orchestration, subagent capture, and sidebar polish remain **extension/plugin** concerns—two mental models until docs and UX converge.
 - Email notify depends on **Resend** configuration; optional but another secret surface.
 - LAN/mobile dashboard bind (`0.0.0.0`) needs firewall discipline; not a hosted multi-tenant service.

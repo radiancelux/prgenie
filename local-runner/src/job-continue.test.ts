@@ -138,16 +138,35 @@ describe("prepareJobContinue", () => {
     assert.equal(result.job.maxRounds, 4);
   });
 
-  it("still requires a PR for non-interrupted terminal jobs", async () => {
-    const job = await seedTerminal(dataDir, "job-failed-nopr", "failed", {
-      prUrl: null,
-      prNumber: null,
+  for (const stage of ["failed", "stopped", "stuck"] as const) {
+    it(`resumes a pre-PR ${stage} job at the build stage`, async () => {
+      const job = await seedTerminal(dataDir, `job-${stage}-nopr`, stage, {
+        prUrl: null,
+        prNumber: null,
+        reviewRound: 0,
+        maxRounds: 2,
+        dryRun: false,
+        worktreePath: `/wt/${stage}-nopr`,
+      });
+      const result = await prepareJobContinue(
+        cfg(dataDir),
+        { id: job.id, prompt: "try again" },
+        {
+          isRunning: () => false,
+          ensureWorktree: async (_repo, _id, branch, existing) => {
+            return { path: existing ?? `/wt/${stage}-nopr`, reused: true };
+          },
+        },
+      );
+      assert.equal(result.job.stage, "building");
+      assert.equal(result.job.reviewRound, 0);
+      assert.equal(result.job.maxRounds, 2);
+      assert.equal(result.job.continueHistory?.[0].resumedStage, "building");
+      assert.equal(result.job.steerQueue[0], "try again");
+      assert.equal(result.worktree, "reused");
+      assert.equal(result.job.worktreePath, `/wt/${stage}-nopr`);
     });
-    await assert.rejects(
-      () => prepareJobContinue(cfg(dataDir), { id: job.id }, { isRunning: () => false }),
-      (err: unknown) => err instanceof ContinueJobError && err.code === "no_pr",
-    );
-  });
+  }
 
   it("rejects running jobs", async () => {
     const job = await seedTerminal(dataDir, "job-run", "approved");

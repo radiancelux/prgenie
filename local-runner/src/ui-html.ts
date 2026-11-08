@@ -309,11 +309,14 @@ export function runnerUiHtml(
       archiveBtn.textContent = archived ? "Restore" : "Remove";
       const terminal = Boolean(selected && picked && TERMINAL_STAGES.has(picked.stage) && !archived);
       continuePanel.hidden = !terminal;
-      const canContinue = terminal && Boolean(picked.prUrl);
+      const canContinue = terminal;
       continueEl.disabled = !canContinue;
       continueBtn.disabled = !canContinue;
-      if (terminal && !canContinue) {
-        continueStatus.textContent = "This job has no PR yet — start a new job instead.";
+      if (terminal && !picked.prUrl) {
+        continueStatus.textContent =
+          "No PR yet — continue re-runs the build stage on this branch/worktree.";
+      } else if (terminal && picked.prUrl) {
+        continueStatus.textContent = "";
       } else if (!terminal) {
         continueStatus.textContent = "";
       }
