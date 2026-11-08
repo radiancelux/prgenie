@@ -48,7 +48,9 @@ export type GracefulRestartOpts = {
   exit?: (code: number) => void;
 };
 
-export async function gracefulRunnerRestart(opts: GracefulRestartOpts): Promise<RestartPrepareResult> {
+export async function gracefulRunnerRestart(
+  opts: GracefulRestartOpts,
+): Promise<RestartPrepareResult> {
   const preview = await inspectRestartState(opts.engine.config);
   await opts.closeHttp();
   const exit = opts.exit ?? ((code: number) => process.exit(code));

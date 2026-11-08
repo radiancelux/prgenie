@@ -16,10 +16,7 @@ import {
 } from "./init.js";
 import { formatRunnerDoctorReport, runRunnerDoctor } from "./runner-doctor.js";
 import { runJobWorker } from "./job-worker.js";
-import {
-  httpCallRunnerRestart,
-  waitForHttpRunner,
-} from "./runner-restart.js";
+import { httpCallRunnerRestart, waitForHttpRunner } from "./runner-restart.js";
 import { spawn } from "node:child_process";
 import path from "node:path";
 
@@ -116,7 +113,9 @@ function resolveRunnerEntryForRestart(): string {
   if (override) return override;
   const bundled = process.argv[1];
   if (bundled) return bundled;
-  throw new Error("cannot resolve runner entry for restart (set PRGENIE_RUNNER_BINARY or use runner.cjs)");
+  throw new Error(
+    "cannot resolve runner entry for restart (set PRGENIE_RUNNER_BINARY or use runner.cjs)",
+  );
 }
 
 async function cmdRunnerRestart(): Promise<void> {

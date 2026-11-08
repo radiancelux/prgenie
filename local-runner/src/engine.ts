@@ -40,11 +40,7 @@ import { ContinueJobError, continueJobFromRaw } from "./job-continue.js";
 import { normalizeStartJobArgs, ValidationError } from "./settings-validation.js";
 import { resolveJobTarget } from "./job-target.js";
 import { markJobInterrupted } from "./job-interrupted.js";
-import {
-  persistJobWorker,
-  spawnDetachedJobWorker,
-  touchJobWorker,
-} from "./job-worker-spawn.js";
+import { persistJobWorker, spawnDetachedJobWorker, touchJobWorker } from "./job-worker-spawn.js";
 import { waitForWorkerExit, workerLooksAlive } from "./job-worker-monitor.js";
 import { inspectRestartState } from "./runner-restart.js";
 
@@ -182,11 +178,11 @@ export class RunnerEngine extends EventEmitter {
 
   schedule(jobId: string): void {
     if (this.running.has(jobId)) return;
-    const p = (useDetachedJobWorkers() ? this.runOneDetached(jobId) : this.runOneInline(jobId)).finally(
-      () => {
-        this.running.delete(jobId);
-      },
-    );
+    const p = (
+      useDetachedJobWorkers() ? this.runOneDetached(jobId) : this.runOneInline(jobId)
+    ).finally(() => {
+      this.running.delete(jobId);
+    });
     this.running.set(jobId, p);
   }
 

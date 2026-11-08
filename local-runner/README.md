@@ -196,8 +196,8 @@ Jobs are JSON under `$PRGENIE_RUNNER_DATA_DIR/jobs/` (archived ones under `archi
 
 HTTP `serve` runs each active job in a **detached `job-worker` process** (own PID, logs on disk). Upgrading `main` no longer requires waiting for every slot to drain: rebuild, then restart the HTTP front-end; workers keep running through the relaunch.
 
-| Action | CLI | MCP | HTTP |
-| ------ | --- | --- | ---- |
+| Action                              | CLI                                                   | MCP                                                                                              | HTTP                                                                          |
+| ----------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
 | Graceful shutdown + relaunch helper | `prgenie restart` (`--build` runs `pnpm build` first) | `restart_runner` (preview adopt/interrupt lists; pair with `prgenie restart` or your supervisor) | `POST /api/runner/restart` (responds then exits **only** the HTTP/MCP server) |
 
 **Flow:** `POST /api/runner/restart` or `prgenie restart` stops the HTTP server without killing detached workers. The next `prgenie serve` (or the relaunch that `prgenie restart` spawns) **re-adopts** live worker PIDs, keeps tailing logs, and leaves the stage machine + watchdog in the worker process. If a worker died during the gap, the job is marked **`interrupted`** (dashboard + JSON) and can be resumed with `continue_job` / `POST …/continue` — never silently dropped.

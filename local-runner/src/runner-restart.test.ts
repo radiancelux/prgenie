@@ -159,7 +159,11 @@ describe("live runner restart (detached workers)", () => {
       },
       { model: "composer-2.5", dryRun: true, config: cfg(dataDir, port) },
     );
-    job.worker = { pid: 2_147_483_640, hostname: os.hostname(), startedAt: new Date().toISOString() };
+    job.worker = {
+      pid: 2_147_483_640,
+      hostname: os.hostname(),
+      startedAt: new Date().toISOString(),
+    };
     await saveJob(dataDir, job);
 
     const engine = new RunnerEngine(cfg(dataDir, port), { watchCi: false });

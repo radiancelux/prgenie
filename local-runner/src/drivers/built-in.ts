@@ -254,8 +254,7 @@ export const slowDryRunDriver: AgentDriver = {
     };
     const result = sleep.then(async () => {
       const fake =
-        `[dry-run] slow agent (${delay}ms) in ${opts.cwd}\n` +
-        `${opts.prompt.slice(0, 120)}...\n`;
+        `[dry-run] slow agent (${delay}ms) in ${opts.cwd}\n` + `${opts.prompt.slice(0, 120)}...\n`;
       await hooks.appendLog(fake);
       hooks.onLine(fake);
       hooks.onLine('{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}');

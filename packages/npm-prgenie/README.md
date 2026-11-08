@@ -149,17 +149,17 @@ Point the client at the repo-local binary, for example `"command": "pnpm", "args
 
 ## MCP tools
 
-| Tool                          | Purpose                        |
-| ----------------------------- | ------------------------------ |
-| `start_job`                   | Start the loop                 |
-| `get_job`                     | Status + log tail              |
-| `list_jobs`                   | Dashboard list                 |
-| `steer_job`                   | Queue follow-up prompt         |
-| `stop_job`                    | Stop running job               |
-| `archive_job` / `restore_job` | Remove / restore finished jobs |
-| `continue_job`                | Extra fix→review round(s)      |
+| Tool                          | Purpose                           |
+| ----------------------------- | --------------------------------- |
+| `start_job`                   | Start the loop                    |
+| `get_job`                     | Status + log tail                 |
+| `list_jobs`                   | Dashboard list                    |
+| `steer_job`                   | Queue follow-up prompt            |
+| `stop_job`                    | Stop running job                  |
+| `archive_job` / `restore_job` | Remove / restore finished jobs    |
+| `continue_job`                | Extra fix→review round(s)         |
 | `restart_runner`              | Graceful restart adoption preview |
-| `settings`                    | Read or patch runner settings  |
+| `settings`                    | Read or patch runner settings     |
 
 Stdio and `serve` share one on-disk job store (file lock when both run).
 

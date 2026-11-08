@@ -25,11 +25,7 @@ async function syncControlFromDisk(
   return job;
 }
 
-function startControlPoller(
-  dataDir: string,
-  jobId: string,
-  control: JobControl,
-): () => void {
+function startControlPoller(dataDir: string, jobId: string, control: JobControl): () => void {
   const timer = setInterval(() => {
     void syncControlFromDisk(dataDir, jobId, control);
   }, POLL_MS);
