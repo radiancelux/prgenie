@@ -249,6 +249,20 @@ Default cwd stays with — pass `cwd` when the host lands in the wrong repo; do 
 
 Prefer MCP tools when the leaf has PR Genie MCP. Soft max **2** concurrent implementor Tasks; hard concurrency is .
 
+## MCP host: `spawn npx ENOENT` (npm runner)
+
+**Symptoms:** Claude Desktop, Cursor, or another GUI MCP client fails to start `prgenie-runner` with `spawn npx ENOENT` or cannot find `node`/`npx` even though your terminal works.
+
+**Cause:** Apps launched from the Dock/Start menu often **do not inherit** nvm/fnm/volta PATH.
+
+**Fix:**
+
+1. Prefer **`npm install -g prgenie`** and set MCP `"command": "prgenie", "args": ["mcp"]` (`prgenie config --client cursor --global`).
+2. Or set `command` to the absolute path from `which npx` / `where npx` (Windows: sometimes `npx.cmd`).
+3. Fully **restart** the MCP host after editing config.
+
+See [npm package README](../packages/npm-prgenie/README.md#troubleshooting).
+
 ## Git missing from PATH (MCP / CLI spawn)
 
 **Symptoms:** MCP or CLI fails with `GitBinaryError` / `git is not resolvable from this process` (ENOENT on spawn).

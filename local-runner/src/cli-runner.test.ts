@@ -86,6 +86,25 @@ describe("runner CLI flags", () => {
     assert.match(stderr, /prgenie: unknown command/);
     assert.doesNotMatch(stderr, /at /);
   });
+
+  it("plugin CLI command names get a targeted hint", async () => {
+    const { code, stderr } = await runRunner(["list"]);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /plugin\/monorepo CLI/);
+  });
+
+  it("unknown --client exits non-zero", async () => {
+    const { code, stderr } = await runRunner(["config", "--client", "typo"]);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /unknown --client typo/);
+  });
+
+  it("config --client claude-desktop prints JSON", async () => {
+    const { code, stdout } = await runRunner(["config", "--client", "claude-desktop", "--npx"]);
+    assert.equal(code, 0);
+    const parsed = JSON.parse(stdout) as { mcpServers: Record<string, unknown> };
+    assert.ok(parsed.mcpServers["prgenie-runner"]);
+  });
 });
 
 describe("serve startup errors", () => {

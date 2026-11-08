@@ -60,6 +60,13 @@ export function formatInitReport(result: InitResult, env: NodeJS.ProcessEnv = pr
       "",
       "Optional override (keep secret):",
       `  export PRGENIE_RUNNER_TOKEN="$(cat ${result.tokenFile})"`,
+      ...(process.platform === "win32"
+        ? [
+            "",
+            "PowerShell (optional override):",
+            `  $env:PRGENIE_RUNNER_TOKEN = Get-Content -Raw '${result.tokenFile.replace(/'/g, "''")}'`,
+          ]
+        : []),
       "",
       "Stdio MCP (Cursor, VS Code, Claude Desktop) does not need the token.",
     );
@@ -89,18 +96,29 @@ export function clientMcpSnippet(command: string, args: string[]): string {
   )}\n`;
 }
 
-export function cursorMcpJsonSnippet(): string {
-  return clientMcpSnippet("npx", ["-y", "prgenie", "mcp"]);
+export const CONFIG_CLIENT_IDS = ["cursor", "vscode", "claude-code", "claude-desktop"] as const;
+export type ConfigClientId = (typeof CONFIG_CLIENT_IDS)[number];
+
+export function mcpSpawnForConfig(useGlobal: boolean): { command: string; args: string[] } {
+  if (useGlobal) {
+    return { command: "prgenie", args: ["mcp"] };
+  }
+  return { command: "npx", args: ["-y", "prgenie", "mcp"] };
 }
 
-export function vscodeMcpJsonSnippet(): string {
+export function cursorMcpJsonSnippet(useGlobal = false): string {
+  const { command, args } = mcpSpawnForConfig(useGlobal);
+  return clientMcpSnippet(command, args);
+}
+
+export function claudeDesktopMcpJsonSnippet(useGlobal = false): string {
+  const { command, args } = mcpSpawnForConfig(useGlobal);
   return `${JSON.stringify(
     {
-      servers: {
+      mcpServers: {
         [RUNNER_MCP_SERVER_ID]: {
-          type: "stdio",
-          command: "npx",
-          args: ["-y", "prgenie", "mcp"],
+          command,
+          args,
         },
       },
     },
@@ -109,6 +127,24 @@ export function vscodeMcpJsonSnippet(): string {
   )}\n`;
 }
 
-export function claudeCodeMcpAddCommand(): string {
-  return `claude mcp add --scope user ${RUNNER_MCP_SERVER_ID} -- npx -y prgenie mcp\n`;
+export function vscodeMcpJsonSnippet(useGlobal = false): string {
+  const { command, args } = mcpSpawnForConfig(useGlobal);
+  return `${JSON.stringify(
+    {
+      servers: {
+        [RUNNER_MCP_SERVER_ID]: {
+          type: "stdio",
+          command,
+          args,
+        },
+      },
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+export function claudeCodeMcpAddCommand(useGlobal = false): string {
+  const { command, args } = mcpSpawnForConfig(useGlobal);
+  return `claude mcp add --scope user ${RUNNER_MCP_SERVER_ID} -- ${command} ${args.join(" ")}\n`;
 }

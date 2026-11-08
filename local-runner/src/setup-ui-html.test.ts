@@ -85,6 +85,14 @@ describe("operator-neutral copy (#163)", () => {
     assert.doesNotMatch(html, /\bhis workstation\b/i);
   });
 
+  it("surfaces Resend env names and save warning copy (#162)", () => {
+    const html = setupUiHtml(9473);
+    assert.match(html, /RESEND_API_KEY/);
+    assert.match(html, /PRGENIE_RUNNER_FROM_EMAIL/);
+    assert.match(html, /emails will not send until Resend is configured/);
+    assert.match(runnerUiHtml(9473), /RESEND_API_KEY/);
+  });
+
   it("rejects known maintainer-specific tokens in setup, dashboard, and MCP text", async () => {
     const setupSrc = await readFile(path.join(srcDir, "setup-ui-html.ts"), "utf8");
     const uiSrc = await readFile(path.join(srcDir, "ui-html.ts"), "utf8");
