@@ -339,6 +339,21 @@ function nullableTrimmed(v: unknown): string | null {
   return v === null || v === "" ? null : String(v).trim();
 }
 
+/** Validates nested jobTypes knobs (e.g. compute watchdog) with the same rules as top-level watchdog. */
+export function validateJobTypesPatch(raw: unknown): Record<string, unknown> | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!isPlainObject(raw)) throw new ValidationError("jobTypes must be an object");
+  const compute = raw.compute;
+  if (compute !== undefined && compute !== null) {
+    if (!isPlainObject(compute)) throw new ValidationError("jobTypes.compute must be an object");
+    const wd = (compute as Record<string, unknown>).watchdog;
+    if (wd !== undefined && wd !== null) {
+      validateWatchdogPatch(wd);
+    }
+  }
+  return raw as Record<string, unknown>;
+}
+
 /** Builds a SettingsPatch from a PATCH /api/settings body; throws ValidationError on bad input. */
 export function parseSettingsPatch(payload: Record<string, unknown>): SettingsPatch {
   const patch: SettingsPatch = {};
@@ -414,8 +429,8 @@ export function parseSettingsPatch(payload: Record<string, unknown>): SettingsPa
       };
     });
   }
-  if (payload.jobTypes !== undefined && typeof payload.jobTypes === "object") {
-    patch.jobTypes = payload.jobTypes as Record<string, unknown>;
+  if (payload.jobTypes !== undefined) {
+    patch.jobTypes = validateJobTypesPatch(payload.jobTypes);
   }
   if (payload.presets !== undefined && typeof payload.presets === "object") {
     patch.presets = payload.presets as Record<string, unknown>;

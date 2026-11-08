@@ -43,7 +43,8 @@ export const RUNNER_MCP_TOOLS = [
         dryRun: { type: "boolean" },
         ticketUrl: {
           type: "string",
-          description: "Linear issue URL (optional; inferred from branch RAD-n when omitted)",
+          description:
+            "Primary ticket URL (optional; when omitted, issue-<n> or ticket-<n> in the branch name may be inferred)",
         },
         ticketUrls: {
           type: "array",
@@ -53,7 +54,8 @@ export const RUNNER_MCP_TOOLS = [
         },
         linearIssue: {
           type: "string",
-          description: "Linear issue id e.g. (optional; builds ticketUrl when set alone)",
+          description:
+            "Issue id such as ISSUE-42 (optional; branch inference uses issue-<n> / ticket-<n> patterns)",
         },
         jobType: {
           type: "string",
