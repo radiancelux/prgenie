@@ -7,11 +7,7 @@ import type {
   AgentDriverRunOptions,
   AgentDriverRunResult,
 } from "./driver-types.js";
-import {
-  buildCursorAgentSpawn,
-  cursorAgentOnPath,
-  resolveCursorAgentBinary,
-} from "../cursor-agent-cli.js";
+import { buildCursorAgentSpawn, resolveCursorAgentBinary } from "../cursor-agent-cli.js";
 import { binaryOnPath, escalatingKill } from "./driver-types.js";
 import { WATCHDOG_CHILD_GRACE_MS } from "../runner-policy.js";
 
@@ -90,14 +86,9 @@ export const cursorAgentDriver: AgentDriver = {
   id: "cursor-agent",
   async start(opts, hooks) {
     const binary = opts.driver.binary?.trim() || "cursor-agent";
-    const resolved =
-      binary === "cursor-agent" || binary === "agent"
-        ? resolveCursorAgentBinary({ name: binary })
-        : null;
-    const available =
-      binary === "cursor-agent" || binary === "agent"
-        ? await cursorAgentOnPath({ name: binary })
-        : await binaryOnPath(binary);
+    const isCursorAgentName = binary === "cursor-agent" || binary === "agent";
+    const resolved = isCursorAgentName ? resolveCursorAgentBinary({ name: binary }) : null;
+    const available = isCursorAgentName ? resolved !== null : await binaryOnPath(binary);
     if (!opts.dryRun && !available) {
       throw new Error(`Driver "${opts.driver.id}": binary not found: ${binary}`);
     }
