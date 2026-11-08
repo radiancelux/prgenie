@@ -200,7 +200,7 @@ export const RUNNER_MCP_TOOL_NAMES = RUNNER_MCP_TOOLS.map((t) => t.name);
 type ToolHandler = (engine: RunnerEngine, args: Json) => Promise<unknown>;
 
 const RUNNER_TOOL_HANDLERS: Record<string, ToolHandler> = {
-  start_job: (engine, args) => engine.startJob(normalizeStartJobArgs(args)),
+  start_job: (engine, args) => engine.startJob(args),
   list_jobs: (engine, args) => engine.list({ includeArchived: args.includeArchived === true }),
   get_job: async (engine, args) => {
     const id = String(args.id ?? "");

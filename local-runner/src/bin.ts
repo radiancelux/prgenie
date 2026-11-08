@@ -23,6 +23,7 @@ import { formatRunnerDoctorReport, runRunnerDoctor } from "./runner-doctor.js";
 import { runJobWorker } from "./job-worker.js";
 import { runRunnerRestartCli } from "./runner-restart.js";
 import { spawn } from "node:child_process";
+import { childProcessSpawnOptions } from "./spawn-options.js";
 import { runCli } from "./cli-errors.js";
 import { runnerCliVersion } from "./version.js";
 
@@ -159,18 +160,22 @@ async function cmdRunnerRestart(): Promise<void> {
     },
     {
       launch: () =>
-        spawn(launcher, [entry, "serve"], {
-          detached: true,
-          stdio: "ignore",
-          env: {
-            ...process.env,
-            PRGENIE_RUNNER_ROLE: "serve",
-            PRGENIE_RUNNER_HOST: config.host,
-            PRGENIE_RUNNER_PORT: String(config.port),
-            PRGENIE_RUNNER_DATA_DIR: config.dataDir,
-            PRGENIE_RUNNER_TOKEN: config.token,
-          },
-        }).unref(),
+        spawn(
+          launcher,
+          [entry, "serve"],
+          childProcessSpawnOptions({
+            detached: true,
+            stdio: "ignore",
+            env: {
+              ...process.env,
+              PRGENIE_RUNNER_ROLE: "serve",
+              PRGENIE_RUNNER_HOST: config.host,
+              PRGENIE_RUNNER_PORT: String(config.port),
+              PRGENIE_RUNNER_DATA_DIR: config.dataDir,
+              PRGENIE_RUNNER_TOKEN: config.token,
+            },
+          }),
+        ).unref(),
     },
   );
 }

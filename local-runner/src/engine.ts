@@ -137,8 +137,11 @@ export class RunnerEngine extends EventEmitter {
     if (this.watchCi) this.ciWatcher.start();
   }
 
-  async startJob(args: StartJobArgs): Promise<JobRecord> {
-    const normalized = normalizeStartJobArgs({ ...args });
+  async startJob(args: StartJobArgs | Record<string, unknown>): Promise<JobRecord> {
+    const normalized = normalizeStartJobArgs(
+      { ...(args as Record<string, unknown>) },
+      { defaultDryRun: this.config.dryRun },
+    );
     const job = await this.withQueueLock(async () => {
       const created = await this.createJobRecord(normalized);
       if (!created.queueState?.queued) this.schedule(created.id);

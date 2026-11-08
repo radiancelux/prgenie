@@ -46,6 +46,7 @@ export function readProcStartTime(pid: number): string | null {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2_000,
+      windowsHide: true,
     }).trim();
     return out || null;
   } catch {

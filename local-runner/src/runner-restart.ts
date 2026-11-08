@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { childProcessSpawnOptions } from "./spawn-options.js";
 import { existsSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
@@ -163,12 +164,16 @@ export function findBuildRoot(entry: string): string | null {
 
 export function runPnpmBuild(root: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    const p = spawn("pnpm", ["build"], {
-      cwd: root,
-      stdio: "inherit",
-      env: process.env,
-      shell: process.platform === "win32",
-    });
+    const p = spawn(
+      "pnpm",
+      ["build"],
+      childProcessSpawnOptions({
+        cwd: root,
+        stdio: "inherit",
+        env: process.env,
+        shell: process.platform === "win32",
+      }),
+    );
     p.on("error", reject);
     p.on("exit", (code) =>
       code === 0 ? resolve() : reject(new Error(`pnpm build exited ${code}`)),

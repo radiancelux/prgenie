@@ -1,3 +1,7 @@
+/** Placeholder when a dry-run code job starts without a prompt file (#195). */
+export const DRY_RUN_PLACEHOLDER_PROMPT =
+  "Dry run: simulate a short implementor pass on this branch (no prompt file was provided).";
+
 export const DEFAULT_IMPLEMENT_PROMPT = `You are the implementor for one feature branch.
 
 Implement the ticket, commit, push to origin, and open a GitHub pull request.
