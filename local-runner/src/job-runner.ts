@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
 import type { RunnerConfig } from "./config.js";
 import { AgentRunner } from "./agent.js";
 import {
@@ -7,8 +7,10 @@ import {
   fetchPrVerdictSince,
   findPrForBranch,
   isBranchSyncedWithOrigin,
+  postPrComment,
   type Verdict,
 } from "./github.js";
+import { resolveReviewVerdict } from "./review-verdict.js";
 import { JobControl } from "./job-control.js";
 import { DEFAULT_FIX_PROMPT, DEFAULT_IMPLEMENT_PROMPT, DEFAULT_REVIEW_PROMPT } from "./prompts.js";
 import {
@@ -195,6 +197,11 @@ async function runAgentStage(
 
 function emit(cb: JobCallbacks | undefined, job: JobRecord, event: JobEvent): void {
   cb?.onEvent?.(job.id, event);
+}
+
+async function runnerLog(cb: JobCallbacks | undefined, job: JobRecord, line: string) {
+  await appendFile(job.logPath, `${line}\n`, "utf8").catch(() => undefined);
+  emit(cb, job, { type: "log", line });
 }
 
 async function persistJob(
@@ -515,15 +522,25 @@ export async function runJobLoop(
       if (job.dryRun) {
         verdict = job.reviewRound >= job.maxRounds ? "APPROVE" : "CHANGES";
       } else if (job.prNumber != null) {
-        verdict = await fetchPrVerdictSince(wt, job.prNumber, {
+        const prNumber = job.prNumber;
+        const githubVerdict = await fetchPrVerdictSince(wt, prNumber, {
           sinceIso: reviewRoundStartedAt,
           afterCommentId: reviewBaselineCommentId,
           afterReviewId: reviewBaselineReviewId,
         });
+        const resolved = await resolveReviewVerdict({
+          githubVerdict,
+          reviewOutput: reviewRun.output,
+          outputFormat,
+          mirrorToPr: (body) => postPrComment(wt, prNumber, body),
+          log: (line) => runnerLog(callbacks, job, line),
+        });
+        verdict = resolved?.verdict ?? null;
       }
 
       if (!verdict) {
-        job.error = "Reviewer did not post VERDICT: APPROVE or VERDICT: CHANGES";
+        job.error =
+          "Reviewer did not post or return VERDICT: APPROVE or VERDICT: CHANGES (checked PR comments, PR reviews, and the reviewer's final message)";
         await setStage(config, job, "failed", control, callbacks);
         return;
       }

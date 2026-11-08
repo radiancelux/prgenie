@@ -266,6 +266,11 @@ export async function fetchPrVerdictSince(
   return findVerdictInReviewsSince(reviews, scope);
 }
 
+export async function postPrComment(cwd: string, prNumber: number, body: string): Promise<boolean> {
+  const res = await gh(cwd, ["pr", "comment", String(prNumber), "--body", body]);
+  return res.code === 0;
+}
+
 export type GitFn = typeof git;
 
 export async function isBranchSyncedWithOrigin(
