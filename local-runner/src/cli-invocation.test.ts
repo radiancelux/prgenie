@@ -17,6 +17,17 @@ describe("cli-invocation", () => {
     assert.equal(prgenieCmd("doctor", {}), "prgenie doctor");
   });
 
+  it("init next-step uses global prgenie doctor when not via npx", () => {
+    const result: InitResult = {
+      dataDir: "/tmp/data",
+      tokenFile: "/tmp/data/runner.token",
+      createdToken: true,
+    };
+    const report = formatInitReport(result, {});
+    assert.match(report, /Next: prgenie doctor/);
+    assert.doesNotMatch(report, /npx -y prgenie@latest doctor/);
+  });
+
   it("init next-step uses npx when launched via npx", () => {
     const result: InitResult = {
       dataDir: "/tmp/data",

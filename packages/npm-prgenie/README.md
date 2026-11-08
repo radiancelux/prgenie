@@ -6,6 +6,27 @@ Optional: `prgenie serve` for a browser dashboard and HTTP MCP (localhost + toke
 
 Requires **Node.js 22+**, **git**, **GitHub CLI (`gh`)**, and **`cursor-agent`** for real (non–dry-run) jobs.
 
+## Windows prerequisites
+
+Use **PowerShell** (or Windows Terminal). After **each** install below, open a **new** window so `PATH` refreshes.
+
+| Tool | Install | Verify |
+| ---- | ------- | ------ |
+| Node 22+ | `winget install OpenJS.NodeJS.LTS` | `node -v` |
+| Git + Git Bash | `winget install --id Git.Git` | `git --version` |
+| GitHub CLI | `winget install --id GitHub.cli` | `gh auth login` |
+| Cursor CLI | `irm 'https://cursor.com/install?win32=true' \| iex` | `cursor-agent login` |
+
+The Cursor CLI installer requires **Git for Windows with Git Bash**. If setup still complains Git Bash is missing even after installing Git, `bash` may resolve to the WSL stub in `WindowsApps`. Prepend Git’s bin directory for that session:
+
+```powershell
+$env:Path = "C:\Program Files\Git\bin;" + $env:Path
+```
+
+macOS/Linux Cursor CLI: `curl https://cursor.com/install -fsS | bash`, then open a new terminal and run `cursor-agent login`.
+
+**Published 0.1.4 note:** on Windows, doctor and real (non–dry-run) jobs may fail to find `cursor-agent` when the CLI installs only `%LOCALAPPDATA%\cursor-agent\*.ps1` scripts. That resolution fix ships in the next npm release after 0.1.4 (#184).
+
 ## Install (recommended: system-level)
 
 The runner is a per-machine tool, so register it once for every repo rather than per project:
@@ -206,7 +227,7 @@ Optional notify emails fire when a job opens/updates a PR and when the loop fini
 
 ## Windows notes
 
-- On Windows, **`prgenie init`** prints a PowerShell override next to the bash `export` line (**requires prgenie 0.1.4 or later**). Bash `export PRGENIE_RUNNER_TOKEN="$(cat ~/.prgenie/local-runner/runner.token)"` becomes, in PowerShell:
+- On Windows, **`prgenie init`** prints the PowerShell token override (and an optional Git Bash line). Unreleased after 0.1.4: it no longer leads with the bash `export` line in PowerShell sessions.
 
   ```powershell
   $env:PRGENIE_RUNNER_TOKEN = Get-Content -Raw 'C:\Users\you\.prgenie\local-runner\runner.token'
@@ -215,7 +236,7 @@ Optional notify emails fire when a job opens/updates a PR and when the loop fini
   `init` prints the real path to your `runner.token`.
 
 - MCP config paths: Cursor `%USERPROFILE%\.cursor\mcp.json`; Claude Desktop `%APPDATA%\Claude\claude_desktop_config.json`; VS Code project `.vscode\mcp.json`.
-- Some MCP hosts need `"command": "npx.cmd"` or a full path to `npx` / `prgenie` — prefer **`npm install -g prgenie`** and `"command": "prgenie"` when `spawn npx ENOENT` appears in host logs.
+- Some MCP hosts on Windows may need `"command": "npx.cmd"` instead of `"npx"` in MCP JSON (`config --client cursor --npx` still emits `"npx"`). This was **not** observed failing in recent Windows QA — if `spawn npx ENOENT` appears in host logs, try `npx.cmd` or prefer **`npm install -g prgenie`** with `"command": "prgenie"`.
 
 ## Two different `prgenie` CLIs?
 
@@ -227,7 +248,7 @@ The **npm package** (this README) is the runner. **`prgenie list` / `create` / `
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`spawn npx ENOENT` (MCP host)**   | GUI apps often lack shell PATH. Use `npm install -g prgenie`, then `"command": "prgenie", "args": ["mcp"]`, or set `command` to the absolute path from `which npx` / `where npx`. Restart the MCP host. |
 | **`gh` not authenticated**          | Run `gh auth login`; re-run `prgenie doctor`. Jobs need `gh` for PR/CI.                                                                                                                                 |
-| **`cursor-agent` missing**          | Install Cursor CLI; or pick another driver in `settings` after `serve`.                                                                                                                                 |
+| **`cursor-agent` missing**          | **Windows (PowerShell):** `irm 'https://cursor.com/install?win32=true' \| iex` (needs Git for Windows + Git Bash). **macOS/Linux:** `curl https://cursor.com/install -fsS \| bash`. Open a new terminal, then `cursor-agent login`. Or pick another driver in `settings` after `serve`. |
 | **Branch held by another worktree** | Another job or git worktree uses that branch. Stop/archive the other job or pick a new branch.                                                                                                          |
 | **Model unavailable on your plan**  | Override `model` in `start_job` or set defaults via `settings` / Setup UI.                                                                                                                              |
 | **Job stuck (watchdog)**            | Check dashboard logs; `stop_job`, then `archive_job`. Tune watchdog via `settings` or Setup.                                                                                                            |

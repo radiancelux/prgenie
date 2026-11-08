@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
+import { formatCursorAgentInstallFix } from "./cursor-agent-cli.js";
 import {
   formatRunnerDoctorReport,
   parseGhAuthStatus,
@@ -10,6 +11,15 @@ import {
   type GhExecResult,
 } from "./runner-doctor.js";
 import { runInit } from "./init.js";
+
+describe("checkAgentCli fix text", () => {
+  it("includes per-OS Cursor CLI install commands", () => {
+    assert.match(formatCursorAgentInstallFix("win32"), /install\?win32=true/);
+    assert.match(formatCursorAgentInstallFix("win32"), /Git for Windows/);
+    assert.match(formatCursorAgentInstallFix("darwin"), /curl https:\/\/cursor.com\/install/);
+    assert.match(formatCursorAgentInstallFix("linux"), /cursor-agent login/);
+  });
+});
 
 describe("parseGhAuthStatus", () => {
   it("detects logged-in, not logged in, and invalid GH_TOKEN", () => {

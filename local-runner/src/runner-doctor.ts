@@ -9,7 +9,7 @@ import {
   runnerTokenFile,
 } from "./config.js";
 import { prgenieCmd, runningViaNpx } from "./cli-invocation.js";
-import { binaryOnPath } from "./drivers/driver-types.js";
+import { cursorAgentOnPath, formatCursorAgentInstallFix } from "./cursor-agent-cli.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -147,7 +147,7 @@ async function checkGh(
 }
 
 async function checkAgentCli(): Promise<RunnerDoctorCheck> {
-  const cursor = await binaryOnPath("cursor-agent");
+  const cursor = await cursorAgentOnPath();
   if (cursor) {
     return {
       id: "agent-cli",
@@ -159,7 +159,7 @@ async function checkAgentCli(): Promise<RunnerDoctorCheck> {
     id: "agent-cli",
     ok: false,
     summary: "cursor-agent is not on PATH.",
-    fix: "Install Cursor CLI (`cursor-agent`) or configure another driver in runner settings after serve is up.",
+    fix: formatCursorAgentInstallFix(),
   };
 }
 
