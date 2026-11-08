@@ -12,7 +12,7 @@ The runner is a per-machine tool, so register it once for every repo rather than
 
 - **`npx` (recommended, no install):** every snippet below runs `npx -y prgenie mcp`. npm caches the package after the first launch.
 - **Global install (recommended on slow/offline networks):** `npm install -g prgenie` (or pin `prgenie@0.1.3`), then use `"command": "prgenie", "args": ["mcp"]` in MCP config. Upgrade with `npm install -g prgenie@latest`.
-- **Why global?** `npx -y prgenie mcp` may take **~70s** to fail on a flaky DNS cache and many MCP hosts time out first. Global install also helps GUI apps that do not inherit your shell `PATH` (see [Troubleshooting](#troubleshooting)).
+- **Why global?** On a flaky DNS cache, `npx -y prgenie mcp` can take well over a minute to fail, and many MCP hosts time out first. Global install also helps GUI apps that do not inherit your shell `PATH` (see [Troubleshooting](#troubleshooting)).
 
 A repo-local devDependency also works but is optional; see [Optional: project devDependency](#optional-project-devdependency).
 

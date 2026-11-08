@@ -31,6 +31,10 @@ Subagent auto-capture is **off by default** (`PRGENIE_CAPTURE_SUBAGENT=1` to dra
 
 ![Runner dashboard (npm path)](docs/runner-dashboard-evidence/dashboard-1280px.png)
 
+_Screenshot: the **npm runner** HTTP dashboard (`npx -y prgenie serve`), not the Local PRs sidebar._
+
+**Control plane:** to adopt an existing CloudAgent or GitHub PR instead of starting from `/steward`, bind `gh`, then `prgenie attach` and `prgenie shepherd` — see [Control plane (attach and shepherd)](docs/contributing.md#control-plane-attach-and-shepherd).
+
 ## Quick start (npm runner)
 
 For the **published runner** (npm **0.1.3** on `main`): MCP stdio job loop without cloning this repo.
@@ -66,6 +70,8 @@ Unsupported or exotic layouts (no package manager, non-JS stacks, custom CI with
 - Not a subagent orchestrator (Cursor's Task tool owns spawn/stop)
 - Not a GitHub PR client (GitLens owns remote PRs after export)
 - Not a Conductor replacement
+
+<a id="install-from-source-monorepo-cursor-plugin-extension"></a>
 
 ## Install from source (Cursor plugin and extension)
 

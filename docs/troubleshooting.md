@@ -247,7 +247,7 @@ Default cwd stays with — pass `cwd` when the host lands in the wrong repo; do 
 - `pnpm cli <args>` from the monorepo root, or
 - `node C:\path\to\pr-genie\packages\cli\dist\prgenie.cjs <args>` (absolute path)
 
-Prefer MCP tools when the leaf has PR Genie MCP. Soft max **2** concurrent implementor Tasks; hard concurrency is .
+Prefer MCP tools when the leaf has PR Genie MCP. Soft max **2** concurrent implementor Tasks; the plugin does not enforce a hard concurrency limit.
 
 ## MCP host: `spawn npx ENOENT` (npm runner)
 

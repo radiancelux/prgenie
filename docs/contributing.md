@@ -56,6 +56,17 @@ prgenie gh use <login>
 
 Subagent capture on `subagentStop` is **opt-in**: `PRGENIE_CAPTURE_SUBAGENT=1`.
 
+### Control plane (attach and shepherd)
+
+Attach an existing CloudAgent or GitHub PR, then shepherd it through the gates:
+
+1. **Bind GitHub** (if needed): `prgenie gh use <your-login>`
+2. **Attach**: `prgenie attach <pr-url|branch>`
+3. **Shepherd**: `prgenie shepherd <id>` — **ready** = gates pass; **blocked** = which gate failed
+4. After plugin changes: `pnpm link-plugin` then `prgenie doctor`
+
+Run `prgenie attach --help` and `prgenie --help` for full command reference.
+
 ## Storage (git-native)
 
 - `refs/local-pr/<id>/head` and `refs/local-pr/<id>/base`
