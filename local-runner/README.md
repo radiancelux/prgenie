@@ -98,7 +98,7 @@ On startup the runner prints reachable URLs (loopback plus a best-effort LAN IP 
 
 `building` → `reviewing` (round N) → `fixing` → … → `approved` | `changes_remaining` | `stuck` | `failed` | `stopped` | `interrupted` (worker died; see [Restart and upgrade](#restart-and-upgrade-while-jobs-run))
 
-Default **`maxRounds`** = 3 (review/fix cycles). N review rounds allow at most N−1 intervening fix passes. Reviewer must post **one** GitHub issue comment on the PR ending with `VERDICT: APPROVE` or `VERDICT: CHANGES` (built-in default review prompt enforces this). The runner also accepts the same `VERDICT:` line on PR review bodies as a fallback.
+Default **`maxRounds`** = 3 (review/fix cycles). N review rounds allow at most N−1 intervening fix passes. Reviewer must post **one** GitHub issue comment on the PR ending with `VERDICT: APPROVE` or `VERDICT: CHANGES` (built-in default review prompt enforces this). The runner also accepts the same `VERDICT:` line on PR review bodies as a fallback. If neither has a verdict for the round (for example, a custom `reviewPromptFile` that asks for a verdict line but not a PR comment), the runner reads the `VERDICT:` line from the reviewer's final message instead, posts that message to the PR as a comment so the fixer and humans can see it, and notes this in the job log. A posted GitHub verdict always wins over the local one. The job fails only when no verdict is found anywhere.
 
 ### Docs mode
 
