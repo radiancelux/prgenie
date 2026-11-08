@@ -62,5 +62,17 @@ describe("prgenie config snippets", () => {
       claudeCodeMcpAddCommand(),
       "claude mcp add --scope user prgenie-runner -- npx -y prgenie mcp\n",
     );
+    assert.equal(
+      claudeCodeMcpAddCommand(true),
+      "claude mcp add --scope user prgenie-runner -- prgenie mcp\n",
+    );
+  });
+
+  it("global mode uses prgenie binary in MCP snippets", () => {
+    const cursor = JSON.parse(cursorMcpJsonSnippet(true)) as {
+      mcpServers: Record<string, { command: string; args: string[] }>;
+    };
+    assert.deepEqual(cursor.mcpServers["prgenie-runner"].args, ["mcp"]);
+    assert.equal(cursor.mcpServers["prgenie-runner"].command, "prgenie");
   });
 });

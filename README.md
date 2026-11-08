@@ -2,104 +2,70 @@
 
 Local pull requests for agent work. GitHub when you say so.
 
-## Quick start (npm)
+PR Genie gives you a **git-native review lane** before anything hits GitHub: branch, diff, comments, and status live in your repo until you export. Two install paths share the name `prgenie` but solve different problems — read [Which PR Genie do I need?](#which-pr-genie-do-i-need) first.
 
-The fastest path is the **`prgenie` npm package**: a local runner that drives an implement → PR → review → fix loop and talks to your MCP client over stdio. No clone, build, port, or token needed.
+## Which PR Genie do I need?
 
-Requires **Node.js 22+**, **git**, the **GitHub CLI (`gh`)**, and **`cursor-agent`** for real (non–dry-run) jobs. Install it system-wide (via `npx`, or `npm install -g prgenie`), not per repo. Full details are in the [package README](packages/npm-prgenie/README.md).
+| You want…                                                                                         | Install                                                                                        | MCP server id      | `prgenie` means…                                                    |
+| ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------- |
+| **Automated implement → PR → review loop** on a workstation (MCP `start_job`, optional dashboard) | [npm `prgenie`](packages/npm-prgenie/README.md) (`npx -y prgenie` or `npm install -g prgenie`) | `prgenie-runner`   | Runner: `init`, `doctor`, `mcp`, `serve`, `config`                  |
+| **Cursor steward + local PR sidebar** (human review, export gate, no push until you say so)       | Monorepo [plugin + extension](#install-from-source-monorepo-cursor-plugin-extension)           | `prgenie` (plugin) | Monorepo CLI: `create`, `list`, `steward`, `export`, … (`pnpm cli`) |
 
-### 1. Add the MCP server
+- The **Local PRs** sidebar (extension) lists **git-native local PRs** from the plugin/monorepo CLI. It does **not** show npm runner jobs started via `prgenie mcp` or the HTTP dashboard — use the [runner dashboard](packages/npm-prgenie/README.md#optional-http-dashboard) for those.
+- `prgenie doctor` and `prgenie mcp` behave differently per binary (runner vs plugin CLI). Run doctor from the install you care about.
+- Keep **both** MCP ids distinct (`prgenie` + `prgenie-runner`) if you use plugin and runner together.
 
-**Cursor** (`.cursor/mcp.json`) — also works for Claude Desktop (`claude_desktop_config.json`) and other stdio clients:
+## Happy path (Cursor plugin — local review lane)
 
-```json
-{
-  "mcpServers": {
-    "prgenie-runner": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "prgenie", "mcp"]
-    }
-  }
-}
-```
+Requires **Node.js 22+**, **git**, **GitHub CLI (`gh`)**, and **Cursor** with the plugin and extension built from this repo ([contributing setup](docs/contributing.md)).
 
-**Claude Code:**
+1. **Link plugin + extension** — `pnpm build && pnpm link-plugin && pnpm link-extension`, then Customize → Plugins → PR Genie off/on, and fully quit/reopen Cursor for the Local PRs sidebar.
+2. **`/steward`** with a ticket URL or brief — steward Tasks an implementor, then a reviewer; do not implement in the steward chat.
+3. **Switch** into the loop worktree (Local PRs sidebar or MCP) and let the implementor land commits on the feature branch.
+4. **Review** — reviewer uses `/review`, files findings, then `complete_review` (MCP or CLI).
+5. **Export** — when the steward reports `handoff_human` (export gate green), run `/export` or **Open on GitHub** in Local PRs.
+
+Subagent auto-capture is **off by default** (`PRGENIE_CAPTURE_SUBAGENT=1` to draft a loop when a coding subagent commits). There is **no** inbox/queue listen flywheel — use `/steward` only.
+
+**UI cues:** Local PRs sidebar (extension) is your watch list. Loop **STATUS** goes `draft` → `ready` → `changes_requested` or `reviewed` → `approved`. The loop stays `ready` while the reviewer files findings; `complete_review` then sets `changes_requested` (open findings) or `reviewed` (review cleared), and addressing the last finding returns it to `ready` for another pass. After a clear review the steward runs the export gate, and `/export` sets `approved`. Full lifecycle, including `review_interrupted` and head drift: [Local PR lifecycle](docs/architecture.md#local-pr-lifecycle). Runner jobs use the web dashboard instead:
+
+![Runner dashboard (npm path)](docs/runner-dashboard-evidence/dashboard-1280px.png)
+
+_Screenshot: the **npm runner** HTTP dashboard (`npx -y prgenie serve`), not the Local PRs sidebar._
+
+**Control plane:** to adopt an existing CloudAgent or GitHub PR instead of starting from `/steward`, bind `gh`, then `prgenie attach` and `prgenie shepherd` — see [Control plane (attach and shepherd)](docs/contributing.md#control-plane-attach-and-shepherd).
+
+## Quick start (npm runner)
+
+For the **published runner** (npm **0.1.3** on `main`): MCP stdio job loop without cloning this repo.
+
+Requires **Node.js 22+**, **git**, **`gh`**, and **`cursor-agent`** for real (non–dry-run) jobs. Full walkthrough: [packages/npm-prgenie/README.md](packages/npm-prgenie/README.md).
 
 ```bash
-claude mcp add --scope user prgenie-runner -- npx -y prgenie mcp
+npx -y prgenie init
+npx -y prgenie doctor
+# Print MCP client config (cursor | vscode | claude-code):
+npx -y prgenie config --client cursor
 ```
 
-**VS Code** (`.vscode/mcp.json`): print the snippet with `npx -y prgenie config --client vscode`.
+`--client claude-desktop` and `--global` **require prgenie 0.1.4 or later**; on 0.1.3, copy the Claude Desktop JSON from the npm README.
 
-Keep the `prgenie-runner` id so it does not collide with the Cursor plugin's `prgenie` MCP.
+Use server id **`prgenie-runner`**. Prefer `npm install -g prgenie` when the network is slow or MCP hosts time out starting `npx` (see npm README).
 
-### 2. Run your first job
+## Supported repositories
 
-1. `npx -y prgenie init` creates the data directory (`~/.prgenie/local-runner`).
-2. `npx -y prgenie doctor` checks Node, git, `gh auth`, and `cursor-agent`, and tells you how to fix anything missing.
-3. Run a **dry-run** job (no agent, safe smoke test). In your MCP client, call the `start_job` tool:
+Today PR Genie targets **JavaScript/TypeScript** repos with **pnpm or npm** workspaces (package scripts for lint/test/build). CI selection and export gates assume that layout.
 
-   ```json
-   {
-     "branch": "chore/runner-smoke",
-     "promptFile": "README.md",
-     "repoPath": "/path/to/your/git/repo",
-     "dryRun": true,
-     "maxRounds": 1
-   }
-   ```
-
-   Then call `get_job` with the returned `id` and watch it reach `approved`.
-
-4. Run a **real job** with the same call on a throwaway branch, `dryRun` omitted, and `cursor-agent` installed.
-
-Optional: `npx -y prgenie serve` opens a browser dashboard and HTTP MCP. See the [package README](packages/npm-prgenie/README.md#optional-http-dashboard) and its [troubleshooting](packages/npm-prgenie/README.md#troubleshooting) section.
-
-## Cursor plugin and local PRs
-
-PR Genie is also a **pre-GitHub review lane** for Cursor (and any git checkout, including Conductor workspaces and GitLens worktrees). Each loop gets a feature branch (never the repo base) and a git worktree so you can switch this window onto the implementor's files.
-
-A local PR is a git-native review loop: branch, base, diff, comments, and status. It never leaves the machine until you export it. PR Genie loop agents are steered — and hooked — away from `git push` / `gh pr create`; other agents keep normal `git` / `gh` (their token is the boundary), and nobody but the human runs `prgenie export`.
-
-When a **subagent** finishes with commits, PR Genie drafts a loop and puts it on the developer's watch list. Cursor still manages the subagents. The sidebar is the spectator GUI. Hand **one steward** a ticket with `/steward`: it Tasks an implementor, then a reviewer, resumes the same implementor on `changes_requested`, and only hands off to you for Push to origin after the export gate (shepherd CI) is green. `/start` remains the implementor-only entry. There is no inbox/queue listen flywheel.
+Unsupported or exotic layouts (no package manager, non-JS stacks, custom CI without `pnpm`/`npm` scripts) may fail export gates or `run_ci` with environment errors — fix tooling in the primary checkout first, or scope work to supported paths. Docs-only jobs on the **npm runner** can use `jobType: "docs"` with bundled markdown lint defaults.
 
 ## What it is
 
-| Piece                           | Role                                                                                   |
-| ------------------------------- | -------------------------------------------------------------------------------------- |
-| `@prgenie/core` + `prgenie` CLI | Create/list/approve local PRs from any worktree                                        |
-| Cursor Plugin                   | No-push rule, `/local-pr`, `/review`, MCP, subagent capture, **per-repo `gh` account** |
-| VS Code / Cursor extension      | Live watch list as loops land — Switch puts this window on that loop's worktree        |
-
-## What you can do today
-
-**How to run the agent flywheel locally** (preferred):
-
-1. **Refresh the plugin** so MCP lists `steward_next` / `bind_steward`: `pnpm build && pnpm link-plugin`, then Customize → Plugins → PR Genie off/on. If Configure → Local stays on **Connecting…** (0 tools), see [Troubleshooting — sticky Connecting](docs/troubleshooting.md#sticky-connecting--0-tools-windows). Do not implement in the `/steward` chat.
-2. **`/steward`** with a ticket URL or brief. You are talking to the **steward**. It creates the packet, Tasks an implementor, then a reviewer, resumes the same implementor on `changes_requested`, and runs the export gate.
-3. **Push to origin** only when the steward says `handoff_human` (or the loop panel shows Push to origin). Run `/export` or **Open on GitHub**.
-
-`/start` is implementor-only (you code here; you do not orchestrate). Do not run `/watch-inbox`, `/watch-ready`, or `prgenie watch start|listen` — those are gone.
-
-**Control plane** (attach an existing CloudAgent or GitHub PR, then shepherd):
-
-1. **Bind GitHub** (if needed): `prgenie gh use <your-login>`
-2. **Attach**: `prgenie attach <pr-url|branch>`
-3. **Shepherd**: `prgenie shepherd <id>` — **ready** = gates pass; **blocked** = which gate failed
-4. After plugin changes: `pnpm link-plugin` then `prgenie doctor`
-
-Run `prgenie attach --help` and `prgenie --help` for full command reference.
-
-## Docs
-
-- [ADR 0001: extension → local runner](docs/decisions/0001-extension-to-local-runner.md) — why automation moved to `local-runner/` while the plugin/extension remain supported
-- [Architecture](docs/architecture.md) — packages, lifecycle, steward flywheel, storage, worktrees, `gh` bind
-- [Default review bar](docs/review-bar.md) — `/review` process bar + authoring `.prgenie/review.md`
-- [Troubleshooting](docs/troubleshooting.md) — `prgenie doctor` checks and common failure modes
-- [Release](docs/release.md) — version alignment, `check-versions`, `pack:extension`
-- [npm package (`prgenie`)](packages/npm-prgenie/README.md) — install, MCP client setup (Cursor, Claude Code, Claude Desktop, VS Code), first job, troubleshooting
-- [Local CLI runner](local-runner/README.md) — optional workstation `cursor-agent` loop + MCP + UI (not the plugin steward)
+| Piece                                    | Role                                                                                    |
+| ---------------------------------------- | --------------------------------------------------------------------------------------- |
+| `@prgenie/core` + monorepo `prgenie` CLI | Create/list/approve **local PRs** from any worktree (`pnpm cli`)                        |
+| Cursor plugin                            | No-push rule, `/steward`, `/review`, steward MCP (`prgenie`), optional subagent capture |
+| VS Code / Cursor extension               | **Local PRs** sidebar for plugin loops — Switch, review, export (not runner jobs)       |
+| npm `prgenie` package                    | Runner MCP (`prgenie-runner`), optional HTTP dashboard + `serve`                        |
 
 ## What it is not
 
@@ -107,103 +73,34 @@ Run `prgenie attach --help` and `prgenie --help` for full command reference.
 - Not a GitHub PR client (GitLens owns remote PRs after export)
 - Not a Conductor replacement
 
-## Install from source (monorepo, Cursor plugin, extension)
+<a id="install-from-source-monorepo-cursor-plugin-extension"></a>
 
-Only needed for the Cursor plugin, the extension, or contributing. For the runner alone, use the [npm Quick start](#quick-start-npm) above.
+## Install from source (Cursor plugin and extension)
 
-Requires Node 20+ and git. Generated MCP/hook bundles (`packages/plugin/mcp/server.cjs`, `packages/plugin/hooks/*.cjs`) are **not** committed — `pnpm build` (and `pnpm link-plugin`, which runs build first) produce them.
+See [docs/contributing.md](docs/contributing.md) for `link-plugin`, `link-extension`, monorepo CLI reference, storage, and maintainer checks. Summarized:
 
 ```powershell
 pnpm install
 pnpm build
-pnpm test
 pnpm link-plugin
 pnpm link-extension
 ```
 
-Stranger path after clone: **pull → `pnpm install` → `pnpm build` → `pnpm link-plugin` → Customize → Plugins → PR Genie off/on.** The plugin MCP will not start until those bundles exist on disk.
+Plugin MCP timeout is **4200s** (heavy CI tools); see [MCP timeouts](docs/troubleshooting.md#mcp-timeouts--progress).
 
-**Huge ±tens-of-thousands-line diffs** on `server.cjs` / hook `.cjs` mean a dirty local build against an old tracked file, or you are on a **pre-migration** branch from before those outputs were gitignored. Rebuild (`pnpm build`) or rebase onto current `main`; do not treat that churn as product source.
+## Docs
 
-Then:
-
-1. **CLI** — Prefer `pnpm cli --help` or an **absolute** path: `node <repo>\packages\cli\dist\prgenie.cjs list`. On Windows, `prgenie` is **not** on PATH after `link-plugin` (plugin MCP is pinned; the CLI is not globally linked). Do not assume a bare `prgenie` works in Task shells.
-2. **Cursor Plugin** (rules, `/local-pr`, MCP) — `link-plugin` copies to `%USERPROFILE%\.cursor\plugins\local\prgenie`. A reload often **does not** refresh the MCP tool list. In **Customize → Plugins**, turn PR Genie **off and on**. **Canonical MCP is the plugin** (`prgenie`). Do not add a workspace `.cursor/mcp.json` named `prgenie` — Connected MCPs will show two rows (tag Plugin + tag folder, e.g. pr-genie) and Local can stick on Connecting…. Enable **only one** `prgenie` entry.
-3. **Sidebar / Local PRs** — that is a **VS Code extension**, not the plugin. `link-plugin` does not update it. Run `pnpm link-extension`, then **quit Cursor fully and reopen** (or F5 `Run PR Genie Extension` for a debug host).
-
-`link-plugin` runs `pnpm build`, then pins MCP `command` to this machine's `node.exe` and `server.cjs` to the plugin folder (UTF-8, no BOM) so Cursor does not look for `mcp/server.cjs` in the workspace root. It also pins `timeout: 1200` (seconds) so git+CI MCP tools are less likely to die with `-32001 Request timed out`; the server streams progress/heartbeats during those calls.
-
-**Parallel Tasks:** keep at most **2** concurrent implementor Tasks as a soft default. Hard concurrency limits are product policy — do not invent a local steward guard here.
-
-## CLI
-
-```text
-prgenie version
-prgenie create [--title t] [--body "summary"] [--base main] [--head branch]
-prgenie attach <pr-url|pr-number|branch> [--title t] [--body b] [--base ref]
-prgenie queue
-prgenie inbox
-prgenie watch
-prgenie claim-review <id> [--head sha] [--source name]
-prgenie steward
-prgenie steward <id> [--restart] [--implementor-missing] [--implementor-failed] [--json]
-prgenie steward bind <id> [--implementor taskId] [--reviewer taskId]
-prgenie doctor
-prgenie sessions [--limit N] [--hook name] [--since iso] [--json]
-prgenie export <id> [--verbose]
-prgenie shepherd <id> [--verbose]
-prgenie update <id> [--title t] [--body "summary"]
-prgenie list [--all] [--search q] [--query q] [--in title,body,comment,file]
-prgenie show <id>
-prgenie diff <id> [--stat] [-- path...]
-prgenie delete <id> --yes
-prgenie reopen <id>
-prgenie approve <id>
-prgenie ready <id>
-prgenie request-changes <id> -m "..."
-prgenie comment <id> -m "..." [--role human|agent|reviewer] [--author name] [--path file] [--line n] [--side left|right] [--reply-to commentId] [--body-file path]
-prgenie address <id> <commentId> -m "..."
-prgenie resolve <id> <commentId> -m "..."
-prgenie edit-comment <id> <commentId> -m "..."
-prgenie delete-comment <id> <commentId> [--yes]
-prgenie complete-review <id> [-m message] [--force]
-prgenie status <id> <draft|ready|changes_requested|reviewed|approved>
-prgenie worktrees
-prgenie worktree <id>
-prgenie learnings [--disabled] [--category name]
-prgenie disable-learning <id>
-prgenie enable-learning <id>
-prgenie delete-learning <id> [--yes]
-prgenie preflight <id>
-prgenie gh list
-prgenie gh status
-prgenie gh use <login>
-prgenie mcp [--smoke]
-```
-
-`prgenie doctor` checks plugin/extension freshness, MCP config (BOM / `${PLUGIN_ROOT}` / duplicate `prgenie` name / pinned `node`), monorepo/VSIX version alignment, export-halt state, corrupt PR files, orphaned `.loops` worktrees, `gh` bind, legacy hooks, and the last shepherd CI failure log (when present). On CI failure, toast/CLI name the check and a short excerpt; `prgenie shepherd <id> --verbose` prints the capped full log under `.git/agent-console/ci-logs/`. Agent orchestration is `/steward` (`prgenie steward` / MCP `steward_next`): one steward per loop, durable Task ids in `.git/agent-console/stewards.json`, export gate before Push to origin. `prgenie watch start|stop|listen` hard-errors and points at `/steward`. `prgenie claim-review` / MCP `claim_review` is the durable one-reviewer-per-HEAD lock.
-
-Bind a GitHub login per repo (`prgenie gh use <login>`). Before `git push` / `gh`, PR Genie switches `gh` to that account. `gh auth` is global — only one account is active at a time — so the bind is how this project stays on the org account instead of a personal account.
-
-Works from a Conductor workspace or any other worktree — same repo git dir.
-
-## Storage (git-native)
-
-- `refs/local-pr/<id>/head` and `refs/local-pr/<id>/base`
-- Notes on `refs/notes/local-pr`
-- Metadata in `.git/agent-console/` (not committed); CI failure logs in `.git/agent-console/ci-logs/`
-
-Cursor may auto-clean worktrees. The loop remains.
-
-## Status
-
-`draft` → `ready` (reviewer may file comments) → `complete_review` → `changes_requested` or `reviewed` → `approved`
-
-Reviewer comments stay on `ready` until **`complete_review`**. That flip is what wakes the implementor (`changes_requested`) or marks **review cleared** (`reviewed`) so the steward can run the export gate. Ready-for-human / Push language only after `handoff_human`. Human comments still request changes immediately. The implementor **addresses** each open finding with a reply under that comment (`address_comment`). Addressing the **last** open finding sets `ready` and posts Review requested so the steward can Task the reviewer again. The reviewer **resolves** addressed comments, then **always** `complete_review`. **`/steward`** drives implement ↔ review via Tasks and only shows Push to origin after the export gate is ready. `/export` opens the GitHub PR at origin and **archives** the loop (`approved`). Archived packets stay on disk (`prgenie show <id>`, `refs/local-pr/*`, Local PRs **Archive (N)**) but drop off `prgenie list` and MCP `list_local_prs` unless you pass `--all` / `all=true`. Export checks the **main workspace** off the loop branch (onto the loop base) and removes a sibling `../<repo>.loops/<id>` checkout. If this window is still on that extra worktree, PR Genie reopens the primary folder and then clears it. Every loop should have a **summary** (`body`): why, what changed, how to test.
+- [Contributing / maintainer setup](docs/contributing.md)
+- [npm package README](packages/npm-prgenie/README.md) — MCP clients (incl. Claude Desktop + Windows), notify/Resend, first job
+- [Architecture](docs/architecture.md) — packages, lifecycle, steward flywheel
+- [Troubleshooting](docs/troubleshooting.md) — `doctor`, sticky Connecting…, `spawn npx ENOENT`, export/`gh` bind
+- [ADR 0001: extension → local runner](docs/decisions/0001-extension-to-local-runner.md)
+- [Default review bar](docs/review-bar.md)
+- [Local runner source](local-runner/README.md) (development; not the plugin steward)
 
 ## Roadmap
 
-Gap analysis and prioritized roadmap: [ROADMAP.md](ROADMAP.md).
+[ROADMAP.md](ROADMAP.md)
 
 ## License
 

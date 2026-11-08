@@ -48,6 +48,10 @@ For architecture changes, add or update an [ADR](docs/decisions/README.md).
 - Report vulnerabilities via [GitHub Security Advisories](https://github.com/radiancelux/prgenie/security/advisories) (see [SECURITY.md](SECURITY.md)).
 - Follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
+## Maintainer development
+
+Plugin, extension, and monorepo CLI setup: [docs/contributing.md](docs/contributing.md).
+
 ## Questions
 
-Open a [GitHub discussion or issue](https://github.com/radiancelux/prgenie/issues) for design questions. README rewrite and broader docs are tracked in issue #114.
+Open a [GitHub discussion or issue](https://github.com/radiancelux/prgenie/issues) for design questions.

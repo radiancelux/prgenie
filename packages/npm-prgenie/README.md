@@ -11,13 +11,14 @@ Requires **Node.js 22+**, **git**, **GitHub CLI (`gh`)**, and **`cursor-agent`**
 The runner is a per-machine tool, so register it once for every repo rather than per project:
 
 - **`npx` (recommended, no install):** every snippet below runs `npx -y prgenie mcp`. npm caches the package after the first launch.
-- **Global install (pin a version):** `npm install -g prgenie` (or `npm install -g prgenie@0.1.2`), then use `"command": "prgenie", "args": ["mcp"]` in place of `npx -y prgenie mcp`. Upgrade with `npm install -g prgenie@latest`.
+- **Fallback: global install.** Use this if `npx` is slow or unreliable on your network: `npm install -g prgenie` (or pin `prgenie@0.1.3`), then use `"command": "prgenie", "args": ["mcp"]` in MCP config. Upgrade with `npm install -g prgenie@latest`.
+- **When to switch to global:** On a flaky DNS cache, `npx -y prgenie mcp` can take well over a minute to fail, and many MCP hosts time out first. Global install also helps GUI apps that do not inherit your shell `PATH` (see [Troubleshooting](#troubleshooting)).
 
 A repo-local devDependency also works but is optional; see [Optional: project devDependency](#optional-project-devdependency).
 
 ## Quick start — MCP client config
 
-All snippets use the published CLI. No token is required for stdio. The server id `prgenie-runner` keeps this separate from the Cursor plugin's `prgenie` steward MCP.
+The MCP config snippets below work with every published release (0.1.3 and later). Features marked **Requires prgenie 0.1.4 or later** are documented ahead of release; on 0.1.3 they are missing or behave differently. No token is required for stdio. The server id `prgenie-runner` keeps this separate from the Cursor plugin's `prgenie` steward MCP.
 
 ### Cursor (`.cursor/mcp.json` in your repo or user config)
 
@@ -35,7 +36,9 @@ All snippets use the published CLI. No token is required for stdio. The server i
 
 Use a **different server id** than the Cursor plugin’s `prgenie` steward MCP (e.g. `prgenie-runner` above) so both can coexist.
 
-Print the same snippet: `npx -y prgenie config --client cursor`
+Print the same snippet: `npx -y prgenie config --client cursor`.
+
+For the global-install form (`"command": "prgenie"`), run the globally installed binary, `prgenie config --client cursor`, which prints that form by default, or pass it explicitly with `npx -y prgenie config --client cursor --global`. **Requires prgenie 0.1.4 or later**; 0.1.3 always prints the `npx` form and ignores `--global`.
 
 ### Claude Code (`claude mcp add`)
 
@@ -57,6 +60,15 @@ Print the same command: `npx -y prgenie config --client claude-code`
 
 ### Claude Desktop (`claude_desktop_config.json`)
 
+Config file locations (create `mcpServers` if missing):
+
+| OS      | Path                                                              |
+| ------- | ----------------------------------------------------------------- |
+| macOS   | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Windows | `%APPDATA%\Claude\claude_desktop_config.json`                     |
+
+After editing, **fully quit and restart Claude Desktop** (not just closing the window).
+
 ```json
 {
   "mcpServers": {
@@ -67,6 +79,12 @@ Print the same command: `npx -y prgenie config --client claude-code`
   }
 }
 ```
+
+With a global install, use `"command": "prgenie", "args": ["mcp"]` instead of `npx`.
+
+Print the snippet: `npx -y prgenie config --client claude-desktop` (add `--global` for the global-install form). **Requires prgenie 0.1.4 or later**; on 0.1.3, copy the JSON above.
+
+If the server does not appear or fails to start, see the MCP [Debugging in Claude Desktop](https://modelcontextprotocol.io/docs/tools/debugging#debugging-in-claude-desktop) guide (server status, `mcp*.log` locations, developer tools).
 
 ### VS Code (`.vscode/mcp.json`)
 
@@ -174,24 +192,60 @@ npx -y prgenie serve  # reads runner.token automatically (no export required)
 
 Open `http://127.0.0.1:9473/` (default). Paste the token from `runner.token` into the dashboard (serve prints the path on startup). MCP over HTTP: `POST /mcp` with `Authorization: Bearer` from that file. Optional override: `export PRGENIE_RUNNER_TOKEN="$(cat ~/.prgenie/local-runner/runner.token)"`.
 
+## Email notifications (Resend)
+
+Optional notify emails fire when a job opens/updates a PR and when the loop finishes (`approved` / `changes_remaining`). Configure **on the machine that runs `prgenie serve`** (stdio-only MCP uses the same env if you also run `serve`).
+
+| Variable                                             | Purpose                                                                                                                   |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `RESEND_API_KEY` or `PRGENIE_RUNNER_RESEND_KEY_FILE` | Resend API key (never logged or shown in the UI)                                                                          |
+| `PRGENIE_RUNNER_FROM_EMAIL`                          | Sender address — default `PR Genie Local Runner <runner@example.com>`. Use a **verified domain** in Resend or sends fail. |
+| `PRGENIE_RUNNER_NOTIFY_EMAIL`                        | Default recipient when notify is enabled in the dashboard/Setup                                                           |
+
+`serve` reads these env vars **at startup** — set them, then restart `prgenie serve`. The dashboard and Setup show env names when Resend is missing; saving notify preferences while Resend is unconfigured stores settings but warns that mail cannot send yet (**requires prgenie 0.1.4 or later**).
+
+## Windows notes
+
+- On Windows, **`prgenie init`** prints a PowerShell override next to the bash `export` line (**requires prgenie 0.1.4 or later**). Bash `export PRGENIE_RUNNER_TOKEN="$(cat ~/.prgenie/local-runner/runner.token)"` becomes, in PowerShell:
+
+  ```powershell
+  $env:PRGENIE_RUNNER_TOKEN = Get-Content -Raw 'C:\Users\you\.prgenie\local-runner\runner.token'
+  ```
+
+  `init` prints the real path to your `runner.token`.
+
+- MCP config paths: Cursor `%USERPROFILE%\.cursor\mcp.json`; Claude Desktop `%APPDATA%\Claude\claude_desktop_config.json`; VS Code project `.vscode\mcp.json`.
+- Some MCP hosts need `"command": "npx.cmd"` or a full path to `npx` / `prgenie` — prefer **`npm install -g prgenie`** and `"command": "prgenie"` when `spawn npx ENOENT` appears in host logs.
+
+## Two different `prgenie` CLIs?
+
+The **npm package** (this README) is the runner. **`prgenie list` / `create` / `export`** belong to the [monorepo plugin CLI](https://github.com/radiancelux/prgenie#which-prgenie-do-i-need) — not this binary. The runner prints a hint if you run those command names (**requires prgenie 0.1.4 or later**; 0.1.3 prints only `unknown command`).
+
 ## Troubleshooting
 
-| Symptom                             | What to do                                                                                     |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------- |
-| **`gh` not authenticated**          | Run `gh auth login`; re-run `prgenie doctor`. Jobs need `gh` for PR/CI.                        |
-| **`cursor-agent` missing**          | Install Cursor CLI; or pick another driver in `settings` after `serve`.                        |
-| **Branch held by another worktree** | Another job or git worktree uses that branch. Stop/archive the other job or pick a new branch. |
-| **Model unavailable on your plan**  | Override `model` in `start_job` or set defaults via `settings` / Setup UI.                     |
-| **Job stuck (watchdog)**            | Check dashboard logs; `stop_job`, then `archive_job`. Tune watchdog via `settings` or Setup.   |
+| Symptom                             | What to do                                                                                                                                                                                              |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`spawn npx ENOENT` (MCP host)**   | GUI apps often lack shell PATH. Use `npm install -g prgenie`, then `"command": "prgenie", "args": ["mcp"]`, or set `command` to the absolute path from `which npx` / `where npx`. Restart the MCP host. |
+| **`gh` not authenticated**          | Run `gh auth login`; re-run `prgenie doctor`. Jobs need `gh` for PR/CI.                                                                                                                                 |
+| **`cursor-agent` missing**          | Install Cursor CLI; or pick another driver in `settings` after `serve`.                                                                                                                                 |
+| **Branch held by another worktree** | Another job or git worktree uses that branch. Stop/archive the other job or pick a new branch.                                                                                                          |
+| **Model unavailable on your plan**  | Override `model` in `start_job` or set defaults via `settings` / Setup UI.                                                                                                                              |
+| **Job stuck (watchdog)**            | Check dashboard logs; `stop_job`, then `archive_job`. Tune watchdog via `settings` or Setup.                                                                                                            |
+| **Notify saved but no email**       | Confirm `RESEND_API_KEY` + verified `PRGENIE_RUNNER_FROM_EMAIL`, restart `serve`, recipient set.                                                                                                        |
 
 ## Environment
 
-| Variable                                      | Purpose                                                         |
-| --------------------------------------------- | --------------------------------------------------------------- |
-| `PRGENIE_RUNNER_DATA_DIR`                     | Job store (default `~/.prgenie/local-runner`)                   |
-| `PRGENIE_RUNNER_TOKEN`                        | Bearer for **`serve` only** (or use `runner.token` from `init`) |
-| `PRGENIE_RUNNER_DRY_RUN`                      | `1` — default new jobs (MCP + dashboard) to dry run             |
-| `PRGENIE_RUNNER_HOST` / `PRGENIE_RUNNER_PORT` | HTTP bind (default `127.0.0.1:9473`)                            |
+| Variable                                            | Purpose                                                         |
+| --------------------------------------------------- | --------------------------------------------------------------- |
+| `PRGENIE_RUNNER_DATA_DIR`                           | Job store (default `~/.prgenie/local-runner`)                   |
+| `PRGENIE_RUNNER_TOKEN`                              | Bearer for **`serve` only** (or use `runner.token` from `init`) |
+| `PRGENIE_RUNNER_DRY_RUN`                            | `1` — default new jobs (MCP + dashboard) to dry run             |
+| `PRGENIE_RUNNER_HOST` / `PRGENIE_RUNNER_PORT`       | HTTP bind (default `127.0.0.1:9473`)                            |
+| `PRGENIE_RUNNER_MODEL`                              | Default agent model (default `composer-2.5`)                    |
+| `PRGENIE_RUNNER_DEFAULT_REPO_PATH`                  | Fallback repo path for code jobs when Setup has no default      |
+| `RESEND_API_KEY` / `PRGENIE_RUNNER_RESEND_KEY_FILE` | Resend API key (notify; server-side only)                       |
+| `PRGENIE_RUNNER_FROM_EMAIL`                         | Resend sender (must be verified in Resend)                      |
+| `PRGENIE_RUNNER_NOTIFY_EMAIL`                       | Default notify recipient                                        |
 
 ## Monorepo development
 

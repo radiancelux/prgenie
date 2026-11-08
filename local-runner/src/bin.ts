@@ -9,12 +9,16 @@ import { listJobs } from "./store.js";
 import { removeWorktree } from "./worktree.js";
 import { MCP_STDIO_READY, serveMcpStdio } from "./mcp-stdio.js";
 import {
+  CONFIG_CLIENT_IDS,
   claudeCodeMcpAddCommand,
+  claudeDesktopMcpJsonSnippet,
   cursorMcpJsonSnippet,
   formatInitReport,
   runInit,
   vscodeMcpJsonSnippet,
 } from "./init.js";
+import { unknownRunnerCommandMessage } from "./runner-cli-hints.js";
+import { runningViaNpx } from "./cli-invocation.js";
 import { formatRunnerDoctorReport, runRunnerDoctor } from "./runner-doctor.js";
 import { runJobWorker } from "./job-worker.js";
 import { runRunnerRestartCli } from "./runner-restart.js";
@@ -78,27 +82,45 @@ async function cmdDoctor(): Promise<void> {
   if (!report.ok) process.exit(1);
 }
 
+function configUseGlobal(): boolean {
+  if (process.argv.includes("--global")) return true;
+  if (process.argv.includes("--npx")) return false;
+  return !runningViaNpx(process.env);
+}
+
 function cmdConfig(): void {
   const clientIdx = process.argv.indexOf("--client");
   const client = clientIdx >= 0 ? process.argv[clientIdx + 1] : null;
+  if (client && !CONFIG_CLIENT_IDS.includes(client as (typeof CONFIG_CLIENT_IDS)[number])) {
+    throw new Error(`unknown --client ${client} (expected: ${CONFIG_CLIENT_IDS.join("|")})`);
+  }
+  const useGlobal = configUseGlobal();
   if (client === "cursor") {
-    process.stdout.write(cursorMcpJsonSnippet());
+    process.stdout.write(cursorMcpJsonSnippet(useGlobal));
     return;
   }
   if (client === "vscode") {
-    process.stdout.write(vscodeMcpJsonSnippet());
+    process.stdout.write(vscodeMcpJsonSnippet(useGlobal));
     return;
   }
   if (client === "claude-code") {
-    process.stdout.write(claudeCodeMcpAddCommand());
+    process.stdout.write(claudeCodeMcpAddCommand(useGlobal));
+    return;
+  }
+  if (client === "claude-desktop") {
+    process.stdout.write(claudeDesktopMcpJsonSnippet(useGlobal));
     return;
   }
   process.stdout.write(
     [
-      "Usage: prgenie config --client cursor|vscode|claude-code",
+      `Usage: prgenie config --client ${CONFIG_CLIENT_IDS.join("|")} [--global|--npx]`,
       "",
-      "Generic stdio (Claude Desktop, portable .mcp.json):",
-      cursorMcpJsonSnippet(),
+      useGlobal
+        ? "Using global/prgenie on PATH (--global default when not launched via npx)."
+        : "Using npx (--npx default when launched via npx).",
+      "",
+      "Generic stdio (portable .mcp.json):",
+      cursorMcpJsonSnippet(useGlobal),
     ].join("\n"),
   );
 }
@@ -191,7 +213,7 @@ Usage:
   prgenie serve            HTTP dashboard + bearer MCP
   prgenie restart [--build]  Graceful HTTP restart (detached workers keep running)
   prgenie job-worker <id>    Internal: detached job loop (do not call by hand)
-  prgenie config --client cursor|vscode|claude-code
+  prgenie config --client cursor|vscode|claude-code|claude-desktop [--global|--npx]
   prgenie prune-worktrees
 
 Options:
@@ -218,7 +240,7 @@ async function main(): Promise<void> {
   }
 
   if (!KNOWN_COMMANDS.has(cmd)) {
-    throw new Error(`unknown command: ${cmd}`);
+    throw new Error(unknownRunnerCommandMessage(cmd));
   }
 
   if (cmd === "serve") await cmdServe();

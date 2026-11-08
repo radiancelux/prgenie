@@ -1,5 +1,6 @@
 import { dashboardFormatBrowserScript } from "./dashboard-format.js";
 import { dashboardStylesheet } from "./dashboard-styles.js";
+import { RESEND_ENV_HINT, RESEND_SAVE_WARNING } from "./resend-ui-copy.js";
 import { streamJsonLogBrowserScript } from "./stream-json-log.js";
 
 export function runnerUiHtml(
@@ -32,7 +33,7 @@ export function runnerUiHtml(
   </div>
   <details class="settings-panel mb-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3" open>
     <summary class="cursor-pointer text-sm font-medium text-zinc-200 select-none">Email notifications</summary>
-    <p class="meta mt-2 text-sm text-zinc-400">Resend API key is server-side only (env). Choose whether to send agent notify emails and the recipient.</p>
+    <p class="meta mt-2 text-sm text-zinc-400">Resend API key is server-side only (<code>RESEND_API_KEY</code> or <code>PRGENIE_RUNNER_RESEND_KEY_FILE</code>, plus <code>PRGENIE_RUNNER_FROM_EMAIL</code>). Restart <code>prgenie serve</code> after changing env. Choose whether to send agent notify emails and the recipient.</p>
     <div class="mt-2 flex flex-wrap items-end gap-3">
       <label class="toggle-row flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" id="notifyEnabled" class="h-4 w-4" /> Send notify emails</label>
       <label class="block w-full flex-1 text-sm text-zinc-400 sm:min-w-[14rem]">Recipient
@@ -175,7 +176,7 @@ export function runnerUiHtml(
       notifyRecipientEl.value = s.recipient || "";
       const parts = [];
       if (s.envFallbackRecipient) parts.push("Env fallback: " + s.envFallbackRecipient);
-      if (!s.resendConfigured) parts.push("Resend not configured on server.");
+      if (!s.resendConfigured) parts.push(${JSON.stringify(RESEND_ENV_HINT)});
       notifyStatus.textContent = parts.join(" · ");
     }
 
@@ -197,7 +198,8 @@ export function runnerUiHtml(
         const s = await res.json();
         notifyEnabledEl.checked = Boolean(s.enabled);
         notifyRecipientEl.value = s.recipient || "";
-        notifyStatus.textContent = "Saved.";
+        const warnResend = s.enabled && !s.resendConfigured;
+        notifyStatus.textContent = warnResend ? ${JSON.stringify(RESEND_SAVE_WARNING)} : "Saved.";
         void loadNotifySettingsUi();
       } catch {
         notifyStatus.textContent = "Save failed (network).";

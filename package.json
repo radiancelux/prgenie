@@ -17,7 +17,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "tsx --test \"packages/*/src/**/*.test.ts\" \"local-runner/src/**/*.test.ts\"",
+    "test": "node scripts/ensure-node-version.mjs && tsx --test \"packages/*/src/**/*.test.ts\" \"local-runner/src/**/*.test.ts\" \"scripts/ensure-node-version.test.mjs\"",
     "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/cli --noEmit && tsc -p packages/extension --noEmit && tsc -p local-runner --noEmit",
     "lint": "eslint packages/core/src packages/cli/src packages/extension/src scripts",
     "lint:fix": "eslint packages/core/src packages/cli/src packages/extension/src scripts --fix",

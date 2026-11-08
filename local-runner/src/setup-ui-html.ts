@@ -1,3 +1,4 @@
+import { RESEND_ENV_HINT, RESEND_SAVE_WARNING } from "./resend-ui-copy.js";
 import { COMPUTE_JOB_DEFAULT_WATCHDOG } from "./job-type-watchdog.js";
 import { runnerListenUrls } from "./listen-urls.js";
 import { dashboardStylesheet } from "./dashboard-styles.js";
@@ -130,6 +131,7 @@ export function setupUiHtml(
     <label class="block min-w-0">Recipient
       <input type="email" id="notifyRecipient" class="min-w-0 max-w-full" autocomplete="email" />
     </label>
+    <p class="meta">Resend is configured via server env only (<code>RESEND_API_KEY</code> or <code>PRGENIE_RUNNER_RESEND_KEY_FILE</code>, plus <code>PRGENIE_RUNNER_FROM_EMAIL</code>). Restart <code>prgenie serve</code> after changing env.</p>
     <p class="meta" id="notifyMeta"></p>
   </div>
   <div class="panel">
@@ -425,7 +427,7 @@ export function setupUiHtml(
       document.getElementById("notifyRecipient").value = loaded.notify?.recipient || "";
       const nm = [];
       if (loaded.envFallbackRecipient) nm.push("Env fallback: " + loaded.envFallbackRecipient);
-      if (!loaded.resendConfigured) nm.push("Resend not configured on server.");
+      if (!loaded.resendConfigured) nm.push(${JSON.stringify(RESEND_ENV_HINT)});
       document.getElementById("notifyMeta").textContent = nm.join(" · ");
       const sel = document.getElementById("defaultDriver");
       sel.innerHTML = loaded.drivers.map((d) =>
@@ -547,7 +549,9 @@ export function setupUiHtml(
           return;
         }
         loaded = await res.json();
-        status.textContent = "Saved.";
+        const notifyOn = Boolean(loaded.notify?.enabled);
+        const warnResend = notifyOn && !loaded.resendConfigured;
+        status.textContent = warnResend ? ${JSON.stringify(RESEND_SAVE_WARNING)} : "Saved.";
         document.getElementById("firstRun").style.display = "none";
         renderDrivers(loaded.drivers);
         applyPolicyFromLoaded();
