@@ -8,12 +8,12 @@ See **`docs/drivers.md`** for the driver adapter contract and built-in drivers.
 
 ## Batch G lessons (cursor-agent)
 
-| Topic       | Behavior                                                                                                                    |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Shell       | **`cursor-agent -p --force --trust`** — without `--force`, nested shell is blocked                                          |
-| Text output | **`--output-format text`** — output appears **only at process exit** (not live)                                             |
-| Live logs   | This runner uses **`--output-format stream-json`** for agent steps so the UI SSE tail updates during runs                   |
-| No-PR guard | If the implementor finishes without a GitHub PR on the branch, the job becomes **`stuck`** (no review of a local-only diff) |
+| Topic       | Behavior                                                                                                                                                                  |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shell       | **`cursor-agent -p --force --trust`** — without `--force`, nested shell is blocked                                                                                        |
+| Text output | **`--output-format text`** — output appears **only at process exit** (not live)                                                                                           |
+| Live logs   | This runner uses **`--output-format stream-json`** for agent steps so the UI SSE tail updates during runs                                                                 |
+| No-PR guard | Default: no GitHub PR after build → **`stuck`**. Pass **`expectPr: false`** on `start_job` for issues-only jobs (audit, no code) to finish **`approved`** without review. |
 
 Every subprocess the runner spawns uses:
 
@@ -83,14 +83,14 @@ On startup the runner prints reachable URLs (loopback plus a best-effort LAN IP 
 
 ### MCP tools
 
-- `start_job` — `repoPath` or `remote`, `branch`, `promptFile` (code jobs), optional **`jobType`** / **`profile`** (`docs` | code), optional **`docsTemplate`** (`marketing` | `policy` | `research`), optional `reviewPromptFile`, `fixPromptFile`, `maxRounds`, `model` (every stage), optional **`stageModels`** (`{ build, review, fix }`), optional **`driver`** (id), `dryRun`, optional `ticketUrl` / `linearIssue` (when omitted, the runner parses `issue-<n>` from the branch name), optional `ticketUrls` (every ticket the job covers; http(s), at most 10)
+- `start_job` — `repoPath` or `remote`, `branch`, `promptFile` (code jobs), optional **`jobType`** / **`profile`** (`docs` | code), optional **`docsTemplate`** (`marketing` | `policy` | `research`), optional **`expectPr`** (`false` → finish approved when build succeeds with no PR), optional `reviewPromptFile`, `fixPromptFile`, `maxRounds`, `model` (every stage), optional **`stageModels`** (`{ build, review, fix }`), optional **`driver`** (id), `dryRun`, optional `ticketUrl` / `linearIssue` (when omitted, the runner parses `issue-<n>` from the branch name), optional `ticketUrls` (every ticket the job covers; http(s), at most 10)
 - `list_jobs` — optional `includeArchived` (archived jobs carry `archivedAt`)
 - `get_job` — status + log tail (also resolves archived jobs, read-only)
 - `steer_job` — queue follow-up text for the next agent step
 - `stop_job`
 - `archive_job` — `id`; removes a finished job from the dashboard (see [Removing jobs](#removing-jobs-archive)). Errors while the job is running.
 - `restore_job` — `id`; moves an archived job back. Errors if a live job already uses that id.
-- `continue_job` — `id`, optional `prompt` / `promptFile`, `extraRounds` (default 1), optional `model` (fix stage). Runs additional fix→review round(s) on a **terminal** job (`approved`, `changes_remaining`, `stuck`, `stopped`, `failed`, `interrupted`). An `interrupted` job that never reached a PR instead re-runs its **build** stage on the same branch and worktree (`extraRounds` defaults to 0 there, and `model` overrides the build model). Refuses archived jobs (restore first), jobs a live worker still owns, and branches held by another active job.
+- `continue_job` — `id`, optional `prompt` / `promptFile`, `extraRounds` (default 1), optional `model` (fix stage). Runs additional fix→review round(s) on a **terminal** job (`approved`, `changes_remaining`, `stuck`, `stopped`, `failed`, `interrupted`) when a PR exists. When there is **no PR yet**, any allowed terminal job re-runs its **build** stage on the same branch and worktree (`extraRounds` defaults to 0, and `model` overrides the build model). Refuses archived jobs (restore first), jobs a live worker still owns, and branches held by another active job.
 - `restart_runner` — adoption preview for graceful HTTP restart (pair with `prgenie restart` or `POST /api/runner/restart`).
 - `settings` — read (no args) or patch runner defaults (same shape as `PATCH /api/settings`).
 
@@ -98,7 +98,7 @@ On startup the runner prints reachable URLs (loopback plus a best-effort LAN IP 
 
 `building` → `reviewing` (round N) → `fixing` → … → `approved` | `changes_remaining` | `stuck` | `failed` | `stopped` | `interrupted` (worker died; see [Restart and upgrade](#restart-and-upgrade-while-jobs-run))
 
-Default **`maxRounds`** = 3 (review/fix cycles). N review rounds allow at most N−1 intervening fix passes. Reviewer must post **one** GitHub issue comment on the PR ending with `VERDICT: APPROVE` or `VERDICT: CHANGES` (built-in default review prompt enforces this). The runner also accepts the same `VERDICT:` line on PR review bodies as a fallback.
+Default **`maxRounds`** = 3 (review/fix cycles). N review rounds allow at most N−1 intervening fix passes. Reviewer must post **one** GitHub issue comment on the PR ending with `VERDICT: APPROVE` or `VERDICT: CHANGES` (built-in default review prompt enforces this). The runner also accepts the same `VERDICT:` line on PR review bodies as a fallback. If neither has a verdict for the round (for example, a custom `reviewPromptFile` that asks for a verdict line but not a PR comment), the runner reads the `VERDICT:` line from the reviewer's final message instead, posts that message to the PR as a comment so the fixer and humans can see it, and notes this in the job log. A posted GitHub verdict always wins over the local one. The job fails only when no verdict is found anywhere.
 
 ### Docs mode
 
@@ -218,7 +218,7 @@ HTTP `serve` runs each active job in a **detached `job-worker` process** (own PI
 - **Stage budget:** a single stage may run for at most `stageCapMs × (recoveryAttempts + 1)` plus kill grace and 5 min of slack, counted from when that stage started (or from when the worker started, whichever is later).
 - A hung or over-budget worker gets `SIGTERM` to its process group, then `SIGKILL` after a grace period. The job is marked only once the process is confirmed gone. A healthy worker is never abandoned, however long the job runs.
 
-When a worker is confirmed dead and its job is still `building` / `reviewing` / `fixing`, the job becomes **`interrupted`** (or `stopped` if a stop was pending) and is never silently dropped. Resume it with `continue_job` / `POST …/continue`. A job interrupted before its PR existed re-runs its build stage on the same branch and worktree.
+When a worker is confirmed dead and its job is still `building` / `reviewing` / `fixing`, the job becomes **`interrupted`** (or `stopped` if a stop was pending) and is never silently dropped. Resume it with `continue_job` / `POST …/continue`. A terminal job with no PR yet (including `stuck` from the no-PR guard) re-runs its build stage on the same branch and worktree.
 
 **Idle restart** (no `building` / `reviewing` / `fixing` jobs) behaves as before.
 

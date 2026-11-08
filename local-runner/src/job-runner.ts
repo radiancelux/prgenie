@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
 import type { RunnerConfig } from "./config.js";
 import { AgentRunner } from "./agent.js";
 import {
@@ -7,8 +7,10 @@ import {
   fetchPrVerdictSince,
   findPrForBranch,
   isBranchSyncedWithOrigin,
+  postPrComment,
   type Verdict,
 } from "./github.js";
+import { resolveReviewVerdict } from "./review-verdict.js";
 import { JobControl } from "./job-control.js";
 import { DEFAULT_FIX_PROMPT, DEFAULT_IMPLEMENT_PROMPT, DEFAULT_REVIEW_PROMPT } from "./prompts.js";
 import {
@@ -38,6 +40,7 @@ import { trackShellToolLine, type ShellToolTracker } from "./stream-json-log.js"
 import { modelForActiveStage, recordActualModel } from "./job-models.js";
 import { setJobError } from "./job-error.js";
 import { parseWatchdogPolicy } from "./runner-policy.js";
+import { resolvePostBuildNoPr } from "./job-pr-policy.js";
 
 export type JobCallbacks = {
   onEvent?: (jobId: string, event: JobEvent) => void;
@@ -248,6 +251,11 @@ async function runAgentStage(
 
 function emit(cb: JobCallbacks | undefined, job: JobRecord, event: JobEvent): void {
   cb?.onEvent?.(job.id, event);
+}
+
+async function runnerLog(cb: JobCallbacks | undefined, job: JobRecord, line: string) {
+  await appendFile(job.logPath, `${line}\n`, "utf8").catch(() => undefined);
+  emit(cb, job, { type: "log", line });
 }
 
 async function persistJob(
@@ -474,7 +482,20 @@ export async function runJobLoop(
         pr = { url: "https://github.com/example/example/pull/1", number: 1 };
       }
       if (!pr) {
-        job.error = "No GitHub PR for branch — local-only diff guard";
+        const noPr = resolvePostBuildNoPr(job.input);
+        if (noPr.kind === "complete") {
+          job.error = null;
+          await setStage(config, job, "approved", control, callbacks);
+          await notify(
+            config,
+            job,
+            `Job finished (no PR): ${job.input.branch}`,
+            callbacks?.fetchImpl,
+          );
+          emit(callbacks, job, { type: "done", stage: "approved" });
+          return;
+        }
+        job.error = noPr.error;
         await setStage(config, job, "stuck", control, callbacks);
         return;
       }
@@ -568,15 +589,25 @@ export async function runJobLoop(
       if (job.dryRun) {
         verdict = job.reviewRound >= job.maxRounds ? "APPROVE" : "CHANGES";
       } else if (job.prNumber != null) {
-        verdict = await fetchPrVerdictSince(wt, job.prNumber, {
+        const prNumber = job.prNumber;
+        const githubVerdict = await fetchPrVerdictSince(wt, prNumber, {
           sinceIso: reviewRoundStartedAt,
           afterCommentId: reviewBaselineCommentId,
           afterReviewId: reviewBaselineReviewId,
         });
+        const resolved = await resolveReviewVerdict({
+          githubVerdict,
+          reviewOutput: reviewRun.output,
+          outputFormat,
+          mirrorToPr: (body) => postPrComment(wt, prNumber, body),
+          log: (line) => runnerLog(callbacks, job, line),
+        });
+        verdict = resolved?.verdict ?? null;
       }
 
       if (!verdict) {
-        job.error = "Reviewer did not post VERDICT: APPROVE or VERDICT: CHANGES";
+        job.error =
+          "Reviewer did not post or return VERDICT: APPROVE or VERDICT: CHANGES (checked PR comments, PR reviews, and the reviewer's final message)";
         await setStage(config, job, "failed", control, callbacks);
         return;
       }

@@ -397,6 +397,7 @@ export async function createJob(
     profile: jobType,
     docsTemplate,
     title,
+    ...(args.expectPr === false ? { expectPr: false as const } : {}),
   };
   const logPath = jobLogFile(dataDir, id);
   await writeFile(logPath, "", "utf8");

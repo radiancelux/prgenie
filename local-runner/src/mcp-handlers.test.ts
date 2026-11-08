@@ -23,6 +23,7 @@ describe("start_job MCP schema", () => {
     assert.ok(props.profile);
     assert.ok(props.docsTemplate);
     assert.ok(props.title);
+    assert.ok(props.expectPr);
   });
 
   it("lists settings tool for maintainable registry", () => {

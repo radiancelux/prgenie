@@ -25,13 +25,7 @@ export const CONTINUE_TERMINAL_STAGES = new Set([
 ]);
 
 export type ContinueJobErrorCode =
-  | "invalid_id"
-  | "not_found"
-  | "archived"
-  | "running"
-  | "not_terminal"
-  | "branch_conflict"
-  | "no_pr";
+  "invalid_id" | "not_found" | "archived" | "running" | "not_terminal" | "branch_conflict";
 
 export class ContinueJobError extends Error {
   constructor(
@@ -107,14 +101,8 @@ export async function prepareJobContinue(
       job.stage,
     );
   }
-  // A restart can interrupt a job before its PR exists; it resumes by re-running the build stage.
+  // No PR yet: resume by re-running the build stage (same branch/worktree, then open PR when ready).
   const resumeBuild = !job.prUrl?.trim();
-  if (resumeBuild && job.stage !== "interrupted") {
-    throw new ContinueJobError(
-      "job has no PR; continue requires an existing pull request",
-      "no_pr",
-    );
-  }
 
   const settings = await loadSettings(config.dataDir);
   const queueOpts: QueueOptions = { isRunning: deps.isRunning };
