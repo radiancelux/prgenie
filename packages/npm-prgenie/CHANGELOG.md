@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4 — 2026-11-08
+
+- Onboarding docs: npm vs monorepo happy path, contributing split, Node 22+ enforcement (#161, #162, #164, #114).
+- Runner CLI: `config --client claude-desktop` with `--global`/`--npx`; Resend notify warnings in dashboard/Setup (#162, #164).
+- Windows `init` prints the PowerShell token line; plugin-style commands get monorepo CLI hints (#161, #164).
+- Tests reject Node <22 via `ensure-node-version`.
+
 ## 0.1.3 — 2026-11-08
 
 - Compute jobs (#167).
