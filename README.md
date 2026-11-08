@@ -44,9 +44,11 @@ Requires **Node.js 22+**, **git**, **`gh`**, and **`cursor-agent`** for real (no
 ```bash
 npx -y prgenie init
 npx -y prgenie doctor
-# Wire MCP client (Cursor, Claude Code, Claude Desktop, VS Code):
+# Print MCP client config (cursor | vscode | claude-code):
 npx -y prgenie config --client cursor
 ```
+
+`--client claude-desktop` and `--global` **require prgenie 0.1.4 or later**; on 0.1.3, copy the Claude Desktop JSON from the npm README.
 
 Use server id **`prgenie-runner`**. Prefer `npm install -g prgenie` when the network is slow or MCP hosts time out starting `npx` (see npm README).
 

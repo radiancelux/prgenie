@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -11,5 +11,17 @@ describe("ensure-node-version", () => {
     assert.doesNotThrow(() => {
       execFileSync(process.execPath, [script], { stdio: "pipe" });
     });
+  });
+
+  it("rejects Node below 22 with an install hint", () => {
+    const result = spawnSync(process.execPath, [script], {
+      encoding: "utf8",
+      env: { ...process.env, PRGENIE_TEST_NODE_VERSION: "v20.11.1" },
+    });
+    assert.equal(result.status, 1);
+    assert.equal(
+      result.stderr,
+      "PR Genie requires Node.js 22+ (current: v20.11.1).\nInstall Node 22 (see .nvmrc) and retry.\n",
+    );
   });
 });

@@ -18,7 +18,7 @@ A repo-local devDependency also works but is optional; see [Optional: project de
 
 ## Quick start — MCP client config
 
-All snippets use the published CLI. No token is required for stdio. The server id `prgenie-runner` keeps this separate from the Cursor plugin's `prgenie` steward MCP.
+The MCP config snippets below work with every published release (0.1.3 and later). Features marked **Requires prgenie 0.1.4 or later** are documented ahead of release; on 0.1.3 they are missing or behave differently. No token is required for stdio. The server id `prgenie-runner` keeps this separate from the Cursor plugin's `prgenie` steward MCP.
 
 ### Cursor (`.cursor/mcp.json` in your repo or user config)
 
@@ -36,7 +36,9 @@ All snippets use the published CLI. No token is required for stdio. The server i
 
 Use a **different server id** than the Cursor plugin’s `prgenie` steward MCP (e.g. `prgenie-runner` above) so both can coexist.
 
-Print the same snippet: `npx -y prgenie config --client cursor` (add `--global` after `npm install -g prgenie`, or omit `--npx` when the `prgenie` binary is on PATH)
+Print the same snippet: `npx -y prgenie config --client cursor`.
+
+For the global-install form (`"command": "prgenie"`), run the globally installed binary, `prgenie config --client cursor`, which prints that form by default, or pass it explicitly with `npx -y prgenie config --client cursor --global`. **Requires prgenie 0.1.4 or later**; 0.1.3 always prints the `npx` form and ignores `--global`.
 
 ### Claude Code (`claude mcp add`)
 
@@ -80,7 +82,9 @@ After editing, **fully quit and restart Claude Desktop** (not just closing the w
 
 With a global install, use `"command": "prgenie", "args": ["mcp"]` instead of `npx`.
 
-Print the snippet: `npx -y prgenie config --client claude-desktop` (`--global` when using `npm install -g prgenie`).
+Print the snippet: `npx -y prgenie config --client claude-desktop` (add `--global` for the global-install form). **Requires prgenie 0.1.4 or later**; on 0.1.3, copy the JSON above.
+
+If the server does not appear or fails to start, see the MCP [Debugging in Claude Desktop](https://modelcontextprotocol.io/docs/tools/debugging#debugging-in-claude-desktop) guide (server status, `mcp*.log` locations, developer tools).
 
 ### VS Code (`.vscode/mcp.json`)
 
@@ -198,17 +202,24 @@ Optional notify emails fire when a job opens/updates a PR and when the loop fini
 | `PRGENIE_RUNNER_FROM_EMAIL`                          | Sender address — default `PR Genie Local Runner <runner@example.com>`. Use a **verified domain** in Resend or sends fail. |
 | `PRGENIE_RUNNER_NOTIFY_EMAIL`                        | Default recipient when notify is enabled in the dashboard/Setup                                                           |
 
-`serve` reads these env vars **at startup** — set them, then restart `prgenie serve`. The dashboard and Setup show env names when Resend is missing; saving notify preferences while Resend is unconfigured stores settings but warns that mail cannot send yet.
+`serve` reads these env vars **at startup** — set them, then restart `prgenie serve`. The dashboard and Setup show env names when Resend is missing; saving notify preferences while Resend is unconfigured stores settings but warns that mail cannot send yet (**requires prgenie 0.1.4 or later**).
 
 ## Windows notes
 
-- **`prgenie init`** prints a PowerShell line for `PRGENIE_RUNNER_TOKEN` on Windows as well as bash `export`.
+- On Windows, **`prgenie init`** prints a PowerShell override next to the bash `export` line (**requires prgenie 0.1.4 or later**). Bash `export PRGENIE_RUNNER_TOKEN="$(cat ~/.prgenie/local-runner/runner.token)"` becomes, in PowerShell:
+
+  ```powershell
+  $env:PRGENIE_RUNNER_TOKEN = Get-Content -Raw 'C:\Users\you\.prgenie\local-runner\runner.token'
+  ```
+
+  `init` prints the real path to your `runner.token`.
+
 - MCP config paths: Cursor `%USERPROFILE%\.cursor\mcp.json`; Claude Desktop `%APPDATA%\Claude\claude_desktop_config.json`; VS Code project `.vscode\mcp.json`.
 - Some MCP hosts need `"command": "npx.cmd"` or a full path to `npx` / `prgenie` — prefer **`npm install -g prgenie`** and `"command": "prgenie"` when `spawn npx ENOENT` appears in host logs.
 
 ## Two different `prgenie` CLIs?
 
-The **npm package** (this README) is the runner. **`prgenie list` / `create` / `export`** belong to the [monorepo plugin CLI](https://github.com/radiancelux/prgenie#which-prgenie-do-i-need) — not this binary. The runner prints a hint if you run those command names.
+The **npm package** (this README) is the runner. **`prgenie list` / `create` / `export`** belong to the [monorepo plugin CLI](https://github.com/radiancelux/prgenie#which-prgenie-do-i-need) — not this binary. The runner prints a hint if you run those command names (**requires prgenie 0.1.4 or later**; 0.1.3 prints only `unknown command`).
 
 ## Troubleshooting
 
