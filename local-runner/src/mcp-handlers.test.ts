@@ -39,6 +39,14 @@ describe("start_job MCP schema", () => {
     assert.equal(props.stageModels.type, "object");
     assert.deepEqual(Object.keys(props.stageModels.properties ?? {}), ["build", "review", "fix"]);
   });
+
+  it("uses operator-neutral ticket field descriptions", () => {
+    const tool = RUNNER_MCP_TOOLS.find((t) => t.name === "start_job");
+    const props = tool!.inputSchema.properties as Record<string, { description?: string }>;
+    assert.match(String(props.ticketUrl.description), /issue-<n>/);
+    assert.doesNotMatch(String(props.ticketUrl.description), /RAD-n/);
+    assert.match(String(props.linearIssue.description), /ISSUE-/);
+  });
 });
 
 describe("start_job validation", () => {

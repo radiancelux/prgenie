@@ -77,7 +77,7 @@ pnpm local-runner serve
 On startup the runner prints reachable URLs (loopback plus a best-effort LAN IP when bound to `0.0.0.0`). Allow the chosen TCP port through your host firewall if needed. Do **not** expose the runner to the public internet without TLS and a proper reverse proxy (out of scope here).
 
 - **UI:** http://127.0.0.1:9473/ (paste token once; stored in `localStorage`)
-- **Setup:** http://127.0.0.1:9473/setup — default model/driver, notify, driver binaries, **docs repo presets** and default repo per job type (bearer-gated `GET`/`PATCH /api/settings`)
+- **Setup:** http://127.0.0.1:9473/setup — default model/driver, **`defaultMaxRounds`**, **`maxActiveJobs`**, per-stage **build/review/fix** models, **watchdog** limits (code/docs plus **compute** overrides under `jobTypes.compute.watchdog`), notify, driver binaries, **docs repo presets** and default repo per job type (bearer-gated `GET`/`PATCH /api/settings`; form validation matches MCP `settings`)
 - **MCP HTTP:** `POST http://127.0.0.1:9473/mcp` with `Authorization: Bearer $PRGENIE_RUNNER_TOKEN`
 - **MCP stdio:** `pnpm local-runner mcp` (for Cursor `mcp.json`)
 
