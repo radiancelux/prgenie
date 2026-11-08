@@ -142,15 +142,22 @@ export const RUNNER_MCP_TOOLS = [
   {
     name: "continue_job",
     description:
-      "Run additional fix→review round(s) on a terminal job (approved, changes_remaining, stuck, stopped, failed, or interrupted).",
+      "Run additional fix→review round(s) on a terminal job (approved, changes_remaining, stuck, stopped, failed, or interrupted). An interrupted job with no PR yet re-runs its build stage on the same branch/worktree instead.",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string" },
         prompt: { type: "string" },
         promptFile: { type: "string" },
-        extraRounds: { type: "number", description: "Default 1" },
-        model: { type: "string", description: "Optional fix-stage model override (default auto)" },
+        extraRounds: {
+          type: "number",
+          description: "Default 1 (0 when resuming an interrupted pre-PR build)",
+        },
+        model: {
+          type: "string",
+          description:
+            "Optional model override for the resumed stage: fix (default auto), or build on a pre-PR resume",
+        },
       },
       required: ["id"],
     },

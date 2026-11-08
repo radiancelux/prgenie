@@ -1,9 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import os from "node:os";
-import path from "node:path";
+import { randomUUID } from "node:crypto";
 import type { RunnerConfig } from "./config.js";
-import type { JobRecord, JobWorkerState } from "./types.js";
-import { saveJob, loadJob } from "./store.js";
 
 function runnerArgvForJobWorker(jobId: string): { command: string; args: string[] } {
   const binary = process.env.PRGENIE_RUNNER_BINARY?.trim();
@@ -28,7 +25,7 @@ function runnerArgvForJobWorker(jobId: string): { command: string; args: string[
   throw new Error("PRGENIE_RUNNER_BINARY or bundled argv[1] required to spawn job-worker");
 }
 
-function workerEnv(config: RunnerConfig): NodeJS.ProcessEnv {
+function workerEnv(config: RunnerConfig, token: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
     PRGENIE_RUNNER_DATA_DIR: config.dataDir,
@@ -37,48 +34,39 @@ function workerEnv(config: RunnerConfig): NodeJS.ProcessEnv {
     PRGENIE_RUNNER_INLINE_JOBS: "1",
     PRGENIE_RUNNER_ROLE: "job-worker",
     PRGENIE_RUNNER_SLOW_MS: process.env.PRGENIE_RUNNER_SLOW_MS,
+    PRGENIE_RUNNER_WORKER_TOKEN: token,
   };
 }
 
-export function spawnDetachedJobWorker(
-  config: RunnerConfig,
-  jobId: string,
-): { child: ChildProcess; pid: number } {
+export type SpawnedJobWorker = {
+  child: ChildProcess;
+  pid: number;
+  /** Claim token the child will write into its lock. */
+  token: string;
+  /** Resolves with the exit code (null on signal or spawn error). */
+  exited: Promise<number | null>;
+};
+
+/**
+ * Launch `job-worker <id>` in its own session. The child claims the job lock itself; a losing
+ * duplicate exits 3 without touching the job.
+ */
+export function spawnDetachedJobWorker(config: RunnerConfig, jobId: string): SpawnedJobWorker {
   const { command, args } = runnerArgvForJobWorker(jobId);
+  const token = randomUUID();
   const child = spawn(command, args, {
     detached: true,
     stdio: "ignore",
-    env: workerEnv(config),
+    env: workerEnv(config, token),
+  });
+  const exited = new Promise<number | null>((resolve) => {
+    child.once("exit", (code) => resolve(code));
+    child.once("error", () => resolve(null));
   });
   child.unref();
   const pid = child.pid;
   if (!pid) {
     throw new Error(`failed to spawn job worker for ${jobId}`);
   }
-  return { child, pid };
-}
-
-export async function persistJobWorker(
-  config: RunnerConfig,
-  job: JobRecord,
-  worker: JobWorkerState | null,
-): Promise<void> {
-  job.worker = worker ?? undefined;
-  await saveJob(config.dataDir, job);
-}
-
-export async function touchJobWorker(
-  config: RunnerConfig,
-  jobId: string,
-  pid: number,
-): Promise<JobRecord | null> {
-  const job = await loadJob(config.dataDir, jobId);
-  if (!job) return null;
-  const worker: JobWorkerState = {
-    pid,
-    hostname: os.hostname(),
-    startedAt: new Date().toISOString(),
-  };
-  await persistJobWorker(config, job, worker);
-  return job;
+  return { child, pid, token, exited };
 }

@@ -90,13 +90,13 @@ On startup the runner prints reachable URLs (loopback plus a best-effort LAN IP 
 - `stop_job`
 - `archive_job` — `id`; removes a finished job from the dashboard (see [Removing jobs](#removing-jobs-archive)). Errors while the job is running.
 - `restore_job` — `id`; moves an archived job back. Errors if a live job already uses that id.
-- `continue_job` — `id`, optional `prompt` / `promptFile`, `extraRounds` (default 1), optional `model` (fix stage). Runs additional fix→review round(s) on a **terminal** job (`approved`, `changes_remaining`, `stuck`, `stopped`, `failed`, `interrupted`). Refuses archived jobs (restore first) and branches held by another active job.
+- `continue_job` — `id`, optional `prompt` / `promptFile`, `extraRounds` (default 1), optional `model` (fix stage). Runs additional fix→review round(s) on a **terminal** job (`approved`, `changes_remaining`, `stuck`, `stopped`, `failed`, `interrupted`). An `interrupted` job that never reached a PR instead re-runs its **build** stage on the same branch and worktree (`extraRounds` defaults to 0 there, and `model` overrides the build model). Refuses archived jobs (restore first), jobs a live worker still owns, and branches held by another active job.
 - `restart_runner` — adoption preview for graceful HTTP restart (pair with `prgenie restart` or `POST /api/runner/restart`).
 - `settings` — read (no args) or patch runner defaults (same shape as `PATCH /api/settings`).
 
 ### Job stages
 
-`building` → `reviewing` (round N) → `fixing` → … → `approved` | `changes_remaining` | `stuck` | `failed` | `stopped`
+`building` → `reviewing` (round N) → `fixing` → … → `approved` | `changes_remaining` | `stuck` | `failed` | `stopped` | `interrupted` (worker died; see [Restart and upgrade](#restart-and-upgrade-while-jobs-run))
 
 Default **`maxRounds`** = 3 (review/fix cycles). N review rounds allow at most N−1 intervening fix passes. Reviewer must post **one** GitHub issue comment on the PR ending with `VERDICT: APPROVE` or `VERDICT: CHANGES` (built-in default review prompt enforces this). The runner also accepts the same `VERDICT:` line on PR review bodies as a fallback.
 
@@ -196,11 +196,27 @@ Jobs are JSON under `$PRGENIE_RUNNER_DATA_DIR/jobs/` (archived ones under `archi
 
 HTTP `serve` runs each active job in a **detached `job-worker` process** (own PID, logs on disk). Upgrading `main` no longer requires waiting for every slot to drain: rebuild, then restart the HTTP front-end; workers keep running through the relaunch.
 
-| Action                              | CLI                                                   | MCP                                                                                              | HTTP                                                                          |
-| ----------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| Graceful shutdown + relaunch helper | `prgenie restart` (`--build` runs `pnpm build` first) | `restart_runner` (preview adopt/interrupt lists; pair with `prgenie restart` or your supervisor) | `POST /api/runner/restart` (responds then exits **only** the HTTP/MCP server) |
+| Action                              | CLI                                                                        | MCP                                                                                              | HTTP                                                                          |
+| ----------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| Graceful shutdown + relaunch helper | `prgenie restart` (`--build` runs `pnpm build` first, aborting on failure) | `restart_runner` (preview adopt/interrupt lists; pair with `prgenie restart` or your supervisor) | `POST /api/runner/restart` (responds then exits **only** the HTTP/MCP server) |
 
-**Flow:** `POST /api/runner/restart` or `prgenie restart` stops the HTTP server without killing detached workers. The next `prgenie serve` (or the relaunch that `prgenie restart` spawns) **re-adopts** live worker PIDs, keeps tailing logs, and leaves the stage machine + watchdog in the worker process. If a worker died during the gap, the job is marked **`interrupted`** (dashboard + JSON) and can be resumed with `continue_job` / `POST …/continue` — never silently dropped.
+**`prgenie restart [--build]`**, in order:
+
+1. With `--build`, runs `pnpm build` at the repo root (the nearest directory above the runner entry that has `pnpm-workspace.yaml`; npm installs have none, so `--build` errors there). A failed build exits `1` and leaves the old server running.
+2. Calls `POST /api/runner/restart`. Any status other than `200` (for example `401` on a wrong token) exits `1` without relaunching. If nothing is listening, it skips straight to launching.
+3. Waits for the old server to release the port, then launches `serve` detached and waits until `/api/jobs/meta` answers.
+
+**Shutdown:** the restart endpoint flushes its response, then ends every dashboard event stream (`/api/events`, `/api/jobs/:id/stream`), stops listening, closes idle keep-alive sockets, and cuts any request still running after 2s. Open dashboards therefore cannot hold the restart; they reconnect to the new server. `SIGINT` on `serve` takes the same path.
+
+**Ownership:** a worker claims its job by creating `$PRGENIE_RUNNER_DATA_DIR/workers/<job-id>.lock` with `O_EXCL`, recording its PID, hostname, a random token, and the OS process start time (`/proc/<pid>/stat` on Linux, `ps -o lstart` on macOS). A second worker for the same job, from a duplicate spawn or two `serve` processes starting at once, finds a live holder and exits `3` without touching the job. A dead holder's lock is replaced under the store lock. A PID whose start time no longer matches counts as dead, so a recycled PID is never adopted or signalled. The job JSON mirrors the claim in `worker`. On exit the worker releases both, but only while its token still owns them, and the cleared `worker: null` persists through later saves of older copies.
+
+**Adoption and supervision:** the next `prgenie serve` (or the relaunch that `prgenie restart` spawns) **re-adopts** live workers. The stage machine and per-stage watchdog keep running in the worker. The serve process forwards the worker's stage, PR, and log progress to dashboard event streams, and supervises the worker using the job's own watchdog snapshot instead of a fixed total:
+
+- **Heartbeat:** the worker refreshes its lock every 5s. If it stays silent longer than the job's watchdog inactivity limit, the worker is treated as hung.
+- **Stage budget:** a single stage may run for at most `stageCapMs × (recoveryAttempts + 1)` plus kill grace and 5 min of slack, counted from when that stage started (or from when the worker started, whichever is later).
+- A hung or over-budget worker gets `SIGTERM` to its process group, then `SIGKILL` after a grace period. The job is marked only once the process is confirmed gone. A healthy worker is never abandoned, however long the job runs.
+
+When a worker is confirmed dead and its job is still `building` / `reviewing` / `fixing`, the job becomes **`interrupted`** (or `stopped` if a stop was pending) and is never silently dropped. Resume it with `continue_job` / `POST …/continue`. A job interrupted before its PR existed re-runs its build stage on the same branch and worktree.
 
 **Idle restart** (no `building` / `reviewing` / `fixing` jobs) behaves as before.
 

@@ -38,10 +38,19 @@ const TERMINAL_JOB_STAGES = new Set([
 ]);
 
 export type HttpServerHooks = {
+  /** Runs after the HTTP server has closed, before the process exits. */
   onGracefulShutdown?: () => Promise<void>;
   /** Test hook: avoid killing the process during integration tests. */
   onProcessExit?: (code: number) => void;
 };
+
+export type RunnerHttpServer = http.Server & {
+  /** End SSE streams, stop listening, and drop keep-alive sockets; resolves once closed. */
+  shutdown: () => Promise<void>;
+};
+
+/** In-flight non-SSE requests get this long to finish before their sockets are cut. */
+const SHUTDOWN_GRACE_MS = 2_000;
 
 const ARCHIVE_ERROR_STATUS = {
   invalid_id: 400,
@@ -175,9 +184,23 @@ export function startHttpServer(
   config: RunnerConfig,
   engine: RunnerEngine,
   hooks: HttpServerHooks = {},
-): http.Server {
+): RunnerHttpServer {
   const sseClients = new Map<string, Set<http.ServerResponse>>();
   const listClients = new Set<http.ServerResponse>();
+  /** Every open event stream; `server.close()` waits on these forever unless they are ended. */
+  const streams = new Set<http.ServerResponse>();
+  let shuttingDown: Promise<void> | null = null;
+
+  const openStream = (req: http.IncomingMessage, res: http.ServerResponse): boolean => {
+    if (shuttingDown) {
+      res.writeHead(503, { "Content-Type": "application/json", Connection: "close" });
+      res.end(JSON.stringify({ error: "runner is restarting" }));
+      return false;
+    }
+    streams.add(res);
+    req.on("close", () => streams.delete(res));
+    return true;
+  };
 
   engine.on("jobs", () => {
     for (const res of listClients) {
@@ -249,6 +272,7 @@ export function startHttpServer(
       }
 
       if (path === "/api/events" && req.method === "GET") {
+        if (!openStream(req, res)) return;
         guard.begin({
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
@@ -347,6 +371,7 @@ export function startHttpServer(
       const streamMatch = path.match(/^\/api\/jobs\/([^/]+)\/stream$/);
       if (streamMatch && req.method === "GET") {
         const jobId = streamMatch[1];
+        if (!openStream(req, res)) return;
         guard.begin({
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
@@ -441,15 +466,17 @@ export function startHttpServer(
 
       if (path === "/api/runner/restart" && req.method === "POST") {
         const preview = await engine.prepareRestart();
-        guard.json(200, preview);
         const exit = hooks.onProcessExit ?? ((code: number) => process.exit(code));
-        setImmediate(() => {
+        // Shut down only after the preview is flushed; cutting sockets earlier truncates it.
+        res.once("finish", () => {
           void (async () => {
             engine.ciWatcher.stop();
+            await shutdown();
             await hooks.onGracefulShutdown?.();
             exit(0);
           })();
         });
+        guard.json(200, preview);
         return;
       }
 
@@ -461,6 +488,26 @@ export function startHttpServer(
     }
   });
 
+  function shutdown(): Promise<void> {
+    shuttingDown ??= new Promise<void>((resolve) => {
+      server.close(() => resolve());
+      for (const res of streams) {
+        try {
+          res.end();
+        } catch {
+          /* client gone */
+        }
+      }
+      streams.clear();
+      listClients.clear();
+      sseClients.clear();
+      server.closeIdleConnections();
+      const force = setTimeout(() => server.closeAllConnections(), SHUTDOWN_GRACE_MS);
+      force.unref();
+    });
+    return shuttingDown;
+  }
+
   server.listen(config.port, config.host);
-  return server;
+  return Object.assign(server, { shutdown });
 }

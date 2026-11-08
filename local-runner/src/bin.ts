@@ -16,21 +16,15 @@ import {
 } from "./init.js";
 import { formatRunnerDoctorReport, runRunnerDoctor } from "./runner-doctor.js";
 import { runJobWorker } from "./job-worker.js";
-import { httpCallRunnerRestart, waitForHttpRunner } from "./runner-restart.js";
+import { runRunnerRestartCli } from "./runner-restart.js";
 import { spawn } from "node:child_process";
-import path from "node:path";
 
 async function cmdServe(): Promise<void> {
   process.env.PRGENIE_RUNNER_ROLE = "serve";
   const config = await loadConfig(process.env, { command: "serve" });
   const engine = new RunnerEngine(config);
   await engine.init();
-  const server = startHttpServer(config, engine, {
-    onGracefulShutdown: () =>
-      new Promise<void>((resolve) => {
-        server.close(() => resolve());
-      }),
-  });
+  const server = startHttpServer(config, engine);
   const urls = runnerListenUrls(config.host, config.port);
   // eslint-disable-next-line no-console
   console.log(
@@ -38,9 +32,12 @@ async function cmdServe(): Promise<void> {
   );
   await new Promise<void>((resolve) => {
     process.on("SIGINT", () => {
-      server.close(() => resolve());
+      engine.ciWatcher.stop();
+      void server.shutdown().then(resolve);
     });
   });
+  // Supervisor polls would otherwise keep the loop alive; detached workers carry on regardless.
+  process.exit(0);
 }
 
 async function cmdMcpStdio(): Promise<void> {
@@ -119,50 +116,34 @@ function resolveRunnerEntryForRestart(): string {
 }
 
 async function cmdRunnerRestart(): Promise<void> {
-  const build = process.argv.includes("--build");
   const config = await loadConfig(process.env, { command: "restart" });
   const host = config.host === "0.0.0.0" ? "127.0.0.1" : config.host;
-  const token = config.token;
-  try {
-    await httpCallRunnerRestart(host, config.port, token);
-  } catch {
-    // old server may already be down
-  }
-  if (build) {
-    const root = path.resolve(path.dirname(resolveRunnerEntryForRestart()), "../..");
-    await new Promise<void>((resolve, reject) => {
-      const p = spawn("pnpm", ["build"], { cwd: root, stdio: "inherit", env: process.env });
-      p.on("error", reject);
-      p.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`pnpm build: ${code}`))));
-    });
-  }
   const entry = resolveRunnerEntryForRestart();
   const launcher = process.env.PRGENIE_RUNNER_RESTART_LAUNCHER?.trim() || process.execPath;
-  const args =
-    launcher === "tsx" || launcher.endsWith("/tsx")
-      ? [entry, "serve"]
-      : launcher === process.execPath
-        ? [entry, "serve"]
-        : [entry, "serve"];
-  spawn(launcher, args, {
-    detached: true,
-    stdio: "ignore",
-    env: {
-      ...process.env,
-      PRGENIE_RUNNER_ROLE: "serve",
-      PRGENIE_RUNNER_HOST: config.host,
-      PRGENIE_RUNNER_PORT: String(config.port),
-      PRGENIE_RUNNER_DATA_DIR: config.dataDir,
-      PRGENIE_RUNNER_TOKEN: token,
+  process.exitCode = await runRunnerRestartCli(
+    {
+      build: process.argv.includes("--build"),
+      entry,
+      host,
+      port: config.port,
+      token: config.token,
     },
-  }).unref();
-  const ok = await waitForHttpRunner(host, config.port, token);
-  if (!ok) {
-    console.error("Runner did not come back up after restart.");
-    process.exitCode = 1;
-    return;
-  }
-  console.log(`Runner restarted on ${host}:${config.port}`);
+    {
+      launch: () =>
+        spawn(launcher, [entry, "serve"], {
+          detached: true,
+          stdio: "ignore",
+          env: {
+            ...process.env,
+            PRGENIE_RUNNER_ROLE: "serve",
+            PRGENIE_RUNNER_HOST: config.host,
+            PRGENIE_RUNNER_PORT: String(config.port),
+            PRGENIE_RUNNER_DATA_DIR: config.dataDir,
+            PRGENIE_RUNNER_TOKEN: config.token,
+          },
+        }).unref(),
+    },
+  );
 }
 
 async function cmdPrune(): Promise<void> {
