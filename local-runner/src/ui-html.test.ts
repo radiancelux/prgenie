@@ -17,6 +17,12 @@ function inlineScriptBodies(html: string): string[] {
 }
 
 describe("runnerUiHtml inline scripts", () => {
+  it("allows continue on terminal jobs without a PR (build resume copy)", () => {
+    const html = runnerUiHtml(8765, ["http://127.0.0.1:8765/"]);
+    assert.match(html, /continue re-runs the build stage/);
+    assert.doesNotMatch(html, /start a new job instead/);
+  });
+
   it("emits JavaScript that parses in vm.Script", () => {
     const html = runnerUiHtml(8765, ["http://127.0.0.1:8765/"]);
     const scripts = inlineScriptBodies(html);

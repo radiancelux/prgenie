@@ -75,6 +75,11 @@ export const RUNNER_MCP_TOOLS = [
           description:
             "Dashboard agent row label (optional; derived from Linear slug, prompt # heading, or branch)",
         },
+        expectPr: {
+          type: "boolean",
+          description:
+            "When false, skip PR review and finish approved if build succeeds with no GitHub PR (issues-only). Default true.",
+        },
       },
       required: ["branch"],
     },
@@ -142,7 +147,7 @@ export const RUNNER_MCP_TOOLS = [
   {
     name: "continue_job",
     description:
-      "Run additional fix→review round(s) on a terminal job (approved, changes_remaining, stuck, stopped, failed, or interrupted). An interrupted job with no PR yet re-runs its build stage on the same branch/worktree instead.",
+      "Run additional fix→review round(s) on a terminal job (approved, changes_remaining, stuck, stopped, failed, or interrupted). When the job has no PR yet, re-runs its build stage on the same branch/worktree instead (then opens a PR when ready).",
     inputSchema: {
       type: "object",
       properties: {
@@ -151,7 +156,7 @@ export const RUNNER_MCP_TOOLS = [
         promptFile: { type: "string" },
         extraRounds: {
           type: "number",
-          description: "Default 1 (0 when resuming an interrupted pre-PR build)",
+          description: "Default 1 (0 when resuming a pre-PR build)",
         },
         model: {
           type: "string",

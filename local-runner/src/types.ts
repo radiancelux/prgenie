@@ -54,6 +54,11 @@ export interface JobInput {
   docsTemplate?: "marketing" | "policy" | "research";
   /** Human label for dashboard rows (derived at create when omitted). */
   title?: string;
+  /**
+   * When false, a successful build with no GitHub PR finishes as approved (issues-only / audit jobs).
+   * Default true: missing PR after build becomes stuck.
+   */
+  expectPr?: boolean;
 }
 
 export interface TokenUsage {
@@ -217,6 +222,8 @@ export interface StartJobArgs {
   docsTemplate?: JobInput["docsTemplate"];
   /** Human label for dashboard rows (derived at create when omitted). */
   title?: string;
+  /** See {@link JobInput.expectPr}. */
+  expectPr?: boolean;
 }
 
 export type JobEvent =

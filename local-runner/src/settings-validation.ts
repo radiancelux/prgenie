@@ -203,6 +203,7 @@ export function normalizeStartJobArgs(raw: Record<string, unknown>): StartJobArg
   const linearIssue = optionalString(raw, "linearIssue");
   const title = optionalString(raw, "title");
   const dryRun = optionalBoolean(raw, "dryRun");
+  const expectPr = optionalBoolean(raw, "expectPr");
   const maxRounds = validateMaxRounds(raw.maxRounds);
   const driver = validateDriverId(raw.driver);
   const jobType = optionalEnum(raw, "jobType", JOB_PROFILES);
@@ -256,6 +257,8 @@ export function normalizeStartJobArgs(raw: Record<string, unknown>): StartJobArg
   if (profile) args.profile = profile;
   if (docsTemplate) args.docsTemplate = docsTemplate;
   if (ticketUrls) args.ticketUrls = ticketUrls;
+  if (expectPr === false) args.expectPr = false;
+  else if (expectPr === true) args.expectPr = true;
   return args;
 }
 

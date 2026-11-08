@@ -66,7 +66,6 @@ const CONTINUE_ERROR_STATUS: Record<ContinueJobError["code"], number> = {
   running: 409,
   not_terminal: 409,
   branch_conflict: 409,
-  no_pr: 409,
 };
 
 /** Validation is 400, a settings or branch conflict is 409, anything else is a server fault. */

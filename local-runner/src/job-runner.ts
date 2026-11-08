@@ -35,6 +35,7 @@ import { runAgentWithWatchdog, type StageWatchdogOptions } from "./stage-watchdo
 import { modelForActiveStage, recordActualModel } from "./job-models.js";
 import { setJobError } from "./job-error.js";
 import { parseWatchdogPolicy } from "./runner-policy.js";
+import { resolvePostBuildNoPr } from "./job-pr-policy.js";
 
 export type JobCallbacks = {
   onEvent?: (jobId: string, event: JobEvent) => void;
@@ -421,7 +422,20 @@ export async function runJobLoop(
         pr = { url: "https://github.com/example/example/pull/1", number: 1 };
       }
       if (!pr) {
-        job.error = "No GitHub PR for branch — local-only diff guard";
+        const noPr = resolvePostBuildNoPr(job.input);
+        if (noPr.kind === "complete") {
+          job.error = null;
+          await setStage(config, job, "approved", control, callbacks);
+          await notify(
+            config,
+            job,
+            `Job finished (no PR): ${job.input.branch}`,
+            callbacks?.fetchImpl,
+          );
+          emit(callbacks, job, { type: "done", stage: "approved" });
+          return;
+        }
+        job.error = noPr.error;
         await setStage(config, job, "stuck", control, callbacks);
         return;
       }

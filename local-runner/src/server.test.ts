@@ -155,10 +155,16 @@ async function seedJob(
   dataDir: string,
   id: string,
   stage: JobStage,
-  opts: { prUrl?: string; branch?: string } = {},
+  opts: { prUrl?: string | null; branch?: string } = {},
 ): Promise<void> {
   await mkdir(path.join(dataDir, "logs"), { recursive: true });
   await writeFile(jobLogFile(dataDir, id), `log ${id}\n`, "utf8");
+  const prUrl =
+    opts.prUrl !== undefined
+      ? opts.prUrl
+      : stage === "building"
+        ? null
+        : "https://github.com/example/example/pull/1";
   await saveJob(dataDir, {
     id,
     createdAt: new Date().toISOString(),
@@ -171,9 +177,8 @@ async function seedJob(
     driverId: "cursor-agent",
     worktreePath: null,
     repoSlug: "o/r",
-    prUrl:
-      opts.prUrl ?? (stage === "building" ? null : "https://github.com/example/example/pull/1"),
-    prNumber: null,
+    prUrl,
+    prNumber: prUrl ? 1 : null,
     prIsDraft: null,
     approveHeadSha: null,
     readyPromotedAt: null,
@@ -814,6 +819,31 @@ describe("continue job over HTTP and MCP", () => {
       });
       assert.equal(archived.status, 409);
       assert.match(archived.body, /archived/i);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("continues stuck/failed/stopped jobs without a PR by resuming build (HTTP/MCP parity)", async () => {
+    const s = await startTestServer();
+    try {
+      for (const stage of ["stuck", "failed", "stopped"] as const) {
+        const httpId = `job-${stage}-nopr-http`;
+        await seedJob(s.dataDir, httpId, stage, { prUrl: null });
+        const http = await httpRequest(s.port, "POST", `/api/jobs/${httpId}/continue`, {
+          token: TOKEN,
+          body: JSON.stringify({ prompt: "open a PR" }),
+        });
+        assert.equal(http.status, 200, stage);
+        const body = JSON.parse(http.body) as { stage: string; maxRounds: number };
+        assert.equal(body.stage, "building", stage);
+        assert.equal(body.maxRounds, 3, "build resume spends no extra rounds by default");
+
+        const mcpId = `job-${stage}-nopr-mcp`;
+        await seedJob(s.dataDir, mcpId, stage, { prUrl: null });
+        const mcp = await mcpCall(s.port, "continue_job", { id: mcpId, prompt: "mcp" });
+        assert.equal((mcp.result?.structuredContent as { stage: string })?.stage, "building");
+      }
     } finally {
       await s.close();
     }
