@@ -158,7 +158,6 @@ export type AgentLogBlock =
       error?: string;
       resultDetail?: string;
       recovered?: boolean;
-      startedAtMs?: number;
     }
   | { kind: "plain"; text: string }
   | { kind: "error"; text: string };
@@ -310,7 +309,6 @@ export function parseAgentLogBlocks(raw: string): AgentLogBlock[] | null {
           summary: argSummary,
           detail,
           phase: "started",
-          startedAtMs: Date.now(),
         });
         continue;
       }
@@ -481,20 +479,18 @@ export function formatAgentLogTailHtml(raw: string, opts: AgentLogHtmlOptions = 
         let failedCls = b.phase === "failed" ? " agent-tool-failed" : "";
         if (b.recovered) failedCls += " agent-tool-failed-recovered";
         let runningMeta = "";
+        const cmd = opts.runningCommand;
+        const startedMs = cmd ? Date.parse(cmd.startedAt) : NaN;
         const isOpenShell =
           b.kind === "tool" &&
           b.name === "shell" &&
           b.phase === "started" &&
           blocks.indexOf(b) === lastOpenShellIdx;
-        if (isOpenShell) {
-          const cmd = opts.runningCommand;
-          const startedMs = cmd?.startedAt ? Date.parse(cmd.startedAt) : (b.startedAtMs ?? nowMs);
-          const elapsed = formatElapsedCompact(
-            nowMs - (Number.isNaN(startedMs) ? nowMs : startedMs),
-          );
+        if (isOpenShell && cmd && !Number.isNaN(startedMs)) {
+          const elapsed = formatElapsedCompact(nowMs - startedMs);
           const proc =
-            cmd?.processLabel?.trim() ||
-            (cmd?.detail ? truncate(cmd.detail, 48) : b.summary ? truncate(b.summary, 48) : "");
+            cmd.processLabel?.trim() ||
+            (cmd.detail ? truncate(cmd.detail, 48) : b.summary ? truncate(b.summary, 48) : "");
           const procPart = proc ? ` · ${escapeHtml(proc)}` : "";
           runningMeta = `<div class="agent-tool-running-meta" data-running-shell="1">running ${escapeHtml(elapsed)}${procPart}</div>`;
         }

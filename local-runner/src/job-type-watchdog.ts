@@ -1,7 +1,12 @@
 import { DEFAULT_WATCHDOG, parseWatchdogPolicy, type WatchdogPolicy } from "./runner-policy.js";
 import type { RunnerSettings } from "./settings.js";
-import type { JobProfile } from "./types.js";
+import type { JobProfile, JobRecord } from "./types.js";
 import { validateWatchdogPatch } from "./settings-validation.js";
+
+/** Only compute jobs let busy child processes (not just agent output) reset inactivity. */
+export function isComputeJob(job: Pick<JobRecord, "input">): boolean {
+  return job.input.jobType === "compute" || job.input.profile === "compute";
+}
 
 /** Built-in watchdog defaults for `jobType: compute` (long CPU-bound tool runs). */
 export const COMPUTE_JOB_DEFAULT_WATCHDOG: WatchdogPolicy = {

@@ -1,9 +1,9 @@
 import { readdirSync, readFileSync } from "node:fs";
-import os from "node:os";
 import { pidAlive } from "./pid-util.js";
 
 export type ProcessActivitySample = {
   active: boolean;
+  /** Top-style per-core percentage for the busiest descendant (can exceed 100). */
   cpuPercent?: number;
   busiestComm?: string;
 };
@@ -12,29 +12,41 @@ export type ProcessActivitySampler = {
   sample(rootPid: number | null | undefined): ProcessActivitySample;
 };
 
-type JiffySnapshot = Map<number, number>;
+export type ProcEntry = { ppid: number; jiffies: number };
 
-function readLinuxProcFieldRest(pid: number): string[] | null {
+/** pid → parent pid and cumulative utime+stime jiffies. */
+export type ProcTable = Map<number, ProcEntry>;
+
+/** One pass over `/proc`: each process's stat is read exactly once per sample. */
+export function readLinuxProcTable(): ProcTable {
+  const table: ProcTable = new Map();
+  if (process.platform !== "linux") return table;
+  let names: string[];
   try {
-    const raw = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const rest = raw.slice(raw.lastIndexOf(")") + 2).split(" ");
-    return rest.length > 12 ? rest : null;
+    names = readdirSync("/proc");
   } catch {
-    return null;
+    return table;
   }
+  for (const name of names) {
+    const pid = Number(name);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    let raw: string;
+    try {
+      raw = readFileSync(`/proc/${pid}/stat`, "utf8");
+    } catch {
+      continue;
+    }
+    const rest = raw.slice(raw.lastIndexOf(")") + 2).split(" ");
+    if (rest.length <= 12) continue;
+    const ppid = Number(rest[1]);
+    const jiffies = Number(rest[11]) + Number(rest[12]);
+    if (!Number.isFinite(ppid) || !Number.isFinite(jiffies)) continue;
+    table.set(pid, { ppid, jiffies });
+  }
+  return table;
 }
 
-function readProcCpuJiffies(pid: number): number | null {
-  if (process.platform !== "linux") return null;
-  const rest = readLinuxProcFieldRest(pid);
-  if (!rest) return null;
-  const utime = Number(rest[11]);
-  const stime = Number(rest[12]);
-  if (!Number.isFinite(utime) || !Number.isFinite(stime)) return null;
-  return utime + stime;
-}
-
-function readProcComm(pid: number): string | null {
+function readLinuxProcComm(pid: number): string | null {
   if (process.platform !== "linux") return null;
   try {
     return readFileSync(`/proc/${pid}/comm`, "utf8").trim() || null;
@@ -43,98 +55,111 @@ function readProcComm(pid: number): string | null {
   }
 }
 
-function childPidsOf(ppid: number): number[] {
-  if (process.platform !== "linux") return [];
-  const out: number[] = [];
-  for (const name of readdirSync("/proc")) {
-    const pid = Number(name);
-    if (!Number.isInteger(pid) || pid <= 0) continue;
-    const rest = readLinuxProcFieldRest(pid);
-    if (!rest) continue;
-    const parent = Number(rest[1]);
-    if (parent === ppid) out.push(pid);
+/** Descendants of `root` (excluding `root` itself). */
+export function descendantPids(table: ProcTable, root: number): number[] {
+  const children = new Map<number, number[]>();
+  for (const [pid, { ppid }] of table) {
+    const list = children.get(ppid);
+    if (list) list.push(pid);
+    else children.set(ppid, [pid]);
   }
-  return out;
-}
-
-function collectDescendantPids(root: number): number[] {
-  const seen = new Set<number>();
-  const stack = [root];
+  const out: number[] = [];
+  const seen = new Set<number>([root]);
+  const stack = [...(children.get(root) ?? [])];
   while (stack.length) {
     const pid = stack.pop()!;
     if (seen.has(pid)) continue;
     seen.add(pid);
-    for (const child of childPidsOf(pid)) stack.push(child);
+    out.push(pid);
+    for (const c of children.get(pid) ?? []) stack.push(c);
   }
-  seen.delete(root);
-  return [...seen];
-}
-
-function coresForCpuPercent(): number {
-  const n = os.cpus().length;
-  return n > 0 ? n : 1;
+  return out;
 }
 
 export type ProcessActivitySamplerOptions = {
   clockHz?: number;
   now?: () => number;
+  /** Per-core CPU % a single descendant must reach for a sample to count as busy. */
+  minCpuPercent?: number;
+  /** Consecutive busy samples required before reporting activity. */
+  sustainSamples?: number;
+  readTable?: () => ProcTable;
+  readComm?: (pid: number) => string | null;
+  isAlive?: (pid: number) => boolean;
 };
 
+export const DEFAULT_MIN_CPU_PERCENT = 20;
+export const DEFAULT_SUSTAIN_SAMPLES = 3;
+
 /**
- * Compares jiffies between ticks for the agent subtree; the second sample onward reports activity.
+ * Compares CPU jiffies of the agent's descendants (never the agent CLI itself) between samples.
+ * Activity is reported only once one descendant stays above `minCpuPercent` for
+ * `sustainSamples` consecutive samples, so background keep-alive noise never counts.
  */
 export function createProcessActivitySampler(
   opts: ProcessActivitySamplerOptions = {},
 ): ProcessActivitySampler {
   const clockHz = opts.clockHz ?? 100;
   const now = opts.now ?? Date.now;
-  let last: JiffySnapshot | null = null;
+  const minCpuPercent = opts.minCpuPercent ?? DEFAULT_MIN_CPU_PERCENT;
+  const sustainSamples = Math.max(1, opts.sustainSamples ?? DEFAULT_SUSTAIN_SAMPLES);
+  const readTable = opts.readTable ?? readLinuxProcTable;
+  const readComm = opts.readComm ?? readLinuxProcComm;
+  const isAlive = opts.isAlive ?? pidAlive;
+  let last: Map<number, number> | null = null;
+  let lastRoot: number | null = null;
   let lastAt = 0;
+  let streak = 0;
+
+  const reset = () => {
+    last = null;
+    lastRoot = null;
+    lastAt = 0;
+    streak = 0;
+  };
 
   return {
     sample(rootPid) {
-      if (!rootPid || !pidAlive(rootPid)) {
-        last = null;
-        lastAt = 0;
+      if (!rootPid || !isAlive(rootPid)) {
+        reset();
         return { active: false };
       }
-      const scan = [rootPid, ...collectDescendantPids(rootPid)];
-      const jiffies: JiffySnapshot = new Map();
-      for (const pid of scan) {
-        const j = readProcCpuJiffies(pid);
-        if (j != null) jiffies.set(pid, j);
+      if (rootPid !== lastRoot) reset();
+      const table = readTable();
+      const jiffies = new Map<number, number>();
+      for (const pid of descendantPids(table, rootPid)) {
+        jiffies.set(pid, table.get(pid)!.jiffies);
       }
       const t = now();
-      let active = false;
-      let cpuPercent: number | undefined;
-      let busiestComm: string | undefined;
-      if (last && lastAt > 0 && jiffies.size) {
-        const elapsedMs = t - lastAt;
-        let maxDelta = 0;
-        let maxPid: number | null = null;
-        for (const [pid, j] of jiffies) {
-          const prev = last.get(pid);
-          if (prev === undefined) continue;
-          const delta = j - prev;
-          if (delta > maxDelta) {
-            maxDelta = delta;
-            maxPid = pid;
-          }
-        }
-        if (maxDelta > 0 && elapsedMs > 0) {
-          active = true;
-          const cpuSec = maxDelta / clockHz;
-          const wallSec = elapsedMs / 1000;
-          cpuPercent = Math.min(
-            9999,
-            Math.round((cpuSec / wallSec) * (100 / coresForCpuPercent())),
-          );
-          busiestComm = maxPid != null ? (readProcComm(maxPid) ?? undefined) : undefined;
+      const prev = last;
+      const elapsedMs = t - lastAt;
+      last = jiffies;
+      lastRoot = rootPid;
+      lastAt = t;
+      if (!prev || elapsedMs <= 0) return { active: false };
+
+      let maxDelta = 0;
+      let maxPid: number | null = null;
+      for (const [pid, j] of jiffies) {
+        const before = prev.get(pid);
+        if (before === undefined) continue;
+        const delta = j - before;
+        if (delta > maxDelta) {
+          maxDelta = delta;
+          maxPid = pid;
         }
       }
-      last = jiffies;
-      lastAt = t;
-      return { active, cpuPercent, busiestComm };
+      if (maxPid == null) {
+        streak = 0;
+        return { active: false };
+      }
+      const cpuPercent = Math.round((maxDelta / clockHz / (elapsedMs / 1000)) * 100);
+      streak = cpuPercent >= minCpuPercent ? streak + 1 : 0;
+      return {
+        active: streak >= sustainSamples,
+        cpuPercent,
+        busiestComm: readComm(maxPid) ?? undefined,
+      };
     },
   };
 }

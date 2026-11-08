@@ -416,7 +416,10 @@ export function runnerUiHtml(
       document.getElementById("logRaw").textContent = rawLogTail;
       const html = logParser.formatAgentLogTailHtml(rawLogTail, {
         nowMs: Date.now(),
-        runningCommand: j && j.runtime && j.runtime.command ? j.runtime.command : undefined,
+        runningCommand:
+          j && !TERMINAL_STAGES.has(j.stage) && j.runtime && j.runtime.command
+            ? j.runtime.command
+            : undefined,
       });
       if (html) {
         stepsEl.innerHTML = html;
@@ -1128,7 +1131,7 @@ export function runnerUiHtml(
         return;
       }
       if ((jobType === "code" || jobType === "compute") && !body.promptFile) {
-        newJobStatus.textContent = "Prompt file is required for code jobs.";
+        newJobStatus.textContent = "Prompt file is required for " + jobType + " jobs.";
         return;
       }
       try {

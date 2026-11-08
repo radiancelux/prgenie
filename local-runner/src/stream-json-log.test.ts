@@ -116,6 +116,14 @@ describe("stream-json log formatting", () => {
     assert.match(html, /blender \(270% CPU\)/);
   });
 
+  it("omits running meta on an open shell without live runtime (e.g. killed job)", () => {
+    const raw = [
+      "--- agent (stream-json) ---",
+      '{"type":"tool_call","subtype":"started","tool_call":{"shellToolCall":{"args":{"command":"blender -b"}}}}',
+    ].join("\n");
+    assert.doesNotMatch(formatAgentLogTailHtml(raw), /agent-tool-running-meta/);
+  });
+
   it("summarizes shell commands", () => {
     assert.match(
       summarizeToolArgs("shell", { command: "git status", description: "status" }),

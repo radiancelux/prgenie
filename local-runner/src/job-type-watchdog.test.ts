@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   COMPUTE_JOB_DEFAULT_WATCHDOG,
   baseWatchdogForJobType,
+  isComputeJob,
   resolveJobWatchdogSnapshot,
 } from "./job-type-watchdog.js";
 import { saveSettings } from "./settings.js";
@@ -15,6 +16,13 @@ import { workerBudgetForJob } from "./job-worker-monitor.js";
 import type { JobRecord } from "./types.js";
 
 describe("job-type watchdog", () => {
+  it("isComputeJob only matches the compute profile", () => {
+    assert.equal(isComputeJob({ input: { jobType: "compute" } } as JobRecord), true);
+    assert.equal(isComputeJob({ input: { profile: "compute" } } as JobRecord), true);
+    assert.equal(isComputeJob({ input: { jobType: "code" } } as JobRecord), false);
+    assert.equal(isComputeJob({ input: {} } as JobRecord), false);
+  });
+
   it("compute jobs use longer built-in watchdog defaults", () => {
     assert.equal(COMPUTE_JOB_DEFAULT_WATCHDOG.inactivityMs, 60 * 60 * 1000);
     assert.equal(COMPUTE_JOB_DEFAULT_WATCHDOG.stageCapMs, 8 * 60 * 60 * 1000);
