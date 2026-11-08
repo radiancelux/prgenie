@@ -5,6 +5,7 @@ import { streamJsonLogBrowserScript } from "./stream-json-log.js";
 export function runnerUiHtml(
   port: number,
   listenUrls: string[] = [`http://127.0.0.1:${port}/`],
+  tokenFilePath = "~/.prgenie/local-runner/runner.token",
 ): string {
   const logParserInit = streamJsonLogBrowserScript();
   const dashFmtInit = dashboardFormatBrowserScript();
@@ -27,6 +28,7 @@ export function runnerUiHtml(
       <input type="password" id="token" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base text-zinc-100" placeholder="PRGENIE_RUNNER_TOKEN" autocomplete="off" />
     </label>
     <button type="button" id="saveToken" class="min-h-11 w-full rounded-md border border-zinc-600 bg-zinc-800 px-4 py-2 text-zinc-100 sm:w-auto">Save token</button>
+    <p class="meta w-full text-sm text-zinc-500">Host token file: <code class="text-zinc-400">${tokenFilePath}</code> (from <code class="text-zinc-400">prgenie init</code> or serve startup).</p>
   </div>
   <details class="settings-panel mb-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3" open>
     <summary class="cursor-pointer text-sm font-medium text-zinc-200 select-none">Email notifications</summary>
@@ -792,7 +794,7 @@ export function runnerUiHtml(
         if (selected) collapseDetail();
         let msg;
         if (jobs.length === 0 && lastJobsMeta.totalOnDisk === 0) {
-          msg = "<strong>No agents yet.</strong> Start an agent below or from MCP.";
+          msg = "<strong>No agents yet.</strong> Start an agent in the form above or from MCP.";
         } else if (jobs.length === 0 && lastJobsMeta.mergedHidden > 0) {
           msg =
             "<strong>Finished agents are hidden.</strong> Turn on <em>Show finished</em> to see " +
@@ -852,7 +854,13 @@ export function runnerUiHtml(
       const res = await fetch(jobsPath, { headers: authHeaders() });
       if (seq !== refreshSeq) return;
       if (res.status === 401) {
-        showJobsMessage("<strong>Unauthorized.</strong> Paste your runner bearer token above and click Save token.");
+        const t = tokenEl.value || localStorage.getItem(tokenKey);
+        const tokenHint = ${JSON.stringify(tokenFilePath)};
+        if (t) {
+          showJobsMessage("<strong>Token rejected.</strong> Check <code>" + tokenHint + "</code> or PRGENIE_RUNNER_TOKEN, then Save token.");
+        } else {
+          showJobsMessage("<strong>Unauthorized.</strong> Paste the bearer token from <code>" + tokenHint + "</code> above and click Save token.");
+        }
         lastJobs = [];
         return;
       }

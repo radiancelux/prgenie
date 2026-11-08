@@ -19,7 +19,22 @@ export interface RunnerConfig {
   defaultCodeRepoPath: string | null;
 }
 
-const DEFAULT_PORT = 9473;
+export const DEFAULT_PORT = 9473;
+
+export function parseRunnerPort(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") return DEFAULT_PORT;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(
+      `PRGENIE_RUNNER_PORT must be a port number (1–65535), got ${JSON.stringify(raw)}.`,
+    );
+  }
+  const port = Number(trimmed);
+  if (port < 1 || port > 65_535) {
+    throw new Error(`PRGENIE_RUNNER_PORT must be between 1 and 65535, got ${port}.`);
+  }
+  return port;
+}
 
 /** Internal placeholder when stdio MCP runs without a bearer secret. */
 export const STDIO_PLACEHOLDER_TOKEN = "stdio-local";
@@ -65,7 +80,7 @@ export async function loadConfig(
   let token = await resolveRunnerToken(env, dataDir);
   if (!token && needsBearer) {
     throw new Error(
-      "PRGENIE_RUNNER_TOKEN is required for serve (HTTP dashboard + bearer MCP). Run `prgenie init` and export the token file, or set PRGENIE_RUNNER_TOKEN.",
+      "PRGENIE_RUNNER_TOKEN is required for serve (HTTP dashboard + bearer MCP). Run `prgenie init`; serve reads runner.token automatically, or set PRGENIE_RUNNER_TOKEN.",
     );
   }
   if (!token) {
@@ -74,7 +89,7 @@ export async function loadConfig(
 
   return {
     host: env.PRGENIE_RUNNER_HOST?.trim() || defaultRunnerHost(),
-    port: Number(env.PRGENIE_RUNNER_PORT || DEFAULT_PORT) || DEFAULT_PORT,
+    port: parseRunnerPort(env.PRGENIE_RUNNER_PORT),
     token,
     dataDir,
     notifyEmail: env.PRGENIE_RUNNER_NOTIFY_EMAIL?.trim() || null,

@@ -72,6 +72,9 @@ execFileSync(
   { cwd: root, stdio: "inherit" },
 );
 const dashboardCss = readFileSync(dashboardCssOut, "utf8");
+const runnerNpmPkg = JSON.parse(
+  readFileSync(path.join(root, "packages/npm-prgenie/package.json"), "utf8"),
+);
 copyFileSync(
   path.join(root, "local-runner/markdownlint-prose-defaults.jsonc"),
   path.join(root, "local-runner/dist/markdownlint-prose-defaults.jsonc"),
@@ -84,6 +87,7 @@ await esbuild.build({
   banner: { js: "#!/usr/bin/env node\n" },
   define: {
     __DASHBOARD_CSS__: JSON.stringify(dashboardCss),
+    __PRGENIE_RUNNER_VERSION__: JSON.stringify(runnerNpmPkg.version),
   },
 });
 

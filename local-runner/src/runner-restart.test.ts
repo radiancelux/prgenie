@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import type { RunnerConfig } from "./config.js";
 import { RunnerEngine } from "./engine.js";
 import { createJob, loadJob, saveJob, updateJobWorker } from "./store.js";
+import { bindRunnerHttpServer } from "./http-bind.js";
 import { startHttpServer, type RunnerHttpServer } from "./server.js";
 import { saveSettings } from "./settings.js";
 import {
@@ -537,7 +538,7 @@ describe("live runner restart (detached workers)", () => {
         exitedAt = Date.now();
       },
     });
-    await new Promise<void>((r) => server.on("listening", () => r()));
+    await bindRunnerHttpServer(server, config.host, config.port);
 
     const list = await openSse(p, config.token);
     const jobStream = await openSse(p, config.token, "/api/jobs/does-not-exist/stream");
@@ -658,7 +659,7 @@ describe("prgenie restart --build", () => {
       await engine.init();
       const server = startHttpServer(config, engine, { onProcessExit: () => undefined });
       servers.push(server);
-      await new Promise<void>((r) => server.on("listening", () => r()));
+      await bindRunnerHttpServer(server, config.host, config.port);
     };
     await boot();
     const sse = await openSse(port, config.token);
