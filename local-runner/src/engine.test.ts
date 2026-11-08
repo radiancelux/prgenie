@@ -1,14 +1,25 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import type { RunnerConfig } from "./config.js";
 import { RunnerEngine } from "./engine.js";
 import { JobControl } from "./job-control.js";
 import { createJob, loadJob, saveJob } from "./store.js";
 import { saveSettings } from "./settings.js";
 import { BranchConflictError } from "./job-queue.js";
+
+const execFileAsync = promisify(execFile);
+
+async function initBareGitRepo(dir: string): Promise<void> {
+  await execFileAsync("git", ["-C", dir, "init", "-b", "main"]);
+  await execFileAsync("git", ["-C", dir, "config", "user.email", "t@test"]);
+  await execFileAsync("git", ["-C", dir, "config", "user.name", "t"]);
+  await execFileAsync("git", ["-C", dir, "commit", "--allow-empty", "-m", "init"]);
+}
 
 function testConfig(dataDir: string): RunnerConfig {
   return {
@@ -118,6 +129,7 @@ describe("RunnerEngine queue", () => {
   it("rejects a duplicate same-branch submission while the cap is full", async () => {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-engine-q-"));
     const repo = await mkdtemp(path.join(os.tmpdir(), "lr-engine-q-repo-"));
+    await initBareGitRepo(repo);
     await saveSettings(dataDir, { maxActiveJobs: 1 });
     await seedJob(dataDir, repo, "feat/running");
     const engine = new RunnerEngine(testConfig(dataDir));
@@ -131,6 +143,7 @@ describe("RunnerEngine queue", () => {
   it("serializes concurrent same-branch starts so only one is accepted", async () => {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-engine-q-race-"));
     const repo = await mkdtemp(path.join(os.tmpdir(), "lr-engine-q-race-repo-"));
+    await initBareGitRepo(repo);
     await saveSettings(dataDir, { maxActiveJobs: 1 });
     await seedJob(dataDir, repo, "feat/running");
     const engine = new RunnerEngine(testConfig(dataDir));
@@ -146,6 +159,7 @@ describe("RunnerEngine queue", () => {
   it("drainQueue fills every free slot", async () => {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-engine-q-drain-"));
     const repo = await mkdtemp(path.join(os.tmpdir(), "lr-engine-q-drain-repo-"));
+    await initBareGitRepo(repo);
     await saveSettings(dataDir, { maxActiveJobs: 2 });
     const jobs = [
       await seedJob(dataDir, repo, "q1", true),

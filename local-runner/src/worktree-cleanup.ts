@@ -9,7 +9,9 @@ import { syncJobMergedStatus } from "./job-merge.js";
 import { setJobError } from "./job-error.js";
 import { patchJob } from "./store.js";
 import type { JobRecord } from "./types.js";
-import { removeWorktree } from "./worktree.js";
+import { branchHasNoCommitsBeyondBase, removeWorktree } from "./worktree.js";
+import { loadSettings } from "./settings.js";
+import type { RunnerSettings } from "./settings.js";
 
 export type WorktreeCleanupReason =
   "merged_hidden" | "terminal_merged" | "terminal_branch_gone" | "archived" | null;
@@ -103,6 +105,22 @@ async function persistCleanupError(config: RunnerConfig, job: JobRecord, msg: st
   });
 }
 
+async function pristineUnpushedFailedWorktree(
+  job: JobRecord,
+  wt: string,
+  gitImpl: typeof git,
+  settings?: RunnerSettings,
+): Promise<boolean> {
+  if (job.stage !== "failed" && job.stage !== "stopped") return false;
+  const sync = await isBranchSyncedWithOrigin(wt, job.input.branch, gitImpl);
+  if (sync.ok) return false;
+  if (sync.reason.includes("does not match")) return false;
+  if (await worktreeHasUncommittedChanges(wt, gitImpl)) return false;
+  if (!(await branchHasNoCommitsBeyondBase(wt, settings, gitImpl))) return false;
+  const onOrigin = await branchExistsOnOrigin(wt, job.input.branch, gitImpl);
+  return !onOrigin;
+}
+
 export async function tryRemoveJobWorktree(
   config: RunnerConfig,
   job: JobRecord,
@@ -111,6 +129,8 @@ export async function tryRemoveJobWorktree(
     gitImpl?: typeof git;
     log?: (msg: string) => void;
     worktreesRoot?: string;
+    /** Suppress job.error noise for expected never-pushed branches (#157). */
+    silent?: boolean;
   },
 ): Promise<TryCleanupResult> {
   const wt = job.worktreePath?.trim();
@@ -136,15 +156,31 @@ export async function tryRemoveJobWorktree(
     return { removed: false, skipped: unremovable };
   }
 
+  const settings = await loadSettings(config.dataDir).catch(() => undefined);
+
   if (await worktreeHasUncommittedChanges(wt, gitImpl)) {
     const msg = `worktree cleanup skipped (${opts.reason}): uncommitted changes in ${wt}`;
     opts.log?.(msg);
-    await persistCleanupError(config, job, msg);
+    if (!opts.silent) await persistCleanupError(config, job, msg);
     return { removed: false, skipped: "dirty" };
+  }
+
+  const pristineFailed = await pristineUnpushedFailedWorktree(job, wt, gitImpl, settings);
+  if (pristineFailed) {
+    await removeWorktree(repoRoot, wt, {
+      branch: job.input.branch,
+      deleteBranch: true,
+    });
+    await persistWorktreeCleared(config, job);
+    opts.log?.(`worktree removed (${opts.reason}, pristine failed start): ${wt}`);
+    return { removed: true };
   }
 
   const sync = await isBranchSyncedWithOrigin(wt, job.input.branch, gitImpl);
   if (!sync.ok) {
+    if (opts.silent || opts.reason === "terminal_branch_gone") {
+      return { removed: false, skipped: "unpushed" };
+    }
     const msg = `worktree cleanup skipped (${opts.reason}): ${sync.reason}`;
     opts.log?.(msg);
     await persistCleanupError(config, job, msg);
@@ -188,7 +224,11 @@ export async function maybeCleanupJobWorktree(
       }
     }
     if (!reason) return;
-    await tryRemoveJobWorktree(config, job, { reason, log });
+    await tryRemoveJobWorktree(config, job, {
+      reason,
+      log,
+      silent: reason === "terminal_branch_gone",
+    });
   } catch (err) {
     log?.(`worktree cleanup error: ${err instanceof Error ? err.message : String(err)}`);
   }

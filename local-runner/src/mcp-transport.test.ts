@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,12 +28,23 @@ function cfg(dataDir: string): RunnerConfig {
   };
 }
 
+const execFileAsync = promisify(execFile);
+
 describe("runner MCP JSON-RPC (in-process)", () => {
   let dataDir = "";
+  let smokeRepo = "";
+  let smokePrompt = "";
 
   before(async () => {
     dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-mcp-"));
     await ensureDataDirs(dataDir);
+    smokeRepo = await mkdtemp(path.join(os.tmpdir(), "lr-mcp-repo-"));
+    await execFileAsync("git", ["-C", smokeRepo, "init", "-b", "main"]);
+    await execFileAsync("git", ["-C", smokeRepo, "config", "user.email", "t@test"]);
+    await execFileAsync("git", ["-C", smokeRepo, "config", "user.name", "t"]);
+    await execFileAsync("git", ["-C", smokeRepo, "commit", "--allow-empty", "-m", "init"]);
+    smokePrompt = path.join(smokeRepo, "README.md");
+    await writeFile(smokePrompt, "# smoke\n", "utf8");
   });
 
   function engine(): RunnerEngine {
@@ -65,8 +78,8 @@ describe("runner MCP JSON-RPC (in-process)", () => {
         name: "start_job",
         arguments: {
           branch: "chore/mcp-dry-run",
-          promptFile: "/tmp/prompt.md",
-          repoPath: "/tmp/example-repo",
+          promptFile: smokePrompt,
+          repoPath: smokeRepo,
           dryRun: true,
           maxRounds: 1,
         },

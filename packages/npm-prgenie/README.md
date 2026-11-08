@@ -141,7 +141,9 @@ Point the client at the repo-local binary, for example `"command": "pnpm", "args
    }
    ```
 
-   Then `get_job` with the returned `id`.
+   Dry runs **always** require a real `repoPath` that exists and is a git checkout — that is the only check that blocks a dry run. They **do not** create a worktree or call `cursor-agent`. The other preflight checks a real job runs (driver on PATH, GitHub `origin` remote, `gh` installed and logged in) **never block** a dry run: any gaps are recorded as `preflightWarnings` on the job and the loop still completes. There is no fake GitHub PR link — the dashboard shows **Dry run** / **Simulated** instead of a PR URL.
+
+   Then `get_job` with the returned `id` (check `preflightWarnings` and `dryRun: true`).
 
 4. **Real job on a test branch**
 
@@ -188,7 +190,7 @@ Open `http://127.0.0.1:9473/` (default). MCP over HTTP: `POST /mcp` with `Author
 | --------------------------------------------- | --------------------------------------------------------------- |
 | `PRGENIE_RUNNER_DATA_DIR`                     | Job store (default `~/.prgenie/local-runner`)                   |
 | `PRGENIE_RUNNER_TOKEN`                        | Bearer for **`serve` only** (or use `runner.token` from `init`) |
-| `PRGENIE_RUNNER_DRY_RUN`                      | `1` — global dry-run default                                    |
+| `PRGENIE_RUNNER_DRY_RUN`                      | `1` — default new jobs (MCP + dashboard) to dry run             |
 | `PRGENIE_RUNNER_HOST` / `PRGENIE_RUNNER_PORT` | HTTP bind (default `127.0.0.1:9473`)                            |
 
 ## Monorepo development

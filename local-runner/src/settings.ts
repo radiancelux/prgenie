@@ -91,6 +91,8 @@ export type RunnerSettingsPublic = Omit<RunnerSettings, "drivers"> & {
   drivers: DriverEntryPublic[];
   docsSettings: ParsedDocsSettings;
   envDefaultCodeRepoPath: string | null;
+  /** `PRGENIE_RUNNER_DRY_RUN` at serve/MCP start — default for dashboard dry-run checkbox. */
+  envDryRunDefault: boolean;
   /** Documented nice-to-haves (not implemented as persistent knobs). */
   policyNotes: {
     ciPollIntervalMs: number;
@@ -468,6 +470,7 @@ export function toPublicSettings(
     })),
     docsSettings: parseDocsSettings(settings),
     envDefaultCodeRepoPath: config.defaultCodeRepoPath,
+    envDryRunDefault: config.dryRun,
   };
 }
 

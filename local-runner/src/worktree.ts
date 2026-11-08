@@ -1,9 +1,10 @@
 import { mkdir, rm, access } from "node:fs/promises";
 import path from "node:path";
 import { cursorWorktreeDir, repoSlugFromPath } from "./paths.js";
-import { git } from "./github.js";
+import { git, type GhResult } from "./github.js";
 import { baseRefProbeOrder, resolveWorktreeBaseRef } from "./repo-base.js";
 import type { RunnerSettings } from "./settings.js";
+import { listJobs } from "./store.js";
 
 export async function cloneRepo(remote: string, dest: string): Promise<void> {
   await mkdir(path.dirname(dest), { recursive: true });
@@ -15,11 +16,58 @@ export async function cloneRepo(remote: string, dest: string): Promise<void> {
   }
 }
 
+async function enrichWorktreeAddFailure(
+  repoPath: string,
+  branch: string,
+  rawErr: string,
+  dataDir?: string,
+): Promise<string> {
+  const used = rawErr.match(/already used by worktree at '([^']+)'/i);
+  if (!used) return `git worktree add failed: ${rawErr || "no base ref found"}`;
+  const wtPath = used[1];
+  let hint = `git worktree remove ${wtPath}`;
+  if (dataDir) {
+    const jobs = await listJobs(dataDir);
+    const owner = jobs.find((j) => j.worktreePath?.trim() === wtPath);
+    if (owner) {
+      hint = `archive job ${owner.id} on the dashboard, or \`git worktree remove ${wtPath}\` and \`git branch -D ${branch}\``;
+    }
+  }
+  return `git worktree add failed: branch "${branch}" is already checked out at ${wtPath} — ${hint}`;
+}
+
+export async function branchHasNoCommitsBeyondBase(
+  cwd: string,
+  settings?: RunnerSettings,
+  gitImpl: (cwd: string, args: string[]) => Promise<GhResult> = git,
+): Promise<boolean> {
+  const bases = settings ? baseRefProbeOrder(settings) : ["origin/main", "origin/master", "main"];
+  for (const base of bases) {
+    const probe = await gitImpl(cwd, ["rev-parse", "--verify", base]);
+    if (probe.code !== 0) continue;
+    const count = await gitImpl(cwd, ["rev-list", "--count", `${base.trim()}..HEAD`]);
+    if (count.code !== 0) return false;
+    return Number(count.stdout.trim()) === 0;
+  }
+  const head = await gitImpl(cwd, ["rev-parse", "HEAD"]);
+  return head.code === 0;
+}
+
+export async function deleteLocalBranch(
+  repoPath: string,
+  branch: string,
+  gitImpl: (cwd: string, args: string[]) => Promise<GhResult> = git,
+): Promise<void> {
+  if (!branch.trim()) return;
+  await gitImpl(repoPath, ["branch", "-D", branch]).catch(() => undefined);
+}
+
 export async function ensureWorktree(
   repoPath: string,
   jobId: string,
   branch: string,
   settings?: RunnerSettings,
+  opts?: { dataDir?: string },
 ): Promise<string> {
   const slug = repoSlugFromPath(repoPath);
   const wt = cursorWorktreeDir(slug, jobId);
@@ -55,7 +103,7 @@ export async function ensureWorktree(
     if (add.code === 0) return wt;
     lastErr = add.stderr.trim() || add.stdout.trim();
   }
-  throw new Error(`git worktree add failed: ${lastErr || "no base ref found"}`);
+  throw new Error(await enrichWorktreeAddFailure(repoPath, branch, lastErr, opts?.dataDir));
 }
 
 /** Reuse an existing job worktree when present; otherwise add one at `origin/<branch>`. */
@@ -102,9 +150,16 @@ export async function ensureContinueWorktree(
   return { path: pathFromEnsure, reused: false };
 }
 
-export async function removeWorktree(repoPath: string, worktreePath: string): Promise<void> {
+export async function removeWorktree(
+  repoPath: string,
+  worktreePath: string,
+  opts?: { branch?: string; deleteBranch?: boolean },
+): Promise<void> {
   await git(repoPath, ["worktree", "remove", "--force", worktreePath]).catch(() => undefined);
   await rm(worktreePath, { recursive: true, force: true }).catch(() => undefined);
+  if (opts?.deleteBranch && opts.branch?.trim()) {
+    await deleteLocalBranch(repoPath, opts.branch);
+  }
 }
 
 export async function rebaseOntoBase(worktree: string, settings?: RunnerSettings): Promise<void> {

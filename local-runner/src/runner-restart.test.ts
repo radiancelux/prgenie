@@ -240,7 +240,11 @@ describe("live runner restart (detached workers)", () => {
       });
       await engineA.init();
 
-      await waitUntil(() => liveWorkerLock(dataDir, jobId) !== null, `worker alive (${stage})`);
+      // The worker creates its lock file before mirroring `worker` into the job record.
+      await waitUntil(async () => {
+        const lock = liveWorkerLock(dataDir, jobId);
+        return !!lock && (await loadJob(dataDir, jobId))?.worker?.token === lock.token;
+      }, `worker alive and mirrored (${stage})`);
       const firstWorker = liveWorkerLock(dataDir, jobId)!;
       assert.ok(pidAlive(firstWorker.pid));
       assert.equal((await loadJob(dataDir, jobId))?.worker?.token, firstWorker.token);
@@ -513,7 +517,8 @@ describe("live runner restart (detached workers)", () => {
     assert.equal(res.maxRounds, 1, "a build resume spends no extra rounds");
     await waitUntil(async () => (await loadJob(dataDir, jobId))?.stage === "approved", "resume");
     const done = await loadJob(dataDir, jobId);
-    assert.ok(done?.prUrl, "build stage ran and linked a PR");
+    assert.equal(done?.stage, "approved");
+    assert.equal(done?.prUrl, null, "dry-run resume does not fabricate a GitHub PR URL");
     assert.equal(done?.continueHistory?.[0].resumedStage, "building");
     assert.equal(done?.continueHistory?.[0].prompt, "pick up where you left off");
     assert.deepEqual(done?.steerQueue, [], "the build stage consumed the resume prompt");

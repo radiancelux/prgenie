@@ -10,6 +10,11 @@ export function repoOwnerNameFromRemoteUrl(url: string): string | null {
   return generic ? generic[1].replace(/\.git$/i, "") : null;
 }
 
+/** True only for remotes hosted on github.com (https, scp-style ssh, or ssh:// URLs). */
+export function isGitHubRemoteUrl(url: string): boolean {
+  return /(?:^|[@/])github\.com[/:][^/\s]+\/[^/\s?#]+/i.test(url.trim());
+}
+
 export function repoOwnerNameFromPrUrl(prUrl: string | null | undefined): string | null {
   if (!prUrl?.trim()) return null;
   const m = prUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull\//i);

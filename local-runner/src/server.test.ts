@@ -1,7 +1,9 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import { execFile } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
 import type { RunnerConfig } from "./config.js";
@@ -14,6 +16,15 @@ import { archivedJobFile, archivedLogFile, jobFile, jobLogFile } from "./paths.j
 import { saveSettings } from "./settings.js";
 import { saveJob } from "./store.js";
 import type { JobRecord, JobStage } from "./types.js";
+
+const execFileAsync = promisify(execFile);
+
+async function initBareGitRepo(dir: string): Promise<void> {
+  await execFileAsync("git", ["-C", dir, "init", "-b", "main"]);
+  await execFileAsync("git", ["-C", dir, "config", "user.email", "t@test"]);
+  await execFileAsync("git", ["-C", dir, "config", "user.name", "t"]);
+  await execFileAsync("git", ["-C", dir, "commit", "--allow-empty", "-m", "init"]);
+}
 
 function cfg(dataDir: string, port: number): RunnerConfig {
   return {
@@ -728,6 +739,7 @@ describe("start job validation parity (HTTP POST /api/jobs vs MCP start_job)", (
       await saveSettings(s.dataDir, { maxActiveJobs: 1 });
       await seedJob(s.dataDir, "occupies-slot", "building");
       const repoPath = await mkdtemp(path.join(os.tmpdir(), "lr-parity-models-repo-"));
+      await initBareGitRepo(repoPath);
       const requests: Array<[string, Record<string, unknown>, Record<string, string>]> = [
         [
           "explicit fix beats legacy model",

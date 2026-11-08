@@ -39,6 +39,11 @@ import {
 import { ContinueJobError, continueJobFromRaw } from "./job-continue.js";
 import { normalizeStartJobArgs, ValidationError } from "./settings-validation.js";
 import { resolveJobTarget } from "./job-target.js";
+import {
+  formatJobPreflightErrors,
+  formatJobPreflightMessage,
+  runJobStartPreflight,
+} from "./job-preflight.js";
 import { markJobInterrupted } from "./job-interrupted.js";
 import { spawnDetachedJobWorker } from "./job-worker-spawn.js";
 import {
@@ -159,10 +164,17 @@ export class RunnerEngine extends EventEmitter {
     if (decision.action === "reject") {
       throw new BranchConflictError(decision.reason);
     }
+    const effectiveDryRun = args.dryRun ?? this.config.dryRun;
+    const preflight = await runJobStartPreflight(target, args, settings, effectiveDryRun);
+    if (preflight.blocking.length) {
+      throw new ValidationError(formatJobPreflightErrors(preflight.blocking));
+    }
+    const preflightWarnings = preflight.warnings.map(formatJobPreflightMessage);
     const job = await createJob(this.config.dataDir, args, {
       model: this.config.defaultModel,
       dryRun: this.config.dryRun,
       config: this.config,
+      preflightWarnings: preflightWarnings.length ? preflightWarnings : undefined,
     });
     if (decision.action === "queue") {
       job.queueState = {
