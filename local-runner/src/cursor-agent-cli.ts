@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 
 export const CURSOR_AGENT_POWERSHELL = "powershell.exe";
+export const CURSOR_AGENT_CMD = process.env.ComSpec?.trim() || "cmd.exe";
 
 export type ResolveCursorAgentBinaryOptions = {
   env?: NodeJS.ProcessEnv;
@@ -98,6 +99,9 @@ export function buildCursorAgentSpawn(
       command: CURSOR_AGENT_POWERSHELL,
       args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", resolvedBinary, ...cliArgs],
     };
+  }
+  if (platform === "win32" && (ext === ".cmd" || ext === ".bat")) {
+    return { command: CURSOR_AGENT_CMD, args: ["/d", "/s", "/c", resolvedBinary, ...cliArgs] };
   }
   return { command: resolvedBinary, args: cliArgs };
 }

@@ -118,6 +118,13 @@ describe("buildCursorAgentSpawn", () => {
     assert.deepEqual(spec, { command: exe, args: ["-p", "x"] });
   });
 
+  it("wraps .cmd with cmd.exe /c and passes argv safely", () => {
+    const cmd = "C:\\Bin\\cursor-agent.cmd";
+    const spec = buildCursorAgentSpawn(cmd, ["-p", "hello world"], "win32");
+    assert.equal(spec.command, process.env.ComSpec?.trim() || "cmd.exe");
+    assert.deepEqual(spec.args, ["/d", "/s", "/c", cmd, "-p", "hello world"]);
+  });
+
   it("lists fallback candidates in install order", () => {
     const local = "C:\\L";
     assert.deepEqual(
