@@ -21,6 +21,7 @@ export const CONTINUE_TERMINAL_STAGES = new Set([
   "stuck",
   "stopped",
   "failed",
+  "interrupted",
 ]);
 
 export type ContinueJobErrorCode =
@@ -106,7 +107,9 @@ export async function prepareJobContinue(
       job.stage,
     );
   }
-  if (!job.prUrl?.trim()) {
+  // A restart can interrupt a job before its PR exists; it resumes by re-running the build stage.
+  const resumeBuild = !job.prUrl?.trim();
+  if (resumeBuild && job.stage !== "interrupted") {
     throw new ContinueJobError(
       "job has no PR; continue requires an existing pull request",
       "no_pr",
@@ -130,7 +133,8 @@ export async function prepareJobContinue(
   const fromFile = await readOptionalPromptFile(args.promptFile, readFn);
   const instructions = mergeContinuePrompt(args.prompt, fromFile);
 
-  const extraRounds = args.extraRounds ?? 1;
+  // A build resume has not spent any review rounds yet, so it adds none unless asked.
+  const extraRounds = args.extraRounds ?? (resumeBuild ? 0 : 1);
   assertContinueMaxRounds(job.maxRounds, extraRounds);
   const nextMax = job.maxRounds + extraRounds;
 
@@ -158,6 +162,7 @@ export async function prepareJobContinue(
     newMaxRounds: nextMax,
     prompt: instructions ?? null,
     model: args.model ?? null,
+    ...(resumeBuild ? { resumedStage: "building" as const } : {}),
   };
   if (!job.continueHistory) job.continueHistory = [];
   job.continueHistory.push(history);
@@ -173,7 +178,7 @@ export async function prepareJobContinue(
         "not_terminal",
       );
     }
-    if (job.stageModels) job.stageModels.fix = m;
+    if (job.stageModels) job.stageModels[resumeBuild ? "build" : "fix"] = m;
   }
 
   if (instructions) {
@@ -181,7 +186,8 @@ export async function prepareJobContinue(
   }
 
   job.stopRequested = false;
-  job.stage = "fixing";
+  job.stage = resumeBuild ? "building" : "fixing";
+  if (resumeBuild) job.reviewRound = 0;
   if (job.queueState?.queued) job.queueState = undefined;
 
   const decision = decideJobStart(

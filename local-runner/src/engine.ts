@@ -39,8 +39,34 @@ import {
 import { ContinueJobError, continueJobFromRaw } from "./job-continue.js";
 import { normalizeStartJobArgs, ValidationError } from "./settings-validation.js";
 import { resolveJobTarget } from "./job-target.js";
+import { markJobInterrupted } from "./job-interrupted.js";
+import { spawnDetachedJobWorker } from "./job-worker-spawn.js";
+import {
+  superviseDetachedWorker,
+  waitForWorkerClaim,
+  workerSignalSafe,
+  type WorkerSuperviseOptions,
+} from "./job-worker-monitor.js";
+import { liveWorkerLock, readWorkerLock } from "./job-worker-lock.js";
+import { inspectRestartState } from "./runner-restart.js";
+import { stat } from "node:fs/promises";
 
 const ACTIVE_STAGES = new Set(["building", "reviewing", "fixing"]);
+
+type WorkerProgressSeen = {
+  primed: boolean;
+  stage: string;
+  reviewRound: number;
+  prUrl: string | null;
+  logSize: number;
+};
+
+function useDetachedJobWorkers(): boolean {
+  if (process.env.PRGENIE_RUNNER_INLINE_JOBS === "1") return false;
+  if (process.env.PRGENIE_RUNNER_DETACHED_JOBS === "1") return true;
+  const role = process.env.PRGENIE_RUNNER_ROLE?.trim();
+  return role === "serve";
+}
 
 export class RunnerEngine extends EventEmitter {
   private running = new Map<string, Promise<void>>();
@@ -50,14 +76,21 @@ export class RunnerEngine extends EventEmitter {
   /** Shared with in-flight runJobLoop — steer/stop must not reload and clobber the live JobRecord. */
   readonly jobControls = new Map<string, JobControl>();
   private readonly watchCi: boolean;
+  private readonly superviseOptions: WorkerSuperviseOptions;
 
   constructor(
     readonly config: RunnerConfig,
-    opts: { watchCi?: boolean; ciWatcherDeps?: CiWatcherDeps } = {},
+    opts: {
+      watchCi?: boolean;
+      ciWatcherDeps?: CiWatcherDeps;
+      /** Detached-worker supervisor timing (tests shorten polls and grace). */
+      workerSupervisor?: WorkerSuperviseOptions;
+    } = {},
   ) {
     super();
     this.watchCi = opts.watchCi ?? true;
     this.ciWatcher = new CiWatcher(config, this, opts.ciWatcherDeps);
+    this.superviseOptions = opts.workerSupervisor ?? {};
   }
 
   private readonly queueOptions = { isRunning: (id: string) => this.isRunning(id) };
@@ -81,9 +114,18 @@ export class RunnerEngine extends EventEmitter {
     await clearStaleSettlingMarkers(this.config.dataDir);
     const jobs = await listJobs(this.config.dataDir);
     for (const job of jobs) {
-      if (ACTIVE_STAGES.has(job.stage) && !job.stopRequested && !job.queueState?.queued) {
-        this.schedule(job.id);
+      if (!ACTIVE_STAGES.has(job.stage) || job.queueState?.queued) continue;
+      if (liveWorkerLock(this.config.dataDir, job.id)) {
+        this.scheduleSupervise(job.id);
+        continue;
       }
+      if (job.worker || readWorkerLock(this.config.dataDir, job.id)) {
+        await markJobInterrupted(this.config, job.id, "worker_exit");
+        this.emitJobsChanged();
+        continue;
+      }
+      if (job.stopRequested) continue;
+      this.schedule(job.id);
     }
     await this.drainQueue();
     if (this.watchCi) this.ciWatcher.start();
@@ -159,13 +201,99 @@ export class RunnerEngine extends EventEmitter {
 
   schedule(jobId: string): void {
     if (this.running.has(jobId)) return;
-    const p = this.runOne(jobId).finally(() => {
+    const p = (
+      useDetachedJobWorkers() ? this.runOneDetached(jobId) : this.runOneInline(jobId)
+    ).finally(() => {
       this.running.delete(jobId);
     });
     this.running.set(jobId, p);
   }
 
-  private async runOne(jobId: string): Promise<void> {
+  /** Adopt a job whose detached worker is already running (restart, or another engine's spawn). */
+  private scheduleSupervise(jobId: string): void {
+    if (this.running.has(jobId)) return;
+    const p = this.superviseWorker(jobId).finally(() => {
+      this.running.delete(jobId);
+    });
+    this.running.set(jobId, p);
+  }
+
+  /**
+   * Watch the detached worker until it exits, forwarding its stage/log/PR progress (written to
+   * disk by the worker) as engine events so dashboards stay live after adoption. Only a worker
+   * confirmed dead leaves an active job `interrupted`.
+   */
+  private async superviseWorker(jobId: string): Promise<void> {
+    const seen: WorkerProgressSeen = {
+      primed: false,
+      stage: "",
+      reviewRound: 0,
+      prUrl: null,
+      logSize: 0,
+    };
+    const forward = (job: JobRecord) => void this.forwardWorkerProgress(job, seen);
+    try {
+      const outcome = await superviseDetachedWorker(this.config, jobId, {
+        ...this.superviseOptions,
+        onTick: forward,
+      });
+      if (outcome.kind === "dead" || outcome.kind === "terminated") {
+        const detail = outcome.kind === "terminated" ? outcome.reason : "stage did not settle";
+        const reason = outcome.kind === "terminated" ? "worker_watchdog" : "worker_exit";
+        await markJobInterrupted(this.config, jobId, reason, detail);
+      }
+      const final = await loadJob(this.config.dataDir, jobId);
+      if (final) await this.forwardWorkerProgress(final, seen);
+    } finally {
+      this.emitJobsChanged();
+      await this.drainQueue();
+    }
+  }
+
+  private async forwardWorkerProgress(job: JobRecord, seen: WorkerProgressSeen): Promise<void> {
+    const logSize = await stat(job.logPath).then(
+      (s) => s.size,
+      () => 0,
+    );
+    if (!seen.primed) {
+      Object.assign(seen, { primed: true, stage: job.stage, reviewRound: job.reviewRound });
+      Object.assign(seen, { prUrl: job.prUrl, logSize });
+      return;
+    }
+    if (job.stage !== seen.stage || job.reviewRound !== seen.reviewRound) {
+      seen.stage = job.stage;
+      seen.reviewRound = job.reviewRound;
+      this.emit("event", job.id, { type: "stage", stage: job.stage, reviewRound: job.reviewRound });
+      this.emitJobsChanged();
+    }
+    if (job.prUrl && job.prUrl !== seen.prUrl) {
+      seen.prUrl = job.prUrl;
+      this.emit("event", job.id, { type: "pr", url: job.prUrl });
+      if (this.watchCi) void this.ciWatcher.refreshJobById(job.id);
+    }
+    if (logSize !== seen.logSize) {
+      seen.logSize = logSize;
+      // The worker owns the log file; listeners re-read the tail from disk.
+      this.emit("event", job.id, { type: "log", line: "" });
+    }
+  }
+
+  private async runOneDetached(jobId: string): Promise<void> {
+    if (!liveWorkerLock(this.config.dataDir, jobId)) {
+      const loaded = await loadJob(this.config.dataDir, jobId);
+      if (!loaded) return;
+      try {
+        const spawned = spawnDetachedJobWorker(this.config, jobId);
+        await waitForWorkerClaim(this.config.dataDir, jobId, spawned.exited);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await markJobInterrupted(this.config, jobId, "worker_missing", msg);
+      }
+    }
+    await this.superviseWorker(jobId);
+  }
+
+  private async runOneInline(jobId: string): Promise<void> {
     const job = await loadJob(this.config.dataDir, jobId);
     if (!job) return;
     const control = this.controlFor(job);
@@ -182,6 +310,15 @@ export class RunnerEngine extends EventEmitter {
       this.jobControls.delete(jobId);
       await this.drainQueue();
     }
+  }
+
+  async prepareRestart(): Promise<Awaited<ReturnType<typeof inspectRestartState>>> {
+    const preview = await inspectRestartState(this.config);
+    for (const id of preview.interruptedJobIds) {
+      await markJobInterrupted(this.config, id, "worker_exit");
+    }
+    if (preview.interruptedJobIds.length) this.emitJobsChanged();
+    return preview;
   }
 
   async list(opts?: {
@@ -270,7 +407,8 @@ export class RunnerEngine extends EventEmitter {
   }> {
     const result = await this.withQueueLock(async () => {
       const prepared = await continueJobFromRaw(this.config, raw, {
-        isRunning: (id) => this.isRunning(id),
+        // A worker owned by another serve/mcp process may still be finishing this job.
+        isRunning: (id) => this.isRunning(id) || liveWorkerLock(this.config.dataDir, id) !== null,
       });
       if (!prepared.queued) {
         this.schedule(prepared.job.id);
@@ -305,6 +443,15 @@ export class RunnerEngine extends EventEmitter {
       return loaded;
     });
     this.jobControls.get(jobId)?.requestStop();
+    // Only signal the exact process holding the lock; a recycled PID must never get SIGTERM.
+    const lock = job ? liveWorkerLock(this.config.dataDir, jobId) : null;
+    if (lock && workerSignalSafe(lock)) {
+      try {
+        process.kill(lock.pid, "SIGTERM");
+      } catch {
+        // already exited
+      }
+    }
     if (job?.stage === "stopped") this.emitJobsChanged();
     return job;
   }

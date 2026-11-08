@@ -91,6 +91,64 @@ describe("prepareJobContinue", () => {
     });
   }
 
+  it("resumes an interrupted pre-PR job at the build stage on its existing worktree", async () => {
+    const job = await seedTerminal(dataDir, "job-int-nopr", "interrupted", {
+      prUrl: null,
+      prNumber: null,
+      reviewRound: 0,
+      maxRounds: 2,
+      dryRun: false,
+      worktreePath: "/wt/job-int-nopr",
+    });
+    const seen: Array<string | null> = [];
+    const result = await prepareJobContinue(
+      cfg(dataDir),
+      { id: job.id, prompt: "resume", model: "composer-2.5" },
+      {
+        isRunning: () => false,
+        ensureWorktree: async (_repo, _id, branch, existing) => {
+          seen.push(`${branch}@${existing}`);
+          return { path: existing!, reused: true };
+        },
+      },
+    );
+    assert.equal(result.job.stage, "building");
+    assert.equal(result.job.reviewRound, 0);
+    assert.equal(result.job.maxRounds, 2, "no review rounds were spent before the PR");
+    assert.equal(result.worktree, "reused");
+    assert.equal(result.job.worktreePath, "/wt/job-int-nopr");
+    assert.deepEqual(seen, ["feat/test@/wt/job-int-nopr"]);
+    assert.equal(result.job.stageModels?.build, "composer-2.5");
+    assert.equal(result.job.continueHistory?.[0].resumedStage, "building");
+    assert.equal(result.job.continueHistory?.[0].extraRounds, 0);
+    assert.equal((await loadJob(dataDir, job.id))?.stage, "building");
+  });
+
+  it("honours explicit extraRounds on a pre-PR build resume", async () => {
+    const job = await seedTerminal(dataDir, "job-int-nopr2", "interrupted", {
+      prUrl: null,
+      prNumber: null,
+      maxRounds: 2,
+    });
+    const result = await prepareJobContinue(
+      cfg(dataDir),
+      { id: job.id, extraRounds: 2 },
+      { isRunning: () => false },
+    );
+    assert.equal(result.job.maxRounds, 4);
+  });
+
+  it("still requires a PR for non-interrupted terminal jobs", async () => {
+    const job = await seedTerminal(dataDir, "job-failed-nopr", "failed", {
+      prUrl: null,
+      prNumber: null,
+    });
+    await assert.rejects(
+      () => prepareJobContinue(cfg(dataDir), { id: job.id }, { isRunning: () => false }),
+      (err: unknown) => err instanceof ContinueJobError && err.code === "no_pr",
+    );
+  });
+
   it("rejects running jobs", async () => {
     const job = await seedTerminal(dataDir, "job-run", "approved");
     await assert.rejects(

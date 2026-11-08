@@ -1,7 +1,7 @@
 import { access, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import type { JobInput, JobRecord, StartJobArgs } from "./types.js";
+import type { JobInput, JobRecord, JobWorkerState, StartJobArgs } from "./types.js";
 import { shouldHideMergedJob } from "./ci.js";
 import { resolveJobTarget, normalizeJobType, type ResolvedJobTarget } from "./job-target.js";
 import { ValidationError } from "./validation-error.js";
@@ -80,17 +80,44 @@ export async function saveJob(dataDir: string, job: JobRecord): Promise<void> {
     // Stale in-memory copies (CI poll, worktree cleanup) must not resurrect an archived job.
     if (await fileExists(archivedJobFile(dataDir, job.id))) return;
     const livePath = jobFile(dataDir, job.id);
-    const onDisk = await readJobFile(livePath);
+    const onDisk = await readJobFile(livePath, { keepWorkerNull: true });
     if (!onDisk) {
       if (await fileExists(archivedJobFile(dataDir, job.id))) return;
     } else {
       job.ciStatus = mergeCiStatus(onDisk.ciStatus, job.ciStatus);
+      // A copy loaded before a claim must not drop it, nor one loaded before a release revive it.
+      job.worker = job.worker === null ? null : onDisk.worker;
       // Only a copy older than disk merges errors; an up-to-date writer may clear `error`.
       if (onDisk.updatedAt > (loadedAt ?? "")) {
         job.error = mergeJobErrors(onDisk.error, job.error);
       }
     }
     await atomicWriteJson(livePath, job);
+    // The clear is consumed: re-saving this copy after a new claim must not wipe that claim.
+    if (job.worker === null) delete job.worker;
+  });
+}
+
+/**
+ * Compare-and-set the `worker` field under the store lock. `mutate` returns the next value, or
+ * `undefined` to leave the record untouched. `updatedAt` is not bumped: this is bookkeeping, not
+ * loop progress, and must not make an in-flight loop copy look stale.
+ */
+export async function updateJobWorker(
+  dataDir: string,
+  id: string,
+  mutate: (current: JobWorkerState | null) => JobWorkerState | null | undefined,
+): Promise<boolean> {
+  if (!isSafeJobId(id)) return false;
+  return withStoreLock(dataDir, async () => {
+    const livePath = jobFile(dataDir, id);
+    const onDisk = await readJobFile(livePath, { keepWorkerNull: true });
+    if (!onDisk) return false;
+    const next = mutate(onDisk.worker ?? null);
+    if (next === undefined) return false;
+    onDisk.worker = next;
+    await atomicWriteJson(livePath, onDisk);
+    return true;
   });
 }
 
@@ -125,7 +152,10 @@ export async function loadArchivedJob(dataDir: string, id: string): Promise<JobR
   return job;
 }
 
-async function readJobFile(filePath: string): Promise<JobRecord | null> {
+async function readJobFile(
+  filePath: string,
+  opts: { keepWorkerNull?: boolean } = {},
+): Promise<JobRecord | null> {
   try {
     const raw = await readFile(filePath, "utf8");
     const job = JSON.parse(raw) as JobRecord;
@@ -134,6 +164,8 @@ async function readJobFile(filePath: string): Promise<JobRecord | null> {
     if (job.prIsDraft === undefined) job.prIsDraft = null;
     if (job.approveHeadSha === undefined) job.approveHeadSha = null;
     if (job.readyPromotedAt === undefined) job.readyPromotedAt = null;
+    // Loaded copies never carry a clear; only code that assigns `worker = null` clears it.
+    if (job.worker === null && !opts.keepWorkerNull) delete job.worker;
     if (job.title === undefined || job.title === null) {
       job.title = job.input?.branch?.trim() || job.id.slice(0, 8);
     }

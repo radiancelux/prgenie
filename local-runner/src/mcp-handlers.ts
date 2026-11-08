@@ -142,18 +142,31 @@ export const RUNNER_MCP_TOOLS = [
   {
     name: "continue_job",
     description:
-      "Run additional fix→review round(s) on a terminal job (approved, changes_remaining, stuck, stopped, or failed).",
+      "Run additional fix→review round(s) on a terminal job (approved, changes_remaining, stuck, stopped, failed, or interrupted). An interrupted job with no PR yet re-runs its build stage on the same branch/worktree instead.",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string" },
         prompt: { type: "string" },
         promptFile: { type: "string" },
-        extraRounds: { type: "number", description: "Default 1" },
-        model: { type: "string", description: "Optional fix-stage model override (default auto)" },
+        extraRounds: {
+          type: "number",
+          description: "Default 1 (0 when resuming an interrupted pre-PR build)",
+        },
+        model: {
+          type: "string",
+          description:
+            "Optional model override for the resumed stage: fix (default auto), or build on a pre-PR resume",
+        },
       },
       required: ["id"],
     },
+  },
+  {
+    name: "restart_runner",
+    description:
+      "Graceful runner restart: HTTP server exits so you can rebuild/relaunch; in-flight jobs keep running in detached workers and are re-adopted on the next serve.",
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "settings",
@@ -208,6 +221,7 @@ const RUNNER_TOOL_HANDLERS: Record<string, ToolHandler> = {
     return { ok: true, id: result.id, stage: result.job.stage };
   },
   continue_job: (engine, args) => engine.continueJob({ ...normalizeContinueJobArgs(args) }),
+  restart_runner: async (engine) => engine.prepareRestart(),
   settings: async (engine, args) => {
     const dataDir = engine.config.dataDir;
     const hasPatch =

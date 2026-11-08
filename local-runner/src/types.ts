@@ -6,7 +6,18 @@ export type JobStage =
   | "changes_remaining"
   | "stuck"
   | "failed"
-  | "stopped";
+  | "stopped"
+  | "interrupted";
+
+export type JobWorkerState = {
+  pid: number;
+  hostname: string;
+  startedAt: string;
+  /** Random per-claim id; release only clears a claim whose token matches. */
+  token?: string;
+  /** OS process start time (`/proc/<pid>/stat` field 22, or `ps lstart`); guards PID reuse. */
+  procStartTime?: string | null;
+};
 
 export type JobProfile = "code" | "docs";
 
@@ -112,6 +123,8 @@ export type JobContinueHistoryEntry = {
   newMaxRounds: number;
   prompt: string | null;
   model: string | null;
+  /** Set when an interrupted pre-PR job re-ran its build stage instead of a fix round. */
+  resumedStage?: "building";
 };
 
 export type JobEffectiveSnapshot = {
@@ -164,6 +177,11 @@ export interface JobRecord {
   logPath: string;
   steerQueue: string[];
   stopRequested: boolean;
+  /**
+   * Detached `job-worker` process executing this job (survives HTTP server restart). Owned by
+   * claim/release in `job-worker-lock.ts`; `saveJob` keeps the on-disk value unless set to `null`.
+   */
+  worker?: JobWorkerState | null;
   dryRun: boolean;
   /** Set while the job lives under `archived/` (dashboard Remove / MCP archive_job); null when live. */
   archivedAt: string | null;

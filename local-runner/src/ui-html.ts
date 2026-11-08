@@ -217,7 +217,14 @@ export function runnerUiHtml(
     };
 
     // Mirrors the server: Remove (archive) is only offered for these; building/reviewing/fixing never.
-    const TERMINAL_STAGES = new Set(["approved", "failed", "stopped", "changes_remaining", "stuck"]);
+    const TERMINAL_STAGES = new Set([
+      "approved",
+      "failed",
+      "stopped",
+      "changes_remaining",
+      "stuck",
+      "interrupted",
+    ]);
     const steerEl = document.getElementById("steerPrompt");
     const continuePanel = document.getElementById("continuePanel");
     const continueEl = document.getElementById("continuePrompt");

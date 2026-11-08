@@ -15,8 +15,12 @@ import {
   vscodeMcpJsonSnippet,
 } from "./init.js";
 import { formatRunnerDoctorReport, runRunnerDoctor } from "./runner-doctor.js";
+import { runJobWorker } from "./job-worker.js";
+import { runRunnerRestartCli } from "./runner-restart.js";
+import { spawn } from "node:child_process";
 
 async function cmdServe(): Promise<void> {
+  process.env.PRGENIE_RUNNER_ROLE = "serve";
   const config = await loadConfig(process.env, { command: "serve" });
   const engine = new RunnerEngine(config);
   await engine.init();
@@ -28,9 +32,12 @@ async function cmdServe(): Promise<void> {
   );
   await new Promise<void>((resolve) => {
     process.on("SIGINT", () => {
-      server.close(() => resolve());
+      engine.ciWatcher.stop();
+      void server.shutdown().then(resolve);
     });
   });
+  // Supervisor polls would otherwise keep the loop alive; detached workers carry on regardless.
+  process.exit(0);
 }
 
 async function cmdMcpStdio(): Promise<void> {
@@ -88,6 +95,57 @@ function cmdConfig(): void {
   );
 }
 
+async function cmdJobWorker(): Promise<void> {
+  const jobId = process.argv[3]?.trim();
+  if (!jobId) {
+    console.error("Usage: prgenie job-worker <job-id>");
+    process.exit(1);
+  }
+  const code = await runJobWorker(jobId);
+  process.exitCode = code;
+}
+
+function resolveRunnerEntryForRestart(): string {
+  const override = process.env.PRGENIE_RUNNER_BINARY?.trim();
+  if (override) return override;
+  const bundled = process.argv[1];
+  if (bundled) return bundled;
+  throw new Error(
+    "cannot resolve runner entry for restart (set PRGENIE_RUNNER_BINARY or use runner.cjs)",
+  );
+}
+
+async function cmdRunnerRestart(): Promise<void> {
+  const config = await loadConfig(process.env, { command: "restart" });
+  const host = config.host === "0.0.0.0" ? "127.0.0.1" : config.host;
+  const entry = resolveRunnerEntryForRestart();
+  const launcher = process.env.PRGENIE_RUNNER_RESTART_LAUNCHER?.trim() || process.execPath;
+  process.exitCode = await runRunnerRestartCli(
+    {
+      build: process.argv.includes("--build"),
+      entry,
+      host,
+      port: config.port,
+      token: config.token,
+    },
+    {
+      launch: () =>
+        spawn(launcher, [entry, "serve"], {
+          detached: true,
+          stdio: "ignore",
+          env: {
+            ...process.env,
+            PRGENIE_RUNNER_ROLE: "serve",
+            PRGENIE_RUNNER_HOST: config.host,
+            PRGENIE_RUNNER_PORT: String(config.port),
+            PRGENIE_RUNNER_DATA_DIR: config.dataDir,
+            PRGENIE_RUNNER_TOKEN: config.token,
+          },
+        }).unref(),
+    },
+  );
+}
+
 async function cmdPrune(): Promise<void> {
   const config = await loadConfig(process.env, { command: "mcp" });
   const jobs = await listJobs(config.dataDir, { includeArchived: true });
@@ -113,6 +171,8 @@ Usage:
   prgenie doctor
   prgenie mcp              MCP over stdio (no bearer token)
   prgenie serve            HTTP dashboard + bearer MCP
+  prgenie restart [--build]  Graceful HTTP restart (detached workers keep running)
+  prgenie job-worker <id>    Internal: detached job loop (do not call by hand)
   prgenie config --client cursor|vscode|claude-code
   prgenie prune-worktrees
 
@@ -128,4 +188,6 @@ else if (cmd === "init") void cmdInit();
 else if (cmd === "doctor") void cmdDoctor();
 else if (cmd === "config") cmdConfig();
 else if (cmd === "prune-worktrees") void cmdPrune();
+else if (cmd === "job-worker") void cmdJobWorker();
+else if (cmd === "restart") void cmdRunnerRestart();
 else usage();

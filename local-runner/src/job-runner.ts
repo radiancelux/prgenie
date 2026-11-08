@@ -156,6 +156,8 @@ async function runAgentStage(
     stage === "building" ? "build" : stage === "reviewing" ? "review" : "fix",
     model,
   );
+  // The serve-side supervisor budgets detached workers per stage from the on-disk clock.
+  await persistJob(config, job, control);
 
   const wd = await runAgentWithWatchdog(
     {

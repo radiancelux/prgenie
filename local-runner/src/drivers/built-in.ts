@@ -222,10 +222,56 @@ export const localModelDriver: AgentDriver = {
   },
 };
 
+function slowDryRunDelayMs(): number {
+  const raw = process.env.PRGENIE_RUNNER_SLOW_MS?.trim();
+  const n = raw ? Number(raw) : 0;
+  return Number.isFinite(n) && n > 0 ? n : 2_500;
+}
+
+/** Test-only driver: dry-run with an async delay so restart tests can observe in-flight workers. */
+export const slowDryRunDriver: AgentDriver = {
+  id: "slow-dry-run",
+  async start(opts, hooks) {
+    const delay = slowDryRunDelayMs();
+    await hooks.appendLog(
+      `\n--- agent (${opts.driver.id}, ${opts.model}, stream-json, slow ${delay}ms) ---\n`,
+    );
+    let timer: NodeJS.Timeout | null = null;
+    const sleep = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, delay);
+    });
+    opts.signal?.addEventListener(
+      "abort",
+      () => {
+        if (timer) clearTimeout(timer);
+      },
+      { once: true },
+    );
+    const handle = {
+      kill: () => {
+        if (timer) clearTimeout(timer);
+      },
+    };
+    const result = sleep.then(async () => {
+      const fake =
+        `[dry-run] slow agent (${delay}ms) in ${opts.cwd}\n` + `${opts.prompt.slice(0, 120)}...\n`;
+      await hooks.appendLog(fake);
+      hooks.onLine(fake);
+      hooks.onLine('{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}');
+      return { code: 0, output: fake };
+    });
+    return { handle, result };
+  },
+  steer(_prompt, hooks) {
+    void hooks.appendLog("[steer] slow-dry-run: queued for next step.\n");
+  },
+};
+
 const BUILT_IN: Record<string, AgentDriver> = {
   "cursor-agent": cursorAgentDriver,
   "claude-code": claudeCodeDriver,
   "local-model": localModelDriver,
+  "slow-dry-run": slowDryRunDriver,
 };
 
 export function getAgentDriver(driverId: string): AgentDriver | null {

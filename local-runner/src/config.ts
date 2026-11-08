@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { defaultRunnerHost } from "./listen-urls.js";
 
-export type RunnerCommand = "serve" | "mcp" | "init" | "doctor" | "prune-worktrees" | "config";
+export type RunnerCommand =
+  "serve" | "mcp" | "init" | "doctor" | "prune-worktrees" | "config" | "job-worker" | "restart";
 
 export interface RunnerConfig {
   host: string;

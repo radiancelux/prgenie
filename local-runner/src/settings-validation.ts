@@ -126,7 +126,11 @@ export function normalizeContinueJobArgs(raw: Record<string, unknown>): Continue
   const prompt = optionalString(raw, "prompt");
   const promptFile = optionalString(raw, "promptFile");
   const modelRaw = optionalString(raw, "model");
-  const extraRounds = validateExtraRounds(raw.extraRounds);
+  // Absent stays absent: the default depends on the job (fix round vs. pre-PR build resume).
+  const extraRounds =
+    raw.extraRounds === undefined || raw.extraRounds === null
+      ? undefined
+      : validateExtraRounds(raw.extraRounds);
 
   const model = modelRaw?.trim() || undefined;
   if (model === "auto") {
