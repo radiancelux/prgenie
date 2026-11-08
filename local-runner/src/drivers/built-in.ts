@@ -7,6 +7,7 @@ import type {
   AgentDriverRunOptions,
   AgentDriverRunResult,
 } from "./driver-types.js";
+import { buildCursorAgentSpawn, resolveCursorAgentBinary } from "../cursor-agent-cli.js";
 import { binaryOnPath, escalatingKill } from "./driver-types.js";
 import { WATCHDOG_CHILD_GRACE_MS } from "../runner-policy.js";
 
@@ -85,7 +86,10 @@ export const cursorAgentDriver: AgentDriver = {
   id: "cursor-agent",
   async start(opts, hooks) {
     const binary = opts.driver.binary?.trim() || "cursor-agent";
-    if (!opts.dryRun && !(await binaryOnPath(binary))) {
+    const isCursorAgentName = binary === "cursor-agent" || binary === "agent";
+    const resolved = isCursorAgentName ? resolveCursorAgentBinary({ name: binary }) : null;
+    const available = isCursorAgentName ? resolved !== null : await binaryOnPath(binary);
+    if (!opts.dryRun && !available) {
       throw new Error(`Driver "${opts.driver.id}": binary not found: ${binary}`);
     }
     const outputFormat = opts.outputFormat ?? "stream-json";
@@ -112,7 +116,9 @@ export const cursorAgentDriver: AgentDriver = {
       outputFormat,
       opts.prompt,
     ];
-    return runSpawnedCli(binary, args, opts, hooks, outputFormat);
+    const spawnBinary = resolved ?? binary;
+    const spawn = buildCursorAgentSpawn(spawnBinary, args);
+    return runSpawnedCli(spawn.command, spawn.args, opts, hooks, outputFormat);
   },
   steer(_prompt, hooks) {
     void hooks.appendLog(

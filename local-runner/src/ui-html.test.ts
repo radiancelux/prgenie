@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { JSDOM } from "jsdom";
+import { shouldHideMergedJob } from "./ci.js";
 import { dashboardFormatBrowserScript } from "./dashboard-format.js";
 import type { JobRecord } from "./types.js";
 import { runnerUiHtml } from "./ui-html.js";
@@ -257,7 +258,14 @@ function minWidthMatches(query: string, viewportWidth: number): boolean {
 
 /** Boots the dashboard in jsdom with stubbed fetch, EventSource, and matchMedia. */
 async function bootDashboard(
-  opts: { jobs?: FixtureJob[]; desktop?: boolean; viewportWidth?: number; logTail?: string } = {},
+  opts: {
+    jobs?: FixtureJob[];
+    desktop?: boolean;
+    viewportWidth?: number;
+    logTail?: string;
+    showFinishedDefault?: boolean;
+    postCreatesMergedHidden?: boolean;
+  } = {},
 ) {
   const html = runnerUiHtml(9473, ["http://127.0.0.1:9473/"]);
   const state = { jobs: opts.jobs ?? fixtureJobs(), confirmAnswer: true };
@@ -275,7 +283,8 @@ async function bootDashboard(
     pretendToBeVisual: true,
     beforeParse(window) {
       window.localStorage.setItem("prgenie_runner_token", "test-token");
-      window.localStorage.setItem("prgenie_runner_show_all_jobs", "1");
+      const showFinished = opts.showFinishedDefault !== false;
+      window.localStorage.setItem("prgenie_runner_show_finished", showFinished ? "1" : "0");
     },
   });
   const { window } = dom;
@@ -354,10 +363,54 @@ async function bootDashboard(
     }
     if (url.pathname === "/api/jobs") {
       if (method === "POST") {
-        return jsonResponse({ ok: true, id: "new-job-id-12345678" });
+        const id = "new-job-id-12345678";
+        if (opts.postCreatesMergedHidden) {
+          const posted = body as {
+            branch?: string;
+            dryRun?: boolean;
+            repoPath?: string;
+            promptFile?: string;
+          };
+          const now = new Date().toISOString();
+          const job = {
+            ...fixtureJobs()[0],
+            id,
+            createdAt: now,
+            updatedAt: now,
+            input: {
+              ...fixtureJobs()[0].input,
+              repoPath: posted.repoPath ?? "/repo",
+              branch: posted.branch ?? "dry",
+              promptFile: posted.promptFile ?? "/p.md",
+            },
+            stage: "approved",
+            reviewRound: 1,
+            prUrl: null,
+            prNumber: null,
+            ciStatus: {
+              status: "merged",
+              summary: "simulated",
+              mergedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+              checkedAt: now,
+              source: "github",
+              checksUrl: null,
+            },
+            lastVerdict: "APPROVE",
+            dryRun: Boolean(posted.dryRun),
+            archivedAt: null,
+          } as unknown as FixtureJob;
+          state.jobs.unshift(job);
+        }
+        return jsonResponse({ ok: true, id });
       }
       const withArchived = url.searchParams.get("includeArchived") === "1";
-      return jsonResponse(state.jobs.filter((j) => withArchived || !j.archivedAt));
+      const includeFinished = url.searchParams.get("includeFinished") === "1";
+      const nowMs = Date.now();
+      let rows = state.jobs.filter((j) => withArchived || !j.archivedAt);
+      if (!includeFinished) {
+        rows = rows.filter((j) => !shouldHideMergedJob(j as unknown as JobRecord, nowMs));
+      }
+      return jsonResponse(rows);
     }
     return jsonResponse({});
   }) as typeof fetch;
@@ -386,8 +439,11 @@ async function bootDashboard(
 
   const doc = window.document;
   await waitFor(
-    () => errors.length > 0 || doc.querySelectorAll("#jobs tr.job-row").length > 0,
-    "job rows",
+    () =>
+      errors.length > 0 ||
+      doc.querySelectorAll("#jobs tr.job-row").length > 0 ||
+      doc.querySelector(".empty-state") !== null,
+    "dashboard ready",
   );
 
   const win = window as unknown as { refresh: () => Promise<void> };
@@ -1181,6 +1237,55 @@ function runningShellJob(): FixtureJob {
     },
   };
 }
+
+describe("runnerUiHtml session-started jobs (#188)", () => {
+  it("keeps a fast-finished dry-run job visible when Show finished is off", async () => {
+    await withDashboard(
+      { jobs: [], showFinishedDefault: false, postCreatesMergedHidden: true },
+      async (d) => {
+        assert.equal(d.doc.querySelectorAll("#jobs tr.job-row").length, 0);
+        (d.doc.getElementById("newJobBranch") as HTMLInputElement).value = "chore/dry";
+        (d.doc.getElementById("newJobRepo") as HTMLInputElement).value = "/home/me/repo";
+        (d.doc.getElementById("newJobPrompt") as HTMLInputElement).value = "/home/me/prompt.md";
+        (d.doc.getElementById("newJobDryRun") as HTMLInputElement).checked = true;
+        (d.doc.getElementById("startJobBtn") as HTMLButtonElement).click();
+        await waitFor(
+          () => d.doc.querySelector('#jobs tr.job-row[data-id="new-job-id-12345678"]') !== null,
+          "session-started merged job visible",
+        );
+        const status = d.doc.getElementById("newJobStatus")!.textContent ?? "";
+        assert.match(status, /finished \(approved\)/);
+      },
+    );
+  });
+
+  it("hides a session-started job after Remove when Show archived is off", async () => {
+    await withDashboard(
+      { jobs: [], showFinishedDefault: false, postCreatesMergedHidden: true },
+      async (d) => {
+        const id = "new-job-id-12345678";
+        (d.doc.getElementById("newJobBranch") as HTMLInputElement).value = "chore/dry";
+        (d.doc.getElementById("newJobRepo") as HTMLInputElement).value = "/home/me/repo";
+        (d.doc.getElementById("newJobPrompt") as HTMLInputElement).value = "/home/me/prompt.md";
+        (d.doc.getElementById("newJobDryRun") as HTMLInputElement).checked = true;
+        (d.doc.getElementById("startJobBtn") as HTMLButtonElement).click();
+        await waitFor(
+          () => d.doc.querySelector(`#jobs tr.job-row[data-id="${id}"]`) !== null,
+          "session-started job visible",
+        );
+        const removeBtn = d.rowAction(id, "archive");
+        assert.ok(removeBtn, "Remove available for fast-finished dry run");
+        removeBtn!.click();
+        await waitFor(() => d.confirms.length > 0, "confirm Remove");
+        assert.equal(d.state.confirmAnswer, true);
+        await waitFor(
+          () => d.doc.querySelector(`#jobs tr.job-row[data-id="${id}"]`) === null,
+          "archived job hidden",
+        );
+      },
+    );
+  });
+});
 
 describe("runnerUiHtml new agent prompt file (#155)", () => {
   const newAgentBoot = { jobs: stagedJobs(["approved"]) };

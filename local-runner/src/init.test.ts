@@ -25,6 +25,26 @@ describe("prgenie init", () => {
     if (dir) await rm(dir, { recursive: true, force: true });
   });
 
+  it("win32 init output omits bash export as the primary token line", () => {
+    const result = {
+      dataDir: "C:\\Users\\u\\.prgenie\\local-runner",
+      tokenFile: "C:\\Users\\u\\.prgenie\\local-runner\\runner.token",
+      createdToken: true,
+    };
+    const report = formatInitReport(result, {});
+    const platform = Object.getOwnPropertyDescriptor(process, "platform");
+    try {
+      Object.defineProperty(process, "platform", { value: "win32" });
+      const win = formatInitReport(result, {});
+      assert.doesNotMatch(win, /^  export PRGENIE_RUNNER_TOKEN=/m);
+      assert.match(win, /\$env:PRGENIE_RUNNER_TOKEN = Get-Content/);
+      assert.match(win, /Git Bash/);
+    } finally {
+      if (platform) Object.defineProperty(process, "platform", platform);
+    }
+    assert.match(report, /Next:.*doctor/);
+  });
+
   it("creates data dir and token file", async () => {
     const dataDir = path.join(dir, "data");
     const result = await runInit({ dataDir });

@@ -37,9 +37,26 @@ _Screenshot: the **npm runner** HTTP dashboard (`npx -y prgenie serve`), not the
 
 ## Quick start (npm runner)
 
-For the **published runner** (npm **0.1.3** on `main`): MCP stdio job loop without cloning this repo.
+For the **published runner** (npm **0.1.4** on `main`; some Windows fixes below ship in the next release after 0.1.4): MCP stdio job loop without cloning this repo.
 
 Requires **Node.js 22+**, **git**, **`gh`**, and **`cursor-agent`** for real (non–dry-run) jobs. Full walkthrough: [packages/npm-prgenie/README.md](packages/npm-prgenie/README.md).
+
+### Windows prerequisites (PowerShell)
+
+Open a **new PowerShell window** after each install so `PATH` updates.
+
+1. **Node 22+** — `winget install OpenJS.NodeJS.LTS`, then `node -v`
+2. **Git for Windows (with Git Bash)** — `winget install --id Git.Git`. If the Cursor CLI installer still says Git Bash is missing, prepend Git’s `bin` folder ahead of WSL stubs:
+
+   ```powershell
+   $env:Path = "C:\Program Files\Git\bin;" + $env:Path
+   ```
+
+3. **GitHub CLI** — `winget install --id GitHub.cli`, new window, then `gh auth login`
+4. **Cursor CLI** — `irm 'https://cursor.com/install?win32=true' | iex`, new window, then `cursor-agent login`  
+   (macOS/Linux: `curl https://cursor.com/install -fsS | bash`.)
+
+On **prgenie 0.1.4**, doctor and real jobs may not detect `cursor-agent` when Windows installs only `.ps1` scripts under `%LOCALAPPDATA%\cursor-agent` — fixed on `main` after 0.1.4 (#184).
 
 ```bash
 npx -y prgenie init

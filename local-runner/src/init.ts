@@ -58,15 +58,19 @@ export function formatInitReport(result: InitResult, env: NodeJS.ProcessEnv = pr
       `For HTTP dashboard / serve, \`${prgenieCmd("serve", env)}\` reads the token file automatically:`,
       `  ${result.tokenFile}`,
       "",
-      "Optional override (keep secret):",
-      `  export PRGENIE_RUNNER_TOKEN="$(cat ${result.tokenFile})"`,
       ...(process.platform === "win32"
         ? [
-            "",
-            "PowerShell (optional override):",
+            "Optional override (keep secret) — PowerShell:",
             `  $env:PRGENIE_RUNNER_TOKEN = Get-Content -Raw '${result.tokenFile.replace(/'/g, "''")}'`,
+            "",
+            "Git Bash: export PRGENIE_RUNNER_TOKEN=\"$(cat '" +
+              result.tokenFile.replace(/'/g, "'\\''") +
+              "')\"",
           ]
-        : []),
+        : [
+            "Optional override (keep secret):",
+            `  export PRGENIE_RUNNER_TOKEN="$(cat ${result.tokenFile})"`,
+          ]),
       "",
       "Stdio MCP (Cursor, VS Code, Claude Desktop) does not need the token.",
     );

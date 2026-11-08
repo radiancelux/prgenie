@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { access } from "node:fs/promises";
+import { cursorAgentOnPath } from "../cursor-agent-cli.js";
 import type { DriverEntry } from "../settings.js";
 
 export interface AgentDriverRunOptions {
@@ -65,6 +66,9 @@ export function escalatingKill(
 export async function binaryOnPath(binary: string): Promise<boolean> {
   const name = binary.trim();
   if (!name) return false;
+  if (name === "cursor-agent" || name === "agent") {
+    return cursorAgentOnPath({ name });
+  }
   if (name.includes("/") || name.includes("\\")) {
     try {
       await access(name);
@@ -73,8 +77,9 @@ export async function binaryOnPath(binary: string): Promise<boolean> {
       return false;
     }
   }
-  const pathEnv = process.env.PATH ?? "";
-  for (const dir of pathEnv.split(":")) {
+  const delimiter = process.platform === "win32" ? ";" : ":";
+  const pathEnv = process.env.PATH ?? process.env.Path ?? "";
+  for (const dir of pathEnv.split(delimiter)) {
     if (!dir) continue;
     try {
       await access(`${dir}/${name}`);

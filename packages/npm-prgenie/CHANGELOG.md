@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Windows: resolve `cursor-agent` `.ps1` installs for doctor and the default driver; shared spawn via `powershell.exe -File` (#184).
+- Windows: `init` prints only the PowerShell token override (Git Bash note optional) (#185).
+- CLI: next-step hints detect `npx` on npm 7+ (Node 24 / npm 11 `npm exec`), so `npx -y prgenie@latest init` prints `Next: npx -y prgenie@latest doctor` (#186).
+- Doctor: per-OS Cursor CLI install commands when `cursor-agent` is missing (#187).
+- Dashboard: session-started jobs stay visible when **Show finished** is off (#188).
+- Docs: Windows prerequisites with `winget` install steps (#189).
+
 ## 0.1.4 — 2026-11-08
 
 - Onboarding docs: npm vs monorepo happy path, contributing split, Node 22+ enforcement (#161, #162, #164, #114).

@@ -270,6 +270,9 @@ export function runnerUiHtml(
     let es = null;
     let lastJobs = [];
     let lastJobsMeta = { totalOnDisk: 0, mergedHidden: 0, archived: 0 };
+    /** Jobs started from this dashboard session stay visible until Show finished would hide them.
+     *  In-memory only: a full page reload drops these pins. */
+    const sessionStartedJobIds = new Set();
 
     function fmtUpdated(iso) {
       const r = dashFmt.formatRelativeTime(iso, Date.now());
@@ -781,8 +784,12 @@ export function runnerUiHtml(
     function renderJobList(jobs) {
       const showFinished = showAllJobsEl.checked;
       const isStale = (j) => !j.archivedAt && dashFmt.shouldHideStaleJob(j);
-      const staleHidden = showFinished ? 0 : jobs.filter(isStale).length;
-      const visible = showFinished ? jobs : jobs.filter((j) => !isStale(j));
+      const keepVisible = (j) => {
+        if (j.archivedAt && !showArchivedEl.checked) return false;
+        return showFinished || sessionStartedJobIds.has(j.id) || !isStale(j);
+      };
+      const staleHidden = showFinished ? 0 : jobs.filter((j) => isStale(j) && !sessionStartedJobIds.has(j.id)).length;
+      const visible = jobs.filter(keepVisible);
       const hintParts = [];
       if (!showFinished && lastJobsMeta.mergedHidden > 0) {
         hintParts.push("(" + lastJobsMeta.mergedHidden + " finished hidden)");
@@ -871,9 +878,31 @@ export function runnerUiHtml(
         lastJobs = [];
         return;
       }
-      const jobs = await res.json();
+      let jobs = await res.json();
+      if (seq !== refreshSeq) return;
+      for (const id of sessionStartedJobIds) {
+        if (seq !== refreshSeq) return;
+        if (jobs.some((j) => j.id === id)) continue;
+        const one = await fetch("/api/jobs/" + encodeURIComponent(id), { headers: authHeaders() });
+        if (seq !== refreshSeq) return;
+        if (!one.ok) continue;
+        const row = await one.json();
+        if (row.archivedAt && !showArchivedEl.checked) continue;
+        jobs.push(row);
+      }
       if (seq !== refreshSeq) return;
       lastJobs = jobs;
+      for (const id of sessionStartedJobIds) {
+        const j = jobs.find((row) => row.id === id);
+        if (j && TERMINAL_STAGES.has(j.stage)) {
+          const short = id.slice(0, 8);
+          const fin = newJobStatus.textContent || "";
+          if (fin.startsWith("Job started:") || fin.startsWith("Starting")) {
+            newJobStatus.textContent = "Job " + short + " finished (" + j.stage + ") — see Agents list.";
+          }
+        }
+      }
+      if (seq !== refreshSeq) return;
       renderJobTable(lastJobs);
     }
 
@@ -1029,6 +1058,7 @@ export function runnerUiHtml(
           return;
         }
         jobsStatus.textContent = 'Removed "' + label + '".' + (data.warning ? " " + data.warning : "");
+        sessionStartedJobIds.delete(id);
       } catch {
         jobsStatus.textContent = "Remove failed (network).";
         return;
@@ -1201,13 +1231,17 @@ export function runnerUiHtml(
           newJobStatus.textContent = data.error || "Start failed (" + res.status + ").";
           return;
         }
+        if (data.id) sessionStartedJobIds.add(data.id);
         newJobStatus.textContent = "Job started: " + (data.id || "").slice(0, 8);
-        void refresh();
+        void refresh().then(() => {
+          if (data.id && lastJobs.some((j) => j.id === data.id)) selectJob(data.id);
+        });
       } catch {
         newJobStatus.textContent = "Start failed (network).";
       }
     };
 
+    window.refresh = refresh;
     updateSteerUi();
     refresh();
     connectListEvents();
