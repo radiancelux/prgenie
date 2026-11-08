@@ -86,6 +86,44 @@ describe("stream-json log formatting", () => {
     assert.equal(toolStepLabel("shell"), "Running");
   });
 
+  it("dims tool failures that were later recovered", () => {
+    const raw = [
+      "--- agent (composer-2.5, stream-json) ---",
+      '{"type":"tool_call","subtype":"started","tool_call":{"editToolCall":{"args":{"path":"/a.ts"}}}}',
+      '{"type":"tool_call","subtype":"completed","tool_call":{"editToolCall":{"args":{"path":"/a.ts"},"result":{"error":{"modelVisibleError":"nope"}}}}}',
+      '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Fixed another way."}]}}',
+    ].join("\n");
+    const html = formatAgentLogTailHtml(raw);
+    assert.match(html, /agent-tool-failed-recovered/);
+  });
+
+  it("renders elapsed running meta on open shell tools", () => {
+    const started = new Date(Date.now() - 12 * 60_000 - 40_000).toISOString();
+    const raw = [
+      "--- agent (stream-json) ---",
+      '{"type":"tool_call","subtype":"started","tool_call":{"shellToolCall":{"args":{"command":"blender -b"}}}}',
+    ].join("\n");
+    const html = formatAgentLogTailHtml(raw, {
+      nowMs: Date.now(),
+      runningCommand: {
+        summary: "blender -b",
+        startedAt: started,
+        processLabel: "blender (270% CPU)",
+      },
+    });
+    assert.match(html, /agent-tool-running-meta/);
+    assert.match(html, /running 12m/);
+    assert.match(html, /blender \(270% CPU\)/);
+  });
+
+  it("omits running meta on an open shell without live runtime (e.g. killed job)", () => {
+    const raw = [
+      "--- agent (stream-json) ---",
+      '{"type":"tool_call","subtype":"started","tool_call":{"shellToolCall":{"args":{"command":"blender -b"}}}}',
+    ].join("\n");
+    assert.doesNotMatch(formatAgentLogTailHtml(raw), /agent-tool-running-meta/);
+  });
+
   it("summarizes shell commands", () => {
     assert.match(
       summarizeToolArgs("shell", { command: "git status", description: "status" }),

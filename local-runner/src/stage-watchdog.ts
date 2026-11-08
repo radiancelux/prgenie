@@ -13,6 +13,10 @@ export type StageWatchdogOptions = {
   onStall?: (reason: string) => void;
   /** Called once per retry, after the stalled child was killed and before it is re-run. */
   onRecovery?: (attempt: number, reason: string) => void;
+  /** When true, refresh the inactivity clock (e.g. live child CPU under the agent). */
+  pollActivity?: () => boolean;
+  /** Fires whenever inactivity is refreshed (log line or pollActivity). */
+  onActivity?: () => void;
 };
 
 /** True when a stream-json or agent log line indicates meaningful progress (not CI noise). */
@@ -54,9 +58,15 @@ export function startStageWatchdogMonitor(opts: StageWatchdogOptions): StageWatc
     abandon = resolve;
   });
 
+  const noteActivity = () => {
+    lastActivity = now();
+    opts.onActivity?.();
+  };
+
   const timer = setInterval(() => {
     if (!running) return;
     const t = now();
+    if (opts.pollActivity?.()) noteActivity();
     if (killedAt != null) {
       // The child ignored the kill (e.g. trapped SIGTERM): stop waiting so the cap is enforced.
       if (t - killedAt >= childGraceMs) abandon?.();
@@ -76,7 +86,7 @@ export function startStageWatchdogMonitor(opts: StageWatchdogOptions): StageWatc
 
   return {
     onLine(line: string) {
-      if (isMeaningfulAgentLine(line)) lastActivity = now();
+      if (isMeaningfulAgentLine(line)) noteActivity();
     },
     async awaitRun<T>(run: Promise<T>) {
       try {

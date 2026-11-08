@@ -47,6 +47,7 @@ export function runnerUiHtml(
       <label class="block w-full text-sm text-zinc-400 sm:w-32">Type
         <select id="newJobType" class="mt-1 w-full min-h-11 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-zinc-100">
           <option value="code">Code (default)</option>
+          <option value="compute">Compute-heavy (long runs)</option>
           <option value="docs">Docs / policy / marketing</option>
         </select>
       </label>
@@ -401,6 +402,8 @@ export function runnerUiHtml(
     });
 
     let rawLogTail = "";
+    let panelJobRecord = null;
+    let liveDetailTick = null;
 
     function stickScrollIfNearBottom(el) {
       if (!el) return false;
@@ -408,12 +411,19 @@ export function runnerUiHtml(
       return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
     }
 
-    function renderLogTail(raw) {
+    function renderLogTail(raw, job) {
+      const j = job ?? panelJobRecord;
       const stepsEl = document.getElementById("logSteps");
       const stick = followLiveEl.checked && stickScrollIfNearBottom(stepsEl);
       rawLogTail = raw || "";
       document.getElementById("logRaw").textContent = rawLogTail;
-      const html = logParser.formatAgentLogTailHtml(rawLogTail);
+      const html = logParser.formatAgentLogTailHtml(rawLogTail, {
+        nowMs: Date.now(),
+        runningCommand:
+          j && !TERMINAL_STAGES.has(j.stage) && j.runtime && j.runtime.command
+            ? j.runtime.command
+            : undefined,
+      });
       if (html) {
         stepsEl.innerHTML = html;
       } else if (rawLogTail && !logParser.looksLikeStreamJsonLog(rawLogTail)) {
@@ -454,12 +464,38 @@ export function runnerUiHtml(
       return dashFmt.jobAgentDisplayLabel(j).label;
     }
 
+    function fmtAgentWait(j) {
+      if (!j || TERMINAL_STAGES.has(j.stage) || (j.queueState && j.queueState.queued)) return "";
+      if (j.runtime && j.runtime.waitMode === "command" && j.runtime.command) {
+        return '<span class="agent-wait-command ml-2 inline-flex max-w-full flex-wrap items-center gap-1 rounded-full border border-amber-500/40 bg-amber-950/40 px-2 py-0.5 text-xs text-amber-200">waiting on command</span>';
+      }
+      return '<span class="agent-wait-think ml-2 text-xs text-zinc-500">agent thinking</span>';
+    }
+
+    function syncLiveDetailTick() {
+      if (liveDetailTick) clearInterval(liveDetailTick);
+      liveDetailTick = null;
+      if (!selected || !panelJobRecord) return;
+      if (TERMINAL_STAGES.has(panelJobRecord.stage)) return;
+      liveDetailTick = setInterval(() => {
+        if (!selected || selected !== panelJobRecord?.id) return;
+        if (!panelJobRecord?.runtime?.command && !stepsElHasRunningShell()) return;
+        renderLogTail(rawLogTail, panelJobRecord);
+        renderDetailHeader(panelJobRecord);
+      }, 1000);
+    }
+
+    function stepsElHasRunningShell() {
+      const el = document.getElementById("logSteps");
+      return Boolean(el && el.querySelector("[data-running-shell]"));
+    }
+
     function renderDetailHeader(j) {
       document.getElementById("detailTitle").textContent = detailTitleForJob(j);
       const stage = j
         ? '<span class="rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-300">' + dashFmt.dashboardStageLabel(j) + "</span>"
         : "";
-      setHtml(document.getElementById("detailStatus"), j ? stage + fmtStatus(j, j.ciStatus) : "");
+      setHtml(document.getElementById("detailStatus"), j ? stage + fmtAgentWait(j) + fmtStatus(j, j.ciStatus) : "");
     }
 
     const tbodyEl = document.getElementById("jobs");
@@ -806,11 +842,15 @@ export function runnerUiHtml(
       selectedJobStage = picked ? picked.stage : null;
       if (panelJobId !== id) {
         panelJobId = id;
+        panelJobRecord = picked ?? null;
         steerEl.value = "";
-        renderLogTail("");
+        renderLogTail("", panelJobRecord);
         renderDocFindings(null);
+      } else {
+        panelJobRecord = picked ?? null;
       }
       renderDetailHeader(picked);
+      syncLiveDetailTick();
       keepFocusAndScroll(placeDetail);
       syncSelectionUi();
       updateSteerUi();
@@ -825,7 +865,10 @@ export function runnerUiHtml(
       stream.onmessage = (ev) => {
         if (es !== stream || selected !== id) return;
         const data = JSON.parse(ev.data);
-        if (data.logTail !== undefined) renderLogTail(data.logTail);
+        if (data.runtime !== undefined && panelJobRecord && panelJobRecord.id === id) {
+          panelJobRecord = { ...panelJobRecord, runtime: data.runtime };
+        }
+        if (data.logTail !== undefined) renderLogTail(data.logTail, panelJobRecord);
         if (data.stage) {
           selectedJobStage = data.stage;
           updateSteerUi();
@@ -834,11 +877,13 @@ export function runnerUiHtml(
       };
       fetch("/api/jobs/" + id, { headers: authHeaders() }).then(r => r.json()).then(j => {
         if (selected !== id) return;
+        panelJobRecord = j;
         selectedJobStage = j.stage;
         updateSteerUi();
         renderDetailHeader(j);
-        renderLogTail(j.logTail || "");
+        renderLogTail(j.logTail || "", j);
         renderDocFindings(j);
+        syncLiveDetailTick();
       });
     }
 
@@ -847,6 +892,8 @@ export function runnerUiHtml(
       const focusWasInPanel = detailPanel.contains(document.activeElement);
       selected = null;
       selectedJobStage = null;
+      panelJobRecord = null;
+      if (liveDetailTick) { clearInterval(liveDetailTick); liveDetailTick = null; }
       if (es) { es.close(); es = null; }
       placeDetail();
       syncSelectionUi();
@@ -1086,8 +1133,8 @@ export function runnerUiHtml(
         newJobStatus.textContent = "Branch is required.";
         return;
       }
-      if (jobType === "code" && !body.promptFile) {
-        newJobStatus.textContent = "Prompt file is required for code jobs.";
+      if ((jobType === "code" || jobType === "compute") && !body.promptFile) {
+        newJobStatus.textContent = "Prompt file is required for " + jobType + " jobs.";
         return;
       }
       try {

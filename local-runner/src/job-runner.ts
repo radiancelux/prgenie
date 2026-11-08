@@ -34,6 +34,9 @@ import { cloneRepo, ensureWorktree, rebaseOntoBase } from "./worktree.js";
 import { cursorWorktreeDir } from "./paths.js";
 import { fetchPrViewInfo, readHeadSha } from "./draft-pr.js";
 import { runAgentWithWatchdog, type StageWatchdogOptions } from "./stage-watchdog.js";
+import { isComputeJob } from "./job-type-watchdog.js";
+import { createProcessActivitySampler } from "./watchdog-process-activity.js";
+import { trackShellToolLine, type ShellToolTracker } from "./stream-json-log.js";
 import { modelForActiveStage, recordActualModel } from "./job-models.js";
 import { setJobError } from "./job-error.js";
 import { parseWatchdogPolicy } from "./runner-policy.js";
@@ -153,6 +156,32 @@ async function runAgentStage(
   };
   job.watchdog.stageStartedAt = new Date().toISOString();
   job.watchdog.lastActivityAt = job.watchdog.stageStartedAt;
+  job.runtime = { waitMode: "agent" };
+  const shellTracker: ShellToolTracker = { open: null };
+  const procSampler = isComputeJob(job)
+    ? createProcessActivitySampler({ now: timing?.now ?? Date.now })
+    : null;
+  let lastRuntimePersist = 0;
+  const syncRuntime = (sample?: { cpuPercent?: number; busiestComm?: string }) => {
+    const open = shellTracker.open;
+    if (open) {
+      const procLabel =
+        sample?.busiestComm && sample.cpuPercent != null
+          ? `${sample.busiestComm} (${sample.cpuPercent}% CPU)`
+          : sample?.busiestComm;
+      job.runtime = {
+        waitMode: "command",
+        command: {
+          summary: open.summary,
+          detail: open.detail,
+          startedAt: new Date(open.startedAtMs).toISOString(),
+          processLabel: procLabel,
+        },
+      };
+    } else {
+      job.runtime = { waitMode: "agent" };
+    }
+  };
   const model = modelForActiveStage(job, stage);
   recordActualModel(
     job,
@@ -162,11 +191,27 @@ async function runAgentStage(
   // The serve-side supervisor budgets detached workers per stage from the on-disk clock.
   await persistJob(config, job, control);
 
+  const clock = timing?.now ?? Date.now;
   const wd = await runAgentWithWatchdog(
     {
       ...timing,
       policy,
       killChild: () => runner.kill(),
+      pollActivity: procSampler
+        ? () => {
+            const sample = procSampler.sample(runner.agentRootPid());
+            if (sample.active) syncRuntime(sample);
+            return sample.active;
+          }
+        : undefined,
+      onActivity: () => {
+        job.watchdog!.lastActivityAt = new Date().toISOString();
+        const t = clock();
+        if (t - lastRuntimePersist >= 2_000) {
+          lastRuntimePersist = t;
+          void persistJob(config, job, control).catch(() => undefined);
+        }
+      },
       onStall: (reason) => {
         job.watchdog!.lastStallReason = reason;
       },
@@ -178,13 +223,21 @@ async function runAgentStage(
     async (tap) => {
       const onLine = (line: string) => {
         tap(line);
+        const wasOpen = shellTracker.open;
+        trackShellToolLine(shellTracker, line, clock());
+        syncRuntime();
         job.watchdog!.lastActivityAt = new Date().toISOString();
+        if (shellTracker.open !== wasOpen) {
+          lastRuntimePersist = clock();
+          void persistJob(config, job, control).catch(() => undefined);
+        }
       };
       runner.on("line", onLine);
       try {
         return await runner.run({ ...opts, model });
       } finally {
         runner.off("line", onLine);
+        job.runtime = null;
       }
     },
   );

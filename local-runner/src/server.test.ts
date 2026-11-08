@@ -565,7 +565,7 @@ describe("start job validation parity (HTTP POST /api/jobs vs MCP start_job)", (
     [
       "missing promptFile",
       { branch: "feat/parity", repoPath: "/repo" },
-      "promptFile is required for code jobs",
+      "promptFile is required for code and compute jobs",
     ],
     [
       "missing repo",
@@ -585,8 +585,8 @@ describe("start job validation parity (HTTP POST /api/jobs vs MCP start_job)", (
     ],
     ["unknown driver", { ...base, driver: "nope" }, DRIVER_MSG],
     ["non-string driver", { ...base, driver: 5 }, DRIVER_MSG],
-    ["bad jobType", { ...base, jobType: "ops" }, "jobType must be one of: code, docs"],
-    ["bad profile", { ...base, profile: "ops" }, "profile must be one of: code, docs"],
+    ["bad jobType", { ...base, jobType: "ops" }, "jobType must be one of: code, docs, compute"],
+    ["bad profile", { ...base, profile: "ops" }, "profile must be one of: code, docs, compute"],
     [
       "bad docsTemplate",
       { ...base, jobType: "docs", docsTemplate: "blog" },

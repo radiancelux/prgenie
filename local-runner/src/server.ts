@@ -220,6 +220,7 @@ export function startHttpServer(
       stage: job.stage,
       reviewRound: job.reviewRound,
       logTail: job.logTail,
+      runtime: job.runtime ?? null,
     });
     for (const res of clients) {
       try {
@@ -383,7 +384,9 @@ export function startHttpServer(
         });
         const job = await engine.get(jobId);
         const tail = job?.logTail ?? (job ? await readLogTail(job.logPath) : "");
-        res.write(`data: ${JSON.stringify({ logTail: tail, stage: job?.stage })}\n\n`);
+        res.write(
+          `data: ${JSON.stringify({ logTail: tail, stage: job?.stage, runtime: job?.runtime ?? null })}\n\n`,
+        );
         return;
       }
 

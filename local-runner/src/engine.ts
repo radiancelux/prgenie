@@ -54,6 +54,7 @@ import { stat } from "node:fs/promises";
 const ACTIVE_STAGES = new Set(["building", "reviewing", "fixing"]);
 
 type WorkerProgressSeen = {
+  runtimeKey?: string;
   primed: boolean;
   stage: string;
   reviewRound: number;
@@ -274,6 +275,11 @@ export class RunnerEngine extends EventEmitter {
     if (logSize !== seen.logSize) {
       seen.logSize = logSize;
       // The worker owns the log file; listeners re-read the tail from disk.
+      this.emit("event", job.id, { type: "log", line: "" });
+    }
+    const runtimeKey = JSON.stringify(job.runtime ?? null);
+    if (runtimeKey !== seen.runtimeKey) {
+      seen.runtimeKey = runtimeKey;
       this.emit("event", job.id, { type: "log", line: "" });
     }
   }

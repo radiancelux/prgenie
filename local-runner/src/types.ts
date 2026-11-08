@@ -19,7 +19,7 @@ export type JobWorkerState = {
   procStartTime?: string | null;
 };
 
-export type JobProfile = "code" | "docs";
+export type JobProfile = "code" | "docs" | "compute";
 
 export type JobStageModelKey = "build" | "review" | "fix";
 
@@ -52,6 +52,12 @@ export interface JobInput {
   profile?: JobProfile;
   /** Built-in docs template when jobType is docs. */
   docsTemplate?: "marketing" | "policy" | "research";
+  /** Per-job watchdog override (frozen into effectiveSnapshot at creation). */
+  watchdog?: {
+    inactivityMs?: number;
+    stageCapMs?: number;
+    recoveryAttempts?: number;
+  };
   /** Human label for dashboard rows (derived at create when omitted). */
   title?: string;
   /**
@@ -115,6 +121,17 @@ export type WatchdogState = {
   lastStallReason: string | null;
 };
 
+/** Live dashboard hints while a stage runs (cleared between stages). */
+export type JobRuntimeState = {
+  waitMode: "agent" | "command";
+  command?: {
+    summary: string;
+    detail?: string;
+    startedAt: string;
+    processLabel?: string;
+  };
+};
+
 export type JobQueueState = {
   queued: boolean;
   position?: number;
@@ -157,6 +174,7 @@ export interface JobRecord {
   stageModelActual?: Partial<JobStageModels>;
   effectiveSnapshot?: JobEffectiveSnapshot;
   watchdog?: WatchdogState;
+  runtime?: JobRuntimeState | null;
   queueState?: JobQueueState;
   driverId: string;
   worktreePath: string | null;
@@ -220,6 +238,7 @@ export interface StartJobArgs {
   jobType?: JobProfile;
   profile?: JobProfile;
   docsTemplate?: JobInput["docsTemplate"];
+  watchdog?: JobInput["watchdog"];
   /** Human label for dashboard rows (derived at create when omitted). */
   title?: string;
   /** See {@link JobInput.expectPr}. */

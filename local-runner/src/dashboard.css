@@ -57,6 +57,15 @@
 .agent-tool-failed {
   @apply border-red-500/50;
 }
+.agent-tool-failed-recovered {
+  @apply border-red-900/35 opacity-60;
+}
+.agent-tool-failed-recovered .agent-tool-error {
+  @apply text-red-400/70;
+}
+.agent-tool-running-meta {
+  @apply mt-1 text-xs font-medium text-amber-200/90 wrap-anywhere;
+}
 .agent-tool-error {
   @apply mt-1 text-sm text-red-300;
 }

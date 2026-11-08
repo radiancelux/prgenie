@@ -10,13 +10,20 @@ import type { RunnerSettings } from "./settings.js";
 import type { StartJobArgs } from "./types.js";
 
 export type ResolvedJobTarget =
-  | { ok: true; repoPath: string; remote?: string; repoSlug: string; jobType: "code" | "docs" }
+  | {
+      ok: true;
+      repoPath: string;
+      remote?: string;
+      repoSlug: string;
+      jobType: "code" | "docs" | "compute";
+    }
   | { ok: false; error: string };
 
-export function normalizeJobType(args: StartJobArgs): "code" | "docs" {
+export function normalizeJobType(args: StartJobArgs): "code" | "docs" | "compute" {
   const profile = args.profile?.trim().toLowerCase();
   const jobType = args.jobType?.trim().toLowerCase();
   if (profile === "docs" || jobType === "docs") return "docs";
+  if (profile === "compute" || jobType === "compute") return "compute";
   return "code";
 }
 
