@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { JSDOM } from "jsdom";
 import { dashboardFormatBrowserScript } from "./dashboard-format.js";
+import type { JobRecord } from "./types.js";
 import { runnerUiHtml } from "./ui-html.js";
 
 function inlineScriptBodies(html: string): string[] {
@@ -175,7 +176,9 @@ describe("dashboardFormatBrowserScript runtime", () => {
   });
 });
 
-type FixtureJob = ReturnType<typeof fixtureJobs>[number];
+type FixtureJob = ReturnType<typeof fixtureJobs>[number] & {
+  runtime?: JobRecord["runtime"];
+};
 
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
@@ -1150,7 +1153,7 @@ function runningShellJob(): FixtureJob {
         processLabel: "blender (270% CPU)",
       },
     },
-  } as FixtureJob;
+  };
 }
 
 describe("runnerUiHtml long-running shell command", () => {

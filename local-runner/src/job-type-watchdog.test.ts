@@ -89,9 +89,7 @@ describe("job-type watchdog", () => {
         watchdogRecoveryAttempts: 1,
       },
     } as JobRecord;
-    assert.ok(
-      workerBudgetForJob(compute).stageBudgetMs > workerBudgetForJob(code).stageBudgetMs,
-    );
+    assert.ok(workerBudgetForJob(compute).stageBudgetMs > workerBudgetForJob(code).stageBudgetMs);
     assert.ok(
       workerBudgetForJob(compute).heartbeatStaleMs > workerBudgetForJob(code).heartbeatStaleMs,
     );
