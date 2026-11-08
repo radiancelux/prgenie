@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.5 — 2026-11-08
 
 - Windows: resolve `cursor-agent` `.ps1` installs for doctor and the default driver; shared spawn via `powershell.exe -File` (#184).
 - Windows: `init` prints only the PowerShell token override (Git Bash note optional) (#185).
