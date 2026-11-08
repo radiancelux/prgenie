@@ -62,7 +62,7 @@ pnpm local-runner prune-worktrees
 ## Start MCP + UI
 
 ```bash
-export PRGENIE_RUNNER_TOKEN='your-local-secret'
+# serve reads ~/.prgenie/local-runner/runner.token after init (export PRGENIE_RUNNER_TOKEN only to override)
 pnpm local-runner serve
 ```
 
@@ -70,7 +70,7 @@ Default bind is **localhost only** (`127.0.0.1`). To open the dashboard from ano
 
 ```bash
 export PRGENIE_RUNNER_HOST=0.0.0.0
-export PRGENIE_RUNNER_TOKEN='your-local-secret'   # keep this secret — same bearer protects UI, SSE, and MCP
+# serve reads runner.token after init (export PRGENIE_RUNNER_TOKEN only to override the file)
 pnpm local-runner serve
 ```
 

@@ -1,8 +1,9 @@
 import { writeSync } from "node:fs";
-import { loadConfig } from "./config.js";
+import { loadConfig, runnerTokenFile } from "./config.js";
 import { RunnerEngine } from "./engine.js";
 import { handleMcpJsonRpc } from "./mcp-handlers.js";
 import { runnerListenUrls } from "./listen-urls.js";
+import { bindRunnerHttpServer } from "./http-bind.js";
 import { startHttpServer } from "./server.js";
 import { listJobs } from "./store.js";
 import { removeWorktree } from "./worktree.js";
@@ -18,6 +19,8 @@ import { formatRunnerDoctorReport, runRunnerDoctor } from "./runner-doctor.js";
 import { runJobWorker } from "./job-worker.js";
 import { runRunnerRestartCli } from "./runner-restart.js";
 import { spawn } from "node:child_process";
+import { runCli } from "./cli-errors.js";
+import { runnerCliVersion } from "./version.js";
 
 async function cmdServe(): Promise<void> {
   process.env.PRGENIE_RUNNER_ROLE = "serve";
@@ -25,10 +28,15 @@ async function cmdServe(): Promise<void> {
   const engine = new RunnerEngine(config);
   await engine.init();
   const server = startHttpServer(config, engine);
+  await bindRunnerHttpServer(server, config.host, config.port);
   const urls = runnerListenUrls(config.host, config.port);
+  const tokenPath = runnerTokenFile(config.dataDir);
   // eslint-disable-next-line no-console
   console.log(
-    `PR Genie runner listening on ${config.host}:${config.port} — UI ${urls.join(", ")} (MCP POST /mcp)`,
+    [
+      `PR Genie runner listening on ${config.host}:${config.port} — UI ${urls.join(", ")} (MCP POST /mcp)`,
+      `Bearer token file: ${tokenPath} (paste in dashboard; never log the token itself).`,
+    ].join("\n"),
   );
   await new Promise<void>((resolve) => {
     process.on("SIGINT", () => {
@@ -61,13 +69,13 @@ async function cmdInit(): Promise<void> {
   const dataDir =
     dataDirFlag >= 0 && process.argv[dataDirFlag + 1] ? process.argv[dataDirFlag + 1] : undefined;
   const result = await runInit({ dataDir, forceToken: force });
-  process.stdout.write(formatInitReport(result));
+  process.stdout.write(formatInitReport(result, process.env));
 }
 
 async function cmdDoctor(): Promise<void> {
   const report = await runRunnerDoctor(process.env);
-  process.stdout.write(formatRunnerDoctorReport(report));
-  if (!report.ok) process.exitCode = 1;
+  process.stdout.write(formatRunnerDoctorReport(report, process.env));
+  if (!report.ok) process.exit(1);
 }
 
 function cmdConfig(): void {
@@ -98,8 +106,7 @@ function cmdConfig(): void {
 async function cmdJobWorker(): Promise<void> {
   const jobId = process.argv[3]?.trim();
   if (!jobId) {
-    console.error("Usage: prgenie job-worker <job-id>");
-    process.exit(1);
+    throw new Error("Usage: prgenie job-worker <job-id>");
   }
   const code = await runJobWorker(jobId);
   process.exitCode = code;
@@ -162,7 +169,18 @@ async function cmdPrune(): Promise<void> {
   console.log(`Pruned ${n} failed/stuck worktrees (kept job JSON on disk).`);
 }
 
-function usage(): never {
+const KNOWN_COMMANDS = new Set([
+  "serve",
+  "mcp",
+  "init",
+  "doctor",
+  "config",
+  "prune-worktrees",
+  "job-worker",
+  "restart",
+]);
+
+function printUsage(): void {
   // eslint-disable-next-line no-console
   console.log(`prgenie — local runner (install via npm: npx -y prgenie)
 
@@ -176,18 +194,41 @@ Usage:
   prgenie config --client cursor|vscode|claude-code
   prgenie prune-worktrees
 
-Env: PRGENIE_RUNNER_DATA_DIR, PRGENIE_RUNNER_TOKEN (serve only),
+Options:
+  --version, -v            Print version and exit
+  --help, -h, help         Print this help and exit
+
+Env: PRGENIE_RUNNER_DATA_DIR, PRGENIE_RUNNER_TOKEN (serve override; serve also reads runner.token),
      PRGENIE_RUNNER_HOST, PRGENIE_RUNNER_PORT, PRGENIE_RUNNER_DRY_RUN=1`);
-  process.exit(1);
 }
 
-const cmd = process.argv[2];
-if (cmd === "serve") void cmdServe();
-else if (cmd === "mcp") void cmdMcpStdio();
-else if (cmd === "init") void cmdInit();
-else if (cmd === "doctor") void cmdDoctor();
-else if (cmd === "config") cmdConfig();
-else if (cmd === "prune-worktrees") void cmdPrune();
-else if (cmd === "job-worker") void cmdJobWorker();
-else if (cmd === "restart") void cmdRunnerRestart();
-else usage();
+async function main(): Promise<void> {
+  const argv = process.argv;
+  const cmd = argv[2];
+
+  if (cmd === "--version" || cmd === "-v") {
+    // eslint-disable-next-line no-console
+    console.log(runnerCliVersion());
+    return;
+  }
+
+  if (cmd === "--help" || cmd === "-h" || cmd === "help" || cmd === undefined) {
+    printUsage();
+    return;
+  }
+
+  if (!KNOWN_COMMANDS.has(cmd)) {
+    throw new Error(`unknown command: ${cmd}`);
+  }
+
+  if (cmd === "serve") await cmdServe();
+  else if (cmd === "mcp") await cmdMcpStdio();
+  else if (cmd === "init") await cmdInit();
+  else if (cmd === "doctor") await cmdDoctor();
+  else if (cmd === "config") cmdConfig();
+  else if (cmd === "prune-worktrees") await cmdPrune();
+  else if (cmd === "job-worker") await cmdJobWorker();
+  else if (cmd === "restart") await cmdRunnerRestart();
+}
+
+runCli(main);

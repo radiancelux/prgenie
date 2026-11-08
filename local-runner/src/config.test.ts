@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { STDIO_PLACEHOLDER_TOKEN, loadConfig } from "./config.js";
+import { STDIO_PLACEHOLDER_TOKEN, loadConfig, parseRunnerPort } from "./config.js";
 
 describe("loadConfig", () => {
   it("defaults host to loopback", async () => {
@@ -21,6 +21,18 @@ describe("loadConfig", () => {
       { command: "mcp" },
     );
     assert.equal(cfg.token, STDIO_PLACEHOLDER_TOKEN);
+  });
+
+  it("rejects invalid PRGENIE_RUNNER_PORT", async () => {
+    assert.throws(() => parseRunnerPort("xy"), /port number/);
+    await assert.rejects(
+      () =>
+        loadConfig(
+          { PRGENIE_RUNNER_TOKEN: "t", PRGENIE_RUNNER_PORT: "70000" },
+          { command: "serve" },
+        ),
+      /between 1 and 65535/,
+    );
   });
 
   it("serve requires bearer token", async () => {

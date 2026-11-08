@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import type { RunnerConfig } from "./config.js";
 import { RunnerEngine } from "./engine.js";
+import { bindRunnerHttpServer } from "./http-bind.js";
 import { handleContinueJobRequest, handleStartJobRequest, startHttpServer } from "./server.js";
 import { handleMcpJsonRpc, handleRunnerTool } from "./mcp-handlers.js";
 import { ValidationError } from "./settings-validation.js";
@@ -82,7 +83,7 @@ describe("startHttpServer hardening", () => {
     s.close();
     const engine = new RunnerEngine(cfg(dataDir, port));
     server = startHttpServer(cfg(dataDir, port), engine);
-    await new Promise<void>((r) => server.on("listening", () => r()));
+    await bindRunnerHttpServer(server, "127.0.0.1", port);
   });
 
   after(async () => {
@@ -93,6 +94,14 @@ describe("startHttpServer hardening", () => {
     const res = await httpRequest(port, "GET", "/api/jobs");
     assert.equal(res.status, 401);
     assert.match(res.body, /unauthorized/);
+    assert.match(res.body, /runner\.token/);
+  });
+
+  it("returns token_rejected for wrong bearer", async () => {
+    const res = await httpRequest(port, "GET", "/api/jobs", { token: "wrong-token" });
+    assert.equal(res.status, 401);
+    assert.match(res.body, /token_rejected/);
+    assert.match(res.body, /Token rejected/);
   });
 
   it("rejects invalid JSON on POST /api/jobs", async () => {
@@ -150,7 +159,7 @@ async function startTestServer(): Promise<{
   const port = (probe.address() as { port: number }).port;
   await new Promise<void>((r) => probe.close(() => r()));
   const server = startHttpServer(cfg(dataDir, port), new RunnerEngine(cfg(dataDir, port)));
-  await new Promise<void>((r) => server.on("listening", () => r()));
+  await bindRunnerHttpServer(server, "127.0.0.1", port);
   return {
     port,
     dataDir,

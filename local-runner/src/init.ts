@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { prgenieCmd } from "./cli-invocation.js";
 import { defaultDataDir, runnerTokenFile } from "./config.js";
 import { ensureDataDirs } from "./store.js";
 
@@ -45,7 +46,7 @@ export async function runInit(options?: {
   return { dataDir, tokenFile, createdToken };
 }
 
-export function formatInitReport(result: InitResult): string {
+export function formatInitReport(result: InitResult, env: NodeJS.ProcessEnv = process.env): string {
   const lines = [
     "PR Genie runner data directory ready.",
     `  data dir: ${result.dataDir}`,
@@ -54,17 +55,18 @@ export function formatInitReport(result: InitResult): string {
   if (result.createdToken) {
     lines.push(
       "",
-      "For HTTP dashboard / serve, export the token (keep it secret):",
+      `For HTTP dashboard / serve, \`${prgenieCmd("serve", env)}\` reads the token file automatically:`,
+      `  ${result.tokenFile}`,
+      "",
+      "Optional override (keep secret):",
       `  export PRGENIE_RUNNER_TOKEN="$(cat ${result.tokenFile})"`,
       "",
       "Stdio MCP (Cursor, VS Code, Claude Desktop) does not need the token.",
-      "Optional:",
-      `  export PRGENIE_RUNNER_DATA_DIR=${JSON.stringify(result.dataDir)}`,
     );
   } else {
     lines.push("", "Existing token file left unchanged (use --force-token to rotate).");
   }
-  lines.push("", "Next: prgenie doctor");
+  lines.push("", `Next: ${prgenieCmd("doctor", env)}`);
   return `${lines.join("\n")}\n`;
 }
 

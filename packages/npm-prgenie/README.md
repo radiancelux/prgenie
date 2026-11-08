@@ -168,11 +168,11 @@ Stdio and `serve` share one on-disk job store (file lock when both run).
 ## Optional HTTP dashboard
 
 ```bash
-export PRGENIE_RUNNER_TOKEN="$(cat ~/.prgenie/local-runner/runner.token)"
-npx -y prgenie serve
+npx -y prgenie init   # once — creates ~/.prgenie/local-runner/runner.token
+npx -y prgenie serve  # reads runner.token automatically (no export required)
 ```
 
-Open `http://127.0.0.1:9473/` (default). MCP over HTTP: `POST /mcp` with `Authorization: Bearer $PRGENIE_RUNNER_TOKEN`.
+Open `http://127.0.0.1:9473/` (default). Paste the token from `runner.token` into the dashboard (serve prints the path on startup). MCP over HTTP: `POST /mcp` with `Authorization: Bearer` from that file. Optional override: `export PRGENIE_RUNNER_TOKEN="$(cat ~/.prgenie/local-runner/runner.token)"`.
 
 ## Troubleshooting
 

@@ -28,6 +28,7 @@ const SETUP_VALIDATION_BOUNDS = {
 export function setupUiHtml(
   port: number,
   listenUrls: string[] = [`http://127.0.0.1:${port}/`],
+  tokenFilePath = "~/.prgenie/local-runner/runner.token",
 ): string {
   const reachability = listenUrls.length ? listenUrls.join(" · ") : `http://127.0.0.1:${port}/`;
   const boundsJson = JSON.stringify(SETUP_VALIDATION_BOUNDS);
@@ -48,7 +49,9 @@ export function setupUiHtml(
     <label class="block min-w-0">Bearer token (stored in this browser only)
       <input type="password" id="token" class="min-w-0 max-w-full" placeholder="PRGENIE_RUNNER_TOKEN" autocomplete="off" />
     </label>
+    <p class="meta">Host token file: <code>${tokenFilePath}</code></p>
   </div>
+  <div id="authHint" class="panel empty-cta" style="display:none;" role="status"></div>
   <div id="firstRun" class="panel empty-cta" style="display:none;">
     <strong>First run.</strong> Choose a default agent driver and model, optional email notify, then save. Runner token stays in env — do not paste it into job logs.
   </div>
@@ -391,13 +394,24 @@ export function setupUiHtml(
       document.getElementById(id).addEventListener("input", () => updateEffectiveLabels());
     }
 
+    const tokenFileHint = ${JSON.stringify(tokenFilePath)};
+
     async function load() {
       const status = document.getElementById("status");
+      const authHint = document.getElementById("authHint");
       const res = await fetch("/api/settings", { headers: authHeaders() });
       if (res.status === 401) {
-        status.textContent = "Save bearer token above (from PRGENIE_RUNNER_TOKEN).";
+        const t = tokenEl.value || localStorage.getItem(tokenKey);
+        authHint.style.display = "block";
+        if (t) {
+          authHint.innerHTML = "<strong>Token rejected.</strong> Check <code>" + tokenFileHint + "</code> or PRGENIE_RUNNER_TOKEN.";
+        } else {
+          authHint.innerHTML = "<strong>Unauthorized.</strong> Paste the bearer token from <code>" + tokenFileHint + "</code> above, then Save settings.";
+        }
+        status.textContent = "";
         return;
       }
+      authHint.style.display = "none";
       if (!res.ok) {
         status.textContent = "Could not load settings.";
         return;

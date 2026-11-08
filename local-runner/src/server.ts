@@ -1,6 +1,6 @@
 import http from "node:http";
 import { URL } from "node:url";
-import type { RunnerConfig } from "./config.js";
+import { runnerTokenFile, type RunnerConfig } from "./config.js";
 import type { RunnerEngine } from "./engine.js";
 import { handleMcpJsonRpc } from "./mcp-handlers.js";
 import { runnerListenUrls, urlHostForRequest } from "./listen-urls.js";
@@ -110,15 +110,31 @@ function queryFlag(url: URL, name: string): boolean {
   return v === "1" || v === "true";
 }
 
-function unauthorized(guard: HttpResponseGuard): void {
-  guard.json(401, { error: "unauthorized" });
+type AuthResult = "ok" | "missing" | "rejected";
+
+function respondUnauthorized(guard: HttpResponseGuard, reason: Exclude<AuthResult, "ok">): void {
+  if (reason === "rejected") {
+    guard.json(401, {
+      error: "token_rejected",
+      message: "Token rejected: check runner.token or PRGENIE_RUNNER_TOKEN.",
+    });
+    return;
+  }
+  guard.json(401, {
+    error: "unauthorized",
+    message: "Bearer token required (see runner.token on the host).",
+  });
 }
 
-function checkAuth(req: http.IncomingMessage, config: RunnerConfig, url: URL): boolean {
+function checkAuth(req: http.IncomingMessage, config: RunnerConfig, url: URL): AuthResult {
   const header = req.headers.authorization;
-  if (header === `Bearer ${config.token}`) return true;
+  const headerToken =
+    typeof header === "string" && header.startsWith("Bearer ") ? header.slice(7) : null;
   const q = url.searchParams.get("token");
-  return q === config.token;
+  const presented = headerToken ?? q;
+  if (!presented) return "missing";
+  if (presented === config.token) return "ok";
+  return "rejected";
 }
 
 async function readJsonObject(
@@ -240,20 +256,31 @@ export function startHttpServer(
       );
       const path = url.pathname;
 
+      const tokenFilePath = runnerTokenFile(config.dataDir);
+
       if (path === "/" && req.method === "GET") {
-        guard.html(200, runnerUiHtml(config.port, runnerListenUrls(config.host, config.port)));
+        guard.html(
+          200,
+          runnerUiHtml(config.port, runnerListenUrls(config.host, config.port), tokenFilePath),
+        );
         return;
       }
 
       if (path === "/setup" && req.method === "GET") {
-        guard.html(200, setupUiHtml(config.port, runnerListenUrls(config.host, config.port)));
+        guard.html(
+          200,
+          setupUiHtml(config.port, runnerListenUrls(config.host, config.port), tokenFilePath),
+        );
         return;
       }
 
       const needsAuth = path.startsWith("/api/") || path === "/mcp";
-      if (needsAuth && !checkAuth(req, config, url)) {
-        unauthorized(guard);
-        return;
+      if (needsAuth) {
+        const auth = checkAuth(req, config, url);
+        if (auth !== "ok") {
+          respondUnauthorized(guard, auth);
+          return;
+        }
       }
 
       if (path === "/mcp" && req.method === "POST") {
@@ -510,6 +537,5 @@ export function startHttpServer(
     return shuttingDown;
   }
 
-  server.listen(config.port, config.host);
   return Object.assign(server, { shutdown });
 }
