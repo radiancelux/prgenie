@@ -131,6 +131,8 @@ const execFileAsync = promisify(execFile);
 async function smokeGitRepo(): Promise<{ repoPath: string; promptFile: string }> {
   const repoPath = await mkdtemp(path.join(os.tmpdir(), "lr-mcp-protocol-repo-"));
   await execFileAsync("git", ["-C", repoPath, "init", "-b", "main"]);
+  await execFileAsync("git", ["-C", repoPath, "config", "user.email", "t@test"]);
+  await execFileAsync("git", ["-C", repoPath, "config", "user.name", "t"]);
   await execFileAsync("git", ["-C", repoPath, "commit", "--allow-empty", "-m", "init"]);
   const promptFile = path.join(repoPath, "README.md");
   await writeFile(promptFile, "# smoke\n", "utf8");

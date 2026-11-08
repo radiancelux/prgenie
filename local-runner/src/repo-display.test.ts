@@ -1,10 +1,26 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  isGitHubRemoteUrl,
   jobRepoDisplayLabel,
   repoBasenameFromPath,
   repoOwnerNameFromRemoteUrl,
 } from "./repo-display.js";
+
+describe("isGitHubRemoteUrl", () => {
+  it("accepts https, scp-style ssh, and ssh:// github.com remotes", () => {
+    assert.equal(isGitHubRemoteUrl("https://github.com/radiancelux/prgenie.git"), true);
+    assert.equal(isGitHubRemoteUrl("git@github.com:acme/widget.git"), true);
+    assert.equal(isGitHubRemoteUrl("ssh://git@github.com/acme/widget"), true);
+  });
+
+  it("rejects other hosts and lookalikes", () => {
+    assert.equal(isGitHubRemoteUrl("git@gitlab.com:acme/widget.git"), false);
+    assert.equal(isGitHubRemoteUrl("https://notgithub.com/acme/widget"), false);
+    assert.equal(isGitHubRemoteUrl("https://github.com.evil.io/acme/widget"), false);
+    assert.equal(isGitHubRemoteUrl(""), false);
+  });
+});
 
 describe("repoOwnerNameFromRemoteUrl", () => {
   it("parses https github remotes", () => {

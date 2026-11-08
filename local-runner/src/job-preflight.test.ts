@@ -85,6 +85,28 @@ describe("job start preflight", () => {
     assert.ok(dry.warnings.length >= 3);
   });
 
+  it("rejects a non-github.com origin even when owner/name parses", async () => {
+    const repo = await mkdtemp(path.join(os.tmpdir(), "lr-pf-gitlab-"));
+    const result = await runJobStartPreflight(
+      { ok: true, repoPath: repo, repoSlug: "demo", jobType: "code" },
+      {},
+      settings,
+      false,
+      {
+        git: (async (_c: string, args: string[]) => {
+          if (args[0] === "rev-parse") return { code: 0, stdout: "true\n", stderr: "" };
+          if (args[0] === "remote") {
+            return { code: 0, stdout: "git@gitlab.com:acme/widgets.git\n", stderr: "" };
+          }
+          return { code: 0, stdout: "", stderr: "" };
+        }) as never,
+        ghAuthStatus: async () => "ok",
+        binaryOnPath: async () => true,
+      },
+    );
+    assert.ok(result.blocking.some((i) => i.id === "origin-not-github"));
+  });
+
   it("enriches no-PR stuck text with likely causes", () => {
     const msg = enrichNoPrGuardMessage("No GitHub PR for branch — local-only diff guard", {
       hints: ['repo has no "origin" remote', "gh is not installed"],

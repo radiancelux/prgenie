@@ -40,6 +40,8 @@ describe("runner MCP JSON-RPC (in-process)", () => {
     await ensureDataDirs(dataDir);
     smokeRepo = await mkdtemp(path.join(os.tmpdir(), "lr-mcp-repo-"));
     await execFileAsync("git", ["-C", smokeRepo, "init", "-b", "main"]);
+    await execFileAsync("git", ["-C", smokeRepo, "config", "user.email", "t@test"]);
+    await execFileAsync("git", ["-C", smokeRepo, "config", "user.name", "t"]);
     await execFileAsync("git", ["-C", smokeRepo, "commit", "--allow-empty", "-m", "init"]);
     smokePrompt = path.join(smokeRepo, "README.md");
     await writeFile(smokePrompt, "# smoke\n", "utf8");

@@ -141,7 +141,7 @@ Point the client at the repo-local binary, for example `"command": "pnpm", "args
    }
    ```
 
-   Dry runs **always** require a real `repoPath` that exists and is a git checkout. They **do not** create a worktree or call `cursor-agent`, but they **do** run the same preflight checks as a real job (driver on PATH, `origin` remote, `gh` installed and logged in) and record any gaps as `preflightWarnings` on the job while still completing the loop. There is no fake GitHub PR link — the dashboard shows **Dry run** / **Simulated** instead of a PR URL.
+   Dry runs **always** require a real `repoPath` that exists and is a git checkout — that is the only check that blocks a dry run. They **do not** create a worktree or call `cursor-agent`. The other preflight checks a real job runs (driver on PATH, GitHub `origin` remote, `gh` installed and logged in) **never block** a dry run: any gaps are recorded as `preflightWarnings` on the job and the loop still completes. There is no fake GitHub PR link — the dashboard shows **Dry run** / **Simulated** instead of a PR URL.
 
    Then `get_job` with the returned `id` (check `preflightWarnings` and `dryRun: true`).
 

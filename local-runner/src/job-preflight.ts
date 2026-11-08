@@ -6,7 +6,7 @@ import { findDriverEntry } from "./settings.js";
 import { binaryOnPath } from "./drivers/driver-types.js";
 import { git, type GhResult } from "./github.js";
 import type { ResolvedJobTarget } from "./job-target.js";
-import { repoOwnerNameFromRemoteUrl } from "./repo-display.js";
+import { isGitHubRemoteUrl } from "./repo-display.js";
 import type { StartJobArgs } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -125,7 +125,7 @@ export async function runJobStartPreflight(
       });
     } else {
       const url = origin.stdout.trim();
-      if (!repoOwnerNameFromRemoteUrl(url)) {
+      if (!isGitHubRemoteUrl(url)) {
         report({
           id: "origin-not-github",
           message: `origin remote is not a GitHub URL (${url}) — PR flow requires github.com`,
@@ -133,7 +133,7 @@ export async function runJobStartPreflight(
       }
     }
   } else if (remote) {
-    if (!repoOwnerNameFromRemoteUrl(remote)) {
+    if (!isGitHubRemoteUrl(remote)) {
       report({
         id: "remote-not-github",
         message: `remote is not a GitHub URL (${remote}) — PR flow requires github.com`,
@@ -198,7 +198,7 @@ export async function diagnosePrSetupIssues(
   const origin = await gitImpl(root, ["remote", "get-url", "origin"]);
   if (origin.code !== 0 || !origin.stdout.trim()) {
     hints.push('repo has no "origin" remote');
-  } else if (!repoOwnerNameFromRemoteUrl(origin.stdout.trim())) {
+  } else if (!isGitHubRemoteUrl(origin.stdout.trim())) {
     hints.push("origin is not a GitHub URL");
   }
 

@@ -37,7 +37,7 @@ export async function ensureDataDirs(dataDir: string): Promise<void> {
 async function atomicWriteJson(filePath: string, value: unknown): Promise<void> {
   const dir = path.dirname(filePath);
   await mkdir(dir, { recursive: true });
-  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  const tmp = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
   await rename(tmp, filePath);
 }

@@ -240,7 +240,11 @@ describe("live runner restart (detached workers)", () => {
       });
       await engineA.init();
 
-      await waitUntil(() => liveWorkerLock(dataDir, jobId) !== null, `worker alive (${stage})`);
+      // The worker creates its lock file before mirroring `worker` into the job record.
+      await waitUntil(async () => {
+        const lock = liveWorkerLock(dataDir, jobId);
+        return !!lock && (await loadJob(dataDir, jobId))?.worker?.token === lock.token;
+      }, `worker alive and mirrored (${stage})`);
       const firstWorker = liveWorkerLock(dataDir, jobId)!;
       assert.ok(pidAlive(firstWorker.pid));
       assert.equal((await loadJob(dataDir, jobId))?.worker?.token, firstWorker.token);

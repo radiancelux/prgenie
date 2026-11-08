@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { closeSync, existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import os from "node:os";
@@ -118,20 +119,35 @@ export async function acquireStoreLock(
   }
 }
 
-let inProcessStoreLock = false;
+/** Data dirs whose lock the current async call chain already holds (makes nesting reentrant). */
+const heldStoreLocks = new AsyncLocalStorage<ReadonlySet<string>>();
+/** Tail of the in-process waiter chain per data dir; concurrent callers queue, never bypass. */
+const inProcessTails = new Map<string, Promise<void>>();
 
 export async function withStoreLock<T>(
   dataDir: string,
   fn: () => Promise<T>,
   maxWaitMs = DEFAULT_MAX_WAIT_MS,
 ): Promise<T> {
-  if (inProcessStoreLock) return fn();
-  const handle = await acquireStoreLock(dataDir, maxWaitMs);
-  inProcessStoreLock = true;
+  const key = path.resolve(dataDir);
+  const held = heldStoreLocks.getStore();
+  if (held?.has(key)) return fn();
+
+  const prev = inProcessTails.get(key) ?? Promise.resolve();
+  let releaseTurn!: () => void;
+  const turn = new Promise<void>((r) => (releaseTurn = r));
+  const tail = prev.then(() => turn);
+  inProcessTails.set(key, tail);
+  await prev;
   try {
-    return await fn();
+    const handle = await acquireStoreLock(dataDir, maxWaitMs);
+    try {
+      return await heldStoreLocks.run(new Set([...(held ?? []), key]), fn);
+    } finally {
+      handle.release();
+    }
   } finally {
-    inProcessStoreLock = false;
-    handle.release();
+    releaseTurn();
+    if (inProcessTails.get(key) === tail) inProcessTails.delete(key);
   }
 }

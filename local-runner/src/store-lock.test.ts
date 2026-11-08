@@ -31,6 +31,29 @@ describe("store lock", () => {
     assert.deepEqual(order, [1, 2, 3]);
   });
 
+  it("a caller arriving while the lock is held waits instead of bypassing it", async () => {
+    const order: number[] = [];
+    let entered!: () => void;
+    const inside = new Promise<void>((r) => (entered = r));
+    const first = withStoreLock(dir, async () => {
+      order.push(1);
+      entered();
+      await new Promise((r) => setTimeout(r, 30));
+      order.push(2);
+    });
+    await inside;
+    await withStoreLock(dir, async () => {
+      order.push(3);
+    });
+    await first;
+    assert.deepEqual(order, [1, 2, 3]);
+  });
+
+  it("nested withStoreLock in the same call chain is reentrant", async () => {
+    const result = await withStoreLock(dir, async () => withStoreLock(dir, async () => "inner"));
+    assert.equal(result, "inner");
+  });
+
   it("release clears lock file", async () => {
     const handle = await acquireStoreLock(dir);
     handle.release();
