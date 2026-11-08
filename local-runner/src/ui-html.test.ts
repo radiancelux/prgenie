@@ -18,6 +18,15 @@ function inlineScriptBodies(html: string): string[] {
 }
 
 describe("runnerUiHtml inline scripts", () => {
+  it("nests prompt file input inside the label with a dedicated label text span", () => {
+    const html = runnerUiHtml(8765, ["http://127.0.0.1:8765/"]);
+    assert.match(html, /id="newJobPromptLabelText"/);
+    assert.match(
+      html,
+      /id="newJobPromptLabel"[\s\S]*id="newJobPromptLabelText"[\s\S]*id="newJobPrompt"/,
+    );
+  });
+
   it("allows continue on terminal jobs without a PR (build resume copy)", () => {
     const html = runnerUiHtml(8765, ["http://127.0.0.1:8765/"]);
     assert.match(html, /continue re-runs the build stage/);
@@ -336,6 +345,9 @@ async function bootDashboard(
         : jsonResponse({}, 404);
     }
     if (url.pathname === "/api/jobs") {
+      if (method === "POST") {
+        return jsonResponse({ ok: true, id: "new-job-id-12345678" });
+      }
       const withArchived = url.searchParams.get("includeArchived") === "1";
       return jsonResponse(state.jobs.filter((j) => withArchived || !j.archivedAt));
     }
@@ -1161,6 +1173,56 @@ function runningShellJob(): FixtureJob {
     },
   };
 }
+
+describe("runnerUiHtml new agent prompt file (#155)", () => {
+  const newAgentBoot = { jobs: stagedJobs(["approved"]) };
+
+  it("keeps #newJobPrompt in the DOM after load and after toggling job type", async () => {
+    await withDashboard(newAgentBoot, async (d) => {
+      const prompt = d.doc.getElementById("newJobPrompt") as HTMLInputElement;
+      const labelText = d.doc.getElementById("newJobPromptLabelText")!;
+      assert.ok(prompt, "prompt input exists after syncNewJobForm on load");
+      assert.equal(labelText.textContent, "Prompt file (code jobs)");
+
+      const typeEl = d.doc.getElementById("newJobType") as HTMLSelectElement;
+      prompt.value = "/tmp/my-prompt.md";
+      typeEl.value = "docs";
+      typeEl.dispatchEvent(new d.window.Event("change"));
+      assert.ok(d.doc.getElementById("newJobPrompt"), "prompt input survives docs toggle");
+      assert.equal(prompt.value, "/tmp/my-prompt.md");
+      assert.equal(labelText.textContent, "Prompt file (optional — uses template if empty)");
+
+      typeEl.value = "code";
+      typeEl.dispatchEvent(new d.window.Event("change"));
+      assert.ok(d.doc.getElementById("newJobPrompt"), "prompt input survives code toggle");
+      assert.equal(prompt.value, "/tmp/my-prompt.md");
+      assert.equal(labelText.textContent, "Prompt file (code jobs)");
+      assert.equal(prompt.required, true);
+    });
+  });
+
+  it("POST /api/jobs from the dashboard includes promptFile for code jobs", async () => {
+    await withDashboard(newAgentBoot, async (d) => {
+      (d.doc.getElementById("newJobBranch") as HTMLInputElement).value = "feat/issue-155";
+      (d.doc.getElementById("newJobRepo") as HTMLInputElement).value = "/home/me/repo";
+      (d.doc.getElementById("newJobPrompt") as HTMLInputElement).value = "/home/me/prompt.md";
+      (d.doc.getElementById("startJobBtn") as HTMLButtonElement).click();
+      await waitFor(
+        () =>
+          /Job started:/.test(d.doc.getElementById("newJobStatus")!.textContent ?? "") &&
+          d.requests.some((r) => r.method === "POST" && r.path === "/api/jobs"),
+        "start job",
+      );
+      const post = d.requests.find((r) => r.method === "POST" && r.path === "/api/jobs")!;
+      assert.deepEqual(post.body, {
+        branch: "feat/issue-155",
+        jobType: "code",
+        repoPath: "/home/me/repo",
+        promptFile: "/home/me/prompt.md",
+      });
+    });
+  });
+});
 
 describe("runnerUiHtml long-running shell command", () => {
   for (const viewportWidth of [360, 460]) {
