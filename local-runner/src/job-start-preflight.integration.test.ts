@@ -65,6 +65,31 @@ describe("job preflight integration", () => {
     if (dataDir) await rm(dataDir, { recursive: true, force: true }).catch(() => undefined);
   });
 
+  it("rejects real jobs when git author identity is unset (#201)", async () => {
+    await git(repo, ["config", "--unset", "user.email"]);
+    await git(repo, ["config", "--unset", "user.name"]);
+    const engine = new RunnerEngine(testConfig(dataDir), { watchCi: false });
+    try {
+      await assert.rejects(
+        () =>
+          engine.startJob({
+            branch: "chore/no-git-id",
+            promptFile: path.join(repo, "README.md"),
+            repoPath: repo,
+            dryRun: false,
+            maxRounds: 1,
+          }),
+        (err: Error) =>
+          err instanceof ValidationError &&
+          /user\.(name|email)/.test(err.message) &&
+          /git -C/.test(err.message),
+      );
+    } finally {
+      await git(repo, ["config", "user.email", "test@example.com"]);
+      await git(repo, ["config", "user.name", "test"]);
+    }
+  });
+
   it("rejects real jobs before creating a worktree when the driver binary is missing", async () => {
     const engine = new RunnerEngine(testConfig(dataDir), { watchCi: false });
     const prev = process.env.PATH;

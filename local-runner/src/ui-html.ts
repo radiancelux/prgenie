@@ -509,7 +509,16 @@ export function runnerUiHtml(
     }
 
     function fmtAgentWait(j) {
-      if (!j || TERMINAL_STAGES.has(j.stage) || (j.queueState && j.queueState.queued)) return "";
+      if (!j || TERMINAL_STAGES.has(j.stage)) return "";
+      if (j.queued || (j.queueState && j.queueState.queued)) {
+        const pos = j.queuePosition != null ? j.queuePosition : j.queueState?.position;
+        const label = pos != null ? "queued (#" + pos + ")" : "queued";
+        return '<span class="ml-2 inline-flex items-center rounded-full border border-violet-500/40 bg-violet-950/40 px-2 py-0.5 text-xs text-violet-200">' + escapeAttr(label) + "</span>";
+      }
+      const activity = j.activityMessage;
+      if (activity) {
+        return '<span class="ml-2 text-xs text-zinc-400">' + escapeAttr(activity) + "</span>";
+      }
       if (j.runtime && j.runtime.waitMode === "command" && j.runtime.command) {
         return '<span class="agent-wait-command ml-2 inline-flex max-w-full flex-wrap items-center gap-1 rounded-full border border-amber-500/40 bg-amber-950/40 px-2 py-0.5 text-xs text-amber-200">waiting on command</span>';
       }

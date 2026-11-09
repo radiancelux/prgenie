@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { after, before, describe, it } from "node:test";
 import { formatCursorAgentInstallFix } from "./cursor-agent-cli.js";
 import {
@@ -11,6 +13,8 @@ import {
   type GhExecResult,
 } from "./runner-doctor.js";
 import { runInit } from "./init.js";
+
+const execFileAsync = promisify(execFile);
 
 describe("checkAgentCli fix text", () => {
   it("includes per-OS Cursor CLI install commands", () => {
@@ -162,6 +166,32 @@ describe("prgenie doctor", () => {
       checkNpmRegistry: false,
     });
     assert.match(noGh.checks.find((c) => c.id === "gh-auth")?.summary ?? "", /not on PATH/);
+  });
+
+  it("reports git identity when the default repo is missing author config (#201)", async () => {
+    const repo = await mkdtemp(path.join(os.tmpdir(), "lr-doc-git-id-"));
+    const emptyGlobal = path.join(repo, ".empty-global-gitconfig");
+    await writeFile(emptyGlobal, "", "utf8");
+    await execFileAsync("git", ["init", "-b", "main"], {
+      cwd: repo,
+      env: {
+        ...process.env,
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: emptyGlobal,
+      },
+    });
+    const report = await runRunnerDoctor(process.env, {
+      execGh: async () => ({ code: 0, stdout: "Logged in", stderr: "" }),
+      fetch: async () => new Response(null, { status: 200 }),
+      checkNpmRegistry: false,
+      checkAgentCli: async () => ({ id: "agent-cli", ok: true, summary: "stub" }),
+      gitIdentityRepoPath: repo,
+    });
+    const id = report.checks.find((c) => c.id === "git-identity");
+    assert.ok(id);
+    assert.equal(id!.ok, false);
+    assert.match(id!.fix ?? "", /git -C/);
+    await rm(repo, { recursive: true, force: true });
   });
 
   it("warns when network is unreachable", async () => {

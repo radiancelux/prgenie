@@ -9,6 +9,7 @@ import { git, type GhResult } from "./github.js";
 import type { ResolvedJobTarget } from "./job-target.js";
 import { isGitHubRemoteUrl } from "./repo-display.js";
 import type { StartJobArgs } from "./types.js";
+import { checkGitIdentity, formatGitIdentityPreflightMessage } from "./git-identity.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -122,6 +123,13 @@ export async function runJobStartPreflight(
   const report = (issue: JobPreflightIssue) => push(issue, !effectiveDryRun);
 
   if (repoPath) {
+    const identity = await checkGitIdentity(repoPath, gitImpl);
+    if (!identity.ok) {
+      report({
+        id: "git-identity",
+        message: formatGitIdentityPreflightMessage(repoPath, identity.missing),
+      });
+    }
     const origin = await gitImpl(repoPath, ["remote", "get-url", "origin"]);
     if (origin.code !== 0 || !origin.stdout.trim()) {
       report({

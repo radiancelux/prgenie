@@ -11,6 +11,10 @@ import {
 } from "./config.js";
 import { prgenieCmd, runningViaNpx } from "./cli-invocation.js";
 import { cursorAgentOnPath, formatCursorAgentInstallFix } from "./cursor-agent-cli.js";
+import { checkGitIdentity, formatGitIdentityFixCommands } from "./git-identity.js";
+import { findRepoPreset, parseDocsSettings } from "./docs-settings.js";
+import { loadSettings } from "./settings.js";
+import { git } from "./github.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -39,6 +43,8 @@ export type RunnerDoctorDeps = {
   /** When true, include npm registry reachability (typical npx installs). */
   checkNpmRegistry?: boolean;
   checkAgentCli?: () => Promise<RunnerDoctorCheck>;
+  /** Override repo used for git-identity check (default: code default preset / env). */
+  gitIdentityRepoPath?: string | null;
 };
 
 function nodeMajor(): number {
@@ -109,6 +115,66 @@ export function parseGhAuthStatus(result: GhExecResult): RunnerDoctorCheck {
     ok: false,
     summary: "gh is installed but not logged in.",
     fix: "Run `gh auth login` for the GitHub account that owns your repos.",
+  };
+}
+
+async function resolveDoctorCodeRepoPath(
+  env: NodeJS.ProcessEnv,
+  override?: string | null,
+): Promise<string | null> {
+  if (override !== undefined) return override?.trim() || null;
+  const config = await loadConfig(env, { command: "doctor" }).catch(() => null);
+  if (config?.defaultCodeRepoPath?.trim()) return config.defaultCodeRepoPath.trim();
+  const dataDir = env.PRGENIE_RUNNER_DATA_DIR?.trim() || defaultDataDir();
+  const settings = await loadSettings(dataDir).catch(() => null);
+  if (!settings) return null;
+  const docs = parseDocsSettings(settings);
+  const preset = findRepoPreset(docs.repoPresets, docs.defaultPresetId.code);
+  return preset?.repoPath?.trim() || null;
+}
+
+async function checkGitIdentityInRepo(repoPath: string | null): Promise<RunnerDoctorCheck> {
+  if (!repoPath) {
+    return {
+      id: "git-identity",
+      ok: true,
+      severity: "warn",
+      summary: "No default code repo configured — git author identity not checked.",
+      fix: "Set a default code repo on Setup (or PRGENIE_RUNNER_DEFAULT_REPO_PATH) and re-run doctor.",
+    };
+  }
+  try {
+    await access(repoPath);
+  } catch {
+    return {
+      id: "git-identity",
+      ok: false,
+      summary: `Default code repo path does not exist: ${repoPath}`,
+      fix: "Fix the path in Setup or PRGENIE_RUNNER_DEFAULT_REPO_PATH.",
+    };
+  }
+  const inside = await git(repoPath, ["rev-parse", "--is-inside-work-tree"]);
+  if (inside.code !== 0 || inside.stdout.trim() !== "true") {
+    return {
+      id: "git-identity",
+      ok: false,
+      summary: `Default code repo is not a git work tree: ${repoPath}`,
+      fix: "Point Setup at a local git clone of your project.",
+    };
+  }
+  const identity = await checkGitIdentity(repoPath, git);
+  if (identity.ok) {
+    return {
+      id: "git-identity",
+      ok: true,
+      summary: `Git author identity is set in ${repoPath} (${identity.name} <${identity.email}>).`,
+    };
+  }
+  return {
+    id: "git-identity",
+    ok: false,
+    summary: `Git author identity missing in ${repoPath} (need user.name and user.email for runner commits).`,
+    fix: formatGitIdentityFixCommands(repoPath),
   };
 }
 
@@ -276,6 +342,8 @@ export async function runRunnerDoctor(
   const checkNpmRegistry = deps.checkNpmRegistry ?? runningViaNpx(env);
 
   checks.push(await checkGit());
+  const identityRepo = await resolveDoctorCodeRepoPath(env, deps.gitIdentityRepoPath);
+  checks.push(await checkGitIdentityInRepo(identityRepo));
   checks.push(await checkGh(deps.execGh ?? defaultExecGh));
   checks.push(deps.checkAgentCli ? await deps.checkAgentCli() : await checkAgentCli());
   checks.push(await checkConnectivity(fetchFn, checkNpmRegistry));
