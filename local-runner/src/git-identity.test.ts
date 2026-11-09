@@ -9,21 +9,45 @@ import {
   checkGitIdentity,
   formatGitIdentityFixCommands,
   formatGitIdentityPreflightMessage,
+  readGitConfigValue,
 } from "./git-identity.js";
-import { git } from "./github.js";
+import type { GhResult } from "./github.js";
 
 const execFileAsync = promisify(execFile);
+
+function globalConfigPath(repo: string): string {
+  return path.join(repo, ".empty-global-gitconfig");
+}
 
 function isolatedGitEnv(repo: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
     GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_GLOBAL: path.join(repo, ".empty-global-gitconfig"),
+    GIT_CONFIG_GLOBAL: globalConfigPath(repo),
+  };
+}
+
+function isolatedGit(repo: string) {
+  return async (cwd: string, args: string[]): Promise<GhResult> => {
+    try {
+      const { stdout, stderr } = await execFileAsync("git", args, {
+        cwd,
+        env: isolatedGitEnv(repo),
+      });
+      return { code: 0, stdout, stderr };
+    } catch (err) {
+      const e = err as { code?: number; stdout?: string; stderr?: string };
+      return {
+        code: typeof e.code === "number" ? e.code : 1,
+        stdout: e.stdout ?? "",
+        stderr: e.stderr ?? "",
+      };
+    }
   };
 }
 
 async function initBareRepo(dir: string): Promise<void> {
-  await writeFile(path.join(dir, ".empty-global-gitconfig"), "", "utf8");
+  await writeFile(globalConfigPath(dir), "", "utf8");
   await execFileAsync("git", ["init", "-b", "main"], { cwd: dir, env: isolatedGitEnv(dir) });
 }
 
@@ -40,19 +64,16 @@ describe("git identity", () => {
     const repo = await mkdtemp(path.join(os.tmpdir(), "lr-git-id-"));
     try {
       await initBareRepo(repo);
-      const result = await checkGitIdentity(repo, git);
+      const result = await checkGitIdentity(repo, isolatedGit(repo));
       assert.equal(result.ok, false);
       assert.deepEqual(result.missing.sort(), ["email", "name"]);
-      assert.match(
-        formatGitIdentityPreflightMessage(repo, result.missing),
-        /git -C/,
-      );
+      assert.match(formatGitIdentityPreflightMessage(repo, result.missing), /git -C/);
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
   });
 
-  it("passes when identity is set", async () => {
+  it("passes when identity is set in the repo", async () => {
     const repo = await mkdtemp(path.join(os.tmpdir(), "lr-git-id-ok-"));
     try {
       await initBareRepo(repo);
@@ -64,11 +85,38 @@ describe("git identity", () => {
         cwd: repo,
         env: isolatedGitEnv(repo),
       });
-      const result = await checkGitIdentity(repo, git);
+      const result = await checkGitIdentity(repo, isolatedGit(repo));
       assert.equal(result.ok, true);
       assert.equal(result.missing.length, 0);
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
+  });
+
+  it("passes when identity comes only from global config", async () => {
+    const repo = await mkdtemp(path.join(os.tmpdir(), "lr-git-id-global-"));
+    try {
+      await initBareRepo(repo);
+      await writeFile(
+        globalConfigPath(repo),
+        "[user]\n\tname = Global User\n\temail = global@example.com\n",
+        "utf8",
+      );
+      const result = await checkGitIdentity(repo, isolatedGit(repo));
+      assert.equal(result.ok, true);
+      assert.equal(result.name, "Global User");
+      assert.equal(result.email, "global@example.com");
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("readGitConfigValue treats a non-zero exit as unset", async () => {
+    const value = await readGitConfigValue("/repo", "user.email", async () => ({
+      code: 1,
+      stdout: "stale@example.com\n",
+      stderr: "",
+    }));
+    assert.equal(value, null);
   });
 });

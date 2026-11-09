@@ -55,6 +55,9 @@ describe("enrichJobPublicView", () => {
   });
 
   it("reports preparing worktree when building without a worktree", () => {
-    assert.equal(jobActivityMessage(job({ stage: "building", worktreePath: null })), "Preparing worktree");
+    assert.equal(
+      jobActivityMessage(job({ stage: "building", worktreePath: null })),
+      "Preparing worktree",
+    );
   });
 });

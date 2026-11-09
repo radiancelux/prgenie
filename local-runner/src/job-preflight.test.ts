@@ -12,7 +12,9 @@ import { loadSettings } from "./settings.js";
 import { runInit } from "./init.js";
 import type { RunnerSettings } from "./settings.js";
 
-function stubGitWithIdentity(extra?: (args: string[]) => { code: number; stdout: string; stderr: string } | null) {
+function stubGitWithIdentity(
+  extra?: (args: string[]) => { code: number; stdout: string; stderr: string } | null,
+) {
   return async (_cwd: string, args: string[]) => {
     const custom = extra?.(args);
     if (custom) return custom;

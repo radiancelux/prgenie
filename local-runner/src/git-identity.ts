@@ -12,7 +12,9 @@ export async function readGitConfigValue(
   key: "user.name" | "user.email",
   git: (cwd: string, args: string[]) => Promise<GhResult>,
 ): Promise<string | null> {
-  const res = await git(repoPath, ["config", "--local", key]);
+  // Effective (local/global/system) config, matching what `git commit` resolves. Exit 1 = unset.
+  const res = await git(repoPath, ["config", "--get", key]);
+  if (res.code !== 0) return null;
   const v = res.stdout.trim();
   return v ? v : null;
 }
@@ -35,7 +37,10 @@ export function formatGitIdentityFixCommands(repoPath: string): string {
   return `git -C ${quoted} config user.name "Your Name" && git -C ${quoted} config user.email "you@example.com"`;
 }
 
-export function formatGitIdentityPreflightMessage(repoPath: string, missing: GitIdentityCheck["missing"]): string {
+export function formatGitIdentityPreflightMessage(
+  repoPath: string,
+  missing: GitIdentityCheck["missing"],
+): string {
   const fields = missing.map((m) => `user.${m}`).join(" and ");
-  return `Git author identity is not set in the target repo (missing ${fields}). Run: ${formatGitIdentityFixCommands(repoPath)}`;
+  return `Git author identity is not configured for the target repo (missing ${fields}). Run: ${formatGitIdentityFixCommands(repoPath)}`;
 }

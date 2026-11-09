@@ -68,6 +68,12 @@ describe("job preflight integration", () => {
   it("rejects real jobs when git author identity is unset (#201)", async () => {
     await git(repo, ["config", "--unset", "user.email"]);
     await git(repo, ["config", "--unset", "user.name"]);
+    const emptyGlobal = path.join(dataDir, ".empty-global-gitconfig");
+    await writeFile(emptyGlobal, "", "utf8");
+    const prevGlobal = process.env.GIT_CONFIG_GLOBAL;
+    const prevNoSystem = process.env.GIT_CONFIG_NOSYSTEM;
+    process.env.GIT_CONFIG_GLOBAL = emptyGlobal;
+    process.env.GIT_CONFIG_NOSYSTEM = "1";
     const engine = new RunnerEngine(testConfig(dataDir), { watchCi: false });
     try {
       await assert.rejects(
@@ -85,6 +91,10 @@ describe("job preflight integration", () => {
           /git -C/.test(err.message),
       );
     } finally {
+      if (prevGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = prevGlobal;
+      if (prevNoSystem === undefined) delete process.env.GIT_CONFIG_NOSYSTEM;
+      else process.env.GIT_CONFIG_NOSYSTEM = prevNoSystem;
       await git(repo, ["config", "user.email", "test@example.com"]);
       await git(repo, ["config", "user.name", "test"]);
     }

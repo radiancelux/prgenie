@@ -180,18 +180,29 @@ describe("prgenie doctor", () => {
         GIT_CONFIG_GLOBAL: emptyGlobal,
       },
     });
-    const report = await runRunnerDoctor(process.env, {
-      execGh: async () => ({ code: 0, stdout: "Logged in", stderr: "" }),
-      fetch: async () => new Response(null, { status: 200 }),
-      checkNpmRegistry: false,
-      checkAgentCli: async () => ({ id: "agent-cli", ok: true, summary: "stub" }),
-      gitIdentityRepoPath: repo,
-    });
-    const id = report.checks.find((c) => c.id === "git-identity");
-    assert.ok(id);
-    assert.equal(id!.ok, false);
-    assert.match(id!.fix ?? "", /git -C/);
-    await rm(repo, { recursive: true, force: true });
+    const prevGlobal = process.env.GIT_CONFIG_GLOBAL;
+    const prevNoSystem = process.env.GIT_CONFIG_NOSYSTEM;
+    process.env.GIT_CONFIG_GLOBAL = emptyGlobal;
+    process.env.GIT_CONFIG_NOSYSTEM = "1";
+    try {
+      const report = await runRunnerDoctor(process.env, {
+        execGh: async () => ({ code: 0, stdout: "Logged in", stderr: "" }),
+        fetch: async () => new Response(null, { status: 200 }),
+        checkNpmRegistry: false,
+        checkAgentCli: async () => ({ id: "agent-cli", ok: true, summary: "stub" }),
+        gitIdentityRepoPath: repo,
+      });
+      const id = report.checks.find((c) => c.id === "git-identity");
+      assert.ok(id);
+      assert.equal(id!.ok, false);
+      assert.match(id!.fix ?? "", /git -C/);
+    } finally {
+      if (prevGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = prevGlobal;
+      if (prevNoSystem === undefined) delete process.env.GIT_CONFIG_NOSYSTEM;
+      else process.env.GIT_CONFIG_NOSYSTEM = prevNoSystem;
+      await rm(repo, { recursive: true, force: true });
+    }
   });
 
   it("warns when network is unreachable", async () => {

@@ -34,10 +34,7 @@ export function jobActivityMessage(job: JobRecord): string | null {
   return null;
 }
 
-export function enrichJobPublicView(
-  job: JobRecord,
-  extra?: { logTail?: string },
-): JobPublicView {
+export function enrichJobPublicView(job: JobRecord, extra?: { logTail?: string }): JobPublicView {
   const queued = Boolean(job.queueState?.queued);
   const queuePosition = queued ? (job.queueState?.position ?? null) : null;
   const branch = job.input?.branch?.trim() ?? "";
