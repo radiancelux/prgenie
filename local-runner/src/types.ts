@@ -178,6 +178,13 @@ export interface JobRecord {
   queueState?: JobQueueState;
   driverId: string;
   worktreePath: string | null;
+  /**
+   * Best-effort base ref (e.g. origin/main). For a reused worktree this is the first
+   * resolvable probe ref, which may differ from the ref the branch was created from.
+   */
+  baseRef?: string | null;
+  /** Best-effort tip SHA of {@link JobRecord.baseRef}; empty string when it could not be resolved. */
+  baseSha?: string | null;
   repoSlug: string;
   prUrl: string | null;
   prNumber: number | null;
