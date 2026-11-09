@@ -450,10 +450,14 @@ export async function runJobLoop(
       job.worktreePath = repoRoot;
       await persistJob(config, job, control);
     } else {
-      wt = await ensureWorktree(repoRoot, job.id, job.input.branch, baseSettings, {
+      const wtResult = await ensureWorktree(repoRoot, job.id, job.input.branch, baseSettings, {
         dataDir: config.dataDir,
       });
+      wt = wtResult.path;
       job.worktreePath = wt;
+      job.baseRef = wtResult.baseRef;
+      job.baseSha = wtResult.baseSha;
+      if (job.effectiveSnapshot) job.effectiveSnapshot.baseRef = wtResult.baseRef;
       await persistJob(config, job, control);
     }
 

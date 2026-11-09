@@ -135,6 +135,7 @@ export async function prepareJobContinue(
       job.input.branch,
       job.worktreePath,
       settings,
+      { dataDir: config.dataDir },
     );
     job.worktreePath = wt.path;
     worktree = wt.reused ? "reused" : "recreated";

@@ -178,6 +178,10 @@ export interface JobRecord {
   queueState?: JobQueueState;
   driverId: string;
   worktreePath: string | null;
+  /** Base ref resolved when the job worktree/branch was created (e.g. origin/main). */
+  baseRef?: string | null;
+  /** Tip SHA of {@link JobRecord.baseRef} at worktree creation. */
+  baseSha?: string | null;
   repoSlug: string;
   prUrl: string | null;
   prNumber: number | null;
