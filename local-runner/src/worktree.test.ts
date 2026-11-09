@@ -139,14 +139,9 @@ describe("ensureContinueWorktree", () => {
       return ok();
     };
 
-    const result = await ensureContinueWorktree(
-      repoPath,
-      jobId,
-      branch,
-      existingWt,
-      undefined,
-      { gitImpl },
-    );
+    const result = await ensureContinueWorktree(repoPath, jobId, branch, existingWt, undefined, {
+      gitImpl,
+    });
     assert.equal(result.reused, true);
     assert.equal(result.path, existingWt);
   });

@@ -41,10 +41,7 @@ export function parseWorktreePathForBranch(porcelain: string, branch: string): s
   return null;
 }
 
-export async function bestEffortFetchOrigin(
-  repoPath: string,
-  gitImpl: GitFn = git,
-): Promise<void> {
+export async function bestEffortFetchOrigin(repoPath: string, gitImpl: GitFn = git): Promise<void> {
   await gitImpl(repoPath, ["fetch", "origin"]).catch(() => undefined);
 }
 
@@ -93,7 +90,9 @@ async function enrichWorktreeAddFailure(
   let hint = `git worktree remove ${wtPath}`;
   if (dataDir) {
     const jobs = await listJobs(dataDir);
-    const owner = jobs.find((j) => j.worktreePath?.trim() && worktreePathsEqual(j.worktreePath, wtPath));
+    const owner = jobs.find(
+      (j) => j.worktreePath?.trim() && worktreePathsEqual(j.worktreePath, wtPath),
+    );
     if (owner) {
       hint = `archive job ${owner.id} on the dashboard, or \`git worktree remove ${wtPath}\` and \`git branch -D ${branch}\``;
     }
