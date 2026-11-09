@@ -450,6 +450,15 @@ export async function runJobLoop(
       job.worktreePath = repoRoot;
       await persistJob(config, job, control);
     } else {
+      job.runtime = {
+        waitMode: "command",
+        command: {
+          summary: "git worktree add",
+          detail: job.input.branch,
+          startedAt: new Date().toISOString(),
+        },
+      };
+      await persistJob(config, job, control);
       const wtResult = await ensureWorktree(repoRoot, job.id, job.input.branch, baseSettings, {
         dataDir: config.dataDir,
       });
@@ -458,6 +467,7 @@ export async function runJobLoop(
       job.baseRef = wtResult.baseRef;
       job.baseSha = wtResult.baseSha;
       if (job.effectiveSnapshot) job.effectiveSnapshot.baseRef = wtResult.baseRef;
+      job.runtime = null;
       await persistJob(config, job, control);
     }
 
@@ -738,8 +748,7 @@ export async function runJobLoop(
 }
 
 export async function jobSnapshot(config: RunnerConfig, job: JobRecord) {
-  return {
-    ...job,
-    logTail: await readLogTail(job.logPath),
-  };
+  const { enrichJobPublicView } = await import("./job-api-view.js");
+  void config;
+  return enrichJobPublicView(job, { logTail: await readLogTail(job.logPath) });
 }

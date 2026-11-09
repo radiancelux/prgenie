@@ -15,7 +15,7 @@ import { ValidationError } from "./settings-validation.js";
 import { BranchConflictError } from "./job-queue.js";
 import { archivedJobFile, archivedLogFile, jobFile, jobLogFile } from "./paths.js";
 import { saveSettings } from "./settings.js";
-import { saveJob } from "./store.js";
+import { loadJob, saveJob } from "./store.js";
 import type { JobRecord, JobStage } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -240,6 +240,49 @@ function mcpCall(port: number, name: string, args: Record<string, unknown>) {
       },
   );
 }
+
+describe("job API status fields (#201 #203 #204)", () => {
+  it("GET /api/jobs and GET /api/jobs/:id expose branch, queued, queuePosition, activityMessage", async () => {
+    const s = await startTestServer();
+    try {
+      await seedJob(s.dataDir, "job-live", "building", { branch: "feat/api-fields" });
+      await saveJob(s.dataDir, {
+        ...(await loadJob(s.dataDir, "job-live"))!,
+        branch: null,
+      } as never);
+      await seedJob(s.dataDir, "job-q", "building", { branch: "feat/queued" });
+      const queued = await loadJob(s.dataDir, "job-q");
+      assert.ok(queued);
+      queued.queueState = { queued: true, position: 2, since: new Date().toISOString() };
+      await saveJob(s.dataDir, queued);
+
+      const list = await httpRequest(s.port, "GET", "/api/jobs", { token: TOKEN });
+      assert.equal(list.status, 200);
+      const jobs = JSON.parse(list.body) as Array<Record<string, unknown>>;
+      const live = jobs.find((j) => j.id === "job-live");
+      const q = jobs.find((j) => j.id === "job-q");
+      assert.equal(live?.branch, "feat/api-fields");
+      assert.equal(q?.branch, "feat/queued");
+      assert.equal(q?.queued, true);
+      assert.equal(q?.queuePosition, 2);
+      assert.match(String(q?.activityMessage), /Queued/);
+
+      const one = await httpRequest(s.port, "GET", "/api/jobs/job-q", { token: TOKEN });
+      assert.equal(one.status, 200);
+      const body = JSON.parse(one.body) as Record<string, unknown>;
+      assert.equal(body.branch, "feat/queued");
+      assert.equal(body.queued, true);
+      assert.equal(body.queuePosition, 2);
+
+      const mcp = await mcpCall(s.port, "get_job", { id: "job-q" });
+      const sc = mcp.result?.structuredContent as Record<string, unknown>;
+      assert.equal(sc.branch, "feat/queued");
+      assert.equal(sc.queued, true);
+    } finally {
+      await s.close();
+    }
+  });
+});
 
 describe("job archive over HTTP and MCP", () => {
   it("requires the bearer token like stop/steer", async () => {

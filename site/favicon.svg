@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="PR Genie">
+  <rect width="32" height="32" rx="6" fill="#141820"/>
+  <path fill="#7dd3a8" d="M10 8a3 3 0 0 0-1 5.83V18.5a4.5 4.5 0 1 0 5 4.47V21.5A3.5 3.5 0 0 1 11 18.5V12.83A3 3 0 1 0 10 8zm0 2a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm11.5 14.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/>
+  <path fill="#9ec5ff" d="M17 12h3V9h2v3h3v2h-3v3h-2v-3h-3v-2z"/>
+</svg>

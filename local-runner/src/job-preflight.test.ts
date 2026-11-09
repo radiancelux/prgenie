@@ -12,6 +12,22 @@ import { loadSettings } from "./settings.js";
 import { runInit } from "./init.js";
 import type { RunnerSettings } from "./settings.js";
 
+function stubGitWithIdentity(
+  extra?: (args: string[]) => { code: number; stdout: string; stderr: string } | null,
+) {
+  return async (_cwd: string, args: string[]) => {
+    const custom = extra?.(args);
+    if (custom) return custom;
+    if (args[0] === "rev-parse") return { code: 0, stdout: "true\n", stderr: "" };
+    if (args[0] === "remote") return { code: 1, stdout: "", stderr: "" };
+    if (args.includes("user.name")) return { code: 0, stdout: "Test\n", stderr: "" };
+    if (args.includes("user.email")) {
+      return { code: 0, stdout: "test@example.com\n", stderr: "" };
+    }
+    return { code: 0, stdout: "", stderr: "" };
+  };
+}
+
 describe("job start preflight", () => {
   let settings: RunnerSettings;
 
@@ -29,13 +45,8 @@ describe("job start preflight", () => {
       repoSlug: "demo",
       jobType: "code" as const,
     };
-    const gitImpl = async (_cwd: string, args: string[]) => {
-      if (args[0] === "rev-parse") return { code: 0, stdout: "true\n", stderr: "" };
-      if (args[0] === "remote") return { code: 1, stdout: "", stderr: "" };
-      return { code: 0, stdout: "", stderr: "" };
-    };
     const result = await runJobStartPreflight(target, {}, settings, false, {
-      git: gitImpl as never,
+      git: stubGitWithIdentity() as never,
       ghAuthStatus: async () => "missing",
       binaryOnPath: async () => false,
     });
@@ -72,11 +83,7 @@ describe("job start preflight", () => {
       settings,
       true,
       {
-        git: (async (_c: string, args: string[]) => {
-          if (args[0] === "rev-parse") return { code: 0, stdout: "true\n", stderr: "" };
-          if (args[0] === "remote") return { code: 1, stdout: "", stderr: "" };
-          return { code: 0, stdout: "", stderr: "" };
-        }) as never,
+        git: stubGitWithIdentity() as never,
         ghAuthStatus: async () => "not_logged_in",
         binaryOnPath: async () => false,
       },
@@ -93,18 +100,42 @@ describe("job start preflight", () => {
       settings,
       false,
       {
-        git: (async (_c: string, args: string[]) => {
-          if (args[0] === "rev-parse") return { code: 0, stdout: "true\n", stderr: "" };
+        git: stubGitWithIdentity((args) => {
           if (args[0] === "remote") {
             return { code: 0, stdout: "git@gitlab.com:acme/widgets.git\n", stderr: "" };
           }
-          return { code: 0, stdout: "", stderr: "" };
+          return null;
         }) as never,
         ghAuthStatus: async () => "ok",
         binaryOnPath: async () => true,
       },
     );
     assert.ok(result.blocking.some((i) => i.id === "origin-not-github"));
+  });
+
+  it("blocks real jobs when git user.name or user.email is unset (#201)", async () => {
+    const repo = await mkdtemp(path.join(os.tmpdir(), "lr-pf-noid-"));
+    const result = await runJobStartPreflight(
+      { ok: true, repoPath: repo, repoSlug: "demo", jobType: "code" },
+      {},
+      settings,
+      false,
+      {
+        git: stubGitWithIdentity((args) => {
+          if (args.includes("user.email")) {
+            return { code: 1, stdout: "", stderr: "" };
+          }
+          return null;
+        }) as never,
+        ghAuthStatus: async () => "ok",
+        binaryOnPath: async () => true,
+      },
+    );
+    assert.equal(result.ok, false);
+    const issue = result.blocking.find((i) => i.id === "git-identity");
+    assert.ok(issue);
+    assert.match(issue!.message, /user\.email/);
+    assert.match(issue!.message, /git -C/);
   });
 
   it("enriches no-PR stuck text with likely causes", () => {
