@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PR Genie — local implement, PR, review, and fix loop</title>
+    <meta
+      name="description"
+      content="PR Genie is a local runner that drives Cursor agents through build, draft PR, and automated review and fix rounds on your own machine."
+    />
+    <link rel="canonical" href="https://prgenie.ai/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://prgenie.ai/" />
+    <meta property="og:title" content="PR Genie — local implement, PR, review, and fix loop" />
+    <meta
+      property="og:description"
+      content="Local runner for the implement → PR → review → fix loop. Your git, your gh, your machine."
+    />
+    <meta property="og:site_name" content="PR Genie" />
+
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:url" content="https://prgenie.ai/" />
+    <meta name="twitter:title" content="PR Genie — local implement, PR, review, and fix loop" />
+    <meta
+      name="twitter:description"
+      content="Local runner for the implement → PR → review → fix loop. Your git, your gh, your machine."
+    />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="/">
+          <img src="/favicon.svg" width="28" height="28" alt="" />
+          <span>PR Genie</span>
+        </a>
+        <nav class="nav-links" aria-label="Page sections">
+          <a href="#how-it-works">How it works</a>
+          <a href="#features">Features</a>
+          <a href="#quickstart">Quickstart</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" aria-labelledby="hero-title">
+        <h1 id="hero-title">PR Genie</h1>
+        <p class="tagline">
+          A local runner that drives Cursor agents through build, then draft PR, then automated
+          review and fix rounds — on your own machine.
+        </p>
+
+        <div class="cta-row">
+          <div class="cmd-box" role="group" aria-label="Install command">
+            <code id="hero-cmd">npx -y prgenie@latest init</code>
+            <button
+              type="button"
+              class="btn-copy"
+              id="copy-hero"
+              data-copy="npx -y prgenie@latest init"
+            >
+              Copy
+            </button>
+          </div>
+        </div>
+
+        <div class="secondary-ctas">
+          <a
+            class="btn btn-ghost"
+            href="https://github.com/radiancelux/prgenie"
+            rel="noopener noreferrer"
+          >
+            GitHub
+          </a>
+          <a
+            class="btn btn-ghost"
+            href="https://www.npmjs.com/package/prgenie"
+            rel="noopener noreferrer"
+          >
+            npm
+          </a>
+        </div>
+
+        <p class="req-note">
+          Requires Node.js 22+, git, GitHub CLI (<code>gh</code>), and <code>cursor-agent</code> for
+          real jobs.
+        </p>
+      </section>
+
+      <section id="how-it-works" aria-labelledby="how-title">
+        <h2 id="how-title">How it works</h2>
+        <p class="section-lead">
+          Wire MCP stdio (<code>prgenie-runner</code>) or the optional HTTP dashboard, then start
+          jobs. Merging the PR stays your call.
+        </p>
+        <ol class="steps">
+          <li>
+            <span class="step-num">Step 1</span>
+            <h3>Start a job</h3>
+            <p>
+              Call <code>start_job</code> with a repo path, branch name, and prompt file (via MCP or
+              the dashboard).
+            </p>
+          </li>
+          <li>
+            <span class="step-num">Step 2</span>
+            <h3>Build</h3>
+            <p>
+              The implementor agent works in a git worktree and lands commits on your feature
+              branch.
+            </p>
+          </li>
+          <li>
+            <span class="step-num">Step 3</span>
+            <h3>Draft PR</h3>
+            <p>
+              The runner commits, pushes, and opens a <strong>draft</strong> GitHub pull request
+              when the build stage succeeds.
+            </p>
+          </li>
+          <li>
+            <span class="step-num">Step 4</span>
+            <h3>Review and fix</h3>
+            <p>
+              Reviewer agents approve or request changes; fixer agents address findings. The loop
+              runs for up to your configured review rounds (default 3, max 10). You promote or merge
+              when ready.
+            </p>
+          </li>
+        </ol>
+      </section>
+
+      <section id="features" aria-labelledby="features-title">
+        <h2 id="features-title">Features</h2>
+        <div class="features">
+          <article class="feature-card">
+            <h3>Linux, macOS, and Windows</h3>
+            <p>
+              Same npm runner on major desktop OSes; use PowerShell or terminal per the npm README
+              for Windows setup.
+            </p>
+          </article>
+          <article class="feature-card">
+            <h3>Per-stage models</h3>
+            <p>
+              Pick models for build, review, and fix stages via <code>stageModels</code> or runner
+              defaults in Setup.
+            </p>
+          </article>
+          <article class="feature-card">
+            <h3>Dashboard on your LAN</h3>
+            <p>
+              Optional <code>prgenie serve</code> UI on localhost; bind <code>0.0.0.0</code> to
+              reach it from other devices on your network.
+            </p>
+          </article>
+          <article class="feature-card">
+            <h3>HTTP and MCP API</h3>
+            <p>
+              Stdio MCP (<code>npx -y prgenie mcp</code>) needs no token; HTTP MCP and the dashboard
+              use a bearer token from <code>prgenie init</code>.
+            </p>
+          </article>
+          <article class="feature-card">
+            <h3>Queued jobs</h3>
+            <p>
+              Jobs queue with a configurable concurrency limit (<code>maxActiveJobs</code>, up to
+              8).
+            </p>
+          </article>
+          <article class="feature-card">
+            <h3>Your credentials</h3>
+            <p>
+              Runs locally with your own git remotes and <code>gh auth</code> — no hosted agent
+              farm.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="quickstart" class="quickstart" aria-labelledby="quickstart-title">
+        <h2 id="quickstart-title">Quickstart</h2>
+        <p class="section-lead">
+          Install once per machine. Server id <code>prgenie-runner</code> keeps the runner separate
+          from the Cursor plugin&apos;s <code>prgenie</code> steward MCP.
+        </p>
+        <ol>
+          <li>
+            <strong>Initialize data dir and token (for HTTP serve later)</strong>
+            <pre class="pre-block"><code>npx -y prgenie init</code></pre>
+          </li>
+          <li>
+            <strong>Check prerequisites</strong>
+            <pre class="pre-block"><code>npx -y prgenie doctor</code></pre>
+          </li>
+          <li>
+            <strong>Start the optional HTTP dashboard</strong>
+            <pre class="pre-block"><code>npx -y prgenie serve</code></pre>
+            <p class="section-lead" style="margin-top: 0.75rem; margin-bottom: 0">
+              Open <code>http://127.0.0.1:9473/</code> and paste the token from
+              <code>runner.token</code>. Wire MCP with
+              <code>npx -y prgenie config --client cursor</code> when you are ready for stdio jobs.
+            </p>
+          </li>
+        </ol>
+      </section>
+
+      <section id="about" aria-labelledby="about-title">
+        <h2 id="about-title" class="visually-hidden">About</h2>
+        <p class="disambig">
+          <strong>PR Genie by radiancelux</strong> is the open-source local runner published on npm
+          as <code>prgenie</code> — not the vLLM hackathon project, prgenie.co, or other namesakes.
+          Source:
+          <a href="https://github.com/radiancelux/prgenie">github.com/radiancelux/prgenie</a>.
+          Licensed under MIT.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <nav class="footer-links" aria-label="Footer">
+          <a href="https://github.com/radiancelux/prgenie">GitHub</a>
+          <a href="https://www.npmjs.com/package/prgenie">npm</a>
+          <a href="https://github.com/radiancelux/prgenie/blob/main/packages/npm-prgenie/README.md"
+            >Documentation</a
+          >
+          <a href="https://github.com/radiancelux/prgenie/blob/main/LICENSE">MIT License</a>
+        </nav>
+        <p>© PR Genie contributors. MIT License.</p>
+      </div>
+    </footer>
+
+    <script>
+      (function () {
+        var copyButtons = document.querySelectorAll("[data-copy]");
+        copyButtons.forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var text = btn.getAttribute("data-copy") || "";
+            if (!text) return;
+            function done(ok) {
+              btn.setAttribute("aria-pressed", ok ? "true" : "false");
+              var label = ok ? "Copied" : "Copy failed";
+              btn.textContent = ok ? "Copied" : "Copy";
+              btn.setAttribute("aria-label", label);
+              if (ok) {
+                window.setTimeout(function () {
+                  btn.textContent = "Copy";
+                  btn.removeAttribute("aria-pressed");
+                }, 2000);
+              }
+            }
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(text).then(
+                function () {
+                  done(true);
+                },
+                function () {
+                  done(false);
+                },
+              );
+            } else {
+              var ta = document.createElement("textarea");
+              ta.value = text;
+              ta.setAttribute("readonly", "");
+              ta.style.position = "fixed";
+              ta.style.left = "-9999px";
+              document.body.appendChild(ta);
+              ta.select();
+              try {
+                done(document.execCommand("copy"));
+              } catch (e) {
+                done(false);
+              }
+              document.body.removeChild(ta);
+            }
+          });
+        });
+      })();
+    </script>
+  </body>
+</html>
