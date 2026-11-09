@@ -71,6 +71,16 @@ describe("shouldHideStaleJob", () => {
   });
 });
 
+describe("dashboardStageLabel queued", () => {
+  it("includes queue position when set", () => {
+    const j = baseJob({
+      stage: "building",
+      queueState: { queued: true, position: 3, since: "2026-01-01T00:00:00.000Z" },
+    });
+    assert.equal(dashboardStageLabel(j), "queued (#3)");
+  });
+});
+
 describe("formatRelativeTime", () => {
   it("returns just now for recent timestamps", () => {
     const now = Date.parse("2026-01-01T12:00:30.000Z");

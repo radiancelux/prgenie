@@ -1,6 +1,7 @@
 import type { RunnerConfig } from "./config.js";
 import { CiWatcher, type CiWatcherDeps } from "./ci-watcher.js";
-import { runJobLoop, jobSnapshot } from "./job-runner.js";
+import { runJobLoop } from "./job-runner.js";
+import { enrichJobPublicView, type JobPublicView } from "./job-api-view.js";
 import { JobControl } from "./job-control.js";
 import {
   archiveJob,
@@ -137,7 +138,7 @@ export class RunnerEngine extends EventEmitter {
     if (this.watchCi) this.ciWatcher.start();
   }
 
-  async startJob(args: StartJobArgs | Record<string, unknown>): Promise<JobRecord> {
+  async startJob(args: StartJobArgs | Record<string, unknown>): Promise<JobPublicView> {
     const normalized = normalizeStartJobArgs(
       { ...(args as Record<string, unknown>) },
       { defaultDryRun: this.config.dryRun },
@@ -148,7 +149,7 @@ export class RunnerEngine extends EventEmitter {
       return created;
     });
     this.emitJobsChanged();
-    return job;
+    return enrichJobPublicView(job);
   }
 
   private async createJobRecord(args: StartJobArgs): Promise<JobRecord> {
@@ -345,11 +346,12 @@ export class RunnerEngine extends EventEmitter {
   async list(opts?: {
     includeFinished?: boolean;
     includeArchived?: boolean;
-  }): Promise<JobRecord[]> {
-    return listJobsForDisplay(this.config.dataDir, Date.now(), {
+  }): Promise<JobPublicView[]> {
+    const jobs = await listJobsForDisplay(this.config.dataDir, Date.now(), {
       includeFinished: opts?.includeFinished,
       includeArchived: opts?.includeArchived,
     });
+    return jobs.map((j) => enrichJobPublicView(j));
   }
 
   async jobsMeta(): Promise<{ totalOnDisk: number; mergedHidden: number; archived: number }> {
@@ -357,12 +359,14 @@ export class RunnerEngine extends EventEmitter {
   }
 
   /** Live job, else archived job (read-only transcript). */
-  async get(jobId: string) {
+  async get(jobId: string): Promise<JobPublicView | null> {
     const job =
       (await loadJob(this.config.dataDir, jobId)) ??
       (await loadArchivedJob(this.config.dataDir, jobId));
     if (!job) return null;
-    return jobSnapshot(this.config, job);
+    const { readLogTail } = await import("./store.js");
+    const logTail = await readLogTail(job.logPath);
+    return enrichJobPublicView(job, { logTail });
   }
 
   async archive(jobId: string): Promise<ArchiveJobResult> {

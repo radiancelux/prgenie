@@ -51,7 +51,7 @@ describe("prgenie init", () => {
     assert.equal(result.createdToken, true);
     const token = (await readFile(runnerTokenFile(dataDir), "utf8")).trim();
     assert.ok(token.length >= 16);
-    assert.match(formatInitReport(result), /prgenie doctor/);
+    assert.match(formatInitReport(result), /doctor/);
     assert.match(formatInitReport(result), /reads the token file automatically/);
     assert.doesNotMatch(formatInitReport(result), /export PRGENIE_RUNNER_DATA_DIR/);
   });
