@@ -182,7 +182,11 @@ describe("RunnerEngine queue", () => {
 
     const dequeued = await loadJob(dataDir, queued.id);
     assert.equal(dequeued?.queueState?.queued, undefined);
-    assert.equal(engine.isRunning(queued.id), true, "queued job should start while the first still runs");
+    assert.equal(
+      engine.isRunning(queued.id),
+      true,
+      "queued job should start while the first still runs",
+    );
 
     await waitForIdle(engine, [running.id, queued.id]);
   });
