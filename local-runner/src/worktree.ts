@@ -180,6 +180,26 @@ export async function ensureWorktree(
 
   await bestEffortFetchOrigin(repoPath, gitImpl);
 
+  const remoteRef = `origin/${branch}`;
+  const remoteProbe = await gitImpl(repoPath, ["rev-parse", "--verify", remoteRef]);
+  if (remoteProbe.code === 0) {
+    const remoteSha = remoteProbe.stdout.trim();
+    const add = await gitImpl(repoPath, ["worktree", "add", "-B", branch, wt, remoteRef]);
+    if (add.code === 0) {
+      const defaultBase = settings
+        ? (await resolveWorktreeBaseRef(repoPath, settings, gitImpl)).ref
+        : "origin/main";
+      const baseTip = await resolveBaseTip(repoPath, defaultBase, gitImpl);
+      return {
+        path: wt,
+        baseRef: baseTip?.baseRef ?? defaultBase,
+        baseSha: baseTip?.baseSha ?? remoteSha,
+      };
+    }
+    const remoteAddErr = add.stderr.trim() || add.stdout.trim();
+    throw new Error(await enrichWorktreeAddFailure(repoPath, branch, remoteAddErr, opts?.dataDir));
+  }
+
   const bases = settings ? baseRefProbeOrder(settings) : ["origin/main", "origin/master", "main"];
   let lastErr = "";
   for (const base of bases) {
@@ -311,18 +331,62 @@ export async function removeWorktree(
   }
 }
 
-export async function rebaseOntoBase(worktree: string, settings?: RunnerSettings): Promise<void> {
+export type GitOperationInProgress = "rebase" | "merge" | "cherry-pick";
+
+/** Detect an unfinished rebase, merge, or cherry-pick before handing the worktree to an agent. */
+export async function detectGitOperationInProgress(
+  worktree: string,
+  gitImpl: GitFn = git,
+): Promise<GitOperationInProgress | null> {
+  const checks: Array<{ ref: string; op: GitOperationInProgress }> = [
+    { ref: "REBASE_HEAD", op: "rebase" },
+    { ref: "MERGE_HEAD", op: "merge" },
+    { ref: "CHERRY_PICK_HEAD", op: "cherry-pick" },
+  ];
+  for (const { ref, op } of checks) {
+    const probe = await gitImpl(worktree, ["rev-parse", "-q", "--verify", ref]);
+    if (probe.code === 0) return op;
+  }
+  return null;
+}
+
+export async function abortGitOperationInProgress(
+  worktree: string,
+  op: GitOperationInProgress,
+  gitImpl: GitFn = git,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const cmd =
+    op === "rebase"
+      ? ["rebase", "--abort"]
+      : op === "merge"
+        ? ["merge", "--abort"]
+        : ["cherry-pick", "--abort"];
+  const res = await gitImpl(worktree, cmd);
+  if (res.code === 0) return { ok: true };
+  const err = res.stderr.trim() || res.stdout.trim() || `git ${cmd.join(" ")} failed`;
+  return { ok: false, error: err };
+}
+
+/** Update the branch tip onto the default base with merge (not rebase) so a normal push works. */
+export async function mergeOntoBase(worktree: string, settings?: RunnerSettings): Promise<void> {
   await git(worktree, ["fetch", "origin"]);
   const order = settings ? baseRefProbeOrder(settings) : ["origin/main", "origin/master", "main"];
   for (const base of order) {
     const probe = await git(worktree, ["rev-parse", "--verify", base]);
-    if (probe.code === 0) {
-      const rb = await git(worktree, ["rebase", base]);
-      if (rb.code !== 0) {
-        throw new Error(`git rebase ${base} failed: ${rb.stderr.trim()}`);
-      }
-      return;
+    if (probe.code !== 0) continue;
+    const baseSha = probe.stdout.trim();
+    const contains = await git(worktree, ["merge-base", "--is-ancestor", baseSha, "HEAD"]);
+    if (contains.code === 0) return;
+    const mg = await git(worktree, ["merge", "--no-edit", base]);
+    if (mg.code !== 0) {
+      throw new Error(`git merge ${base} failed: ${mg.stderr.trim()}`);
     }
+    return;
   }
-  throw new Error("Could not find origin/main or origin/master for rebase");
+  throw new Error("Could not find origin/main or origin/master for merge");
+}
+
+/** @deprecated Use mergeOntoBase — rebasing rewrites pushed history. */
+export async function rebaseOntoBase(worktree: string, settings?: RunnerSettings): Promise<void> {
+  return mergeOntoBase(worktree, settings);
 }

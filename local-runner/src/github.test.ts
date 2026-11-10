@@ -1,5 +1,8 @@
-import { describe, it } from "node:test";
+import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   findVerdictInCommentsSince,
   findVerdictInReviewsSince,
@@ -144,6 +147,13 @@ describe("verdict source priority", () => {
 });
 
 describe("isBranchSyncedWithOrigin", () => {
+  let wt = "";
+
+  beforeEach(async () => {
+    wt = await mkdtemp(path.join(os.tmpdir(), "lr-sync-wt-"));
+    await mkdir(wt, { recursive: true });
+  });
+
   it("passes when local HEAD matches origin", async () => {
     const gitImpl: GitFn = async (_cwd, args) => {
       if (args[0] === "fetch") return { code: 0, stdout: "", stderr: "" };
@@ -155,8 +165,41 @@ describe("isBranchSyncedWithOrigin", () => {
       }
       return { code: 1, stdout: "", stderr: "unexpected" };
     };
-    const result = await isBranchSyncedWithOrigin("/wt", "feat/x", gitImpl);
+    const result = await isBranchSyncedWithOrigin(wt, "feat/x", gitImpl);
     assert.deepEqual(result, { ok: true });
+  });
+
+  it("reports missing worktree cwd before spawning git", async () => {
+    const gitImpl: GitFn = async () => {
+      return { code: 1, stdout: "", stderr: "should not run" };
+    };
+    const result = await isBranchSyncedWithOrigin("/no/such/worktree", "feat/x", gitImpl);
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.match(result.reason, /worktree directory is missing/i);
+      assert.match(result.reason, /ENOENT/i);
+    }
+  });
+
+  it("explains diverged history after a rebase", async () => {
+    const gitImpl: GitFn = async (_cwd, args) => {
+      if (args[0] === "fetch") return { code: 0, stdout: "", stderr: "" };
+      if (args[0] === "rev-parse" && args[1] === "HEAD") {
+        return { code: 0, stdout: "local\n", stderr: "" };
+      }
+      if (args[0] === "rev-parse" && args[1] === "refs/remotes/origin/feat/x") {
+        return { code: 0, stdout: "remote\n", stderr: "" };
+      }
+      if (args[0] === "merge-base" && args[1] === "--is-ancestor") {
+        return { code: 1, stdout: "", stderr: "" };
+      }
+      return { code: 1, stdout: "", stderr: "" };
+    };
+    const result = await isBranchSyncedWithOrigin(wt, "feat/x", gitImpl);
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.match(result.reason, /diverged|rebase|force-push/i);
+    }
   });
 
   it("fails when local is ahead of origin", async () => {
@@ -168,12 +211,18 @@ describe("isBranchSyncedWithOrigin", () => {
       if (args[0] === "rev-parse" && args[1] === "refs/remotes/origin/feat/x") {
         return { code: 0, stdout: "remote\n", stderr: "" };
       }
+      if (args[0] === "merge-base" && args[1] === "--is-ancestor" && args[2] === "remote") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "merge-base" && args[1] === "--is-ancestor") {
+        return { code: 1, stdout: "", stderr: "" };
+      }
       return { code: 1, stdout: "", stderr: "" };
     };
-    const result = await isBranchSyncedWithOrigin("/wt", "feat/x", gitImpl);
+    const result = await isBranchSyncedWithOrigin(wt, "feat/x", gitImpl);
     assert.equal(result.ok, false);
     if (!result.ok) {
-      assert.match(result.reason, /does not match origin/);
+      assert.match(result.reason, /unpushed commits|ahead of origin/i);
     }
   });
 });

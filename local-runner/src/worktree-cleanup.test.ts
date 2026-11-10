@@ -7,6 +7,7 @@ import type { RunnerConfig } from "./config.js";
 import { MERGED_HIDE_AFTER_MS } from "./ci.js";
 import {
   tryRemoveJobWorktree,
+  worktreeCleanupReason,
   worktreeHasUncommittedChanges,
   worktreePathExists,
 } from "./worktree-cleanup.js";
@@ -67,6 +68,23 @@ function job(overrides: Partial<JobRecord> = {}): JobRecord {
 }
 
 describe("worktree cleanup", () => {
+  it("does not schedule cleanup for non-terminal stages even when merged is hidden", () => {
+    const mergedAt = Date.now() - MERGED_HIDE_AFTER_MS - 60_000;
+    const active = job({
+      stage: "fixing",
+      worktreePath: "/wt/live",
+      ciStatus: {
+        status: "merged",
+        mergedAt: new Date(mergedAt).toISOString(),
+        checkedAt: "",
+        source: "github",
+      },
+    });
+    assert.equal(worktreeCleanupReason(active, Date.now()), null);
+    const stuck = job({ stage: "stuck", worktreePath: "/wt/done", ciStatus: null });
+    assert.equal(worktreeCleanupReason(stuck), null);
+  });
+
   it("already-missing worktree path clears without throw", async () => {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-wt-miss-"));
     const config = testConfig(dataDir);

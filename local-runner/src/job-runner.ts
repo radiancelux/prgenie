@@ -35,7 +35,13 @@ import {
 import { readLogTail, saveJob } from "./store.js";
 import type { JobEvent, JobRecord, JobStage } from "./types.js";
 import { sumTokenUsageFromLog } from "./usage.js";
-import { cloneRepo, ensureWorktree, rebaseOntoBase } from "./worktree.js";
+import {
+  branchHasNoCommitsBeyondBase,
+  cloneRepo,
+  ensureWorktree,
+  mergeOntoBase,
+} from "./worktree.js";
+import { branchExistsOnOrigin, worktreePathExists } from "./worktree-cleanup.js";
 import { cursorWorktreeDir } from "./paths.js";
 import { fetchPrViewInfo, readHeadSha } from "./draft-pr.js";
 import { runAgentWithWatchdog, type StageWatchdogOptions } from "./stage-watchdog.js";
@@ -45,7 +51,12 @@ import { trackShellToolLine, type ShellToolTracker } from "./stream-json-log.js"
 import { modelForActiveStage, recordActualModel } from "./job-models.js";
 import { setJobError } from "./job-error.js";
 import { parseWatchdogPolicy } from "./runner-policy.js";
-import { jobExpectsPr, resolvePostBuildNoPr } from "./job-pr-policy.js";
+import {
+  jobExpectsPr,
+  NO_PR_GUARD_MESSAGE,
+  resolvePostBuildNoPr,
+  resolvePostBuildNoPrError,
+} from "./job-pr-policy.js";
 import { diagnosePrSetupIssues, enrichNoPrGuardMessage } from "./job-preflight.js";
 import { ensureDraftPrAfterBuild } from "./post-build-pr.js";
 import { git as defaultGit, gh as defaultGh } from "./github.js";
@@ -292,6 +303,8 @@ async function persistJob(
   }
 }
 
+const STAGES_CLEAR_ERROR = new Set<JobStage>(["building", "reviewing", "fixing", "approved"]);
+
 async function setStage(
   config: RunnerConfig,
   job: JobRecord,
@@ -300,6 +313,7 @@ async function setStage(
   cb?: JobCallbacks,
 ): Promise<void> {
   job.stage = stage;
+  if (STAGES_CLEAR_ERROR.has(stage)) job.error = null;
   await persistJob(config, job, control);
   emit(cb, job, { type: "stage", stage, reviewRound: job.reviewRound });
 }
@@ -318,7 +332,7 @@ async function runFixStage(
 ): Promise<boolean> {
   await setStage(config, job, "fixing", control, callbacks);
   if (!job.dryRun) {
-    await rebaseOntoBase(wt, baseSettings);
+    await mergeOntoBase(wt, baseSettings);
   }
   const fixDefault = isDocsJob(job) ? resolveDocsFixPrompt() : DEFAULT_FIX_PROMPT;
   const fixPrompt = await readPromptFile(job.input.fixPromptFile ?? "", fixDefault);
@@ -385,9 +399,22 @@ async function ensurePushedBeforeReview(
   callbacks?: JobCallbacks,
 ): Promise<boolean> {
   if (job.dryRun) return true;
+  if (!(await worktreePathExists(wt))) {
+    const repoRoot = job.input.repoPath?.trim();
+    const onOrigin =
+      repoRoot != null && (await branchExistsOnOrigin(repoRoot, job.input.branch));
+    job.error = onOrigin
+      ? `Job worktree is missing (${wt}) but origin already has branch ${job.input.branch}. Use continue_job to recreate the checkout.`
+      : `Job worktree is missing (${wt}). Use continue_job to recreate the checkout.`;
+    await setStage(config, job, "stuck", control, callbacks);
+    return false;
+  }
   const sync = await isBranchSyncedWithOrigin(wt, job.input.branch);
   if (sync.ok) return true;
-  job.error = `Branch not pushed to origin before review: ${sync.reason}`;
+  const prefix = /missing|diverged|force-push/i.test(sync.reason)
+    ? sync.reason
+    : `Branch not pushed to origin before review: ${sync.reason}`;
+  job.error = prefix;
   await setStage(config, job, "stuck", control, callbacks);
   return false;
 }
@@ -471,6 +498,17 @@ export async function runJobLoop(
       await persistJob(config, job, control);
     }
 
+    if (!job.dryRun && !job.prUrl) {
+      const existingPr = await findPrForBranch(wt, job.input.branch);
+      if (existingPr) {
+        job.prUrl = existingPr.url;
+        job.prNumber = existingPr.number;
+        await persistJob(config, job, control);
+        emit(callbacks, job, { type: "pr", url: existingPr.url });
+        callbacks?.onPrLinked?.(job.id);
+      }
+    }
+
     // --- building / implementor ---
     if (job.stage === "building" && !job.prUrl) {
       let prompt: string;
@@ -524,7 +562,15 @@ export async function runJobLoop(
         return;
       }
 
-      let pr = job.dryRun ? null : await findPrForBranch(wt, job.input.branch);
+      let pr: Awaited<ReturnType<typeof findPrForBranch>> = null;
+      if (!job.dryRun) {
+        if (job.prUrl && job.prNumber != null) {
+          pr = { url: job.prUrl, number: job.prNumber };
+        } else {
+          pr = await findPrForBranch(wt, job.input.branch);
+        }
+      }
+      let ensurePrError: string | undefined;
       if (!pr && !job.dryRun && jobExpectsPr(job.input)) {
         const ensured = await ensureDraftPrAfterBuild(
           {
@@ -542,6 +588,7 @@ export async function runJobLoop(
             "utf8",
           ).catch(() => undefined);
         } else {
+          ensurePrError = ensured.error;
           await appendFile(
             job.logPath,
             `[runner] could not open PR after build: ${ensured.error}\n`,
@@ -564,8 +611,17 @@ export async function runJobLoop(
             emit(callbacks, job, { type: "done", stage: "approved" });
             return;
           }
-          const diagnosis = await diagnosePrSetupIssues(repoRoot);
-          job.error = enrichNoPrGuardMessage(noPr.error, diagnosis);
+          const branchMatchesBase = await branchHasNoCommitsBeyondBase(wt, baseSettings);
+          let errorText = resolvePostBuildNoPrError({
+            input: job.input,
+            ensureError: ensurePrError,
+            branchMatchesBase,
+          });
+          if (errorText === NO_PR_GUARD_MESSAGE) {
+            const diagnosis = await diagnosePrSetupIssues(repoRoot);
+            errorText = enrichNoPrGuardMessage(errorText, diagnosis);
+          }
+          job.error = errorText;
           await setStage(config, job, "stuck", control, callbacks);
           return;
         }

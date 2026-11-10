@@ -45,11 +45,18 @@ export async function branchExistsOnOrigin(
   return res.stdout.trim().length > 0;
 }
 
+const TERMINAL_WORKTREE_CLEANUP_STAGES = new Set([
+  "failed",
+  "stopped",
+  "changes_remaining",
+  "approved",
+  "stuck",
+]);
+
 export function worktreeCleanupReason(job: JobRecord, nowMs = Date.now()): WorktreeCleanupReason {
   if (!job.worktreePath?.trim()) return null;
+  if (!TERMINAL_WORKTREE_CLEANUP_STAGES.has(job.stage)) return null;
   if (shouldHideMergedJob(job, nowMs)) return "merged_hidden";
-  const terminal = new Set(["failed", "stopped", "changes_remaining", "approved", "stuck"]);
-  if (!terminal.has(job.stage)) return null;
   if (job.ciStatus?.status === "merged" || job.ciStatus?.mergedAt) {
     return "terminal_merged";
   }
@@ -241,7 +248,11 @@ export async function cleanupHiddenMergedWorktrees(
   log?: (msg: string) => void,
 ): Promise<void> {
   for (const job of jobs) {
-    if (shouldHideMergedJob(job, nowMs) && job.worktreePath) {
+    if (
+      shouldHideMergedJob(job, nowMs) &&
+      job.worktreePath &&
+      TERMINAL_WORKTREE_CLEANUP_STAGES.has(job.stage)
+    ) {
       await tryRemoveJobWorktree(config, job, { reason: "merged_hidden", log });
     }
   }
