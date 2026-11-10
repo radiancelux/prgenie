@@ -9,7 +9,7 @@ import type { RunnerConfig } from "./config.js";
 import { RunnerEngine } from "./engine.js";
 import { JobControl } from "./job-control.js";
 import { createJob, loadJob, saveJob } from "./store.js";
-import { saveSettings } from "./settings.js";
+import { loadSettings, saveSettings } from "./settings.js";
 import { BranchConflictError } from "./job-queue.js";
 
 const execFileAsync = promisify(execFile);
@@ -154,6 +154,37 @@ describe("RunnerEngine queue", () => {
     for (const r of results) {
       if (r.status === "rejected") assert.ok(r.reason instanceof BranchConflictError);
     }
+  });
+
+  it("raising maxActiveJobs starts queued jobs without waiting for a running job to finish", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-engine-q-cap-"));
+    const repo = await mkdtemp(path.join(os.tmpdir(), "lr-engine-q-cap-repo-"));
+    await initBareGitRepo(repo);
+    await saveSettings(dataDir, { maxActiveJobs: 1 });
+    const engine = new RunnerEngine(testConfig(dataDir), { watchCi: false });
+    const jobArgs = (branch: string) => ({
+      repoPath: repo,
+      branch,
+      promptFile: prompt,
+      maxRounds: 1,
+      dryRun: true,
+    });
+    const running = await engine.startJob(jobArgs("feat/running"));
+    assert.equal(running.queueState?.queued, undefined);
+    const queued = await engine.startJob(jobArgs("feat/queued"));
+    assert.equal(queued.queueState?.queued, true);
+    assert.equal(engine.isRunning(running.id), true);
+    assert.equal(engine.isRunning(queued.id), false);
+
+    const prior = await loadSettings(dataDir);
+    await saveSettings(dataDir, { maxActiveJobs: 2 });
+    await engine.settingsSaved(prior.maxActiveJobs);
+
+    const dequeued = await loadJob(dataDir, queued.id);
+    assert.equal(dequeued?.queueState?.queued, undefined);
+    assert.equal(engine.isRunning(queued.id), true, "queued job should start while the first still runs");
+
+    await waitForIdle(engine, [running.id, queued.id]);
   });
 
   it("drainQueue fills every free slot", async () => {

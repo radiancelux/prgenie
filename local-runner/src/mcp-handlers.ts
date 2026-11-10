@@ -244,7 +244,9 @@ const RUNNER_TOOL_HANDLERS: Record<string, ToolHandler> = {
       return toPublicSettings(engine.config, await loadSettings(dataDir));
     }
     const patch = parseSettingsPatch((hasPatch ? (args.patch as Json) : args) as Json);
+    const prior = await loadSettings(dataDir);
     const saved = await saveSettings(dataDir, patch);
+    await engine.settingsSaved(prior.maxActiveJobs);
     return toPublicSettings(engine.config, saved);
   },
 };

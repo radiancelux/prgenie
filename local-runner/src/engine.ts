@@ -191,6 +191,17 @@ export class RunnerEngine extends EventEmitter {
     return job;
   }
 
+  /**
+   * Call after runner settings are persisted (HTTP PATCH /api/settings or MCP `settings`).
+   * Starts queued jobs immediately when concurrency was raised.
+   */
+  async settingsSaved(priorMaxActiveJobs: number): Promise<void> {
+    const settings = await loadSettings(this.config.dataDir);
+    if (settings.maxActiveJobs > priorMaxActiveJobs) {
+      await this.drainQueue();
+    }
+  }
+
   /** Start queued jobs until every free slot is used. */
   private async drainQueue(): Promise<void> {
     const started = await this.withQueueLock(async () => {

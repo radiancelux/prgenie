@@ -379,7 +379,9 @@ export function startHttpServer(
         const payload = await readJsonObject(req, guard);
         if (!payload || guard.started) return;
         const patch = parseSettingsPatch(payload);
+        const prior = await loadSettings(config.dataDir);
         const saved = await saveSettings(config.dataDir, patch);
+        await engine.settingsSaved(prior.maxActiveJobs);
         guard.json(200, toPublicSettings(config, saved) as Record<string, unknown>);
         return;
       }
