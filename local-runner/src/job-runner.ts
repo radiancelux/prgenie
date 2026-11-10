@@ -401,8 +401,7 @@ async function ensurePushedBeforeReview(
   if (job.dryRun) return true;
   if (!(await worktreePathExists(wt))) {
     const repoRoot = job.input.repoPath?.trim();
-    const onOrigin =
-      repoRoot != null && (await branchExistsOnOrigin(repoRoot, job.input.branch));
+    const onOrigin = repoRoot != null && (await branchExistsOnOrigin(repoRoot, job.input.branch));
     job.error = onOrigin
       ? `Job worktree is missing (${wt}) but origin already has branch ${job.input.branch}. Use continue_job to recreate the checkout.`
       : `Job worktree is missing (${wt}). Use continue_job to recreate the checkout.`;

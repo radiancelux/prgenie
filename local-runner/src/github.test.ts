@@ -199,6 +199,7 @@ describe("isBranchSyncedWithOrigin", () => {
     assert.equal(result.ok, false);
     if (!result.ok) {
       assert.match(result.reason, /diverged|rebase|force-push/i);
+      assert.equal(result.mismatch, "diverged");
     }
   });
 
@@ -223,6 +224,7 @@ describe("isBranchSyncedWithOrigin", () => {
     assert.equal(result.ok, false);
     if (!result.ok) {
       assert.match(result.reason, /unpushed commits|ahead of origin/i);
+      assert.equal(result.mismatch, "ahead");
     }
   });
 });

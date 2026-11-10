@@ -285,21 +285,20 @@ async function worktreeCwdExists(cwd: string): Promise<boolean> {
 
 function spawnGitEnoentReason(cwd: string, stderr: string): string | null {
   if (!/ENOENT/i.test(stderr)) return null;
-  return (
-    `job worktree directory is missing (${cwd}). When the checkout path does not exist, Node reports spawn git ENOENT — that means a missing working directory, not a missing git binary. Use continue_job to recreate the worktree.`
-  );
+  return `job worktree directory is missing (${cwd}). When the checkout path does not exist, Node reports spawn git ENOENT — that means a missing working directory, not a missing git binary. Use continue_job to recreate the worktree.`;
 }
 
 export async function isBranchSyncedWithOrigin(
   cwd: string,
   branch: string,
   gitImpl: GitFn = git,
-): Promise<{ ok: true } | { ok: false; reason: string }> {
+): Promise<
+  { ok: true } | { ok: false; reason: string; mismatch?: "ahead" | "behind" | "diverged" }
+> {
   if (!(await worktreeCwdExists(cwd))) {
     return {
       ok: false,
-      reason:
-        `job worktree directory is missing (${cwd}). When the checkout path does not exist, Node reports spawn git ENOENT — that means a missing working directory, not a missing git binary. Use continue_job to recreate the worktree.`,
+      reason: `job worktree directory is missing (${cwd}). When the checkout path does not exist, Node reports spawn git ENOENT — that means a missing working directory, not a missing git binary. Use continue_job to recreate the worktree.`,
     };
   }
   const fetchRes = await gitImpl(cwd, ["fetch", "origin", branch]);
@@ -322,22 +321,22 @@ export async function isBranchSyncedWithOrigin(
   const remoteSha = remote.stdout.trim();
   if (localSha === remoteSha) return { ok: true };
 
-  const remoteIsAncestor = await gitImpl(cwd, [
-    "merge-base",
-    "--is-ancestor",
-    remoteSha,
-    localSha,
-  ]);
+  const remoteIsAncestor = await gitImpl(cwd, ["merge-base", "--is-ancestor", remoteSha, localSha]);
   if (remoteIsAncestor.code === 0) {
-    return { ok: false, reason: "local branch has unpushed commits (ahead of origin)" };
+    return {
+      ok: false,
+      reason: "local branch has unpushed commits (ahead of origin)",
+      mismatch: "ahead",
+    };
   }
   const localIsAncestor = await gitImpl(cwd, ["merge-base", "--is-ancestor", localSha, remoteSha]);
   if (localIsAncestor.code === 0) {
-    return { ok: false, reason: "local HEAD is behind origin" };
+    return { ok: false, reason: "local HEAD is behind origin", mismatch: "behind" };
   }
   return {
     ok: false,
     reason:
       "local HEAD diverged from origin (for example after a rebase). A normal git push cannot update the remote without force-push, which the runner does not perform.",
+    mismatch: "diverged",
   };
 }

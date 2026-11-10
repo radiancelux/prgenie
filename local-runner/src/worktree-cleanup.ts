@@ -121,7 +121,7 @@ async function pristineUnpushedFailedWorktree(
   if (job.stage !== "failed" && job.stage !== "stopped") return false;
   const sync = await isBranchSyncedWithOrigin(wt, job.input.branch, gitImpl);
   if (sync.ok) return false;
-  if (sync.reason.includes("does not match")) return false;
+  if (sync.mismatch) return false;
   if (await worktreeHasUncommittedChanges(wt, gitImpl)) return false;
   if (!(await branchHasNoCommitsBeyondBase(wt, settings, gitImpl))) return false;
   const onOrigin = await branchExistsOnOrigin(wt, job.input.branch, gitImpl);

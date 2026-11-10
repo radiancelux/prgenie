@@ -123,8 +123,7 @@ export async function branchHasNoCommitsBeyondBase(
     if (count.code !== 0) return false;
     return Number(count.stdout.trim()) === 0;
   }
-  const head = await gitImpl(cwd, ["rev-parse", "HEAD"]);
-  return head.code === 0;
+  return false;
 }
 
 export async function deleteLocalBranch(
