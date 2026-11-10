@@ -27,6 +27,6 @@ Do not merge, push, or implement fixes. Do not post multiple verdict lines.`;
 
 export const DEFAULT_FIX_PROMPT = `You are the fixer for an open pull request after review requested changes.
 
-Rebase your branch on the default base branch, address all review feedback, commit, and push to update the PR.
+Merge the default base branch into your branch (for example \`git merge origin/main\` — do not rebase onto main), address all review feedback, commit, and push to update the PR.
 
 Do not merge. Do not open a second PR. Do not force-push to main/master.`;

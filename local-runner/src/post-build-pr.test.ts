@@ -72,6 +72,19 @@ describe("post-build-pr", () => {
     assert.deepEqual(await commitAllIfDirty("/wt", "msg", git), { ok: true });
   });
 
+  it("returns gh error text when pr create fails", async () => {
+    const gh = ghImpl({
+      "pr\0create\0--draft\0--head\0b\0--title\0t\0--body\0t": {
+        code: 1,
+        stdout: "",
+        stderr: "GraphQL: No commits between main and b",
+      },
+    });
+    const res = await createDraftPr("/wt", "b", "t", gh);
+    assert.equal(res.ok, false);
+    if (!res.ok) assert.match(res.error, /No commits between/i);
+  });
+
   it("createDraftPr parses gh output", async () => {
     const gh = ghImpl({
       "pr\0create\0--draft\0--head\0b\0--title\0t\0--body\0t": {

@@ -94,12 +94,48 @@ describe("ensureWorktree", () => {
     assert.equal(result.baseSha, baseSha);
   });
 
+  it("bases a new worktree on origin/branch when the remote branch already exists", async () => {
+    const remoteSha = "f".repeat(40);
+    const calls: string[][] = [];
+    const gitImpl = async (_cwd: string, args: string[]) => {
+      calls.push(args);
+      if (args[0] === "worktree" && args[1] === "list") {
+        return ok("worktree /repo/proj\n");
+      }
+      if (args[0] === "fetch") return ok();
+      if (args[0] === "rev-parse" && args[1] === "--verify" && args[2] === `origin/${branch}`) {
+        return ok(remoteSha);
+      }
+      if (args[0] === "rev-parse" && args[1] === "--verify" && args[2] === "origin/main") {
+        return ok(baseSha);
+      }
+      if (args[0] === "rev-parse" && args[2] === "origin/main") return ok(baseSha);
+      if (args[0] === "worktree" && args[1] === "add") {
+        assert.equal(args[5], `origin/${branch}`);
+        return ok();
+      }
+      if (args[0] === "show-ref") return fail("");
+      return ok();
+    };
+
+    const result = await ensureWorktree(repoPath, jobId, branch, undefined, { gitImpl });
+    assert.equal(result.path, wt);
+    assert.equal(result.baseRef, "origin/main");
+    assert.equal(result.baseSha, baseSha);
+    const add = calls.find((a) => a[0] === "worktree" && a[1] === "add");
+    assert.ok(add);
+    assert.equal(add![5], `origin/${branch}`);
+  });
+
   it("refuses -B when the local branch has commits beyond the base", async () => {
     const gitImpl = async (_cwd: string, args: string[]) => {
       if (args[0] === "worktree" && args[1] === "list") {
         return ok("worktree /repo/proj\n");
       }
       if (args[0] === "fetch") return ok();
+      if (args[0] === "rev-parse" && args[1] === "--verify" && args[2] === `origin/${branch}`) {
+        return fail("");
+      }
       if (args[0] === "rev-parse" && args[1] === "--verify") return ok(baseSha);
       if (args[0] === "show-ref") return ok();
       if (args[0] === "rev-list" && args[1] === "--count") return ok("2\n");
