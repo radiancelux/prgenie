@@ -11,7 +11,12 @@ import {
 import { loadSettings } from "./settings.js";
 import { loadArchivedJob, loadJob, saveJob } from "./store.js";
 import type { JobContinueHistoryEntry, JobRecord } from "./types.js";
-import { ensureContinueWorktree } from "./worktree.js";
+import {
+  abortGitOperationInProgress,
+  detectGitOperationInProgress,
+  ensureContinueWorktree,
+} from "./worktree.js";
+import { git as defaultGit } from "./github.js";
 import { assertContinueMaxRounds, normalizeContinueJobArgs } from "./settings-validation.js";
 import type { ContinueJobArgs } from "./types.js";
 
@@ -48,6 +53,7 @@ export type ContinueJobDeps = {
   isRunning: (id: string) => boolean;
   ensureWorktree?: typeof ensureContinueWorktree;
   readPromptFile?: (filePath: string) => Promise<string>;
+  gitImpl?: typeof defaultGit;
 };
 
 async function readOptionalPromptFile(
@@ -139,6 +145,20 @@ export async function prepareJobContinue(
     );
     job.worktreePath = wt.path;
     worktree = wt.reused ? "reused" : "recreated";
+    const gitImpl = deps.gitImpl ?? defaultGit;
+    const pending = await detectGitOperationInProgress(wt.path, gitImpl);
+    if (pending) {
+      const aborted = await abortGitOperationInProgress(wt.path, pending, gitImpl);
+      if (!aborted.ok) {
+        throw new ContinueJobError(
+          `worktree has an unfinished git ${pending} (${aborted.error}). Resolve or run git ${pending === "rebase" ? "rebase --abort" : pending === "merge" ? "merge --abort" : "cherry-pick --abort"} manually, then continue again.`,
+          "not_terminal",
+        );
+      }
+      job.steerQueue.push(
+        `[runner] Aborted unfinished git ${pending} before continue so the agent starts from a clean branch.`,
+      );
+    }
   } else if (job.input.repoPath?.trim()) {
     job.worktreePath = job.input.repoPath;
     worktree = "reused";
@@ -175,6 +195,7 @@ export async function prepareJobContinue(
   }
 
   job.stopRequested = false;
+  job.error = null;
   job.stage = resumeBuild ? "building" : "fixing";
   if (resumeBuild) job.reviewRound = 0;
   if (job.queueState?.queued) job.queueState = undefined;

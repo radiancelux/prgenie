@@ -74,6 +74,17 @@ describe("prepareJobContinue", () => {
     dataDir = await mkdtemp(path.join(os.tmpdir(), "lr-continue-"));
   });
 
+  it("clears stale job.error when continuing", async () => {
+    const job = await seedTerminal(dataDir, "job-err", "stuck", { error: "old failure" });
+    const result = await prepareJobContinue(
+      cfg(dataDir),
+      { id: job.id },
+      { isRunning: () => false },
+    );
+    assert.equal(result.job.error, null);
+    assert.equal((await loadJob(dataDir, job.id))?.error, null);
+  });
+
   for (const stage of [...CONTINUE_TERMINAL_STAGES] as JobStage[]) {
     it(`allows continue on terminal stage ${stage}`, async () => {
       const job = await seedTerminal(dataDir, `job-${stage}`, stage);

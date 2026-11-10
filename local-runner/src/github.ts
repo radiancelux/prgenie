@@ -273,23 +273,70 @@ export async function postPrComment(cwd: string, prNumber: number, body: string)
 
 export type GitFn = typeof git;
 
+async function worktreeCwdExists(cwd: string): Promise<boolean> {
+  const { access } = await import("node:fs/promises");
+  try {
+    await access(cwd);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function spawnGitEnoentReason(cwd: string, stderr: string): string | null {
+  if (!/ENOENT/i.test(stderr)) return null;
+  return `job worktree directory is missing (${cwd}). When the checkout path does not exist, Node reports spawn git ENOENT — that means a missing working directory, not a missing git binary. Use continue_job to recreate the worktree.`;
+}
+
 export async function isBranchSyncedWithOrigin(
   cwd: string,
   branch: string,
   gitImpl: GitFn = git,
-): Promise<{ ok: true } | { ok: false; reason: string }> {
+): Promise<
+  { ok: true } | { ok: false; reason: string; mismatch?: "ahead" | "behind" | "diverged" }
+> {
+  if (!(await worktreeCwdExists(cwd))) {
+    return {
+      ok: false,
+      reason: `job worktree directory is missing (${cwd}). When the checkout path does not exist, Node reports spawn git ENOENT — that means a missing working directory, not a missing git binary. Use continue_job to recreate the worktree.`,
+    };
+  }
   const fetchRes = await gitImpl(cwd, ["fetch", "origin", branch]);
   if (fetchRes.code !== 0) {
-    const reason = fetchRes.stderr.trim() || fetchRes.stdout.trim() || "git fetch failed";
+    const combined = `${fetchRes.stderr}\n${fetchRes.stdout}`.trim();
+    const enoent = spawnGitEnoentReason(cwd, combined);
+    if (enoent) return { ok: false, reason: enoent };
+    const reason = combined || "git fetch failed";
     return { ok: false, reason };
   }
   const local = await gitImpl(cwd, ["rev-parse", "HEAD"]);
   const remote = await gitImpl(cwd, ["rev-parse", `refs/remotes/origin/${branch}`]);
   if (local.code !== 0 || remote.code !== 0) {
+    const combined = `${local.stderr}\n${remote.stderr}`.trim();
+    const enoent = spawnGitEnoentReason(cwd, combined);
+    if (enoent) return { ok: false, reason: enoent };
     return { ok: false, reason: "could not resolve local or remote HEAD" };
   }
-  if (local.stdout.trim() !== remote.stdout.trim()) {
-    return { ok: false, reason: "local HEAD does not match origin" };
+  const localSha = local.stdout.trim();
+  const remoteSha = remote.stdout.trim();
+  if (localSha === remoteSha) return { ok: true };
+
+  const remoteIsAncestor = await gitImpl(cwd, ["merge-base", "--is-ancestor", remoteSha, localSha]);
+  if (remoteIsAncestor.code === 0) {
+    return {
+      ok: false,
+      reason: "local branch has unpushed commits (ahead of origin)",
+      mismatch: "ahead",
+    };
   }
-  return { ok: true };
+  const localIsAncestor = await gitImpl(cwd, ["merge-base", "--is-ancestor", localSha, remoteSha]);
+  if (localIsAncestor.code === 0) {
+    return { ok: false, reason: "local HEAD is behind origin", mismatch: "behind" };
+  }
+  return {
+    ok: false,
+    reason:
+      "local HEAD diverged from origin (for example after a rebase). A normal git push cannot update the remote without force-push, which the runner does not perform.",
+    mismatch: "diverged",
+  };
 }
