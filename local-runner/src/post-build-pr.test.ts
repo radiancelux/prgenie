@@ -83,18 +83,32 @@ describe("post-build-pr", () => {
   });
 
   it("adopts existing PR before create", async () => {
-    const gh = ghImpl([
-      ghRoute((p) => p.includes("pulls") && p.includes("state=open"), {
-        code: 0,
-        stdout: JSON.stringify([{ number: 42, html_url: "https://github.com/org/repo/pull/42" }]),
-        stderr: "",
-      }),
-    ]);
+    const calls: string[][] = [];
+    const gh = async (_cwd: string, args: string[]) => {
+      calls.push(args);
+      const path = ghPath(args);
+      if (path.includes("pulls") && path.includes("state=open")) {
+        return {
+          code: 0,
+          stdout: JSON.stringify([{ number: 42, html_url: "https://github.com/org/repo/pull/42" }]),
+          stderr: "",
+        };
+      }
+      return { code: 1, stdout: "", stderr: `unexpected gh ${path}` };
+    };
     const res = await createDraftPr("/wt", "b", "t", gh, { repoSlug: "org/repo" });
     assert.deepEqual(res, {
       ok: true,
       pr: { url: "https://github.com/org/repo/pull/42", number: 42 },
     });
+    assert.ok(
+      calls.some((a) => a.includes("-X") && a.includes("GET")),
+      "open PR lookup must use gh api GET",
+    );
+    assert.ok(
+      !calls.some((a) => a.includes("-X") && a.includes("POST")),
+      "must not attempt PR create when one is already open",
+    );
   });
 
   it("returns REST error text when pr create fails", async () => {

@@ -54,6 +54,19 @@ function parsePullInfo(row: RestPull): PrInfo | null {
   return null;
 }
 
+/** `gh api` often prints only a short message on stderr; validation details are on stdout (JSON). */
+function ghApiCombinedOutput(res: GhResult): string {
+  return `${res.stderr}\n${res.stdout}`.trim();
+}
+
+function isPrAlreadyExistsMessage(text: string): boolean {
+  return /already exists|A pull request already exists/i.test(text);
+}
+
+function isGitHubValidation422(res: GhResult): boolean {
+  return /\b422\b/.test(ghApiCombinedOutput(res));
+}
+
 export async function restFindOpenPrForBranch(
   cwd: string,
   branch: string,
@@ -64,7 +77,18 @@ export async function restFindOpenPrForBranch(
   const head = await resolveHeadQualifier(cwd, branch, repoSlug, gh);
   const res = await ghWithGithubRetry(
     cwd,
-    ["api", `${prefix}/pulls`, "-f", `head=${head}`, "-f", "state=open", "-f", "per_page=5"],
+    [
+      "api",
+      "-X",
+      "GET",
+      `${prefix}/pulls`,
+      "-f",
+      `head=${head}`,
+      "-f",
+      "state=open",
+      "-f",
+      "per_page=5",
+    ],
     gh,
   );
   if (res.code !== 0 || !res.stdout.trim()) return null;
@@ -131,11 +155,11 @@ export async function restCreateDraftPull(
       // fall through
     }
   }
-  const err = (res.stderr || res.stdout).trim() || "REST pull create failed";
+  const err = ghApiCombinedOutput(res) || "REST pull create failed";
   if (isGithubRateLimitResult(res)) {
     return { ok: false, error: err.slice(0, 400), transient: true };
   }
-  if (/already exists|A pull request already exists/i.test(err)) {
+  if (isPrAlreadyExistsMessage(err) || isGitHubValidation422(res)) {
     const existing = await restFindOpenPrForBranch(cwd, branch, repoSlug, gh);
     if (existing) return { ok: true, pr: existing };
   }
@@ -193,7 +217,7 @@ export async function restFetchCheckRunsForRef(
   const prefix = repoApiPrefix(resolveRepoSlug(repoSlug, null));
   const res = await ghWithGithubRetry(
     cwd,
-    ["api", `${prefix}/commits/${sha}/check-runs`, "-f", "per_page=100"],
+    ["api", "-X", "GET", `${prefix}/commits/${sha}/check-runs`, "-f", "per_page=100"],
     gh,
   );
   if (res.code !== 0 || !res.stdout.trim()) return [];

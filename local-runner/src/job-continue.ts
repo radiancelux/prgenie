@@ -16,7 +16,8 @@ import {
   detectGitOperationInProgress,
   ensureContinueWorktree,
 } from "./worktree.js";
-import { git as defaultGit } from "./github.js";
+import { findPrForBranch, git as defaultGit } from "./github.js";
+import type { PrInfo } from "./github.js";
 import { shouldResumePostBuildPr } from "./job-pr-policy.js";
 import { assertContinueMaxRounds, normalizeContinueJobArgs } from "./settings-validation.js";
 import type { ContinueJobArgs } from "./types.js";
@@ -55,7 +56,28 @@ export type ContinueJobDeps = {
   ensureWorktree?: typeof ensureContinueWorktree;
   readPromptFile?: (filePath: string) => Promise<string>;
   gitImpl?: typeof defaultGit;
+  findPrForBranch?: (
+    cwd: string,
+    branch: string,
+    repoSlug?: string | null,
+  ) => Promise<PrInfo | null>;
 };
+
+async function adoptOpenPrForBranchIfNeeded(
+  job: JobRecord,
+  deps: ContinueJobDeps,
+): Promise<boolean> {
+  if (job.prUrl?.trim() || job.dryRun) return false;
+  const cwd = job.worktreePath?.trim() || job.input.repoPath?.trim();
+  if (!cwd) return false;
+  const findPr = deps.findPrForBranch ?? findPrForBranch;
+  const existing = await findPr(cwd, job.input.branch, job.repoSlug);
+  if (!existing) return false;
+  job.prUrl = existing.url;
+  job.prNumber = existing.number;
+  job.postBuildPendingPr = false;
+  return true;
+}
 
 async function readOptionalPromptFile(
   filePath: string | undefined,
@@ -108,6 +130,7 @@ export async function prepareJobContinue(
       job.stage,
     );
   }
+  await adoptOpenPrForBranchIfNeeded(job, deps);
   const resumePostBuildPr = shouldResumePostBuildPr(job);
   // No PR yet: resume by re-running the build stage (same branch/worktree, then open PR when ready).
   const resumeBuild = !job.prUrl?.trim() && !resumePostBuildPr;
