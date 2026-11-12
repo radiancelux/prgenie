@@ -273,29 +273,38 @@ describe("buildGhPrViewArgs", () => {
 });
 
 describe("fetchPrCiStatus", () => {
-  it("returns merged status from gh rollup", async () => {
-    const stdout = JSON.stringify({
-      state: "MERGED",
-      mergedAt: "2026-01-01T12:00:00Z",
-      url: "https://github.com/o/r/pull/1",
-      statusCheckRollup: [{ name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }],
-    });
-    const r = await fetchPrCiStatus(
-      null,
-      { prNumber: 1, repoSlug: "o/r" },
-      {
-        gh: async (_cwd, args) => {
-          assert.doesNotMatch(args.join(" "), /mergeableState/);
-          assert.ok(args.includes("--repo"));
-          return { code: 0, stdout, stderr: "" };
-        },
-      },
-    );
+  it("returns merged status from REST pull + check-runs", async () => {
+    const gh = async (_cwd: string, args: string[]) => {
+      const path = args.join(" ");
+      if (path.includes("/pulls/1") && !path.includes("check-runs")) {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            state: "closed",
+            merged_at: "2026-01-01T12:00:00Z",
+            html_url: "https://github.com/o/r/pull/1",
+            head: { sha: "abc" },
+          }),
+          stderr: "",
+        };
+      }
+      if (path.includes("check-runs")) {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            check_runs: [{ name: "ci", status: "completed", conclusion: "success" }],
+          }),
+          stderr: "",
+        };
+      }
+      return { code: 1, stdout: "", stderr: "unexpected " + path };
+    };
+    const r = await fetchPrCiStatus(null, { prNumber: 1, repoSlug: "o/r" }, { gh });
     assert.equal(r.status, "merged");
     assert.equal(r.summary, "merged");
   });
 
-  it("returns unknown with reason when gh fails", async () => {
+  it("returns unknown with reason when REST pull fails", async () => {
     const r = await fetchPrCiStatus(
       null,
       { prNumber: 2, repoSlug: "o/r" },
@@ -303,39 +312,67 @@ describe("fetchPrCiStatus", () => {
         gh: async () => ({
           code: 1,
           stdout: "",
-          stderr: 'Unknown JSON field: "mergeableState"\n',
+          stderr: "pull request not found",
         }),
       },
     );
     assert.equal(r.status, "unknown");
     assert.equal(r.summary, "CI unknown");
-    assert.match(r.reason ?? "", /mergeableState/);
+    assert.match(r.reason ?? "", /REST pull lookup failed/);
   });
 
-  it("maps pending and failing CI from gh checks rollup", async () => {
-    const pendingOut = JSON.stringify({
-      state: "OPEN",
-      mergeable: "MERGEABLE",
-      url: "https://github.com/o/r/pull/3",
-      statusCheckRollup: [{ name: "build", status: "IN_PROGRESS" }],
-    });
+  it("maps pending and failing CI from REST check-runs", async () => {
+    const ghPending = async (_cwd: string, args: string[]) => {
+      const path = args.join(" ");
+      if (path.includes("/pulls/3")) {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            state: "open",
+            mergeable: true,
+            html_url: "https://github.com/o/r/pull/3",
+            head: { sha: "sha3" },
+          }),
+          stderr: "",
+        };
+      }
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          check_runs: [{ name: "build", status: "in_progress" }],
+        }),
+        stderr: "",
+      };
+    };
     const pending = await fetchPrCiStatus(
       null,
       { prNumber: 3, repoSlug: "o/r" },
-      { gh: async () => ({ code: 0, stdout: pendingOut, stderr: "" }) },
+      { gh: ghPending },
     );
     assert.equal(pending.status, "pending");
 
-    const failOut = JSON.stringify({
-      state: "OPEN",
-      mergeable: "MERGEABLE",
-      statusCheckRollup: [{ name: "build", status: "COMPLETED", conclusion: "FAILURE" }],
-    });
-    const failed = await fetchPrCiStatus(
-      null,
-      { prNumber: 4, repoSlug: "o/r" },
-      { gh: async () => ({ code: 0, stdout: failOut, stderr: "" }) },
-    );
+    const ghFail = async (_cwd: string, args: string[]) => {
+      const path = args.join(" ");
+      if (path.includes("/pulls/4")) {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            state: "open",
+            mergeable: true,
+            head: { sha: "sha4" },
+          }),
+          stderr: "",
+        };
+      }
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          check_runs: [{ name: "build", status: "completed", conclusion: "failure" }],
+        }),
+        stderr: "",
+      };
+    };
+    const failed = await fetchPrCiStatus(null, { prNumber: 4, repoSlug: "o/r" }, { gh: ghFail });
     assert.equal(failed.status, "failure");
   });
 });

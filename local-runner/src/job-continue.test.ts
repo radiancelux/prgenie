@@ -149,6 +149,26 @@ describe("prepareJobContinue", () => {
     assert.equal(result.job.maxRounds, 4);
   });
 
+  it("resumes post-build PR step without re-running implementor", async () => {
+    const job = await seedTerminal(dataDir, "job-stuck-pr", "stuck", {
+      prUrl: null,
+      prNumber: null,
+      reviewRound: 0,
+      maxRounds: 2,
+      postBuildPendingPr: true,
+      error: "Could not open a GitHub PR after build: rate limit",
+    });
+    const result = await prepareJobContinue(
+      cfg(dataDir),
+      { id: job.id },
+      { isRunning: () => false },
+    );
+    assert.equal(result.job.stage, "building");
+    assert.equal(result.job.postBuildPendingPr, true);
+    assert.equal(result.job.continueHistory?.[0].resumedStage, "post_build_pr");
+    assert.equal(result.job.maxRounds, 2);
+  });
+
   for (const stage of ["failed", "stopped", "stuck"] as const) {
     it(`resumes a pre-PR ${stage} job at the build stage`, async () => {
       const job = await seedTerminal(dataDir, `job-${stage}-nopr`, stage, {

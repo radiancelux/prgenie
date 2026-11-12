@@ -15,7 +15,7 @@ import { listJobs, loadJob, patchJob } from "./store.js";
 import { loadSettings } from "./settings.js";
 import { maybeCleanupJobWorktree } from "./worktree-cleanup.js";
 
-const CI_POLL_MS = 45_000;
+const CI_POLL_MS = 60_000;
 
 export type CiWatcherDeps = {
   fetchPrCiStatus?: typeof fetchPrCiStatus;

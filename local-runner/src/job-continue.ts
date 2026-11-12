@@ -17,6 +17,7 @@ import {
   ensureContinueWorktree,
 } from "./worktree.js";
 import { git as defaultGit } from "./github.js";
+import { shouldResumePostBuildPr } from "./job-pr-policy.js";
 import { assertContinueMaxRounds, normalizeContinueJobArgs } from "./settings-validation.js";
 import type { ContinueJobArgs } from "./types.js";
 
@@ -107,8 +108,9 @@ export async function prepareJobContinue(
       job.stage,
     );
   }
+  const resumePostBuildPr = shouldResumePostBuildPr(job);
   // No PR yet: resume by re-running the build stage (same branch/worktree, then open PR when ready).
-  const resumeBuild = !job.prUrl?.trim();
+  const resumeBuild = !job.prUrl?.trim() && !resumePostBuildPr;
 
   const settings = await loadSettings(config.dataDir);
   const queueOpts: QueueOptions = { isRunning: deps.isRunning };
@@ -128,7 +130,7 @@ export async function prepareJobContinue(
   const instructions = mergeContinuePrompt(args.prompt, fromFile);
 
   // A build resume has not spent any review rounds yet, so it adds none unless asked.
-  const extraRounds = args.extraRounds ?? (resumeBuild ? 0 : 1);
+  const extraRounds = args.extraRounds ?? (resumeBuild || resumePostBuildPr ? 0 : 1);
   assertContinueMaxRounds(job.maxRounds, extraRounds);
   const nextMax = job.maxRounds + extraRounds;
 
@@ -171,7 +173,11 @@ export async function prepareJobContinue(
     newMaxRounds: nextMax,
     prompt: instructions ?? null,
     model: args.model ?? null,
-    ...(resumeBuild ? { resumedStage: "building" as const } : {}),
+    ...(resumeBuild
+      ? { resumedStage: "building" as const }
+      : resumePostBuildPr
+        ? { resumedStage: "post_build_pr" as const }
+        : {}),
   };
   if (!job.continueHistory) job.continueHistory = [];
   job.continueHistory.push(history);
@@ -187,7 +193,7 @@ export async function prepareJobContinue(
         "not_terminal",
       );
     }
-    if (job.stageModels) job.stageModels[resumeBuild ? "build" : "fix"] = m;
+    if (job.stageModels) job.stageModels[resumeBuild || resumePostBuildPr ? "build" : "fix"] = m;
   }
 
   if (instructions) {
@@ -196,8 +202,9 @@ export async function prepareJobContinue(
 
   job.stopRequested = false;
   job.error = null;
-  job.stage = resumeBuild ? "building" : "fixing";
-  if (resumeBuild) job.reviewRound = 0;
+  job.stage = resumeBuild || resumePostBuildPr ? "building" : "fixing";
+  if (resumeBuild || resumePostBuildPr) job.reviewRound = 0;
+  if (resumePostBuildPr) job.postBuildPendingPr = true;
   if (job.queueState?.queued) job.queueState = undefined;
 
   const decision = decideJobStart(
