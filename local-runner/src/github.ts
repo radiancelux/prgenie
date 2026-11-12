@@ -1,10 +1,24 @@
 import { spawnCommand, type GhResult } from "./spawn-cmd.js";
+import { ghWithGithubRetry } from "./github-rate-limit.js";
+import {
+  resolveRepoSlug,
+  restFindOpenPrForBranch,
+  restGetPull,
+  restPostIssueComment,
+} from "./github-rest.js";
+import { repoSlugFromPrUrl } from "./ci.js";
 
 export type { GhResult };
 
-export async function gh(cwd: string, args: string[]): Promise<GhResult> {
+async function ghSpawn(cwd: string, args: string[]): Promise<GhResult> {
   return spawnCommand("gh", cwd, args);
 }
+
+export async function gh(cwd: string, args: string[]): Promise<GhResult> {
+  return ghWithGithubRetry(cwd, args, ghSpawn);
+}
+
+export { ghSpawn as ghRaw };
 
 export async function git(cwd: string, args: string[]): Promise<GhResult> {
   return spawnCommand("git", cwd, args);
@@ -19,21 +33,26 @@ export type FetchPrMergedFn = (
 
 export async function fetchPrMerged(
   cwd: string,
-  target: { prNumber?: number | null; branch?: string },
+  target: {
+    prNumber?: number | null;
+    branch?: string;
+    repoSlug?: string | null;
+    prUrl?: string | null;
+  },
 ): Promise<FetchPrMergedResult> {
-  const ref =
-    target.prNumber != null ? String(target.prNumber) : target.branch?.trim() || undefined;
-  if (!ref) return { merged: false, mergedAt: null };
-
-  const ghRes = await gh(cwd, ["pr", "view", ref, "--json", "state,mergedAt"]);
-  if (ghRes.code !== 0) return { merged: false, mergedAt: null };
-  try {
-    const parsed = JSON.parse(ghRes.stdout) as { state?: string; mergedAt?: string | null };
-    const merged = parsed.state === "MERGED" || (parsed.mergedAt != null && parsed.mergedAt !== "");
-    return { merged, mergedAt: merged ? (parsed.mergedAt ?? null) : null };
-  } catch {
-    return { merged: false, mergedAt: null };
+  const repoSlug = resolveRepoSlug(target.repoSlug, target.prUrl);
+  let prNumber = target.prNumber;
+  if (prNumber == null && target.branch?.trim()) {
+    const found = await findPrForBranch(cwd, target.branch, repoSlug);
+    if (found) prNumber = found.number;
   }
+  if (prNumber == null) return { merged: false, mergedAt: null };
+
+  const pull = await restGetPull(cwd, prNumber, repoSlug, ghSpawn);
+  if (!pull) return { merged: false, mergedAt: null };
+  const state = (pull.state ?? "").toUpperCase();
+  const merged = state === "MERGED" || (pull.merged_at != null && pull.merged_at !== "");
+  return { merged, mergedAt: merged ? (pull.merged_at ?? null) : null };
 }
 
 export interface PrInfo {
@@ -41,18 +60,12 @@ export interface PrInfo {
   number: number;
 }
 
-export async function findPrForBranch(cwd: string, branch: string): Promise<PrInfo | null> {
-  const view = await gh(cwd, ["pr", "view", branch, "--json", "url,number"]);
-  if (view.code !== 0) return null;
-  try {
-    const parsed = JSON.parse(view.stdout) as { url?: string; number?: number };
-    if (parsed.url && typeof parsed.number === "number") {
-      return { url: parsed.url, number: parsed.number };
-    }
-  } catch {
-    // ignore
-  }
-  return null;
+export async function findPrForBranch(
+  cwd: string,
+  branch: string,
+  repoSlug?: string | null,
+): Promise<PrInfo | null> {
+  return restFindOpenPrForBranch(cwd, branch, repoSlug, ghSpawn);
 }
 
 export type Verdict = "APPROVE" | "CHANGES";
@@ -266,9 +279,13 @@ export async function fetchPrVerdictSince(
   return findVerdictInReviewsSince(reviews, scope);
 }
 
-export async function postPrComment(cwd: string, prNumber: number, body: string): Promise<boolean> {
-  const res = await gh(cwd, ["pr", "comment", String(prNumber), "--body", body]);
-  return res.code === 0;
+export async function postPrComment(
+  cwd: string,
+  prNumber: number,
+  body: string,
+  repoSlug?: string | null,
+): Promise<boolean> {
+  return restPostIssueComment(cwd, prNumber, body, repoSlug, ghSpawn);
 }
 
 export type GitFn = typeof git;

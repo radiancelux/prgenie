@@ -56,6 +56,7 @@ import {
   NO_PR_GUARD_MESSAGE,
   resolvePostBuildNoPr,
   resolvePostBuildNoPrError,
+  isTransientPrEnsureError,
 } from "./job-pr-policy.js";
 import { diagnosePrSetupIssues, enrichNoPrGuardMessage } from "./job-preflight.js";
 import { ensureDraftPrAfterBuild } from "./post-build-pr.js";
@@ -498,7 +499,7 @@ export async function runJobLoop(
     }
 
     if (!job.dryRun && !job.prUrl) {
-      const existingPr = await findPrForBranch(wt, job.input.branch);
+      const existingPr = await findPrForBranch(wt, job.input.branch, job.repoSlug);
       if (existingPr) {
         job.prUrl = existingPr.url;
         job.prNumber = existingPr.number;
@@ -510,55 +511,61 @@ export async function runJobLoop(
 
     // --- building / implementor ---
     if (job.stage === "building" && !job.prUrl) {
-      let prompt: string;
-      if (isDocsJob(job)) {
-        const template = isDocsTemplateId(job.input.docsTemplate) ? job.input.docsTemplate : null;
-        const fallback = resolveDocsImplementPrompt(template);
-        prompt = await readPromptFile(job.input.promptFile, fallback);
-      } else if (job.dryRun && !job.input.promptFile?.trim()) {
-        prompt = DRY_RUN_PLACEHOLDER_PROMPT;
-      } else {
-        prompt = await readPromptFile(job.input.promptFile, DEFAULT_IMPLEMENT_PROMPT);
-      }
-      const steer = control.drainSteer();
-      const fullPrompt = steer ? `${prompt}\n\n--- steer ---\n${steer}` : prompt;
-      const baseRun = {
-        cwd: wt,
-        prompt: fullPrompt,
-        model: job.model,
-        logPath: job.logPath,
-        dryRun: job.dryRun,
-        outputFormat,
-        signal: control.signal,
-        driverId: job.driverId,
-        driverEntry,
-      };
-      const result = await runAgentStage(
-        runner,
-        config,
-        job,
-        control,
-        settings,
-        "building",
-        baseRun,
-        callbacks?.watchdogTiming,
-      );
-      if (await checkStop()) return;
-      if (!result || result.code !== 0) {
-        if (!result) {
-          await setStage(config, job, "stuck", control, callbacks);
-          await notify(
-            config,
-            job,
-            `Watchdog exhausted: ${job.input.branch}`,
-            callbacks?.fetchImpl,
-            "watchdog",
-          );
+      const skipImplementor = Boolean(job.postBuildPendingPr);
+      if (!skipImplementor) {
+        let prompt: string;
+        if (isDocsJob(job)) {
+          const template = isDocsTemplateId(job.input.docsTemplate) ? job.input.docsTemplate : null;
+          const fallback = resolveDocsImplementPrompt(template);
+          prompt = await readPromptFile(job.input.promptFile, fallback);
+        } else if (job.dryRun && !job.input.promptFile?.trim()) {
+          prompt = DRY_RUN_PLACEHOLDER_PROMPT;
+        } else {
+          prompt = await readPromptFile(job.input.promptFile, DEFAULT_IMPLEMENT_PROMPT);
+        }
+        const steer = control.drainSteer();
+        const fullPrompt = steer ? `${prompt}\n\n--- steer ---\n${steer}` : prompt;
+        const baseRun = {
+          cwd: wt,
+          prompt: fullPrompt,
+          model: job.model,
+          logPath: job.logPath,
+          dryRun: job.dryRun,
+          outputFormat,
+          signal: control.signal,
+          driverId: job.driverId,
+          driverEntry,
+        };
+        const result = await runAgentStage(
+          runner,
+          config,
+          job,
+          control,
+          settings,
+          "building",
+          baseRun,
+          callbacks?.watchdogTiming,
+        );
+        if (await checkStop()) return;
+        if (!result || result.code !== 0) {
+          if (!result) {
+            await setStage(config, job, "stuck", control, callbacks);
+            await notify(
+              config,
+              job,
+              `Watchdog exhausted: ${job.input.branch}`,
+              callbacks?.fetchImpl,
+              "watchdog",
+            );
+            return;
+          }
+          job.error = `implementor exited ${result.code}`;
+          job.postBuildPendingPr = false;
+          await setStage(config, job, "failed", control, callbacks);
           return;
         }
-        job.error = `implementor exited ${result.code}`;
-        await setStage(config, job, "failed", control, callbacks);
-        return;
+        job.postBuildPendingPr = true;
+        await persistJob(config, job, control);
       }
 
       let pr: Awaited<ReturnType<typeof findPrForBranch>> = null;
@@ -566,7 +573,7 @@ export async function runJobLoop(
         if (job.prUrl && job.prNumber != null) {
           pr = { url: job.prUrl, number: job.prNumber };
         } else {
-          pr = await findPrForBranch(wt, job.input.branch);
+          pr = await findPrForBranch(wt, job.input.branch, job.repoSlug);
         }
       }
       let ensurePrError: string | undefined;
@@ -576,6 +583,7 @@ export async function runJobLoop(
             cwd: wt,
             branch: job.input.branch,
             title: job.title || job.input.branch,
+            repoSlug: job.repoSlug,
           },
           { git: defaultGit, gh: defaultGh },
         );
@@ -621,12 +629,25 @@ export async function runJobLoop(
             errorText = enrichNoPrGuardMessage(errorText, diagnosis);
           }
           job.error = errorText;
+          if (isTransientPrEnsureError(ensurePrError)) {
+            job.postBuildPendingPr = true;
+            await setStage(config, job, "failed", control, callbacks);
+            await notify(
+              config,
+              job,
+              `GitHub rate limit opening PR (transient): ${job.input.branch}`,
+              callbacks?.fetchImpl,
+            );
+            return;
+          }
+          job.postBuildPendingPr = true;
           await setStage(config, job, "stuck", control, callbacks);
           return;
         }
       } else {
         job.prUrl = pr.url;
         job.prNumber = pr.number;
+        job.postBuildPendingPr = false;
         await persistJob(config, job, control);
         emit(callbacks, job, { type: "pr", url: pr.url });
         callbacks?.onPrLinked?.(job.id);

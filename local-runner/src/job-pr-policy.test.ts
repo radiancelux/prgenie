@@ -7,6 +7,8 @@ import {
   NO_PR_GUARD_MESSAGE,
   resolvePostBuildNoPr,
   resolvePostBuildNoPrError,
+  shouldResumePostBuildPr,
+  isTransientPrEnsureError,
 } from "./job-pr-policy.js";
 
 describe("job-pr-policy", () => {
@@ -46,5 +48,45 @@ describe("job-pr-policy", () => {
     assert.equal(fromGh, NO_COMMITS_BEYOND_BASE_MESSAGE);
     const generic = resolvePostBuildNoPrError({ input: {} });
     assert.equal(generic, NO_PR_GUARD_MESSAGE);
+  });
+
+  it("detects transient GitHub PR errors", () => {
+    assert.equal(isTransientPrEnsureError("GraphQL: rate limit already exceeded"), true);
+    assert.equal(isTransientPrEnsureError("network timeout"), false);
+  });
+
+  it("resumes post-build PR step when flagged or PR errors indicate link failure", () => {
+    assert.equal(
+      shouldResumePostBuildPr({
+        prUrl: null,
+        reviewRound: 0,
+        stage: "stuck",
+        postBuildPendingPr: true,
+        input: { repoPath: "/r", branch: "b", promptFile: "/p" },
+        error: null,
+      }),
+      true,
+    );
+    assert.equal(
+      shouldResumePostBuildPr({
+        prUrl: null,
+        reviewRound: 0,
+        stage: "stuck",
+        input: { repoPath: "/r", branch: "b", promptFile: "/p" },
+        error: "Could not open a GitHub PR after build: rate limit",
+      }),
+      true,
+    );
+    assert.equal(
+      shouldResumePostBuildPr({
+        prUrl: null,
+        reviewRound: 0,
+        stage: "interrupted",
+        postBuildPendingPr: true,
+        input: { repoPath: "/r", branch: "b", promptFile: "/p" },
+        error: null,
+      }),
+      false,
+    );
   });
 });

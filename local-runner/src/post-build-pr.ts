@@ -1,5 +1,7 @@
 import type { GhResult } from "./spawn-cmd.js";
 import type { PrInfo } from "./github.js";
+import { ghWithGithubRetry, isTransientGithubFailure } from "./github-rate-limit.js";
+import { resolveRepoSlug, restCreateDraftPull, restFindOpenPrForBranch } from "./github-rest.js";
 
 export type GitGh = {
   git: (cwd: string, args: string[]) => Promise<GhResult>;
@@ -49,44 +51,52 @@ export async function pushBranch(
   return { ok: true };
 }
 
-function parsePrCreate(stdout: string, stderr: string): PrInfo | null {
-  const text = `${stdout}\n${stderr}`;
-  const urlMatch = text.match(/https:\/\/github\.com\/[^\s)]+\/pull\/(\d+)/i);
-  if (!urlMatch) return null;
-  return { url: urlMatch[0].replace(/[).,]+$/, ""), number: Number(urlMatch[1]) };
+async function resolveDefaultBaseBranch(cwd: string, gh: GitGh["gh"]): Promise<string> {
+  const res = await ghWithGithubRetry(
+    cwd,
+    ["api", "repos/{owner}/{repo}", "--jq", ".default_branch"],
+    gh,
+  );
+  if (res.code === 0) {
+    const base = res.stdout.trim();
+    if (base) return base;
+  }
+  return "main";
 }
+
+export type CreateDraftPrOptions = {
+  repoSlug?: string | null;
+  prUrl?: string | null;
+};
 
 export async function createDraftPr(
   cwd: string,
   branch: string,
   title: string,
   gh: GitGh["gh"],
-): Promise<{ ok: true; pr: PrInfo } | { ok: false; error: string }> {
-  const args = ["pr", "create", "--draft", "--head", branch, "--title", title, "--body", title];
-  const res = await gh(cwd, args);
-  const pr = parsePrCreate(res.stdout, res.stderr);
-  if (res.code === 0 && pr) return { ok: true, pr };
-  const err = res.stderr.trim() || res.stdout.trim() || "gh pr create failed";
-  if (/already exists/i.test(err)) {
-    const view = await gh(cwd, ["pr", "view", branch, "--json", "url,number"]);
-    if (view.code === 0) {
-      try {
-        const parsed = JSON.parse(view.stdout) as { url?: string; number?: number };
-        if (parsed.url && typeof parsed.number === "number") {
-          return { ok: true, pr: { url: parsed.url, number: parsed.number } };
-        }
-      } catch {
-        // fall through
-      }
-    }
+  options: CreateDraftPrOptions = {},
+): Promise<{ ok: true; pr: PrInfo } | { ok: false; error: string; transient?: boolean }> {
+  const repoSlug = resolveRepoSlug(options.repoSlug, options.prUrl);
+  const existing = await restFindOpenPrForBranch(cwd, branch, repoSlug, gh);
+  if (existing) return { ok: true, pr: existing };
+
+  const base = await resolveDefaultBaseBranch(cwd, gh);
+  const created = await restCreateDraftPull(cwd, branch, title, base, repoSlug, gh);
+  if (created.ok) return created;
+
+  if (!created.ok && created.transient) {
+    const again = await restFindOpenPrForBranch(cwd, branch, repoSlug, gh);
+    if (again) return { ok: true, pr: again };
   }
-  return { ok: false, error: err.slice(0, 400) };
+  return created;
 }
 
 export type EnsureDraftPrInput = {
   cwd: string;
   branch: string;
   title: string;
+  repoSlug?: string | null;
+  prUrl?: string | null;
 };
 
 /**
@@ -96,11 +106,24 @@ export type EnsureDraftPrInput = {
 export async function ensureDraftPrAfterBuild(
   input: EnsureDraftPrInput,
   deps: GitGh,
-): Promise<{ ok: true; pr: PrInfo } | { ok: false; error: string }> {
+): Promise<{ ok: true; pr: PrInfo } | { ok: false; error: string; transient?: boolean }> {
   const commitMsg = input.title?.trim() || `Updates for ${input.branch}`;
   const committed = await commitAllIfDirty(input.cwd, commitMsg, deps.git);
   if (!committed.ok) return committed;
   const pushed = await pushBranch(input.cwd, input.branch, deps.git);
   if (!pushed.ok) return pushed;
-  return createDraftPr(input.cwd, input.branch, commitMsg, deps.gh);
+  return createDraftPr(input.cwd, input.branch, commitMsg, deps.gh, {
+    repoSlug: input.repoSlug,
+    prUrl: input.prUrl,
+  });
+}
+
+/** True when callers should not mark the job stuck (GitHub throttling). */
+export function isEnsurePrTransientFailure(
+  result: { ok: false; error: string; transient?: boolean },
+  rawGh?: GhResult,
+): boolean {
+  if (result.transient) return true;
+  if (rawGh && isTransientGithubFailure(rawGh)) return true;
+  return /rate limit|secondary rate/i.test(result.error);
 }

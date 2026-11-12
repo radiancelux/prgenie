@@ -146,7 +146,7 @@ export type JobContinueHistoryEntry = {
   prompt: string | null;
   model: string | null;
   /** Set when an interrupted pre-PR job re-ran its build stage instead of a fix round. */
-  resumedStage?: "building";
+  resumedStage?: "building" | "post_build_pr";
 };
 
 export type JobEffectiveSnapshot = {
@@ -219,6 +219,11 @@ export interface JobRecord {
   archivedAt: string | null;
   /** Extra fix→review rounds started via continue_job / POST continue. */
   continueHistory?: JobContinueHistoryEntry[];
+  /**
+   * Build stage finished but the runner has not linked a PR yet (PR step failed or was rate-limited).
+   * continue_job resumes at the PR step instead of re-running the implementor.
+   */
+  postBuildPendingPr?: boolean;
 }
 
 export interface ContinueJobArgs {

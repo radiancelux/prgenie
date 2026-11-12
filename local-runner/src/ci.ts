@@ -1,6 +1,15 @@
 import os from "node:os";
 import type { CiRollupStatus, CiStatusInfo, JobRecord } from "./types.js";
-import { gh, type GhResult } from "./github.js";
+import { ghRaw, type GhResult } from "./github.js";
+import type { GhFn } from "./github-rate-limit.js";
+import { ghWithGithubRetry } from "./github-rate-limit.js";
+import {
+  resolveRepoSlug,
+  restFetchCheckRunsForRef,
+  restFindOpenPrForBranch,
+  restGetPull,
+  type CheckRunRow,
+} from "./github-rest.js";
 import { spawnCommand } from "./spawn-cmd.js";
 
 /** Default job list hides merged PRs after this long (still kept on disk). */
@@ -227,42 +236,77 @@ function parseOriginChecksJson(stdout: string): CheckRow[] {
   return rows;
 }
 
-type GhViewOk = {
+type RestViewOk = {
   ok: true;
   pr: GhPrViewFields;
   ciRollup: CiRollupStatus;
   ciSummary: string;
 };
 
-type GhViewFail = { ok: false; reason: string };
+type RestViewFail = { ok: false; reason: string };
 
-async function fetchGhPrView(
+function checkRunToRow(row: CheckRunRow): CheckRow {
+  return {
+    name: row.name,
+    status: row.status,
+    conclusion: row.conclusion ?? undefined,
+    detailsUrl: row.details_url ?? row.html_url,
+  };
+}
+
+async function resolvePullNumber(
+  spawnCwd: string,
+  repoSlug: string | null,
+  target: { prNumber?: number | null; branch?: string },
+  ghFn: typeof ghRaw,
+): Promise<number | null> {
+  if (target.prNumber != null) return target.prNumber;
+  const branch = target.branch?.trim();
+  if (!branch) return null;
+  const found = await restFindOpenPrForBranch(spawnCwd, branch, repoSlug, (c, a) =>
+    ghWithGithubRetry(c, a, ghFn),
+  );
+  return found?.number ?? null;
+}
+
+async function fetchPrCiViaRest(
   spawnCwd: string,
   repoSlug: string | null | undefined,
   target: { prNumber?: number | null; branch?: string },
-  ghImpl: typeof gh = gh,
-): Promise<GhViewOk | GhViewFail> {
-  const ghArgs = buildGhPrViewArgs(repoSlug, target);
-  if (!ghArgs) return { ok: false, reason: "no PR ref" };
+  ghFn: GhFn = ghRaw,
+): Promise<RestViewOk | RestViewFail> {
+  const slug = resolveRepoSlug(repoSlug, null);
+  const prNumber = await resolvePullNumber(spawnCwd, slug, target, ghFn);
+  if (prNumber == null) return { ok: false, reason: "no PR ref" };
 
-  const ghRes = await ghImpl(spawnCwd, ghArgs);
-  if (ghRes.code !== 0) {
-    return { ok: false, reason: firstStderrLine(ghRes.stderr || ghRes.stdout) };
+  const pull = await restGetPull(spawnCwd, prNumber, slug, (c, a) => ghWithGithubRetry(c, a, ghFn));
+  if (!pull) return { ok: false, reason: "REST pull lookup failed" };
+
+  const pr: GhPrViewFields = {
+    state: (pull.state ?? "").toUpperCase(),
+    mergedAt: pull.merged_at ?? null,
+    mergeable:
+      pull.mergeable === false
+        ? "CONFLICTING"
+        : pull.mergeable_state?.toUpperCase() === "DIRTY"
+          ? "CONFLICTING"
+          : "MERGEABLE",
+    url: pull.html_url,
+  };
+
+  const headSha = pull.head?.sha?.trim();
+  let ciRollup: CiRollupStatus = "unknown";
+  let ciSummary = "no checks";
+  if (headSha) {
+    const runs = await restFetchCheckRunsForRef(spawnCwd, headSha, slug, (c, a) =>
+      ghWithGithubRetry(c, a, ghFn),
+    );
+    const rolled = rollupCheckStatuses(runs.map(checkRunToRow));
+    ciRollup = rolled.status;
+    ciSummary = rolled.summary;
   }
-  try {
-    const parsed = JSON.parse(ghRes.stdout) as GhPrViewFields & {
-      statusCheckRollup?: Array<{ name?: string; status?: string; conclusion?: string | null }>;
-    };
-    const rolled = rollupFromGithubStatusCheckRollup(parsed.statusCheckRollup ?? []);
-    return {
-      ok: true,
-      pr: parsed,
-      ciRollup: rolled.status,
-      ciSummary: rolled.summary,
-    };
-  } catch {
-    return { ok: false, reason: "invalid gh pr view JSON" };
-  }
+
+  return { ok: true, pr, ciRollup, ciSummary };
 }
 
 export type FetchPrCiTarget = {
@@ -273,7 +317,7 @@ export type FetchPrCiTarget = {
 };
 
 export type FetchPrCiDeps = {
-  gh?: typeof gh;
+  gh?: GhFn;
   originCmd?: typeof originCmd;
 };
 
@@ -290,12 +334,15 @@ export async function fetchPrCiStatus(
 
   const repoSlug = target.repoSlug?.trim() || repoSlugFromPrUrl(target.prUrl) || null;
   const spawnCwd = cwd?.trim() || os.tmpdir();
-  const ghImpl = deps.gh ?? gh;
   const originImpl = deps.originCmd ?? originCmd;
 
-  const ghView = await fetchGhPrView(spawnCwd, repoSlug, target, ghImpl);
-  if (ghView.ok) {
-    return { ...statusFromGhView(ghView.pr, ghView.ciRollup, ghView.ciSummary), source: "github" };
+  const restGh = deps.gh ?? ghRaw;
+  const restView = await fetchPrCiViaRest(spawnCwd, repoSlug, target, restGh);
+  if (restView.ok) {
+    return {
+      ...statusFromGhView(restView.pr, restView.ciRollup, restView.ciSummary),
+      source: "github",
+    };
   }
 
   if (cwd?.trim()) {
@@ -322,7 +369,7 @@ export async function fetchPrCiStatus(
   return {
     status: "unknown",
     summary: "CI unknown",
-    reason: ghView.reason,
+    reason: restView.reason,
     source: "github",
   };
 }

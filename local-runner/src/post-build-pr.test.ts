@@ -21,16 +21,20 @@ function gitImpl(script: Record<string, GhResult>) {
   };
 }
 
-function ghImpl(script: Record<string, GhResult>) {
+function ghPath(args: string[]): string {
+  return args.join(" ");
+}
+
+function ghRoute(match: (path: string) => boolean, res: GhResult) {
+  return { match: (args: string[]) => match(ghPath(args)), res };
+}
+
+function ghImpl(routes: Array<{ match: (args: string[]) => boolean; res: GhResult }>) {
   return async (_cwd: string, args: string[]): Promise<GhResult> => {
-    const key = args.join("\0");
-    return (
-      script[key] ?? {
-        code: 1,
-        stdout: "",
-        stderr: `unexpected gh ${args.join(" ")}`,
-      }
-    );
+    for (const row of routes) {
+      if (row.match(args)) return row.res;
+    }
+    return { code: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
   };
 }
 
@@ -44,15 +48,21 @@ describe("post-build-pr", () => {
       "rev-parse\0refs/remotes/origin/feat/x": { code: 1, stdout: "", stderr: "" },
       "push\0-u\0origin\0feat/x": { code: 0, stdout: "", stderr: "" },
     });
-    const gh = ghImpl({
-      "pr\0create\0--draft\0--head\0feat/x\0--title\0feat/x\0--body\0feat/x": {
+    const gh = ghImpl([
+      ghRoute((p) => p.includes("pulls") && p.includes("state=open"), {
         code: 0,
-        stdout: "https://github.com/o/r/pull/9\n",
+        stdout: "[]\n",
         stderr: "",
-      },
-    });
+      }),
+      ghRoute((p) => p.includes("default_branch"), { code: 0, stdout: "main\n", stderr: "" }),
+      ghRoute((p) => p.includes("POST") && p.includes("pulls"), {
+        code: 0,
+        stdout: JSON.stringify({ number: 9, html_url: "https://github.com/o/r/pull/9" }),
+        stderr: "",
+      }),
+    ]);
     const res = await ensureDraftPrAfterBuild(
-      { cwd: "/wt", branch: "feat/x", title: "feat/x" },
+      { cwd: "/wt", branch: "feat/x", title: "feat/x", repoSlug: "owner/r" },
       { git, gh },
     );
     assert.equal(res.ok, true);
@@ -72,31 +82,37 @@ describe("post-build-pr", () => {
     assert.deepEqual(await commitAllIfDirty("/wt", "msg", git), { ok: true });
   });
 
-  it("returns gh error text when pr create fails", async () => {
-    const gh = ghImpl({
-      "pr\0create\0--draft\0--head\0b\0--title\0t\0--body\0t": {
-        code: 1,
-        stdout: "",
-        stderr: "GraphQL: No commits between main and b",
-      },
-    });
-    const res = await createDraftPr("/wt", "b", "t", gh);
-    assert.equal(res.ok, false);
-    if (!res.ok) assert.match(res.error, /No commits between/i);
-  });
-
-  it("createDraftPr parses gh output", async () => {
-    const gh = ghImpl({
-      "pr\0create\0--draft\0--head\0b\0--title\0t\0--body\0t": {
+  it("adopts existing PR before create", async () => {
+    const gh = ghImpl([
+      ghRoute((p) => p.includes("pulls") && p.includes("state=open"), {
         code: 0,
-        stdout: "https://github.com/org/repo/pull/42\n",
+        stdout: JSON.stringify([{ number: 42, html_url: "https://github.com/org/repo/pull/42" }]),
         stderr: "",
-      },
-    });
-    const res = await createDraftPr("/wt", "b", "t", gh);
+      }),
+    ]);
+    const res = await createDraftPr("/wt", "b", "t", gh, { repoSlug: "org/repo" });
     assert.deepEqual(res, {
       ok: true,
       pr: { url: "https://github.com/org/repo/pull/42", number: 42 },
     });
+  });
+
+  it("returns REST error text when pr create fails", async () => {
+    const gh = ghImpl([
+      ghRoute((p) => p.includes("pulls") && p.includes("state=open"), {
+        code: 0,
+        stdout: "[]",
+        stderr: "",
+      }),
+      ghRoute((p) => p.includes("default_branch"), { code: 0, stdout: "main\n", stderr: "" }),
+      ghRoute((p) => p.includes("POST") && p.includes("pulls"), {
+        code: 1,
+        stdout: "",
+        stderr: "Validation Failed: No commits between main and b",
+      }),
+    ]);
+    const res = await createDraftPr("/wt", "b", "t", gh, { repoSlug: "org/repo" });
+    assert.equal(res.ok, false);
+    if (!res.ok) assert.match(res.error, /No commits between/i);
   });
 });

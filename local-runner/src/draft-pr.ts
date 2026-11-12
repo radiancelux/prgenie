@@ -1,8 +1,8 @@
 import type { CiStatusInfo, JobRecord, JobStage } from "./types.js";
 import { isCiFinal } from "./ci.js";
 import { isDocsJob } from "./doc-checks.js";
-import { gh, git } from "./github.js";
-import { repoSlugFromPrUrl } from "./ci.js";
+import { ghRaw, git } from "./github.js";
+import { resolveRepoSlug, restGetPull, restMarkPullReady } from "./github-rest.js";
 
 export type PrViewInfo = {
   isDraft: boolean;
@@ -60,53 +60,42 @@ export async function readHeadSha(cwd: string): Promise<string | null> {
 
 export async function fetchPrViewInfo(
   cwd: string,
-  target: { prNumber?: number | null; branch?: string; prUrl?: string | null },
-  ghImpl: typeof gh = gh,
+  target: {
+    prNumber?: number | null;
+    branch?: string;
+    prUrl?: string | null;
+    repoSlug?: string | null;
+  },
+  ghImpl: typeof ghRaw = ghRaw,
 ): Promise<PrViewInfo | null> {
-  const ref =
-    target.prNumber != null ? String(target.prNumber) : target.branch?.trim() || undefined;
-  if (!ref) return null;
-  const args = ["pr", "view", ref, "--json", "isDraft,headRefOid,state"];
-  const slug = repoSlugFromPrUrl(target.prUrl);
-  if (slug) args.push("--repo", slug);
-  const res = await ghImpl(cwd, args);
-  if (res.code !== 0) return null;
-  try {
-    const parsed = JSON.parse(res.stdout) as {
-      isDraft?: boolean;
-      headRefOid?: string;
-      state?: string;
-    };
-    return {
-      isDraft: Boolean(parsed.isDraft),
-      headRefOid: parsed.headRefOid?.trim() || null,
-      state: parsed.state ?? null,
-    };
-  } catch {
-    return null;
-  }
+  if (target.prNumber == null) return null;
+  const slug = resolveRepoSlug(target.repoSlug ?? null, target.prUrl);
+  const pull = await restGetPull(cwd, target.prNumber, slug, ghImpl);
+  if (!pull) return null;
+  return {
+    isDraft: Boolean(pull.draft),
+    headRefOid: pull.head?.sha?.trim() || null,
+    state: pull.state?.toUpperCase() ?? null,
+  };
 }
 
 export async function promotePrToReady(
   cwd: string,
-  target: { prNumber?: number | null; branch?: string; prUrl?: string | null },
-  ghImpl: typeof gh = gh,
+  target: {
+    prNumber?: number | null;
+    branch?: string;
+    prUrl?: string | null;
+    repoSlug?: string | null;
+  },
+  ghImpl: typeof ghRaw = ghRaw,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ref =
-    target.prNumber != null ? String(target.prNumber) : target.branch?.trim() || undefined;
-  if (!ref) return { ok: false, error: "no PR ref" };
-  const args = ["pr", "ready", ref];
-  const slug = repoSlugFromPrUrl(target.prUrl);
-  if (slug) args.push("--repo", slug);
-  const res = await ghImpl(cwd, args);
-  if (res.code === 0) return { ok: true };
-  const err = res.stderr.trim() || res.stdout.trim() || "gh pr ready failed";
-  if (/already/i.test(err)) return { ok: true };
-  return { ok: false, error: err.slice(0, 400) };
+  if (target.prNumber == null) return { ok: false, error: "no PR ref" };
+  const slug = resolveRepoSlug(target.repoSlug ?? null, target.prUrl);
+  return restMarkPullReady(cwd, target.prNumber, slug, ghImpl);
 }
 
 export type PromoteDeps = {
-  gh?: typeof gh;
+  gh?: typeof ghRaw;
   git?: typeof git;
   now?: () => string;
 };
@@ -120,7 +109,7 @@ export async function syncDraftReadyForJob(
   if (!cwd?.trim() || (job.prNumber == null && !job.input.branch)) {
     return { job, changed: false };
   }
-  const ghImpl = deps.gh ?? gh;
+  const ghImpl = deps.gh ?? ghRaw;
   const gitImpl = deps.git ?? git;
   const now = deps.now ?? (() => new Date().toISOString());
 
@@ -128,7 +117,12 @@ export async function syncDraftReadyForJob(
   let errorNote: string | undefined;
   const view = await fetchPrViewInfo(
     cwd,
-    { prNumber: job.prNumber, branch: job.input.branch, prUrl: job.prUrl },
+    {
+      prNumber: job.prNumber,
+      branch: job.input.branch,
+      prUrl: job.prUrl,
+      repoSlug: job.repoSlug,
+    },
     ghImpl,
   );
   if (view) {
@@ -158,7 +152,12 @@ export async function syncDraftReadyForJob(
   if (decision.action === "promote") {
     const result = await promotePrToReady(
       cwd,
-      { prNumber: job.prNumber, branch: job.input.branch, prUrl: job.prUrl },
+      {
+        prNumber: job.prNumber,
+        branch: job.input.branch,
+        prUrl: job.prUrl,
+        repoSlug: job.repoSlug,
+      },
       ghImpl,
     );
     if (result.ok) {
