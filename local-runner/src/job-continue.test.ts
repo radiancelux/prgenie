@@ -149,6 +149,38 @@ describe("prepareJobContinue", () => {
     assert.equal(result.job.maxRounds, 4);
   });
 
+  it("adopts an open GitHub PR and resumes at fix instead of rebuild", async () => {
+    const job = await seedTerminal(dataDir, "job-adopt-pr", "stuck", {
+      prUrl: null,
+      prNumber: null,
+      reviewRound: 2,
+      maxRounds: 2,
+      dryRun: false,
+      worktreePath: "/wt/adopt",
+      error: "Could not open a GitHub PR after build: gh: Validation Failed (HTTP 422)",
+      postBuildPendingPr: true,
+    });
+    const result = await prepareJobContinue(
+      cfg(dataDir),
+      { id: job.id, prompt: "review" },
+      {
+        isRunning: () => false,
+        ensureWorktree: async () => ({ path: "/wt/adopt", reused: true }),
+        findPrForBranch: async () => ({
+          url: "https://github.com/o/r/pull/357",
+          number: 357,
+        }),
+      },
+    );
+    assert.equal(result.job.prUrl, "https://github.com/o/r/pull/357");
+    assert.equal(result.job.prNumber, 357);
+    assert.equal(result.job.postBuildPendingPr, false);
+    assert.equal(result.job.stage, "fixing");
+    assert.equal(result.job.reviewRound, 2);
+    assert.equal(result.job.continueHistory?.[0].resumedStage, undefined);
+    assert.equal(result.job.maxRounds, 3);
+  });
+
   it("resumes post-build PR step without re-running implementor", async () => {
     const job = await seedTerminal(dataDir, "job-stuck-pr", "stuck", {
       prUrl: null,
