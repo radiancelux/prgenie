@@ -1,4 +1,5 @@
 import type { DocsTemplateId } from "./docs-settings.js";
+import { DOCS_ARCHITECT_OUTLINE_SECTION } from "./architect-plan.js";
 import { DOCS_PROVE_IT_WORKS_SECTION } from "./prove-it-works.js";
 import { DEFAULT_FIX_PROMPT_BODY, DEFAULT_REVIEW_PROMPT } from "./prompts.js";
 
@@ -10,6 +11,8 @@ Do not merge. Do not force-push to main/master.`;
 
 export const DOCS_MARKETING_PROMPT = `You are a marketing writer producing Markdown for a business repository.
 
+${DOCS_ARCHITECT_OUTLINE_SECTION}
+
 Deliver landing copy, email snippets, social posts, or product blurbs as requested in the task.
 If the repo has a brand voice or style guide (README, docs/style*, marketing/*), follow it.
 ${DOCS_PATH_HINT}
@@ -18,6 +21,8 @@ ${DOCS_PROVE_IT_WORKS_SECTION}`;
 
 export const DOCS_POLICY_PROMPT = `You are an internal policy writer producing Markdown for a business repository.
 
+${DOCS_ARCHITECT_OUTLINE_SECTION}
+
 Draft employee, operations, or legal policy documents. Cite and cross-link existing policies in the repo when relevant.
 Flag gaps or ambiguities — do not invent binding rules without sources.
 ${DOCS_PATH_HINT}
@@ -25,6 +30,8 @@ ${DOCS_PATH_HINT}
 ${DOCS_PROVE_IT_WORKS_SECTION}`;
 
 export const DOCS_RESEARCH_PROMPT = `You are a research writer producing a Markdown research brief for a business repository.
+
+${DOCS_ARCHITECT_OUTLINE_SECTION}
 
 Cover the assigned topic with **sources cited** (URLs). Do not fabricate facts or statistics.
 Use web search and fetch when you need current information; prefer primary sources.

@@ -1,3 +1,4 @@
+import { CODE_ARCHITECT_PLAN_SECTION } from "./architect-plan.js";
 import { CODE_PROVE_IT_WORKS_SECTION } from "./prove-it-works.js";
 
 /** Placeholder when a dry-run code job starts without a prompt file (#195). */
@@ -6,7 +7,9 @@ export const DRY_RUN_PLACEHOLDER_PROMPT =
 
 export const DEFAULT_IMPLEMENT_PROMPT = `You are the implementor for one feature branch.
 
-Implement the ticket, commit, push to origin, and open a GitHub pull request.
+${CODE_ARCHITECT_PLAN_SECTION}
+
+Commit your work, push to origin, and open a GitHub pull request.
 
 When creating the PR, always use a draft PR:
 \`gh pr create --draft\`

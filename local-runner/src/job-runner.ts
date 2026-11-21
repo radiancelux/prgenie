@@ -304,6 +304,15 @@ async function runnerLog(cb: JobCallbacks | undefined, job: JobRecord, line: str
 const PROVE_EVIDENCE_FAIL =
   "Stage finished without PROVE: EVIDENCE (run the real artifact/tests and include command + output in the agent message).";
 
+/** Default building-stage implementor prompt (docs template or code). Architect + prove sections live in defaults (#247). */
+function buildingImplementFallback(job: JobRecord): string {
+  if (isDocsJob(job)) {
+    const template = isDocsTemplateId(job.input.docsTemplate) ? job.input.docsTemplate : null;
+    return resolveDocsImplementPrompt(template);
+  }
+  return DEFAULT_IMPLEMENT_PROMPT;
+}
+
 /** Default implement/fix prompts require real verification output; custom prompt files opt out. */
 async function acceptProveEvidenceOrFail(
   config: RunnerConfig,
@@ -590,24 +599,13 @@ export async function runJobLoop(
       if (!skipImplementor) {
         let prompt: string;
         const bases = promptBases(job, wt);
-        if (isDocsJob(job)) {
-          const template = isDocsTemplateId(job.input.docsTemplate) ? job.input.docsTemplate : null;
-          const fallback = resolveDocsImplementPrompt(template);
-          prompt = await readPromptFile(
-            "promptFile",
-            job.input.promptFile,
-            fallback,
-            bases,
-            job,
-            callbacks,
-          );
-        } else if (job.dryRun && !job.input.promptFile?.trim()) {
+        if (job.dryRun && !job.input.promptFile?.trim() && !isDocsJob(job)) {
           prompt = DRY_RUN_PLACEHOLDER_PROMPT;
         } else {
           prompt = await readPromptFile(
             "promptFile",
             job.input.promptFile,
-            DEFAULT_IMPLEMENT_PROMPT,
+            buildingImplementFallback(job),
             bases,
             job,
             callbacks,

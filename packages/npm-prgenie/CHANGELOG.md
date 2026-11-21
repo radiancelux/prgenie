@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Runner: default implement prompts require a short architect plan (`ARCHITECT: PLAN`) before code or doc work in the same building pass; custom prompt files opt out (#247).
 - Runner: default implement and fix prompts require real verification evidence (`PROVE: EVIDENCE` with command output); custom prompt files opt out (#246).
 
 ## 0.1.6 — 2026-11-08
